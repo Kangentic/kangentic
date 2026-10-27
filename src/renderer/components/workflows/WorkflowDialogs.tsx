@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
 import { Pencil, Play, Workflow as WorkflowIcon } from 'lucide-react';
 import type { Workflow, WorkflowSummary, WorkflowViewTask } from '../../../shared/types';
 import { BaseDialog } from '../dialogs/BaseDialog';
@@ -11,10 +12,6 @@ import { taskLabel, workflowColor } from './workflow-graph';
  * Delete, Remove. Rename is the Board Manager's profile rename: the field
  * leads with the current name selected, and Enter renames.
  */
-
-function plural(count: number, one: string, many: string): string {
-  return `${count} ${count === 1 ? one : many}`;
-}
 
 function TintedWorkflowIcon({ summary }: { summary: WorkflowSummary }) {
   return <WorkflowIcon size={16} style={{ color: workflowColor(summary.workflow.color_slot) }} />;
@@ -32,21 +29,26 @@ export function StartWorkflowDialog({ summary, sourceTaskLabel, onConfirm, onCan
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
+  const workflowTitle = summary.workflow.title;
+  const taskCount = summary.taskCount;
   return (
     <ConfirmDialog
-      title={`Start ${summary.workflow.title}?`}
+      title={t`Start ${workflowTitle}?`}
       icon={<TintedWorkflowIcon summary={summary} />}
       message={(
         <>
           <p>
-            {summary.taskCount === 1
-              ? 'Creates 1 task. It starts automatically.'
-              : `Creates ${plural(summary.taskCount, 'task', 'tasks')}. They start automatically in the order this workflow sets.`}
+            <Plural
+              value={taskCount}
+              one="Creates # task. It starts automatically."
+              other="Creates # tasks. They start automatically in the order this workflow sets."
+            />
           </p>
-          {sourceTaskLabel && <p className="mt-2.5">Task {sourceTaskLabel} moves to Done.</p>}
+          {sourceTaskLabel && <p className="mt-2.5"><Trans>Task {sourceTaskLabel} moves to Done.</Trans></p>}
         </>
       )}
-      confirmLabel="Start workflow"
+      confirmLabel={t`Start workflow`}
       confirmIcon={<Play size={12} className="shrink-0" data-testid="workflow-start-confirm-icon" />}
       testId="workflow-start-confirm"
       onConfirm={() => onConfirm()}
@@ -61,35 +63,48 @@ export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
   const state = summary.workflow.state;
+  const workflowTitle = summary.workflow.title;
+  const taskCount = summary.taskCount;
   let message: React.ReactNode;
   if (state === 'draft') {
-    message = summary.taskCount > 0
-      ? <p>Deletes its {plural(summary.taskCount, 'planned task', 'planned tasks')} and the agent conversation. Nothing else changes.</p>
-      : <p>Deletes the agent conversation. Nothing else changes.</p>;
+    message = taskCount > 0
+      ? (
+        <p>
+          <Plural
+            value={taskCount}
+            one="Deletes its # planned task and the agent conversation. Nothing else changes."
+            other="Deletes its # planned tasks and the agent conversation. Nothing else changes."
+          />
+        </p>
+      )
+      : <p><Trans>Deletes the agent conversation. Nothing else changes.</Trans></p>;
   } else {
     const unfinished = summary.taskCount - summary.doneCount;
-    let staysText: string;
-    if (unfinished === 0) staysText = 'Its tasks are done and stay where they are.';
-    else if (unfinished === 1) staysText = 'Its 1 unfinished task stays where it is, as an ordinary task.';
-    else staysText = `Its ${unfinished} unfinished tasks stay where they are, as ordinary tasks.`;
     message = (
       <>
         <p>
-          {staysText}
-          {' '}The agent conversation is deleted.
+          <Plural
+            value={unfinished}
+            _0="Its tasks are done and stay where they are. The agent conversation is deleted."
+            one="Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted."
+            other="Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted."
+          />
         </p>
         {state === 'paused' && unfinished > 0 && (
-          <p className="mt-2.5">{unfinished === 1 ? 'It stays paused until you resume it.' : 'They stay paused until you resume them.'}</p>
+          <p className="mt-2.5">
+            <Plural value={unfinished} one="It stays paused until you resume it." other="They stay paused until you resume them." />
+          </p>
         )}
       </>
     );
   }
   return (
     <ConfirmDialog
-      title={`Delete ${summary.workflow.title}?`}
+      title={t`Delete ${workflowTitle}?`}
       message={message}
-      confirmLabel="Delete"
+      confirmLabel={t`Delete`}
       variant="danger"
       testId="workflow-delete-confirm"
       onConfirm={() => onConfirm()}
@@ -105,13 +120,16 @@ export function RemoveTaskDialog({ workflow, task, onConfirm, onCancel }: {
   onConfirm: () => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
   const planned = task.place === 'planned';
+  const label = taskLabel(task);
+  const workflowTitle = workflow.title;
   return (
     <ConfirmDialog
-      title={`Remove ${taskLabel(task)} from ${workflow.title}?`}
+      title={t`Remove ${label} from ${workflowTitle}?`}
       icon={<WorkflowIcon size={16} style={{ color: workflowColor(workflow.color_slot) }} />}
-      message={<p>{planned ? 'It exists only in this workflow, so it is gone for good.' : 'It stays where it is, as an ordinary task.'}</p>}
-      confirmLabel="Remove"
+      message={<p>{planned ? t`It exists only in this workflow, so it is gone for good.` : t`It stays where it is, as an ordinary task.`}</p>}
+      confirmLabel={t`Remove`}
       testId="workflow-remove-confirm"
       onConfirm={() => onConfirm()}
       onCancel={onCancel}
@@ -124,6 +142,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
   onRename: (name: string) => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
   const [value, setValue] = useState(name);
   const inputRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -143,7 +162,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
 
   return (
     <BaseDialog
-      title="Rename workflow"
+      title={t`Rename workflow`}
       // The header's Rename button's pencil, before the title as the other titled dialogs have one.
       icon={<Pencil size={16} className="text-fg-muted" data-testid="workflow-rename-icon" />}
       onClose={onCancel}
@@ -157,7 +176,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
             className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
             data-testid="workflow-rename-cancel"
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </button>
           <button
             type="button"
@@ -166,7 +185,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
             className="px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis enabled:hover:bg-accent text-accent-on disabled:opacity-40 disabled:cursor-not-allowed"
             data-testid="workflow-rename-confirm"
           >
-            Rename
+            <Trans>Rename</Trans>
           </button>
         </div>
       )}
@@ -183,7 +202,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
             submit();
           }
         }}
-        aria-label="Workflow name"
+        aria-label={t`Workflow name`}
         className="w-full px-3 py-2 bg-surface-control border border-edge-input rounded text-sm text-fg-tertiary placeholder-fg-muted focus:outline-none focus:border-accent"
         data-testid="workflow-rename-input"
       />

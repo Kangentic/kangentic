@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useCallback, useRef, useMemo, useDeferredValue } from 'react';
 import { Check, Loader2, Paperclip, Search, AlertCircle, RefreshCw, EyeOff, Eye } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { formatRelativeTime } from '../../lib/datetime';
 import { BaseDialog } from '../dialogs/BaseDialog';
 import { Pill } from '../Pill';
@@ -86,6 +88,7 @@ function searchHaystack(issue: ExternalIssue): string {
 }
 
 export function ImportDialog({ source, onClose }: ImportDialogProps) {
+  const { t, i18n } = useLingui();
   const [issues, setIssues] = useState<ExternalIssue[]>([]);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
@@ -149,14 +152,14 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       setIssues(sortByCreatedDesc(result.issues));
     } catch (reconcileError: unknown) {
       if (fetchSequenceRef.current !== token) return;
-      setError(reconcileError instanceof Error ? reconcileError.message : 'Failed to sync issues');
+      setError(reconcileError instanceof Error ? reconcileError.message : t`Failed to sync issues`);
     } finally {
       if (fetchSequenceRef.current === token) {
         setSyncing(false);
         setLoading(false);
       }
     }
-  }, [source.source, source.repository]);
+  }, [source.source, source.repository, t]);
 
   // On mount: check the CLI, paint the persistent cache instantly, then reconcile
   // in the background. First-ever open has an empty cache, so the spinner stays up
@@ -182,7 +185,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     window.electronAPI.backlog.importCheckCli(source.source).then(async (cli) => {
       if (fetchSequenceRef.current !== token) return;
       if (!cli.available || !cli.authenticated) {
-        setCliError(cli.error ?? 'CLI not available');
+        setCliError(cli.error ?? t`CLI not available`);
         setLoading(false);
         setSyncing(false);
         return;
@@ -194,7 +197,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
       void reconcile('incremental');
     }).catch((cliError: unknown) => {
       if (fetchSequenceRef.current !== token) return;
-      setCliError(cliError instanceof Error ? cliError.message : 'CLI check failed');
+      setCliError(cliError instanceof Error ? cliError.message : t`CLI check failed`);
       setLoading(false);
       setSyncing(false);
     });
@@ -364,22 +367,29 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         })),
       });
 
+      // Each part is a whole message with its own plural, joined as a list for the
+      // session's language (English reads "a, b, c").
+      const importedCount = result.imported;
+      const duplicateCount = result.skippedDuplicates;
+      const skippedAttachmentCount = result.skippedAttachments;
+      const detailUnavailableCount = result.detailUnavailable ?? 0;
       const parts: string[] = [];
-      parts.push(`${result.imported} imported`);
-      if (result.skippedDuplicates > 0) {
-        parts.push(`${result.skippedDuplicates} already in the backlog`);
+      parts.push(t`${importedCount} imported`);
+      if (duplicateCount > 0) {
+        parts.push(t`${duplicateCount} already in the backlog`);
       }
-      if (result.skippedAttachments > 0) {
-        parts.push(`${result.skippedAttachments} attachment${result.skippedAttachments !== 1 ? 's' : ''} skipped`);
+      if (skippedAttachmentCount > 0) {
+        parts.push(t`${plural(skippedAttachmentCount, { one: '# attachment skipped', other: '# attachments skipped' })}`);
       }
-      if (result.detailUnavailable) {
-        parts.push(`comments unavailable for ${result.detailUnavailable} item${result.detailUnavailable !== 1 ? 's' : ''}`);
+      if (detailUnavailableCount > 0) {
+        parts.push(t`comments unavailable for ${plural(detailUnavailableCount, { one: '# item', other: '# items' })}`);
       }
-      addToast({ title: 'Issues imported', message: `${parts.join(', ')}.`, variant: 'success' });
+      const summary = new Intl.ListFormat(i18n.locale, { type: 'unit', style: 'short' }).format(parts);
+      addToast({ title: t`Issues imported`, message: t`${summary}.`, variant: 'success' });
       loadBacklog();
       onClose();
     } catch (importError: unknown) {
-      setError(importError instanceof Error ? importError.message : 'Import failed');
+      setError(importError instanceof Error ? importError.message : t`Import failed`);
       setImporting(false);
     }
   };
@@ -399,9 +409,9 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         <ButtonGroup
           size="sm"
           options={[
-            { value: 'open' as StateFilter, label: 'Open' },
-            { value: 'closed' as StateFilter, label: 'Closed' },
-            { value: 'all' as StateFilter, label: 'All' },
+            { value: 'open' as StateFilter, label: t({ message: 'Open', context: 'import state filter' }) },
+            { value: 'closed' as StateFilter, label: t({ message: 'Closed', context: 'import state filter' }) },
+            { value: 'all' as StateFilter, label: t({ message: 'All', context: 'import state filter' }) },
           ]}
           value={stateFilter}
           onChange={handleStateFilterChange}
@@ -410,23 +420,26 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
     </div>
   );
 
+  const selectedCount = selectedIds.size;
   const importButtonLabel = importing
-    ? 'Importing...'
-    : selectedIds.size > 0
-      ? `Import (${selectedIds.size})`
-      : 'Import';
+    ? t`Importing...`
+    : selectedCount > 0
+      ? t`Import (${selectedCount})`
+      : t({ message: 'Import', context: 'button' });
 
   // Whether background paging is still in progress is communicated by the
   // dedicated streaming indicator below the list, not repeated here.
   const showingSubset = hasActiveFilters || hideImported;
+  const shownCount = filteredIssues.length;
+  const loadedCount = issues.length;
   const footerCountLabel = showingSubset
-    ? `${filteredIssues.length} of ${issues.length} items`
-    : `${issues.length} items loaded`;
+    ? t`${shownCount} of ${plural(loadedCount, { one: '# item', other: '# items' })}`
+    : t`${plural(loadedCount, { one: '# item loaded', other: '# items loaded' })}`;
 
   const footer = (
     <div className="flex items-center justify-between">
       <span className="text-xs text-fg-faint">
-        {selectedIds.size > 0 ? `${selectedIds.size} selected` : footerCountLabel}
+        {selectedCount > 0 ? t`${selectedCount} selected` : footerCountLabel}
       </span>
       <div className="flex gap-2">
         <button
@@ -434,7 +447,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           onClick={onClose}
           className="px-3 py-1 text-xs text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
         >
-          Cancel
+          <Trans context="button">Cancel</Trans>
         </button>
         <button
           type="button"
@@ -471,7 +484,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             type="text"
             value={filterText}
             onChange={(event) => setFilterText(event.target.value)}
-            placeholder="Filter by ID, title, label, or assignee..."
+            placeholder={t`Filter by ID, title, label, or assignee...`}
             className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
             data-testid="import-search"
           />
@@ -480,7 +493,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         {/* Type filter (Azure DevOps work item types) */}
         {uniqueTypes.length > 0 && (
           <MultiSelectDropdown
-            label="Type"
+            label={t({ message: 'Type', context: 'import filter' })}
+            testIdKey="type"
             options={uniqueTypes}
             selected={filterTypes}
             onToggle={toggleFilterType}
@@ -491,7 +505,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         {/* Status filter */}
         {uniqueStatuses.length > 0 && (
           <MultiSelectDropdown
-            label="Status"
+            label={t({ message: 'Status', context: 'import filter' })}
+            testIdKey="status"
             options={uniqueStatuses}
             selected={filterStatuses}
             onToggle={toggleFilterStatus}
@@ -502,7 +517,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         {/* Assignee filter */}
         {uniqueAssignees.length > 0 && (
           <MultiSelectDropdown
-            label="Assignee"
+            label={t({ message: 'Assignee', context: 'import filter' })}
+            testIdKey="assignee"
             options={uniqueAssignees}
             selected={filterAssignees}
             onToggle={toggleFilterAssignee}
@@ -514,7 +530,8 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         {/* Label filter */}
         {uniqueLabels.length > 0 && (
           <MultiSelectDropdown
-            label="Label"
+            label={t({ message: 'Label', context: 'import filter' })}
+            testIdKey="label"
             options={uniqueLabels}
             selected={filterLabels}
             onToggle={toggleFilterLabel}
@@ -523,7 +540,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
         )}
 
         {/* Hide imported toggle */}
-        <Tooltip label={hideImported ? 'Show imported items' : 'Hide imported items'}>
+        <Tooltip label={hideImported ? t`Show imported items` : t`Hide imported items`}>
           <button
             type="button"
             onClick={() => setHideImported(!hideImported)}
@@ -534,7 +551,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             }`}
           >
             {hideImported ? <EyeOff size={10} /> : <Eye size={10} />}
-            Imported
+            <Trans context="import filter">Imported</Trans>
           </button>
         </Tooltip>
 
@@ -562,7 +579,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
               disabled={syncing}
               className="ml-auto text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
             >
-              Retry
+              <Trans>Retry</Trans>
             </button>
           </div>
         </div>
@@ -581,7 +598,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             className="accent-accent-emphasis"
             data-testid="import-select-all"
           />
-          <span className="text-xs text-fg-faint">Select all</span>
+          <span className="text-xs text-fg-faint"><Trans>Select all</Trans></span>
         </div>
       )}
 
@@ -635,7 +652,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
             {allImported && !hasActiveFilters ? (
               <>
                 <Check size={24} className="text-success" />
-                <span className="text-sm">All items have been imported</span>
+                <span className="text-sm"><Trans>All items have been imported</Trans></span>
                 <button
                   type="button"
                   onClick={() => reconcile('full')}
@@ -643,23 +660,23 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
                   className="flex items-center gap-1.5 mt-1 text-xs text-accent-fg hover:underline disabled:opacity-50 disabled:no-underline"
                 >
                   <RefreshCw size={12} />
-                  Refresh to check for new items
+                  <Trans>Refresh to check for new items</Trans>
                 </button>
               </>
             ) : hasActiveFilters ? (
               <>
-                <span data-testid="import-empty-state-message" className="text-sm">No items match your filters</span>
+                <span data-testid="import-empty-state-message" className="text-sm"><Trans>No items match your filters</Trans></span>
                 <button
                   type="button"
                   onClick={clearFilters}
                   data-testid="import-clear-filters-btn"
                   className="text-xs text-accent-fg hover:underline"
                 >
-                  Clear filters
+                  <Trans>Clear filters</Trans>
                 </button>
               </>
             ) : (
-              <span className="text-sm">No items found</span>
+              <span className="text-sm"><Trans>No items found</Trans></span>
             )}
           </div>
         )}
@@ -673,7 +690,7 @@ export function ImportDialog({ source, onClose }: ImportDialogProps) {
           className="flex items-center justify-center gap-2 py-2 border-t border-edge/30 text-xs text-fg-faint flex-shrink-0"
         >
           <Loader2 size={12} className="animate-spin" />
-          Syncing...
+          <Trans>Syncing...</Trans>
         </div>
       )}
     </BaseDialog>
@@ -729,7 +746,7 @@ const ImportIssueRow = React.memo(function ImportIssueRow({
           </span>
           {isImported && (
             <span className="text-[11px] text-fg-faint bg-surface-hover/50 px-1.5 py-0.5 rounded shrink-0">
-              imported
+              <Trans context="import row badge">imported</Trans>
             </span>
           )}
         </div>

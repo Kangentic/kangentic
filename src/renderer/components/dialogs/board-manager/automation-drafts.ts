@@ -17,9 +17,11 @@ import {
   type AutomationColumnFacts,
   type AutomationRunnability,
 } from '../../../../shared/automation-manifest';
-import { englishText } from '../../../../shared/i18n/english';
 import { i18n } from '@lingui/core';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import { describeAutomation } from '../../../../shared/automation-describe';
+import { englishText } from '../../../../shared/i18n/english';
+import { translateText } from '../../../i18n/translate';
 import { conditionKindsAsStored } from '../../../../shared/final-line-match';
 import { TEMPLATE_VARIABLE_PATTERN } from '../../../../shared/task-template-vars';
 import type {
@@ -137,7 +139,7 @@ export function makeNewAutomation(type: AutomationType, trigger: AutomationTrigg
     // Named for the type rather than left blank: a blank name blocks Save, and
     // the dialog opens with this selected, so the common case is to type over it.
     // English, like a seeded column name: it is persisted to the database and to
-    // the committed kangentic.json.
+    // the committed kangentic.json, so englishText, never translateText.
     name: `New ${englishText(AUTOMATION_MANIFEST[type].label).toLowerCase()}`,
     type,
     trigger,
@@ -171,6 +173,7 @@ export function copyAutomation(source: AutomationDraft, trigger: AutomationTrigg
 
 function uniqueName(wanted: string, taken: string[]): string {
   const lowered = new Set(taken.map((name) => name.trim().toLowerCase()));
+  // Persisted and shared through kangentic.json: englishText, never translateText.
   const base = wanted.trim() || 'Automation';
   if (!lowered.has(base.toLowerCase())) return base;
   let suffix = 2;
@@ -426,14 +429,23 @@ export function countAutomationChanges(
 export function describeAutomationChanges(
   originals: AutomationDraftsByColumn,
   drafts: AutomationDraftsByColumn,
-  columnName: (columnId: string) => string,
+  nameOfColumn: (columnId: string) => string,
 ): string[] {
   return dirtyColumnIds(originals, drafts).map((columnId) => {
     const before = originals[columnId] ?? [];
     const after = drafts[columnId] ?? [];
-    if (after.length > before.length) return `${columnName(columnId)}: added ${after.length - before.length} automation(s)`;
-    if (after.length < before.length) return `${columnName(columnId)}: removed ${before.length - after.length} automation(s)`;
-    return `${columnName(columnId)}: edited automations`;
+    const columnName = nameOfColumn(columnId);
+    // The "(s)" is the English wording tests and the discard dialog already show;
+    // both plural forms keep it, and a translator still gets the plural slots.
+    if (after.length > before.length) {
+      const addedCount = after.length - before.length;
+      return translateText(msg`${{ columnName }}: added ${plural(addedCount, { one: '# automation(s)', other: '# automation(s)' })}`);
+    }
+    if (after.length < before.length) {
+      const removedCount = before.length - after.length;
+      return translateText(msg`${{ columnName }}: removed ${plural(removedCount, { one: '# automation(s)', other: '# automation(s)' })}`);
+    }
+    return translateText(msg`${{ columnName }}: edited automations`);
   });
 }
 

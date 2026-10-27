@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../../lib/datetime';
 import type { DataTableColumn } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
@@ -50,6 +51,7 @@ export function useCompletedColumns(input: {
     handleDelete,
     handleViewDetail,
   } = input;
+  const { t } = useLingui();
 
   return useMemo(() => [
     {
@@ -82,7 +84,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'title' as SortKey,
-      label: 'Title',
+      label: t({ message: 'Title', context: 'column header' }),
       width: '',
       sortValue: (row) => row.task.title.toLowerCase(),
       render: (row) => (
@@ -96,7 +98,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'cost' as SortKey,
-      label: 'Cost',
+      label: t({ message: 'Cost', context: 'column header' }),
       align: 'right',
       width: 'w-[80px]',
       sortValue: (row) => row.summary?.totalCostUsd ?? -1,
@@ -109,7 +111,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'duration' as SortKey,
-      label: 'Agent runtime',
+      label: t({ message: 'Agent runtime', context: 'column header' }),
       align: 'right',
       width: 'w-[90px]',
       sortValue: (row) => row.summary?.durationMs ?? -1,
@@ -122,7 +124,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'tokens' as SortKey,
-      label: 'Tokens',
+      label: t({ message: 'Tokens', context: 'column header' }),
       align: 'right',
       width: 'w-[120px]',
       sortValue: (row) =>
@@ -146,7 +148,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'tools' as SortKey,
-      label: 'Tools',
+      label: t({ message: 'Tools', context: 'column header' }),
       align: 'right',
       width: 'w-[70px]',
       sortValue: (row) => row.summary?.toolCallCount ?? -1,
@@ -165,7 +167,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'files' as SortKey,
-      label: 'Files',
+      label: t({ message: 'Files', context: 'column header' }),
       align: 'right',
       width: 'w-[60px]',
       sortValue: (row) => row.summary?.filesChanged ?? -1,
@@ -178,7 +180,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'lines' as SortKey,
-      label: 'Lines',
+      label: t({ message: 'Lines', context: 'column header' }),
       align: 'right',
       width: 'w-[100px]',
       sortValue: (row) =>
@@ -195,7 +197,7 @@ export function useCompletedColumns(input: {
     },
     {
       key: 'completed' as SortKey,
-      label: 'Completed',
+      label: t({ message: 'Completed', context: 'column header' }),
       align: 'right',
       width: 'w-[140px]',
       sortValue: (row) => row.task.archived_at ?? row.task.updated_at,
@@ -227,6 +229,7 @@ export function useCompletedColumns(input: {
       ),
     },
   ], [
+    t,
     selectedIds,
     swimlanes,
     restorePopoverId,

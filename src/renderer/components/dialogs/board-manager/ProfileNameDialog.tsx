@@ -1,23 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Info } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from '../BaseDialog';
-
-const TITLES: Record<'new' | 'duplicate' | 'rename', string> = {
-  new: 'New profile',
-  duplicate: 'Duplicate profile',
-  rename: 'Rename profile',
-};
-
-/**
- * Naming the SOURCE says more in fewer words than describing the mechanism.
- * A new profile carries no overrides, so every column resolves to the board's
- * own settings - which is exactly what "Default" means here. Duplicate names
- * the profile it copies instead.
- */
-function describe(mode: 'new' | 'duplicate' | 'rename', sourceName: string): string {
-  if (mode === 'rename') return 'Only the label changes. Tasks already using this profile stay on it.';
-  return `Inherits every column's settings from ${sourceName}.`;
-}
 
 /**
  * Name prompt for creating, duplicating, or renaming a Board Profile.
@@ -45,7 +29,21 @@ export function ProfileNameDialog({
   onConfirm: (name: string) => void;
   onCancel: () => void;
 }) {
+  const { t } = useLingui();
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const titles: Record<'new' | 'duplicate' | 'rename', string> = {
+    new: t`New profile`,
+    duplicate: t`Duplicate profile`,
+    rename: t`Rename profile`,
+  };
+  // Naming the SOURCE says more in fewer words than describing the mechanism.
+  // A new profile carries no overrides, so every column resolves to the board's
+  // own settings - which is exactly what "Default" means here. Duplicate names
+  // the profile it copies instead.
+  const description = mode === 'rename'
+    ? t`Only the label changes. Tasks already using this profile stay on it.`
+    : t`Inherits every column's settings from ${sourceName}.`;
 
   useEffect(() => {
     inputRef.current?.focus();
@@ -59,7 +57,7 @@ export function ProfileNameDialog({
   const canConfirm = trimmed.length > 0 && !isDuplicateName;
 
   return (
-    <BaseDialog title={TITLES[mode]} onClose={onCancel}>
+    <BaseDialog title={titles[mode]} onClose={onCancel}>
       <div className="space-y-3">
         {/* The name field leads: naming the profile is the task, and the
             explanation below is support for it. Leading with prose made the
@@ -79,7 +77,7 @@ export function ProfileNameDialog({
           // A profile varies agent, model, and effort, so the axis users pick
           // along is task complexity (and the cost that follows from it), not
           // an abstract quality tier.
-          placeholder="e.g. Simple or Complex"
+          placeholder={t`e.g. Simple or Complex`}
           className="w-full px-3 py-2 bg-surface-control border border-edge-input rounded text-sm text-fg-tertiary
             placeholder-fg-muted focus:outline-none focus:border-accent"
           data-testid="profile-name-input"
@@ -87,13 +85,13 @@ export function ProfileNameDialog({
 
         {isDuplicateName && (
           <p className="text-sm text-warning" data-testid="profile-name-error">
-            A profile named &quot;{trimmed}&quot; already exists.
+            <Trans>A profile named &quot;{trimmed}&quot; already exists.</Trans>
           </p>
         )}
 
         <div className="flex items-center gap-2 px-3 py-2 rounded bg-surface/60 border border-edge/50">
           <Info size={14} className="flex-shrink-0 text-fg-faint" />
-          <span className="text-sm text-fg-muted">{describe(mode, sourceName)}</span>
+          <span className="text-sm text-fg-muted">{description}</span>
         </div>
 
         <div className="flex justify-end gap-2 pt-1">
@@ -103,7 +101,7 @@ export function ProfileNameDialog({
             data-testid="profile-name-cancel"
             className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg rounded hover:bg-surface-hover"
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </button>
           <button
             type="button"
@@ -113,7 +111,7 @@ export function ProfileNameDialog({
               disabled:opacity-40 disabled:pointer-events-none"
             data-testid="profile-name-confirm"
           >
-            {mode === 'rename' ? 'Rename' : 'Create'}
+            {mode === 'rename' ? <Trans>Rename</Trans> : <Trans>Create</Trans>}
           </button>
         </div>
       </div>

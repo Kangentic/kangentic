@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { ArrowRight } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { agentShortName } from '../../../utils/agent-display-name';
 import type { HandoffRecord } from '../../../../shared/types';
 
@@ -27,7 +28,7 @@ export function HandoffTimeline({ taskId }: HandoffTimelineProps) {
 
   return (
     <div className="flex flex-col gap-1.5 mt-3" data-testid="handoff-timeline">
-      <span className="text-xs font-medium text-fg-faint">Handoff Chain</span>
+      <span className="text-xs font-medium text-fg-faint"><Trans>Handoff Chain</Trans></span>
       <div className="flex items-center gap-1.5 flex-wrap">
         {handoffs.map((handoff, index) => (
           <div key={handoff.id} className="flex items-center gap-1.5">

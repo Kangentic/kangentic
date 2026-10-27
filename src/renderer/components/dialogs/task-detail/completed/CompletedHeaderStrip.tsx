@@ -1,5 +1,7 @@
 import type { ReactNode } from 'react';
 import { CheckCircle2, GitPullRequest, XCircle } from 'lucide-react';
+import { Plural, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { formatCost, formatSpan } from '../../../../utils/format-session';
 import { formatTokenCount } from '../../../../utils/format-tokens';
 import { formatDateTime, formatMonthDay, formatMonthDayTime } from '../../../../lib/datetime';
@@ -34,6 +36,7 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
   report: TaskReport;
   gitTotals?: { insertions: number; deletions: number; filesChanged: number } | null;
 }) {
+  const { t } = useLingui();
   const { summary } = report;
   const startedMs = report.startedAt ? Date.parse(report.startedAt) : Number.NaN;
   const endedMs = report.endedAt ? Date.parse(report.endedAt) : Number.NaN;
@@ -44,49 +47,56 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
   const hasChanges = changeFigures !== null && (changeFigures.linesAdded > 0 || changeFigures.linesRemoved > 0 || changeFigures.filesChanged > 0);
   const prLabel = prStatePresentation(task.pr_state).label;
   const exitedWithError = summary?.exitCode != null && summary.exitCode !== 0;
-  const statusLabel = exitedWithError ? `Exited (${summary?.exitCode})` : 'Completed';
+  const exitCode = summary?.exitCode;
+  const statusLabel = exitedWithError ? t`Exited (${exitCode})` : t({ message: 'Completed', context: 'task status' });
 
   const metrics: Metric[] = [];
-  if (report.startedAt) metrics.push({ key: 'started', label: 'Started', value: <MomentValue value={report.startedAt} />, wideOnly: true });
-  if (report.endedAt) metrics.push({ key: 'ended', label: 'Ended', value: <MomentValue value={report.endedAt} />, wideOnly: true });
+  if (report.startedAt) metrics.push({ key: 'started', label: t({ message: 'Started', context: 'completed task metric' }), value: <MomentValue value={report.startedAt} />, wideOnly: true });
+  if (report.endedAt) metrics.push({ key: 'ended', label: t({ message: 'Ended', context: 'completed task metric' }), value: <MomentValue value={report.endedAt} />, wideOnly: true });
   if (Number.isFinite(elapsedMs) && elapsedMs >= 0) {
+    const startedText = report.startedAt ? formatDateTime(report.startedAt) : '';
+    const endedText = report.endedAt ? formatDateTime(report.endedAt) : '';
     metrics.push({
       key: 'elapsed',
-      label: 'Elapsed',
+      label: t({ message: 'Elapsed', context: 'completed task metric' }),
       value: formatSpan(elapsedMs),
-      tip: report.startedAt && report.endedAt ? `${formatDateTime(report.startedAt)} to ${formatDateTime(report.endedAt)}` : undefined,
+      tip: report.startedAt && report.endedAt ? t`${startedText} to ${endedText}` : undefined,
     });
   }
-  if (summary && summary.durationMs > 0) metrics.push({ key: 'agent-runtime', label: 'Agent runtime', value: formatSpan(summary.durationMs) });
+  if (summary && summary.durationMs > 0) metrics.push({ key: 'agent-runtime', label: t({ message: 'Agent runtime', context: 'completed task metric' }), value: formatSpan(summary.durationMs) });
   if (hasChanges && changeFigures) {
+    const linesAdded = changeFigures.linesAdded;
+    const linesRemoved = changeFigures.linesRemoved;
+    const filesChanged = changeFigures.filesChanged;
     metrics.push({
       key: 'changes',
-      label: 'Changes',
+      label: t({ message: 'Changes', context: 'completed task metric' }),
       value: (
         <>
-          <Tooltip label={`${changeFigures.linesAdded.toLocaleString()} lines added`}>
+          <Tooltip label={t`${plural(linesAdded, { one: '# line added', other: '# lines added' })}`}>
             <span className="text-green-400/80">+{formatTokenCount(changeFigures.linesAdded)}</span>
           </Tooltip>
-          <Tooltip label={`${changeFigures.linesRemoved.toLocaleString()} lines removed`}>
+          <Tooltip label={t`${plural(linesRemoved, { one: '# line removed', other: '# lines removed' })}`}>
             <span className="text-red-400/80">-{formatTokenCount(changeFigures.linesRemoved)}</span>
           </Tooltip>
           {changeFigures.filesChanged > 0 && (
-            <span className="hidden text-[13px] font-normal text-fg-muted @[860px]:inline">{changeFigures.filesChanged} {changeFigures.filesChanged === 1 ? 'file' : 'files'}</span>
+            <span className="hidden text-[13px] font-normal text-fg-muted @[860px]:inline"><Plural value={filesChanged} one="# file" other="# files" /></span>
           )}
         </>
       ),
-      tip: changeFigures.filesChanged > 0 ? `${changeFigures.filesChanged.toLocaleString()} ${changeFigures.filesChanged === 1 ? 'file' : 'files'} changed` : undefined,
+      tip: changeFigures.filesChanged > 0 ? t`${plural(filesChanged, { one: '# file changed', other: '# files changed' })}` : undefined,
     });
   }
   if (task.pr_number != null) {
     const prUrl = task.pr_url;
+    const prNumber = task.pr_number;
     metrics.push({
       key: 'pull-request',
-      label: 'Pull request',
+      label: t({ message: 'Pull request', context: 'completed task metric' }),
       value: (
         <>
           {prUrl ? (
-            <Tooltip label={prLabel ? `Open PR #${task.pr_number} (${prLabel})` : `Open PR #${task.pr_number}`}>
+            <Tooltip label={prLabel ? t`Open PR #${prNumber} (${prLabel})` : t`Open PR #${prNumber}`}>
               <button
                 type="button"
                 onClick={() => { void window.electronAPI.shell.openExternal(prUrl); }}
@@ -97,7 +107,7 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
               </button>
             </Tooltip>
           ) : (
-            <Tooltip label={prLabel ? `PR #${task.pr_number} (${prLabel})` : ''}>
+            <Tooltip label={prLabel ? t`PR #${prNumber} (${prLabel})` : ''}>
               <span className="inline-flex items-center gap-[5px] text-purple-400">
                 <GitPullRequest size={14} />#{task.pr_number}
               </span>
@@ -108,7 +118,7 @@ export function CompletedHeaderStrip({ task, report, gitTotals }: {
       ),
     });
   }
-  if (summary && summary.totalCostUsd > 0) metrics.push({ key: 'cost', label: 'Cost', value: formatCost(summary.totalCostUsd) });
+  if (summary && summary.totalCostUsd > 0) metrics.push({ key: 'cost', label: t({ message: 'Cost', context: 'completed task metric' }), value: formatCost(summary.totalCostUsd) });
 
   return (
     <div className="@container flex-shrink-0 border-b border-edge" data-testid="completed-header-strip">

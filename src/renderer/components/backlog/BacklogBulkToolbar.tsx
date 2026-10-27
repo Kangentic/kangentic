@@ -1,5 +1,6 @@
 import { useState, useRef } from 'react';
 import { SquareArrowRight, Trash2 } from 'lucide-react';
+import { Trans } from '@lingui/react/macro';
 import { PromotePopover } from './PromotePopover';
 import type { Swimlane } from '../../../shared/types';
 
@@ -26,7 +27,7 @@ export function BacklogBulkToolbar({
       data-testid="backlog-bulk-toolbar"
     >
       <span className="text-sm text-fg-muted font-medium tabular-nums">
-        {selectedCount} selected
+        <Trans>{selectedCount} selected</Trans>
       </span>
       <div className="w-px h-5 bg-edge" />
       <button
@@ -36,7 +37,7 @@ export function BacklogBulkToolbar({
         data-testid="bulk-move-to-board-btn"
       >
         <SquareArrowRight size={14} />
-        Move to Board
+        <Trans>Move to Board</Trans>
       </button>
       <button
         type="button"
@@ -45,7 +46,7 @@ export function BacklogBulkToolbar({
         data-testid="bulk-delete-btn"
       >
         <Trash2 size={14} />
-        Delete
+        <Trans context="button">Delete</Trans>
       </button>
       {showColumnPicker && (
         <PromotePopover

@@ -10,12 +10,17 @@ import { CountBadge } from '../../../CountBadge';
 import { Tooltip } from '../../../Tooltip';
 import { tipLabel } from '../../../../utils/tooltip';
 import { FILE_STATUS_CONFIG } from './file-status';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../../../../i18n/translate';
+import type { LocalizedText } from '../../../../../shared/i18n/text';
 
 /** Diff scope options for the segmented control (single-select among 3 fixed values). */
-const SCOPE_OPTIONS: { value: GitDiffScope; label: string }[] = [
-  { value: 'working', label: 'Working' },
-  { value: 'staged', label: 'Staged' },
-  { value: 'branch', label: 'Branch' },
+const SCOPE_OPTIONS: { value: GitDiffScope; label: LocalizedText }[] = [
+  { value: 'working', label: msg({ message: 'Working', context: 'git area' }) },
+  { value: 'staged', label: msg({ message: 'Staged', context: 'git area' }) },
+  { value: 'branch', label: msg({ message: 'Branch', context: 'git area' }) },
 ];
 
 interface FileTreePanelProps {
@@ -142,12 +147,21 @@ function compactTree(node: DirectoryNode): DirectoryNode {
 type FileSortMode = AppConfig['diffFileSort'];
 
 /** The sort menu's options (single-select; the current mode gets a check). */
-const SORT_OPTIONS: { value: FileSortMode; label: string }[] = [
-  { value: 'name', label: 'Name' },
-  { value: 'status', label: 'Status' },
-  { value: 'size', label: 'Size' },
-  { value: 'ext', label: 'Extension' },
+const SORT_OPTIONS: { value: FileSortMode; label: LocalizedText }[] = [
+  { value: 'name', label: msg({ message: 'Name', context: 'column header' }) },
+  { value: 'status', label: msg({ message: 'Status', context: 'column header' }) },
+  { value: 'size', label: msg({ message: 'Size', context: 'column header' }) },
+  { value: 'ext', label: msg({ message: 'Extension', context: 'column header' }) },
 ];
+
+/** The sort button's tip and name, one whole sentence per key (a translation may
+ *  not build "by ..." from the option's label). */
+const SORT_TIPS: Record<FileSortMode, LocalizedText> = {
+  name: msg`Sort: by name`,
+  status: msg`Sort: by status`,
+  size: msg`Sort: by size`,
+  ext: msg`Sort: by extension`,
+};
 
 // Status grouping order for "by status": additions, then untracked, modified,
 // renamed, copied, and deletions last.
@@ -273,7 +287,7 @@ const GroupRowView = memo(function GroupRowView({ row, first }: { row: FlatGroup
           bottom-aligned with the boundary. */}
       <span className="inline-flex items-center gap-1.5 text-fg-faint">
         <span className="text-[11px] font-semibold uppercase tracking-wider leading-none">
-          {statusConfig.label}
+          {translateText(statusConfig.label)}
         </span>
         <CountBadge count={row.count} variant="tinted" size="pill" testId="changes-group-count" />
       </span>
@@ -321,6 +335,7 @@ const FileRowView = memo(function FileRowView({
   onContextMenu: (file: GitDiffFileEntry, event: ReactMouseEvent) => void;
   onOpenInNewWindow?: (filePath: string) => void;
 }) {
+  const { t } = useLingui();
   const statusConfig = STATUS_CONFIG[row.file.status];
   const StatusIcon = statusConfig.icon;
   // Flat mode shows the full repo-relative path (no directory rows for context);
@@ -337,7 +352,7 @@ const FileRowView = memo(function FileRowView({
       data-path={row.file.path}
       data-selected={isSelected}
     >
-      <Tooltip label={`${statusConfig.label}: ${row.file.path}`}>
+      <Tooltip label={`${translateText(statusConfig.label)}: ${row.file.path}`}>
         <button
           onClick={() => onSelect(row.file.path)}
           // Detach this one file's diff into its own OS window. Both clicks of the
@@ -365,11 +380,11 @@ const FileRowView = memo(function FileRowView({
       </Tooltip>
       {/* "Viewed" toggle: a reviewed file's row dims. Always visible (not
           hover-only) so the review state is discoverable; subtle until checked. */}
-      <Tooltip label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}>
+      <Tooltip label={viewed ? t`Mark as not viewed` : t`Mark as viewed`}>
         <button
           type="button"
           onClick={() => onToggleViewed(row.file.path)}
-          aria-label={viewed ? 'Mark as not viewed' : 'Mark as viewed'}
+          aria-label={viewed ? t`Mark as not viewed` : t`Mark as viewed`}
           aria-pressed={viewed}
           data-testid="changes-viewed-toggle"
           data-path={row.file.path}
@@ -605,6 +620,7 @@ function FileContextMenu({
   onViewHistory?: () => void;
   onClose: () => void;
 }) {
+  const { t } = useLingui();
   const menuRef = useRef<HTMLDivElement>(null);
   const { file } = state;
 
@@ -650,7 +666,7 @@ function FileContextMenu({
         data-testid="context-open-file"
       >
         <ExternalLink size={14} className="text-fg-faint" />
-        Open in editor
+        <Trans>Open in editor</Trans>
       </button>
       <button
         type="button"
@@ -660,20 +676,20 @@ function FileContextMenu({
         data-testid="context-reveal-file"
       >
         <FolderOpen size={14} className="text-fg-faint" />
-        Reveal in file manager
+        <Trans>Reveal in file manager</Trans>
       </button>
       <button
         type="button"
         onClick={() => {
           navigator.clipboard.writeText(file.path);
-          useToastStore.getState().addToast({ title: 'Path copied', message: file.path, variant: 'info' });
+          useToastStore.getState().addToast({ title: t`Path copied`, message: file.path, variant: 'info' });
           onClose();
         }}
         className="w-full px-3 py-1.5 text-sm text-fg-secondary text-left hover:bg-surface-hover/40 flex items-center gap-2"
         data-testid="context-copy-path"
       >
         <Copy size={14} className="text-fg-faint" />
-        Copy path
+        <Trans>Copy path</Trans>
       </button>
       {onOpenInNewWindow && (
         <button
@@ -683,7 +699,7 @@ function FileContextMenu({
           data-testid="context-open-new-window"
         >
           <AppWindow size={14} className="text-fg-faint" />
-          Open in new window
+          <Trans>Open in new window</Trans>
         </button>
       )}
       {onViewHistory && (
@@ -694,7 +710,7 @@ function FileContextMenu({
           data-testid="context-file-history"
         >
           <History size={14} className="text-fg-faint" />
-          View history
+          <Trans>View history</Trans>
         </button>
       )}
     </div>
@@ -731,6 +747,7 @@ function FileHistoryPopover({
 }) {
   const popoverRef = useRef<HTMLDivElement>(null);
   const { file } = state;
+  const historyFileName = file.path.split('/').pop() ?? file.path;
   // The history is stored with the key it was fetched for and `commits` is
   // derived from it, so a change of file or directory reads as "loading"
   // at once, with no effect having to clear the previous result first.
@@ -782,7 +799,7 @@ function FileHistoryPopover({
     >
       <Tooltip label={file.path}>
         <div className="px-3 py-1.5 text-[11px] font-medium text-fg-faint truncate border-b border-edge-subtle">
-          History: {file.path.split('/').pop() ?? file.path}
+          <Trans>History: {historyFileName}</Trans>
         </div>
       </Tooltip>
       {commits === null ? (
@@ -790,7 +807,7 @@ function FileHistoryPopover({
           <Loader2 size={14} className="animate-spin text-fg-faint" />
         </div>
       ) : commits.length === 0 ? (
-        <div className="px-3 py-3 text-xs text-fg-disabled text-center">No history found</div>
+        <div className="px-3 py-3 text-xs text-fg-disabled text-center"><Trans>No history found</Trans></div>
       ) : (
         commits.map((commit) => (
           <button
@@ -835,6 +852,7 @@ function BranchHeader({
   baseLabel?: string;
   baseLabelCustom?: boolean;
 }) {
+  const { t } = useLingui();
   const branch = branchSummary?.currentBranch;
   const ahead = branchSummary?.ahead ?? 0;
   const behind = branchSummary?.behind ?? 0;
@@ -848,11 +866,12 @@ function BranchHeader({
         <GitBranch size={12} className="text-fg-muted flex-shrink-0" />
         <Tooltip label={branch ?? ''}>
           <span className="text-fg-secondary font-medium truncate" data-testid="changes-branch-name">
+            {/* i18n-ok: git's own term for a checkout that is on no branch */}
             {branch ?? 'Detached HEAD'}
           </span>
         </Tooltip>
         {baseLabel && (
-          <Tooltip label={baseLabelCustom ? `Based on ${baseLabel}, not the project default` : `Based on ${baseLabel}, the project default`}>
+          <Tooltip label={baseLabelCustom ? t`Based on ${baseLabel}, not the project default` : t`Based on ${baseLabel}, the project default`}>
             <span
               className={`shrink-0 rounded border px-1 py-px text-[11px] font-medium leading-none truncate ${
                 baseLabelCustom ? 'border-accent/50 text-accent-fg' : 'border-edge-subtle text-fg-faint'
@@ -864,7 +883,7 @@ function BranchHeader({
           </Tooltip>
         )}
         {(ahead > 0 || behind > 0) && (
-          <Tooltip label={`${ahead} ahead, ${behind} behind base branch`}>
+          <Tooltip label={t`${ahead} ahead, ${behind} behind base branch`}>
             <span className="flex items-center gap-1.5 text-fg-muted flex-shrink-0">
               {ahead > 0 && (
                 <span className="flex items-center gap-0.5 tabular-nums">
@@ -911,11 +930,14 @@ export function FileTreePanel({
   onSelectHistoryCommit,
   onOpenInNewWindow,
 }: FileTreePanelProps) {
+  const { t } = useLingui();
   const [searchQuery, setSearchQuery] = useState('');
   const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
   const [historyPopover, setHistoryPopover] = useState<FileHistoryPopoverState | null>(null);
 
   const sort = useConfigStore((state) => state.config.diffFileSort);
+  const sortTip = translateText(SORT_TIPS[sort] ?? SORT_TIPS.name);
+  const fileCount = files.length;
   const flat = useConfigStore((state) => state.config.diffFlatList);
   const updateConfig = useConfigStore((state) => state.updateConfig);
 
@@ -1019,7 +1041,7 @@ export function FileTreePanel({
           <div className="px-1 @[200px]/file-tree:px-2 py-1.5 border-b border-edge">
             <div
               role="radiogroup"
-              aria-label="Diff scope"
+              aria-label={t`Diff scope`}
               data-testid="changes-scope-select"
               className="flex gap-0.5 rounded border border-edge-input bg-surface-hover p-0.5"
             >
@@ -1039,7 +1061,7 @@ export function FileTreePanel({
                         : 'text-fg-muted hover:text-fg hover:bg-surface-raised/60'
                     }`}
                   >
-                    {option.label}
+                    {translateText(option.label)}
                   </button>
                 );
               })}
@@ -1064,7 +1086,7 @@ export function FileTreePanel({
         className="relative flex items-center gap-2 overflow-hidden px-2 py-1.5 border-b border-edge text-xs text-fg-muted flex-shrink-0"
         data-testid="changes-list-header"
       >
-        <span className="whitespace-nowrap">{files.length} file{files.length !== 1 ? 's' : ''}</span>
+        <span className="whitespace-nowrap"><Plural value={fileCount} one="# file" other="# files" /></span>
         {(totalInsertions > 0 || totalDeletions > 0) && (
           <span className="flex items-center gap-1 whitespace-nowrap tabular-nums">
             {totalInsertions > 0 && <span className="text-green-400">+{totalInsertions}</span>}
@@ -1090,7 +1112,7 @@ export function FileTreePanel({
             // review-marks feature is discoverable before the first mark.
             // Bare n/m - the word lives in the tooltip; the rail cannot
             // afford it at 220px (matches the surface header's chip).
-            <Tooltip label={`${viewedCount} of ${files.length} files viewed`}>
+            <Tooltip label={t`${viewedCount} of ${plural(fileCount, { one: '# file viewed', other: '# files viewed' })}`}>
               <span
                 className="flex items-center gap-1 whitespace-nowrap text-fg-faint tabular-nums"
                 data-testid="changes-viewed-count"
@@ -1111,11 +1133,11 @@ export function FileTreePanel({
           )}
           <div className="flex items-center gap-0.5">
             {/* The name says the current view; the detail says what a click does. */}
-            <Tooltip label={flat ? 'Flat list' : 'Tree view'} detail={flat ? 'Switch to tree' : 'Switch to flat list'}>
+            <Tooltip label={flat ? t`Flat list` : t`Tree view`} detail={flat ? t`Switch to tree` : t`Switch to flat list`}>
               <button
                 type="button"
                 onClick={() => updateConfig({ diffFlatList: !flat })}
-                aria-label={flat ? 'Flat list' : 'Tree view'}
+                aria-label={flat ? t`Flat list` : t`Tree view`}
                 data-testid="changes-tree-flat"
                 data-flat={flat}
                 className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors"
@@ -1125,12 +1147,12 @@ export function FileTreePanel({
             </Tooltip>
             {/* Always rendered (disabled in flat mode, where there are no
                 directories) so toggling tree/flat never shifts the other buttons. */}
-            <Tooltip label={tipLabel({ disabled: flat, disabledReason: 'Tree view only', tip: expansion.expand ? 'Collapse all' : 'Expand all' })}>
+            <Tooltip label={tipLabel({ disabled: flat, disabledReason: t`Tree view only`, tip: expansion.expand ? t`Collapse all` : t`Expand all` })}>
               <button
                 type="button"
                 onClick={toggleCollapseAll}
                 disabled={flat}
-                aria-label={expansion.expand ? 'Collapse all' : 'Expand all'}
+                aria-label={expansion.expand ? t`Collapse all` : t`Expand all`}
                 data-testid="changes-collapse-all"
                 className="flex-shrink-0 p-1 rounded text-fg-muted hover:text-fg hover:bg-surface-hover transition-colors disabled:opacity-30 disabled:cursor-default disabled:hover:bg-transparent disabled:hover:text-fg-muted"
               >
@@ -1149,18 +1171,18 @@ export function FileTreePanel({
             type="text"
             value={searchQuery}
             onChange={(event) => setSearchQuery(event.target.value)}
-            placeholder="Filter files..."
+            placeholder={t`Filter files...`}
             className="bg-transparent outline-none flex-1 min-w-0 text-fg placeholder:text-fg-disabled"
           />
           <div ref={sortButtonRef} className="flex-shrink-0 -mr-1">
             <Tooltip
-              label={`Sort: by ${SORT_OPTIONS.find((option) => option.value === sort)?.label.toLowerCase() ?? sort}`}
+              label={sortTip}
               enabled={!sortMenuOpen}
             >
               <button
                 type="button"
                 onClick={() => setSortMenuOpen((open) => !open)}
-                aria-label={`Sort: by ${sort}`}
+                aria-label={sortTip}
                 aria-expanded={sortMenuOpen}
                 data-testid="changes-sort"
                 className={`p-1 rounded transition-colors ${sortMenuOpen ? 'bg-surface-hover text-fg' : 'text-fg-muted hover:text-fg hover:bg-surface-hover'}`}
@@ -1194,7 +1216,7 @@ export function FileTreePanel({
                   <span className="flex w-3.5 items-center justify-center">
                     {sort === option.value && <Check size={12} className="text-accent" />}
                   </span>
-                  {option.label}
+                  {translateText(option.label)}
                 </button>
               ))}
             </OverlayPopover>
@@ -1224,7 +1246,7 @@ export function FileTreePanel({
           // is not empty, this view of it is - so the rail states that itself.
           <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4 text-center">
             <Search size={22} className="text-fg-disabled" />
-            <span className="text-sm text-fg-muted">No matching files</span>
+            <span className="text-sm text-fg-muted"><Trans>No matching files</Trans></span>
           </div>
         )
       ) : (

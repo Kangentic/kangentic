@@ -1,4 +1,5 @@
 import React from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { AlertTriangle, Folder, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowBoardEnds, WorkflowRouteStep, WorkflowTaskPlace } from '../../../shared/types';
 import { ColumnGlyph } from '../../utils/swimlane-icons';
@@ -26,7 +27,9 @@ const UNCOLORED = 'var(--color-fg-faint)';
  * on its color at 18%, the strength the old current bar's ring had.
  */
 function StepMarker({ stop, color }: { stop: TrackStop; color: string }) {
-  const label = `${stop.name}: now`;
+  const { t } = useLingui();
+  const stopName = stop.name;
+  const label = t`${stopName}: now`;
   return (
     <Tooltip label={label}>
       <span
@@ -64,6 +67,7 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
   place: WorkflowTaskPlace;
   currentStep?: CurrentStepStyle;
 }) {
+  const { t } = useLingui();
   const stops = trackStops(steps, ends, place);
   if (stops.length === 0) return null;
   return (
@@ -72,8 +76,10 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
         const color = stop.color ?? UNCOLORED;
         if (stop.state === 'current' && currentStep === 'marker') return <StepMarker key={stop.swimlaneId} stop={stop} color={color} />;
         // Each bar is named by its text, as the marker is, and the same text is its tip.
+        // Named, so the translator reads {stopName}, not a member expression.
+        const stopName = stop.name;
         if (stop.state === 'current') {
-          const currentLabel = `${stop.name}: now`;
+          const currentLabel = t`${stopName}: now`;
           return (
             <Tooltip key={stop.swimlaneId} label={currentLabel}>
               <i
@@ -87,7 +93,7 @@ export const WorkflowStepTrack = React.memo(function WorkflowStepTrack({ steps, 
             </Tooltip>
           );
         }
-        const stopLabel = `${stop.name}: ${stop.state === 'done' ? 'done' : 'next'}`;
+        const stopLabel = stop.state === 'done' ? t`${stopName}: done` : t`${stopName}: next`;
         return (
           <Tooltip key={stop.swimlaneId} label={stopLabel}>
             <i
@@ -171,9 +177,10 @@ interface WorkflowCardStripProps {
  * footer is still its live session's.
  */
 function StallMark({ reason }: { reason: string }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label={`Stalled: ${reason}`}>
-      <span className="inline-flex shrink-0 text-warning" role="img" aria-label="Stalled" data-testid="workflow-card-stalled">
+    <Tooltip label={t`Stalled: ${reason}`}>
+      <span className="inline-flex shrink-0 text-warning" role="img" aria-label={t`Stalled`} data-testid="workflow-card-stalled">
         <AlertTriangle size={12} />
       </span>
     </Tooltip>

@@ -1,8 +1,10 @@
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import type { WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSAL_MESSAGES, workflowTaskLabel } from '../../../shared/workflow-refusals';
-import { translateText } from '../../i18n/translate';
 import { UNNAMED_BLOCKER_LABEL, waitingLabel } from '../../../shared/workflow-waiting';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
+import { translateText } from '../../i18n/translate';
 import type { WorkflowWaiting } from './WorkflowCanvasCard';
 
 /**
@@ -12,8 +14,14 @@ import type { WorkflowWaiting } from './WorkflowCanvasCard';
  * `workflow-view-service.ts`); the view uses them to draw what is possible and
  * to say why something is not, so a refusal is a disabled control with its
  * reason rather than an error after the fact. Both sides word a refusal from
- * `WORKFLOW_REFUSALS`, so the tooltip and the error read the same.
+ * `WORKFLOW_REFUSALS`, so the tooltip and the error read the same (here in the
+ * session's language, through `WORKFLOW_REFUSAL_MESSAGES` and `translateText`).
  */
+
+/** Why a link or an unlink names a task the workflow no longer holds. */
+function taskGoneRefusal(): string {
+  return i18n._(msg`That task is no longer in this workflow.`);
+}
 
 /**
  * A workflow's color: its slot in the app's categorical palette, which is
@@ -101,7 +109,7 @@ export function wouldLoop(detail: WorkflowDetail, blockerKey: string, blockedKey
 export function linkRefusal(detail: WorkflowDetail, blockerKey: string, blockedKey: string): string | null {
   const blocker = findTask(detail, blockerKey);
   const blocked = findTask(detail, blockedKey);
-  if (!blocker || !blocked) return 'That task is no longer in this workflow.';
+  if (!blocker || !blocked) return taskGoneRefusal();
   if (blockerKey === blockedKey) return translateText(WORKFLOW_REFUSAL_MESSAGES.selfLink);
   if (!canWait(blocked)) return translateText(WORKFLOW_REFUSAL_MESSAGES.cannotWait(taskLabel(blocked)));
   if (!canBlock(blocker)) return translateText(WORKFLOW_REFUSAL_MESSAGES.blockerDone(taskLabel(blocker)));
@@ -121,7 +129,7 @@ export function linkRefusal(detail: WorkflowDetail, blockerKey: string, blockedK
 export function unlinkRefusal(detail: WorkflowDetail, blockerKey: string, blockedKey: string): string | null {
   const blocker = findTask(detail, blockerKey);
   const blocked = findTask(detail, blockedKey);
-  if (!blocker || !blocked) return 'That task is no longer in this workflow.';
+  if (!blocker || !blocked) return taskGoneRefusal();
   if (blocker.place === 'done') return translateText(WORKFLOW_REFUSAL_MESSAGES.unlinkChangesNothing(taskLabel(blocker), 'is done'));
   if (!canWait(blocked)) return translateText(WORKFLOW_REFUSAL_MESSAGES.unlinkChangesNothing(taskLabel(blocked), 'has started'));
   return null;
@@ -160,7 +168,9 @@ export function stepRefusal(task: WorkflowViewTask, stepIndex: number): string |
   if (task.place === 'done') return translateText(WORKFLOW_REFUSAL_MESSAGES.doneStays(taskLabel(task)));
   if (stepIndex >= reachedStepCount(task)) return null;
   const current = task.steps.find((step) => step.state === 'current');
-  return translateText(WORKFLOW_REFUSAL_MESSAGES.stepReached(taskLabel(task), current?.name ?? 'its column'));
+  // The column's own name is data. With no current step, a stand-in phrase names it.
+  const columnName = current?.name ?? i18n._(msg({ message: 'its column', comment: 'Stands in for a column name inside "has reached ..."' }));
+  return translateText(WORKFLOW_REFUSAL_MESSAGES.stepReached(taskLabel(task), columnName));
 }
 
 /**

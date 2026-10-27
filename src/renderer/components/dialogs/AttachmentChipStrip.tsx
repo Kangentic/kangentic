@@ -1,4 +1,5 @@
 import { X } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { isImageMediaType, getFileTypeIcon } from './attachment-utils';
 
@@ -47,6 +48,7 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
   onRemove,
   testId = 'attachment-thumbnails',
 }: AttachmentChipStripProps<TAttachment>) {
+  const { t } = useLingui();
   if (attachments.length === 0) return null;
 
   return (
@@ -54,6 +56,8 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
       {attachments.map((attachment) => {
         const isImage = isImageMediaType(attachment.media_type);
         const FileTypeIcon = getFileTypeIcon(attachment.media_type);
+        const filename = attachment.filename;
+        const removeLabel = t`Remove ${filename}`;
 
         return (
           <span
@@ -85,12 +89,12 @@ export function AttachmentChipStrip<TAttachment extends AttachmentChipItem>({
               </button>
             </Tooltip>
             {onRemove && (
-              <Tooltip label={`Remove ${attachment.filename}`}>
+              <Tooltip label={removeLabel}>
                 <button
                   type="button"
                   onClick={() => onRemove(attachment.id)}
                   className="flex-shrink-0 rounded p-0.5 text-fg-muted transition-colors hover:bg-surface-hover hover:text-fg"
-                  aria-label={`Remove ${attachment.filename}`}
+                  aria-label={removeLabel}
                   data-testid="attachment-remove"
                 >
                   <X size={12} />

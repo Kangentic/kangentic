@@ -1,4 +1,5 @@
 import { CloudDownload, ExternalLink } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { useUpdaterStore } from '../../stores/updater-store';
@@ -23,17 +24,19 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  * Mounted in AppLayout so it appears regardless of sidebar state.
  */
 export function ReleaseNotesDialog() {
+  const { t } = useLingui();
   const pendingUpdate = useUpdaterStore((state) => state.pendingUpdate);
   const isModalOpen = useUpdaterStore((state) => state.isModalOpen);
   const autoOpened = useUpdaterStore((state) => state.autoOpened);
   const dismiss = useUpdaterStore((state) => state.dismiss);
 
   if (!pendingUpdate || !isModalOpen) return null;
+  const updateVersion = pendingUpdate.version;
 
   return (
     <BaseDialog
       onClose={dismiss}
-      title={`Version ${pendingUpdate.version} is ready to install`}
+      title={t`Version ${updateVersion} is ready to install`}
       icon={<CloudDownload size={16} className="text-attention" />}
       trapFocus={!autoOpened}
       backdropClassName="backdrop-blur-xs"
@@ -47,6 +50,7 @@ export function ReleaseNotesDialog() {
             data-testid="release-notes-github-link"
           >
             <ExternalLink size={12} />
+            {/* i18n-ok: the name of the GitHub release page */}
             GitHub Release
           </button>
           <div className="flex gap-3">
@@ -54,13 +58,13 @@ export function ReleaseNotesDialog() {
               onClick={dismiss}
               className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
             >
-              Later
+              <Trans>Later</Trans>
             </button>
             <button
               onClick={() => window.electronAPI.updater.installUpdate()}
               className="px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on"
             >
-              Restart to update
+              <Trans>Restart to update</Trans>
             </button>
           </div>
         </div>

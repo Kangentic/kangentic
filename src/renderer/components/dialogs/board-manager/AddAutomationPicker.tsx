@@ -1,7 +1,8 @@
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_PHRASES } from '../../../../shared/automation-manifest';
-import { translateText } from '../../../i18n/translate';
 import { i18n } from '@lingui/core';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { translateText } from '../../../i18n/translate';
+import { AUTOMATION_MANIFEST, AUTOMATION_TRIGGER_PHRASES } from '../../../../shared/automation-manifest';
 import { describeAutomationMarks } from '../../../../shared/automation-describe';
 import type { AutomationTrigger, AutomationType, Swimlane } from '../../../../shared/types';
 import { OverlayPopover } from '../../OverlayPopover';
@@ -39,6 +40,7 @@ export interface AddAutomationPickerProps {
 }
 
 export function AddAutomationPicker(props: AddAutomationPickerProps) {
+  const { t } = useLingui();
   const [filter, setFilter] = useState('');
   const menuRef = useRef<HTMLDivElement>(null);
   // The anchor arrives as a prop; the position hook wants a ref. Kept current
@@ -127,7 +129,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
           data-testid="column-automation-picker-filter"
           value={filter}
           onChange={(event) => setFilter(event.target.value)}
-          placeholder="Search automations"
+          placeholder={t`Search automations`}
           // Capture + stop, so Escape closes the picker without also reaching
           // the dialog's own Escape listener and closing Board setup.
           onKeyDownCapture={(event) => {
@@ -140,7 +142,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
         />
       </div>
 
-      <PickerGroup label="New automation">
+      <PickerGroup label={t`New automation`}>
         {types.map(({ type, runnable }) => {
           const entry = AUTOMATION_MANIFEST[type];
           return (
@@ -168,12 +170,14 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
       </PickerGroup>
 
       {copies.length > 0 && (
-        <PickerGroup label="Copy existing">
+        <PickerGroup label={t`Copy existing`}>
           {copies.map(({ column, draft }) => {
             // A copy row IS an automation of a known type, so it carries the
             // same glyph as the New automation rows above, the row in the list,
             // and the Type field. This group was the last place the type was
             // identified by its sentence alone.
+            const columnName = column.name;
+            const triggerPhrase = translateText(AUTOMATION_TRIGGER_PHRASES[draft.trigger]);
             return (
             <button
               key={`${column.id}:${draft.id}`}
@@ -198,7 +202,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
                 </span>
                 <span className="block truncate text-[11px] text-fg-faint">{describeDraft(draft)}</span>
                 <span className="block text-[11px] text-fg-muted">
-                  {column.name}, {translateText(AUTOMATION_TRIGGER_PHRASES[draft.trigger])}
+                  <Trans>{columnName}, {triggerPhrase}</Trans>
                 </span>
               </span>
             </button>
@@ -208,7 +212,7 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
       )}
 
       {types.length === 0 && copies.length === 0 && (
-        <p className="px-3 py-3 text-xs text-fg-faint">Nothing matches that.</p>
+        <p className="px-3 py-3 text-xs text-fg-faint"><Trans>Nothing matches that.</Trans></p>
       )}
     </OverlayPopover>
   );

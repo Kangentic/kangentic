@@ -7,6 +7,2759 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-TW\n"
 
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid ", as in {sample}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "\"{fileName}\" is over the 10 MB limit."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "\"{name}\" will be removed when you save."
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "\"{oversizedFileName}\" is over the 10 MB limit."
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "\"{relocatedName}\" now points at {relocatedPath}."
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "\"{taskTitle}\" is in {openBoardLaneName}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "\"{taskTitle}\" is now in {columnName}."
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "\"{taskTitle}\" is on the board."
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "({deleteFailureCount} failed)"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "{ahead} ahead, {behind} behind base branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "{automationCount, plural, one {# automation runs here} other {# automations run here}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+msgid "{columnName}, {triggerPhrase}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+msgid "{columnName}: added {addedCount, plural, one {# automation(s)} other {# automation(s)}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+msgid "{columnName}: edited automations"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+msgid "{columnName}: removed {removedCount, plural, one {# automation(s)} other {# automation(s)}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "{contextLabel} context window"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "{fileCount, plural, one {# file} other {# files}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "{filesChanged, plural, one {# file changed} other {# files changed}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "{filesChanged, plural, one {# file} other {# files}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{filteredCount, plural, one {# task} other {# tasks}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{filteredCount} of {archivedTotalCount, plural, one {# task} other {# tasks}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{leadingParts} and {lastPart}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "{linesAdded, plural, one {# line added} other {# lines added}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "{name} enabled"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "{newer} available"
+msgstr ""
+
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "{newerModelLabel} available"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "{nextFileCombo} - next changed file"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "{oldPath} to {newPath}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid "{pattern}: {rule}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid "{pattern}: {rule}, as in {sample}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "{percent}% of pixels changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{position} of {total}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{reason} Saved {savedBeforeFailing} before failing."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{savedTotal, plural, one {# column} other {# columns}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{selectedCount, plural, one {Delete # completed task} other {Delete # completed tasks}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{selectedCount, plural, one {Delete # task} other {Delete # tasks}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{selectedCount, plural, one {This will permanently delete # task, its session history, and any associated worktrees.} other {This will permanently delete # tasks, their session history, and any associated worktrees.}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+msgid "{selectedCount} selected"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "{shownCount} of {totalCount}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "{startedText} to {endedText}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "{subagentName} subagent"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "{surfaceHeaderAhead} ahead, {surfaceHeaderBehind} behind base branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{taskCount, plural, one {Move or delete its task first.} other {Move or delete all # tasks first.}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{tokenCountText} tokens"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/tooltip.ts
+msgid "{toolCallCount, plural, one {# tool call} other {# tool calls}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{totalCostText} total cost"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "{totalFilesChanged, plural, one {# file changed} other {# files changed}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {# files marked viewed}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "A narrow pane renders inline"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "A profile named \"{trimmed}\" already exists."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/form-layout.tsx
+msgid "About {label}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Action"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Add automation"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Add column"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Added"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "After"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "After image opacity"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "After Plan Mode"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "After, faded"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview group"
+msgid "Agent"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Agent default"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Agent evaluation"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Agent Override"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Agent runtime"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Agent runtime"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Agent: {agentOverrideLabel}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "All columns"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "All tests pass"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Already up to date"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Already used on this column."
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "An alternate set of per-column agent, model, and effort settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "Another column uses this icon"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Approve each plan for you. Questions the agent asks still wait."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgctxt "task action"
+msgid "Archive"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgctxt "task status"
+msgid "Archived"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "plan approval"
+msgid "Automatic"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Automation needs a name"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "Automations"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "Automations are shared by every profile. Switch to Default to edit them."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Automations changed on:"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Back to all changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Back to Branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Back to Staged"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Back to Working"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Background calls"
+msgstr ""
+
+#: src/renderer/components/dialogs/TaskBranchRow.tsx
+msgid "Base branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Base branch: {displayBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "Base: {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Based on {baseLabel}, not the project default"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Based on {baseLabel}, the project default"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "Before"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "binary"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Binary file - cannot display diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Blame is unavailable for this file"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Board Profile changes will also be discarded."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Board saved"
+msgstr ""
+
+#: src/renderer/components/dialogs/TaskBranchRow.tsx
+msgid "Branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "git area"
+msgid "Branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Cache read"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Cache write"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Call"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Can't fast-forward"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Can't remove \"{name}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Can't update from {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BaseDialog.tsx
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#: src/renderer/components/dialogs/ConfirmDialog.tsx
+#: src/renderer/components/dialogs/DialogFooterActions.tsx
+msgid "Cancel"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgid "Change in Settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Changed pixels"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgctxt "tab"
+msgid "Changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/TaskChangesDialog.tsx
+msgid "Changes - #{displayId} {taskTitle}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+msgid "Changes are open in their own window"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Choose icon"
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "Choose Icon"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Choose icon: {chosenIconName}"
+msgstr ""
+
+#: src/renderer/components/dialogs/Combobox.tsx
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "Clear"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#: src/renderer/components/dialogs/WhatsNewDialog.tsx
+msgctxt "button"
+msgid "Close"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Close browser"
+msgstr ""
+
+#: src/renderer/components/dialogs/BaseDialog.tsx
+msgid "Close dialog"
+msgstr ""
+
+#: src/renderer/components/dialogs/Combobox.tsx
+#: src/renderer/components/dialogs/FontCombobox.tsx
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "Close dropdown"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Closing now will discard this new task and its unsaved changes."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Closing now will discard unsaved changes in:"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Closing now will discard your changes to this task."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Collapse all"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "Collapse history"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Collapse to split view"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Collapse unchanged"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Color"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Color {presetColor}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Color {presetColor} (selected)"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "column name fallback"
+msgid "column"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgctxt "unnamed column fallback"
+msgid "column"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Column"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Column"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Column Manager"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Column name"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Column needs a name"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Column order changes will also be discarded."
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Column Settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Columns"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Commands"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
+msgid "Commit graph"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Commits"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Compactions"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Compare every column's settings side by side"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Comparing pixels"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Completed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "task status"
+msgid "Completed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgid "Completed task"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "Completed Tasks ({archivedTotalCount})"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Condition"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Condition check"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Condition kind"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Condition: {condition}"
+msgstr ""
+
+#: src/renderer/components/dialogs/ConfirmDialog.tsx
+msgid "Confirm"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Conversation"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgctxt "tab"
+msgid "Conversation"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Copied"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+msgid "Copy conversation ID"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+msgid "Copy existing"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+msgid "Copy isolated conversation ID"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Copy path"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Copy task ID"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Cost"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Cost"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Could not compare pixels"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Could not read"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Could not read this image"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgid "Could not read this task's record"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "Couldn't add \"{filename}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't archive task"
+msgstr ""
+
+#: src/renderer/components/dialogs/image-compress.ts
+msgid "Couldn't compress image"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Couldn't create task"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't delete \"{deletedColumnName}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't delete \"{deletedColumnName}\": {reasonText}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Couldn't fetch {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgid "Couldn't open \"{filename}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Couldn't open file diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "Couldn't relocate project"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "Couldn't remove attachment"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't reset session"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Couldn't resolve PR"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't run {commandName}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't save"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't save automations on \"{columnName}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't save automations on \"{columnName}\": {reasonText}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Couldn't save profiles"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't save task"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't send to backlog"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Couldn't switch branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Create"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "created {savedCreates, plural, one {# column} other {# columns}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Custom color"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "board overview value"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "board profile"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/dialogs/Combobox.tsx
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgctxt "placeholder"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgctxt "profile option"
+msgid "Default"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Default ({iconRole})"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "Delete"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgctxt "task action"
+msgid "Delete"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "Delete {name}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "Delete completed task"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+msgid "Delete task"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+msgid "Delete this profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Deleted"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "deleted {savedDeletes, plural, one {# column} other {# columns}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "Deleting {deleteCompleted} of {deleteTotal}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Description"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgctxt "tab"
+msgid "Description"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/CommitSelectionBar.tsx
+msgid "Deselect commit"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "Diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Diff scope"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Discard"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Discard unsaved changes?"
+msgstr ""
+
+#: src/renderer/components/dialogs/ConfirmDialog.tsx
+msgid "Don't ask again"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgctxt "button"
+msgid "Done"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "column role"
+msgid "Done"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Double-click to reset"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Drag to reorder"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Drag to resize"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Drag to reveal the new image"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+msgid "Drop files here"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "Duplicate profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+msgid "Duplicate this profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "e.g. Simple or Complex"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Each column applies its own settings as the task moves."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgctxt "task action"
+msgid "Edit"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "Edit {name}"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Edit agent defaults in Settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Edit automation"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Edit profiles in Edit Columns"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Effort"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Elapsed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Ended"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "process state"
+msgid "Ended"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "call outcome"
+msgid "Error"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Exited ({exitCode})"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Expand all"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Expand changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "Expand history"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "column header"
+msgid "Extension"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Fade between the two images"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Failed to load diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
+msgid "Failed to load diff viewer"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#: src/renderer/components/dialogs/TaskChangesDialog.tsx
+msgid "Failed to load the Changes panel"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Fast-forwarded {commitCount, plural, one {# commit} other {# commits}}."
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "File"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/useAttachments.ts
+msgid "File too large"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Files"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Files changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Filter files..."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Flat list"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Frequency"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Fresh input"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "From session totals"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "General"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Generate title"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Git could not reach origin."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Git LFS pointer"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Hand off context when the agent changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Handoff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/HandoffTimeline.tsx
+msgid "Handoff Chain"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Hex color value"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Hide browser"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Hide changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Hide description"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Hide workflow"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Highlight the pixels that changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "History"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "History: {historyFileName}"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "How many times it can run on a task."
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "How this task runs"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Icon"
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "Icons failed to load. Restart Kangentic to try again."
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "If it was moved or renamed, locate the new folder to keep all tasks and board history."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Ignore whitespace"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "Image"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Image comparison"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Image preview"
+msgstr ""
+
+#: src/renderer/components/dialogs/image-compress.ts
+msgid "Image sent at lower quality"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+msgid "Indexing is off, so no commits are linked"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "Inherits every column's settings from {sourceName}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgctxt "image compare mode"
+msgid "Inline"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Inline when narrow"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Input with cache"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "session target"
+msgid "Isolated"
+msgstr ""
+
+#: src/renderer/components/dialogs/image-compress.ts
+msgid "It was still large after compression."
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "JSON File"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "Jupyter Notebook"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Keep editing"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Kept alive until you close it"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Knowledge Graph indexing is off"
+msgstr ""
+
+#: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+msgid "Labels"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Last message"
+msgstr ""
+
+#: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+msgid "Later"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Lines"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Link PR"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Loading branches..."
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "Loading icons"
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "Locate Folder..."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "session target"
+msgid "Main"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "plan approval"
+msgid "Manual"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Mark as not viewed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Mark as viewed"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
+msgstr ""
+
+#: src/renderer/components/dialogs/dialog-maximize.tsx
+msgid "Maximize dialog"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Maximum runs"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Model"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Models and tokens"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Modified"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Move to"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Name"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "column header"
+msgid "Name"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Name it before saving."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Name terminal"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Needs both images"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+msgid "New automation"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "New profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "New Task"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Next change"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Next column"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "No active session"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "No active session. Drag this task into a column that starts an agent."
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "No agent CLI detected yet"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "No agent runs on record"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "No branches found"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "No branches match \"{query}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/TaskChangesDialog.tsx
+msgid "No changes on this branch"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "no changes to save"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "No changes vs {baseLabel}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+msgid "No commands or skills found"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+msgid "No commits for this task"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "No commits on this branch yet."
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "No completed tasks yet"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "No conversation history for this task yet"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+msgid "No conversation yet"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgid "No description"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "No files changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/FontCombobox.tsx
+msgid "No fonts match \"{typedFilter}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "No git history available."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "No history found"
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "No icons match \"{query}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/Combobox.tsx
+msgid "No matches"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "No matching files"
+msgstr ""
+
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "No models match \"{filterText}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "No origin remote"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "No pixel changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "No PR found"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "No PR resolver"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "No profiles yet - create one in Edit Columns"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "No staged changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "No tasks match \"{searchQuery}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "No uncommitted changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "None"
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgctxt "icon option"
+msgid "None"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "None is available for this repository."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Not image data"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Not offered on this trigger."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "not readable"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Not readable"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing matches branch \"{searchedBranch}\"."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+msgid "Nothing matches that."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing matches this task."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing new on {baseBranch}."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Nothing runs at a turn end in {terminalName}."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Nothing runs when a task enters {columnName}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Nothing to search by"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "On enter"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "On exit"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "On exit, this column's automations share {exitBudgetSeconds} seconds in total. Put longer work on enter."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "On turn end"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Only one agent CLI detected - install another to choose"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "Only the label changes. Tasks already using this profile stay on it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgctxt "pull request state"
+msgid "open"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "Open {shortHash} on {providerName}"
+msgstr ""
+
+#: src/renderer/components/dialogs/Combobox.tsx
+#: src/renderer/components/dialogs/FontCombobox.tsx
+#: src/renderer/components/dialogs/ModelCombobox.tsx
+msgid "Open dropdown"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Open Folder"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Open in editor"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Open in new window"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "Open on {providerName}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "Open PR #{prNumber}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "Open PR #{prNumber} ({prLabel})"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Open project folder"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Open settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Open Settings"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Open that board to edit its profiles"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Open worktree"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Open Worktree"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Open worktree folder"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+msgid "Opens this part of the conversation"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Outcome"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Output"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "Overlay"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+msgid "Overview"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Page kept"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Path copied"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pause session"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Pausing agent..."
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "PDF Document"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Permission"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Permissions"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Permissions"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Permissions"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Pinned for the whole task, ignoring column settings."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Plan approval"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Plan approval is shared by every profile. Switch to Default to change it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Pop out of tiling"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Position {queuePosition} of {queueTotal}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "PR #{prNumber}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgid "PR #{prNumber} ({prLabel})"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "PR host unreachable"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "PR linked"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Preview image"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Preview rendered markdown"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Previews stop at {previewLimit} per image"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Previous change"
+msgstr ""
+
+#: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+msgid "Priority"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+msgid "Profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+msgctxt "placement option"
+msgid "Project"
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "Project Folder Not Found"
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "Project relocated"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Pull request"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+msgid "Pull Request"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Queued (click to pause)"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "call outcome"
+msgid "Ran"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Rebase or merge it in the session instead."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Refresh PR"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Removal staged"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Remove"
+msgstr ""
+
+#: src/renderer/components/dialogs/AttachmentChipStrip.tsx
+msgid "Remove {filename}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Remove column"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Remove column \"{removeTargetName}\""
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "Removed profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "Rename"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+msgid "Rename profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+msgid "Rename this profile"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Renamed"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "Reorder {name}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Reset"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Reset session"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Reset to agent default"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Reset to project default"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Reset to project setting"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Resize file list"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Resize history"
+msgstr ""
+
+#: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+msgid "Restart to update"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+msgctxt "task action"
+msgid "Restore"
+msgstr ""
+
+#: src/renderer/components/dialogs/dialog-maximize.tsx
+msgid "Restore dialog"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/RestorePopover.tsx
+msgid "Restore to"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+msgid "Restore to board"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgctxt "task action"
+msgid "Resume"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgid "Resume {taskTitle}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Resume session"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgctxt "task status"
+msgid "Resuming"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Resuming agent..."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+msgid "Retry"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Reveal in file manager"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgctxt "completed task card"
+msgid "Route"
+msgstr ""
+
+#: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+msgid "Run in a new worktree"
+msgstr ""
+
+#: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+msgid "Run in the project folder"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgctxt "task status"
+msgid "Running"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "completed task card"
+msgid "Runs"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Runs only when this holds."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Runtime"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Same-agent moves (e.g. Claude to Claude) resume natively via the agent's own session id and ignore this setting."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "button"
+msgid "Save"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Save stopped partway"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "saved {savedUpdates, plural, one {# column} other {# columns}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "saved automations"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "saved profiles"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+msgid "Search automations"
+msgstr ""
+
+#: src/renderer/components/dialogs/BranchPicker.tsx
+msgid "Search branches..."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+msgid "Search commands & skills..."
+msgstr ""
+
+#: src/renderer/components/dialogs/IconPickerDialog.tsx
+msgid "Search icons..."
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "Search tasks..."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Select a commit to see its changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Select a file to view changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Send to Backlog"
+msgstr ""
+
+#: src/renderer/components/dialogs/image-compress.ts
+msgid "Sending the original instead."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Sent to backlog"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "board manager field"
+msgid "Session"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Session"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Session"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Session could not be resumed."
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+msgid "Session may be expired"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+msgid "Session may need to be re-created"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Sessions don't run in {roleName} columns, so {label} doesn't apply."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Sessions don't run in {terminalName} columns."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Set up an Automation agent"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Share the task's conversation with the other columns."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Show {fileName} in Changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Show {shortSha} in Changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Show all"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Show all {callCount}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Show blame"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Show browser"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Show changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Show description"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Show diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Show less"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+msgid "Show text diff"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Show workflow"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgid "Showing it in the file manager instead."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+msgid "Showing latest {commitCount, plural, one {# commit} other {# commits}}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+msgid "Showing the latest {commitCount, plural, one {# commit} other {# commits}}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Side by side"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "column header"
+msgid "Size"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "call outcome"
+msgid "Skipped"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "Slider"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Slider position"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Sort: by extension"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Sort: by name"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Sort: by size"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Sort: by status"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgctxt "image compare mode"
+msgid "Stacked"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "git area"
+msgid "Staged"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "Start"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Start a clean conversation on every entry."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Start an agent automatically when a task enters this column."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Start an agent here"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Start an agent here is off."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Started"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+msgctxt "completed task metric"
+msgid "Started"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+msgid "Starting agent..."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Starts automatically when a slot opens up"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "column header"
+msgid "Status"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "leftover section"
+msgid "Still running"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "process action"
+msgid "Stop"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgid "Stop {label}"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "leftover section"
+msgid "Stopped"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "process state"
+msgid "Stopped"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgctxt "process state"
+msgid "Stopping"
+msgstr ""
+
+#: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+msgid "Stopping leftover processes is off, so these kept running."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgctxt "tab"
+msgid "Summary"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Summary pending"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Switch to flat list"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Switch to tree"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Task archived"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+msgid "Task created"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Task deleted"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useCopyDisplayId.ts
+msgid "Task ID copied"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+msgid "Task moved"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Task summaries are off"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+msgid "Task summary"
+msgstr ""
+
+#: src/renderer/components/dialogs/NewTaskDialog.tsx
+#: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+msgid "Task title"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "Text File"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Text match"
+msgstr ""
+
+#: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+msgid "The agent CLI this task runs on"
+msgstr ""
+
+#: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+msgid "The folder could not be used."
+msgstr ""
+
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
 msgid "The folder for <0>\"{projectName}\"</0> no longer exists:"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The PR host returned an error."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+msgid "The task's changes could not be read"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
+msgid "The task's changes could not be read."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "The window could not be created."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "The worktree has uncommitted changes."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "There is no remote to fetch {baseBranch} from."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "These columns are staged for removal and will be kept:"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "These columns are staged for removal. Discarding keeps them:"
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "This action cannot be undone."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "This commit changed no files"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "This is handled by the column's settings now. Remove it to use them."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "This task has no branch, commit or PR number yet."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
+msgid "This task has no conversation history"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+msgid "This task has no conversation history."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "This task is archived. It does not appear on the board."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+msgid "This task's commits are not in this clone"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationTypePicker.tsx
+msgid "This type is retired and cannot be chosen."
+msgstr ""
+
+#: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+msgid "This will permanently delete the task, its session history, and any associated worktree."
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Title"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "column role"
+msgid "To Do"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Toggle browser"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Toggle changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Toggle workflow"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Tokens"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Too large to preview"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Tool calls"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+msgctxt "column header"
+msgid "Tools"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "table total row"
+msgid "Total"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Tree view"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "Tree view only"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Trigger"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Try again in a moment."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgctxt "column header"
+msgid "Turns"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "Type"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+msgid "Under 0.1% of pixels changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "Unsaved"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgid "unsaved changes"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Untitled"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Untitled column"
+msgstr ""
+
+#: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+msgid "Untitled task"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+msgctxt "file status"
+msgid "Untracked"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Update from base"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Update from base failed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Updated from {baseBranch}"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "updated the column order"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+msgctxt "tab"
+msgid "Usage"
+msgstr ""
+
+#: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+msgid "Version {updateVersion} is ready to install"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "View conversation"
+msgstr ""
+
+#: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+msgid "View details"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "View history"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "View options"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "View PR #{prNumber}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Waiting in queue"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "What is this column for?"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "What it does."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "What runs. Each type brings its own fields."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+msgid "What starts it."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
+msgstr ""
+
+#: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+msgid "Where the agent runs"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Where the task goes when the agent exits Plan mode."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid "Wildcard examples"
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid "Wildcard examples. {rows}."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+msgid "Window limit reached"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Workflow step"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgctxt "git area"
+msgid "Working"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+msgid "Working..."
+msgstr ""
+
+#: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+msgctxt "placement option"
+msgid "Worktree"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+msgid "Wrap long lines"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "Write summary"
+msgstr ""
+
+#: src/renderer/components/dialogs/attachment-utils.ts
+msgctxt "file type"
+msgid "XML File"
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "You approve each plan in the agent's terminal."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Your Board Profile changes will be discarded."
+msgstr ""
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Your column order changes will be discarded."
 msgstr ""

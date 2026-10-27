@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Palette } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { HexColorPicker } from 'react-colorful';
 import { Tooltip } from '../../Tooltip';
 
@@ -34,6 +35,8 @@ export function ColorPickerPopover({
    *  color slot) should pass that default first. */
   presetColors?: string[];
 }) {
+  const { t } = useLingui();
+  const customColorLabel = t`Custom color`;
   const popoverRef = useRef<HTMLDivElement>(null);
   const [showCustomPicker, setShowCustomPicker] = useState(false);
   const [hexInput, setHexInput] = useState(color);
@@ -102,7 +105,7 @@ export function ColorPickerPopover({
             style={{ backgroundColor: presetColor }}
           />
         ))}
-        <Tooltip label="Custom color">
+        <Tooltip label={customColorLabel}>
           <button
             type="button"
             onClick={() => setShowCustomPicker(!showCustomPicker)}
@@ -114,7 +117,7 @@ export function ColorPickerPopover({
                   : 'border-edge-input hover:border-fg-muted bg-surface-raised'
             }`}
             style={isCustomColor ? { backgroundColor: color } : undefined}
-            aria-label="Custom color"
+            aria-label={customColorLabel}
           >
             <Palette size={10} className={isCustomColor ? 'text-white' : 'text-fg-muted'} />
           </button>
@@ -140,7 +143,7 @@ export function ColorPickerPopover({
               if (!/^#[0-9a-fA-F]{6}$/.test(hexInput)) setHexInput(color);
             }}
             className="w-full bg-surface-control border border-edge-input rounded px-3 py-1.5 text-sm text-fg font-mono focus:outline-none focus:border-accent"
-            placeholder="#000000"
+            placeholder="#000000" // i18n-ok: an example hex value
             maxLength={7}
           />
         </div>

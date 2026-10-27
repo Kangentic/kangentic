@@ -1,12 +1,11 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Search, Smile } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 import { Tooltip } from '../Tooltip';
 import { getLoadedIconCatalog, loadIconCatalog, type IconEntry } from '../../utils/icon-registry';
 import { tipLabel } from '../../utils/tooltip';
 
-/** Why a used icon cannot be picked: each column's icon is its own. */
-const USED_ICON_REASON = 'Another column uses this icon';
 
 interface IconPickerDialogProps {
   onClose: () => void;
@@ -52,6 +51,10 @@ export function IconPickerDialog({
   usedIcons = EMPTY_SET,
   hideNone = false,
 }: IconPickerDialogProps) {
+  const { t } = useLingui();
+  // Why a used icon cannot be picked: each column's icon is its own.
+  const usedIconReason = t`Another column uses this icon`;
+  const noneLabel = t({ message: 'None', context: 'icon option' });
   const [query, setQuery] = useState('');
   const { icons: allIcons, failed } = useAllIcons();
   const loading = allIcons.length === 0 && !failed;
@@ -68,7 +71,7 @@ export function IconPickerDialog({
   return (
     <BaseDialog
       onClose={onClose}
-      title="Choose Icon"
+      title={t`Choose Icon`}
       icon={<Smile size={14} className="text-fg-muted" />}
       className="w-[480px] h-[40vh]"
       rawBody
@@ -85,7 +88,7 @@ export function IconPickerDialog({
             type="text"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search icons..."
+            placeholder={t`Search icons...`}
             autoFocus
             className="w-full bg-surface/50 border border-edge/50 rounded text-xs text-fg-tertiary placeholder-fg-muted pl-7 pr-2 py-1.5 outline-none focus:border-edge-input"
           />
@@ -97,7 +100,7 @@ export function IconPickerDialog({
         <div className="flex flex-wrap gap-1">
           {/* None option */}
           {!hideNone && (
-            <Tooltip label="None">
+            <Tooltip label={noneLabel}>
               <button
                 type="button"
                 onClick={() => onSelect(null)}
@@ -106,7 +109,7 @@ export function IconPickerDialog({
                     ? 'border-white bg-surface-hover'
                     : 'border-transparent text-fg-muted hover:text-fg-secondary hover:bg-surface-raised'
                 }`}
-                aria-label="None"
+                aria-label={noneLabel}
               >
                 <div
                   className="w-2.5 h-2.5 rounded-full"
@@ -123,7 +126,7 @@ export function IconPickerDialog({
             return (
               <Tooltip
                 key={entry.name}
-                label={tipLabel({ disabled: isUsed, disabledReason: USED_ICON_REASON, tip: entry.label })}
+                label={tipLabel({ disabled: isUsed, disabledReason: usedIconReason, tip: entry.label })}
               >
                 <button
                   type="button"
@@ -151,17 +154,17 @@ export function IconPickerDialog({
 
         {loading && (
           <div className="text-sm text-fg-disabled text-center py-6" data-testid="icon-picker-loading">
-            Loading icons
+            <Trans>Loading icons</Trans>
           </div>
         )}
         {failed && (
           <div className="text-sm text-fg-disabled text-center py-6" data-testid="icon-picker-failed">
-            Icons failed to load. Restart Kangentic to try again.
+            <Trans>Icons failed to load. Restart Kangentic to try again.</Trans>
           </div>
         )}
         {!loading && !failed && filtered.length === 0 && query && (
           <div className="text-sm text-fg-disabled text-center py-6">
-            No icons match "{query}"
+            <Trans>No icons match "{query}"</Trans>
           </div>
         )}
       </div>

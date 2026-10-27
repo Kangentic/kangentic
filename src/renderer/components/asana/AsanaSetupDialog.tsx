@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { KanbanSquare, ExternalLink, Loader2, Eye, EyeOff } from 'lucide-react';
 import { BaseDialog } from '../dialogs/BaseDialog';
 
@@ -11,6 +12,7 @@ interface AsanaSetupDialogProps {
 const ASANA_APPS_URL = 'https://app.asana.com/0/my-apps';
 
 export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
+  const { t } = useLingui();
   const [token, setToken] = useState('');
   const [showToken, setShowToken] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -32,7 +34,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
   const handleSave = async () => {
     const trimmedToken = token.trim();
     if (trimmedToken.length === 0) {
-      setError('Paste your Personal Access Token to continue.');
+      setError(t`Paste your Personal Access Token to continue.`);
       return;
     }
     setSubmitting(true);
@@ -40,12 +42,12 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
     try {
       const result = await window.electronAPI.backlog.asana.setPat({ token: trimmedToken });
       if (!result.ok) {
-        setError(result.error ?? 'Could not save the token.');
+        setError(result.error ?? t`Could not save the token.`);
         return;
       }
       onSaved();
     } catch (saveError: unknown) {
-      setError(saveError instanceof Error ? saveError.message : 'Could not save the token.');
+      setError(saveError instanceof Error ? saveError.message : t`Could not save the token.`);
     } finally {
       setSubmitting(false);
     }
@@ -60,7 +62,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
   return (
     <BaseDialog
       onClose={onClose}
-      title="Connect Asana"
+      title={t`Connect Asana`}
       icon={<KanbanSquare size={18} className="text-accent" />}
       testId="asana-setup-dialog"
       className="w-[480px]"
@@ -71,7 +73,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
             onClick={onClose}
             className="px-3 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
           >
-            Cancel
+            <Trans>Cancel</Trans>
           </button>
           <button
             type="button"
@@ -81,21 +83,21 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
             data-testid="asana-setup-save-btn"
           >
             {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
-            Connect
+            <Trans>Connect</Trans>
           </button>
         </div>
       }
     >
       <div className="flex flex-col gap-5 text-sm">
         <p className="text-fg-muted">
-          Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds.
+          <Trans>Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds.</Trans>
         </p>
 
         {/* Step 1 */}
         <section className="flex flex-col gap-2">
           <h4 className="flex items-center gap-2 text-sm font-semibold text-fg">
             {numberBadge(1)}
-            Open Asana developer settings
+            <Trans>Open Asana developer settings</Trans>
           </h4>
           <div className="ml-7">
             <button
@@ -105,7 +107,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
               data-testid="asana-setup-open-console-btn"
             >
               <ExternalLink size={12} />
-              Open app.asana.com/0/my-apps
+              <Trans>Open app.asana.com/0/my-apps</Trans>
             </button>
           </div>
         </section>
@@ -114,11 +116,15 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
         <section className="flex flex-col gap-2">
           <h4 className="flex items-center gap-2 text-sm font-semibold text-fg">
             {numberBadge(2)}
-            Create a Personal Access Token
+            <Trans>Create a Personal Access Token</Trans>
           </h4>
           <p className="ml-7 text-xs text-fg-muted">
-            Open the <span className="text-fg">Personal access tokens</span> tab and click <span className="text-fg">Create new token</span>.
-            Name it &ldquo;Kangentic&rdquo;, accept the API terms, then copy the token Asana shows you (it is only displayed once).
+            {/* The two spans quote button and tab labels in Asana's own English UI, so the comment
+                tells a translator to keep them as written. */}
+            <Trans comment="The two highlighted phrases are labels in Asana's own English interface. Keep them as written.">
+              Open the <span className="text-fg">Personal access tokens</span> tab and click <span className="text-fg">Create new token</span>.
+              Name it &quot;Kangentic&quot;, accept the API terms, then copy the token Asana shows you (it is only displayed once).
+            </Trans>
           </p>
         </section>
 
@@ -126,11 +132,11 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
         <section className="flex flex-col gap-2">
           <h4 className="flex items-center gap-2 text-sm font-semibold text-fg">
             {numberBadge(3)}
-            Paste it here
+            <Trans>Paste it here</Trans>
           </h4>
           <div className="ml-7 flex flex-col gap-2">
             <label className="text-xs text-fg-muted" htmlFor="asana-setup-pat">
-              Personal Access Token
+              <Trans>Personal Access Token</Trans>
             </label>
             <div className="relative">
               <input
@@ -140,7 +146,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
                 value={token}
                 onChange={(event) => { setToken(event.target.value); setError(null); }}
                 onKeyDown={(event) => { if (event.key === 'Enter') handleSave(); }}
-                placeholder="Paste your token"
+                placeholder={t`Paste your token`}
                 className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 pr-9 outline-none focus:border-edge-input font-mono"
                 data-testid="asana-setup-pat-input"
               />
@@ -148,15 +154,17 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
                 type="button"
                 onClick={() => setShowToken((previous) => !previous)}
                 className="absolute right-1.5 top-1/2 -translate-y-1/2 p-1 text-fg-faint hover:text-fg rounded"
-                aria-label={showToken ? 'Hide token' : 'Show token'}
+                aria-label={showToken ? t`Hide token` : t`Show token`}
                 data-testid="asana-setup-toggle-token-btn"
               >
                 {showToken ? <EyeOff size={14} /> : <Eye size={14} />}
               </button>
             </div>
             <p className="text-[11px] text-fg-faint">
-              Your token is stored locally and encrypted with your operating system&rsquo;s keychain.
-              Kangentic never sends it anywhere except Asana.
+              <Trans>
+                Your token is stored locally and encrypted with your operating system's keychain.
+                Kangentic never sends it anywhere except Asana.
+              </Trans>
             </p>
 
             {error && (

@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { ChevronDown, ChevronUp, CircleCheckBig, CircleDashed, Pause, Workflow as WorkflowIcon } from 'lucide-react';
 import type { WorkflowState, WorkflowSummary } from '../../../shared/types';
 import { OverlayPopover } from '../OverlayPopover';
@@ -7,6 +8,7 @@ import { Tooltip } from '../Tooltip';
 import { Pill, TINTED_PILL_EDGE, TINTED_PILL_FILL } from '../Pill';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { workflowColor } from './workflow-graph';
+import { tasksText } from './workflow-text';
 import { useSessionStore } from '../../stores/session-store';
 import { requiresUserInteraction } from '../../../shared/activity-state';
 import { formatClockTime } from '../../lib/datetime';
@@ -26,29 +28,25 @@ import { formatClockTime } from '../../lib/datetime';
  * (popover-escapes-clipping.md).
  */
 
-function tasksText(count: number): string {
-  return `${count} ${count === 1 ? 'task' : 'tasks'}`;
-}
-
 /** A workflow's state as a list row or a panel names it (a header says it with its buttons instead). */
 export function WorkflowStateChip({ state }: { state: WorkflowState }) {
   const shape = 'inline-flex items-center gap-1 h-5 px-1.5 rounded text-[11px] font-medium whitespace-nowrap shrink-0';
   if (state === 'running') {
     return (
       <span className={`${shape} text-active bg-active/10 ring-1 ring-inset ring-active/25`} data-testid="workflow-state-chip" data-state={state}>
-        <ActivityMark mark="agent-working" size={12} />Running
+        <ActivityMark mark="agent-working" size={12} /><Trans context="workflow state">Running</Trans>
       </span>
     );
   }
   // Paused and Not started: the Running chip's tint and ring, in grey (board 11).
   const grey = `${shape} text-fg-muted bg-fg-muted/10 ring-1 ring-inset ring-fg-muted/25`;
   if (state === 'paused') {
-    return <span className={grey} data-testid="workflow-state-chip" data-state={state}><Pause size={11} />Paused</span>;
+    return <span className={grey} data-testid="workflow-state-chip" data-state={state}><Pause size={11} /><Trans context="workflow state">Paused</Trans></span>;
   }
   if (state === 'done') {
-    return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleCheckBig size={11} />Complete</span>;
+    return <span className={`${shape} text-fg-muted bg-surface-hover/60`} data-testid="workflow-state-chip" data-state={state}><CircleCheckBig size={11} /><Trans context="workflow state">Complete</Trans></span>;
   }
-  return <span className={grey} data-testid="workflow-state-chip" data-state={state}><CircleDashed size={11} />Not started</span>;
+  return <span className={grey} data-testid="workflow-state-chip" data-state={state}><CircleDashed size={11} /><Trans context="workflow state">Not started</Trans></span>;
 }
 
 function StateChip({ summary }: { summary: WorkflowSummary }) {
@@ -62,6 +60,7 @@ function StateChip({ summary }: { summary: WorkflowSummary }) {
  * running workflow's tasks wait for the user ("2 idle"). Nothing otherwise.
  */
 function useAgentNote(summary: WorkflowSummary): string | null {
+  const { t } = useLingui();
   const agent = summary.agent ?? null;
   const running = summary.workflow.state === 'running';
   // A count, so the selector's answer is a primitive and a row re-renders only when it changes.
@@ -76,12 +75,19 @@ function useAgentNote(summary: WorkflowSummary): string | null {
   });
   // A workflow paused before `paused_at` existed has no time, and falls through to its agent.
   const pausedAt = summary.workflow.state === 'paused' ? summary.workflow.paused_at ?? null : null;
-  if (pausedAt) return `Paused ${formatClockTime(pausedAt)}`;
-  if (agent?.state === 'active') return 'Agent active';
-  if (agent?.state === 'paused') return 'Agent paused';
+  if (pausedAt) {
+    const pausedTime = formatClockTime(pausedAt);
+    return t`Paused ${pausedTime}`;
+  }
+  if (agent?.state === 'active') return t`Agent active`;
+  if (agent?.state === 'paused') return t`Agent paused`;
   // activity-state-ok: the workflow agent's own summary state, one label per state, not an idle-vs-active bucket.
-  if (agent?.state === 'idle') return agent.lastReplyAt ? `Agent idle, last message ${formatClockTime(agent.lastReplyAt)}` : 'Agent idle';
-  return idleTasks > 0 ? `${idleTasks} idle` : null;
+  if (agent?.state === 'idle') {
+    if (!agent.lastReplyAt) return t`Agent idle`;
+    const lastMessageTime = formatClockTime(agent.lastReplyAt);
+    return t`Agent idle, last message ${lastMessageTime}`;
+  }
+  return idleTasks > 0 ? t`${idleTasks} idle` : null;
 }
 
 function PickerRowName({ summary }: { summary: WorkflowSummary }) {
@@ -106,6 +112,7 @@ interface WorkflowPickerProps {
 }
 
 export function WorkflowPicker({ summaries, selected, onSelect, controlClassName, pillClassName }: WorkflowPickerProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -141,13 +148,14 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
     };
   }, [open]);
 
-  const name = selected?.workflow.title ?? 'Workflows';
+  const name = selected?.workflow.title ?? t`Workflows`;
   const count = selected?.taskCount ?? 0;
+  const countText = tasksText(count);
   const Chevron = open ? ChevronUp : ChevronDown;
 
   return (
     <>
-      <Tooltip label={`${name}, ${tasksText(count)}`} enabled={!open}>
+      <Tooltip label={t`${name}, ${countText}`} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -166,7 +174,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
             className={`shrink-0 border font-medium tabular-nums ${pillClassName}`}
             style={{ backgroundColor: TINTED_PILL_FILL, borderColor: TINTED_PILL_EDGE }}
           >
-            {tasksText(count)}
+            {countText}
           </Pill>
           <span className="flex-1" />
           <Chevron size={14} className="shrink-0 text-fg-muted" />
@@ -181,10 +189,12 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
         className="fixed z-[2147483646] w-[360px] max-h-[420px] overflow-y-auto bg-surface-raised border border-edge-input rounded-md shadow-xl py-1"
         data-testid="workflow-picker-menu"
       >
-        <div role="listbox" aria-label="Workflows">
+        <div role="listbox" aria-label={t`Workflows`}>
           {summaries.map((summary) => {
             const isSelected = summary.workflow.id === selected?.workflow.id;
             const started = summary.workflow.state !== 'draft';
+            // Named locals, so the translator reads {doneCount} and {taskCount}.
+            const { doneCount, taskCount } = summary;
             return (
               <button
                 key={summary.workflow.id}
@@ -202,7 +212,7 @@ export function WorkflowPicker({ summaries, selected, onSelect, controlClassName
                 <WorkflowIcon size={15} className="shrink-0" style={{ color: workflowColor(summary.workflow.color_slot) }} />
                 <PickerRowName summary={summary} />
                 <span className="shrink-0 text-xs text-fg-muted tabular-nums">
-                  {started ? `${summary.doneCount} of ${summary.taskCount}` : tasksText(summary.taskCount)}
+                  {started ? t`${doneCount} of ${taskCount}` : tasksText(taskCount)}
                 </span>
                 <StateChip summary={summary} />
               </button>

@@ -1,5 +1,7 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { Download, Plus, Trash2, ChevronRight, ArrowLeft, Loader2, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { translateText } from '../../i18n/translate';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
@@ -25,6 +27,8 @@ interface ImportPopoverProps {
 type AddPhase = 'provider' | 'sourceType' | 'url';
 
 export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverProps) {
+  const { t } = useLingui();
+  const importTasksLabel = t`Import Tasks`;
   const [open, setOpen] = useState(false);
   const [sources, setSources] = useState<ImportSource[]>([]);
 
@@ -187,7 +191,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
       // Check CLI availability first
       const cliStatus = await window.electronAPI.backlog.importCheckCli(selectedSourceType.value);
       if (!cliStatus.available || !cliStatus.authenticated) {
-        setError(cliStatus.error ?? 'CLI not available or not authenticated');
+        setError(cliStatus.error ?? t`CLI not available or not authenticated`);
         setLoading(false);
         return;
       }
@@ -202,7 +206,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
       setOpen(false);
       onOpenImportDialog(source);
     } catch (addError: unknown) {
-      setError(addError instanceof Error ? addError.message : 'Failed to add source');
+      setError(addError instanceof Error ? addError.message : t`Failed to add source`);
     } finally {
       setLoading(false);
     }
@@ -222,19 +226,19 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label="Import Tasks" enabled={!open}>
+      <Tooltip label={importTasksLabel} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"
           onClick={() => setOpen(!open)}
-          aria-label="Import Tasks"
+          aria-label={importTasksLabel}
           className={`flex items-center gap-1.5 py-1.5 text-sm text-fg-muted hover:text-fg border border-edge/50 hover:bg-surface-hover/40 rounded transition-colors ${
             collapse ? collapse.button : 'px-3'
           }`}
           data-testid="import-sources-btn"
         >
           <Download size={14} className="shrink-0" />
-          <span className={collapse?.label}>Import Tasks</span>
+          <span className={collapse?.label}>{importTasksLabel}</span>
         </button>
       </Tooltip>
 
@@ -247,7 +251,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
         data-testid="import-popover"
       >
           <div className="px-3 py-2 border-b border-edge">
-            <span className="text-xs font-medium text-fg-muted uppercase tracking-wider">Import Sources</span>
+            <span className="text-xs font-medium text-fg-muted uppercase tracking-wider"><Trans>Import Sources</Trans></span>
           </div>
 
           {/* Saved sources */}
@@ -255,7 +259,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
             <div className="max-h-48 overflow-y-auto">
               {sources.length === 0 && (
                 <div className="px-3 py-4 text-center text-sm text-fg-faint">
-                  No sources configured. Add one to start.
+                  <Trans>No sources configured. Add one to start.</Trans>
                 </div>
               )}
               {sources.map((source) => (
@@ -303,9 +307,9 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                 >
                   <span className="w-5 flex justify-center text-fg-muted shrink-0">{provider.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-fg">{provider.label}</span>
+                    <span className="text-sm text-fg">{translateText(provider.label)}</span>
                     {provider.comingSoon && (
-                      <span className="text-[11px] text-fg-faint ml-2">Coming soon</span>
+                      <span className="text-[11px] text-fg-faint ml-2"><Trans>Coming soon</Trans></span>
                     )}
                   </div>
                   {provider.available && <ChevronRight size={14} className="text-fg-faint" />}
@@ -318,7 +322,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                   className="flex items-center gap-1.5 w-full px-3 py-2 text-sm text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
                 >
                   <X size={14} />
-                  Cancel
+                  <Trans context="button">Cancel</Trans>
                 </button>
               </div>
             </div>
@@ -336,8 +340,8 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                 >
                   <span className="w-5 flex justify-center text-fg-muted shrink-0">{sourceType.icon}</span>
                   <div className="flex-1 min-w-0">
-                    <span className="text-sm text-fg">{sourceType.label}</span>
-                    <span className="text-[11px] text-fg-faint block">{sourceType.description}</span>
+                    <span className="text-sm text-fg">{translateText(sourceType.label)}</span>
+                    <span className="text-[11px] text-fg-faint block">{translateText(sourceType.description)}</span>
                   </div>
                 </button>
               ))}
@@ -348,7 +352,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                   className="flex items-center gap-1 text-xs text-fg-faint hover:text-fg transition-colors"
                 >
                   <ArrowLeft size={12} />
-                  Back
+                  <Trans context="button">Back</Trans>
                 </button>
               </div>
             </div>
@@ -359,7 +363,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
             <div className="px-3 py-2.5">
               <div className="flex items-center gap-2.5 mb-2">
                 <span className="w-5 flex justify-center text-fg-muted shrink-0">{selectedProvider.icon}</span>
-                <span className="text-xs font-medium text-fg">{selectedSourceType.label}</span>
+                <span className="text-xs font-medium text-fg">{translateText(selectedSourceType.label)}</span>
               </div>
               <input
                 ref={urlInputRef}
@@ -373,7 +377,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                 className="w-full bg-surface/50 border border-edge/50 rounded text-sm text-fg placeholder-fg-muted px-2.5 py-1.5 outline-none focus:border-edge-input mb-1"
                 data-testid="import-source-url-input"
               />
-              <p className="text-[11px] text-fg-faint mb-2">{selectedSourceType.hint}</p>
+              <p className="text-[11px] text-fg-faint mb-2">{translateText(selectedSourceType.hint)}</p>
               {error && (
                 <p className="text-xs text-danger mb-2" data-testid="import-source-error">{error}</p>
               )}
@@ -386,7 +390,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                   data-testid="import-source-connect-btn"
                 >
                   {loading ? <Loader2 size={14} className="animate-spin" /> : null}
-                  Connect
+                  <Trans>Connect</Trans>
                 </button>
                 <button
                   type="button"
@@ -404,7 +408,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                   className="flex items-center gap-1 px-3 py-1.5 text-xs text-fg-muted hover:text-fg border border-edge/50 rounded transition-colors"
                 >
                   <ArrowLeft size={12} />
-                  Back
+                  <Trans context="button">Back</Trans>
                 </button>
               </div>
             </div>
@@ -420,7 +424,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
                 data-testid="add-import-source-btn"
               >
                 <Plus size={14} />
-                Add Source
+                <Trans>Add Source</Trans>
               </button>
             </div>
           )}

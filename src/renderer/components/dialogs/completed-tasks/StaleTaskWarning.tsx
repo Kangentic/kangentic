@@ -1,3 +1,4 @@
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../../Tooltip';
 
 type AgeLevel = 'fresh' | 'aging' | 'stale';
@@ -23,10 +24,11 @@ function getAgeLevel(archivedAt: string): AgeLevel {
  * directly, no restoration involved.
  */
 export function StaleTaskWarning({ archivedAt }: { archivedAt: string }) {
+  const { t } = useLingui();
   const level = getAgeLevel(archivedAt);
   if (level === 'fresh') return null;
   const color = level === 'aging' ? 'bg-yellow-400/70' : 'bg-fg-disabled';
-  const tooltip = level === 'aging' ? 'Session may need to be re-created' : 'Session may be expired';
+  const tooltip = level === 'aging' ? t`Session may need to be re-created` : t`Session may be expired`;
   return (
     <Tooltip label={tooltip}>
       <span className={`inline-block w-1.5 h-1.5 rounded-full ${color} mr-1.5 flex-shrink-0`} />

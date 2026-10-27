@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from 'react';
 import { flushSync } from 'react-dom';
 import { useSessionStore } from '../../../stores/session-store';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
 import { useTaskDetailHost } from './task-detail-host';
 import { sendToBacklogAsksFirst } from '../../../utils/send-to-backlog-confirm';
@@ -35,7 +37,7 @@ function reportActionFailure(
   error: unknown,
 ): void {
   useToastStore.getState().addToast({
-    title: action === 'archive' ? "Couldn't archive task" : "Couldn't send to backlog",
+    title: action === 'archive' ? i18n._(msg`Couldn't archive task`) : i18n._(msg`Couldn't send to backlog`),
     message: `"${task.title}": ${asSentence(describeIpcError(error, ''))}`,
     variant: 'warning',
     ...opensTask(task.projectId, task.id),
@@ -242,7 +244,7 @@ export function useTaskActions(input: {
     } catch (err) {
       console.error('Reset session failed:', err);
       useToastStore.getState().addToast({
-        title: "Couldn't reset session",
+        title: i18n._(msg`Couldn't reset session`),
         message: asSentence(describeIpcError(err, '')),
         variant: 'warning',
       });
@@ -252,6 +254,7 @@ export function useTaskActions(input: {
   const handleCommandSelect = async (command: AgentCommand) => {
     if (!input.task.id || toggling) return;
     setPendingAction('resuming');
+    const commandName = command.displayName;
     try {
       useSessionStore.getState().setPendingCommandLabel(input.task.id, command.displayName);
       await input.suspendSession(input.task.id, taskProjectId);
@@ -261,7 +264,7 @@ export function useTaskActions(input: {
       console.error('Command invocation failed:', error);
       useSessionStore.getState().clearPendingCommandLabel(input.task.id);
       useToastStore.getState().addToast({
-        title: `Couldn't run ${command.displayName}`,
+        title: i18n._(msg`Couldn't run ${{ commandName }}`),
         // The command resumes the session, so a Resume refusal can be the reason.
         message: sessionFailureBody(error),
         variant: 'warning',
@@ -272,7 +275,8 @@ export function useTaskActions(input: {
   };
 
   const handleMoveTo = async (targetSwimlaneId: string, options: { keepOpen?: boolean } = {}) => {
-    const targetName = input.swimlanes.find((candidate) => candidate.id === targetSwimlaneId)?.name ?? 'column';
+    const columnName = input.swimlanes.find((candidate) => candidate.id === targetSwimlaneId)?.name ?? i18n._(msg({ message: 'column', context: 'unnamed column fallback' }));
+    const taskTitle = input.task.title;
     if (input.isArchived) {
       input.onClose();
       await host.unarchiveTask({ id: input.task.id, targetSwimlaneId });
@@ -295,8 +299,8 @@ export function useTaskActions(input: {
       }
     }
     useToastStore.getState().addToast({
-      title: 'Task moved',
-      message: `"${input.task.title}" is now in ${targetName}.`,
+      title: i18n._(msg`Task moved`),
+      message: i18n._(msg`"${{ taskTitle }}" is now in ${{ columnName }}.`),
       variant: 'success',
       ...opensTask(taskProjectId, input.task.id),
     });
@@ -428,7 +432,7 @@ export function useTaskActions(input: {
         } catch (error) {
           console.error('switchBranch failed:', error);
           useToastStore.getState().addToast({
-            title: "Couldn't switch branch",
+            title: i18n._(msg`Couldn't switch branch`),
             message: asSentence(describeIpcError(error, '')),
             variant: 'warning',
           });
@@ -467,7 +471,7 @@ export function useTaskActions(input: {
           // and a Save from the unsaved-edits prompt left no trace at all.
           console.error('updateTask failed:', error);
           useToastStore.getState().addToast({
-            title: "Couldn't save task",
+            title: i18n._(msg`Couldn't save task`),
             message: asSentence(describeIpcError(error, '')),
             variant: 'warning',
           });
@@ -519,7 +523,7 @@ export function useTaskActions(input: {
       return;
     }
     useToastStore.getState().addToast({
-      title: 'Sent to backlog',
+      title: i18n._(msg`Sent to backlog`),
       message: `"${taskTitle}"`,
       variant: 'info',
     });
@@ -555,7 +559,7 @@ export function useTaskActions(input: {
       void host.refresh().catch(() => {});
     }
     useToastStore.getState().addToast({
-      title: 'Task archived',
+      title: i18n._(msg`Task archived`),
       message: `"${taskTitle}"`,
       variant: 'info',
     });
@@ -570,7 +574,7 @@ export function useTaskActions(input: {
     }
     await host.deleteTask(input.task.id);
     useToastStore.getState().addToast({
-      title: 'Task deleted',
+      title: i18n._(msg`Task deleted`),
       message: `"${taskTitle}"`,
       variant: 'info',
     });

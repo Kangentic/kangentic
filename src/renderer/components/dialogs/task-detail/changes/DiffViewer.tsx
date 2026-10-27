@@ -3,6 +3,9 @@ import { DiffEditor } from '@monaco-editor/react';
 import type { DiffEditorProps, DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
 import { Loader2, Columns2, Rows2, FileCode, ChevronUp, ChevronDown, Eye, ImageOff } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { translateText } from '../../../../i18n/translate';
+import { FILE_STATUS_CONFIG } from './file-status';
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
 import { MarkdownRenderer } from '../../../MarkdownRenderer';
 import { shownTheme, useConfigStore } from '../../../../stores/config-store';
@@ -75,15 +78,6 @@ interface DiffViewerProps {
    */
   showEditorBootSpinner?: boolean;
 }
-
-const STATUS_LABELS: Record<GitDiffStatus, { label: string; colorClass: string }> = {
-  A: { label: 'Added', colorClass: 'text-green-400' },
-  M: { label: 'Modified', colorClass: 'text-modified' },
-  D: { label: 'Deleted', colorClass: 'text-red-400' },
-  R: { label: 'Renamed', colorClass: 'text-blue-400' },
-  C: { label: 'Copied', colorClass: 'text-blue-400' },
-  U: { label: 'Untracked', colorClass: 'text-green-300' },
-};
 
 /**
  * The width at or below which Monaco renders a side-by-side diff inline (its
@@ -207,7 +201,8 @@ export function DiffViewer({
   // of the app instead of leaving it on the committed theme for the hover's duration.
   const theme = useConfigStore(shownTheme);
   const monacoTheme = monacoThemeForTheme(theme);
-  const statusConfig = STATUS_LABELS[status];
+  const { t } = useLingui();
+  const statusConfig = FILE_STATUS_CONFIG[status];
 
   // Markdown files can flip from the Monaco diff to a rendered preview of their
   // NEW content. `language` is the server-derived signal (diff-service maps
@@ -224,8 +219,8 @@ export function DiffViewer({
   const [showPreview, setShowPreview] = useState(false);
   const previewActive = (isMarkdown || isPreviewableSvg) && showPreview;
   const previewToggleLabel = isMarkdown
-    ? (previewActive ? 'Show diff' : 'Preview rendered markdown')
-    : (previewActive ? 'Show text diff' : 'Preview image');
+    ? (previewActive ? t`Show diff` : t`Preview rendered markdown`)
+    : (previewActive ? t`Show text diff` : t`Preview image`);
   // The one preview that is neither the diff editor nor the image view.
   const markdownPreviewActive = isMarkdown && showPreview;
 
@@ -1106,7 +1101,7 @@ export function DiffViewer({
         {/* min-w-0 lets a long path truncate instead of setting the row's
             minimum width, which pushed a narrow pane past the window's edge. */}
         <span className="text-xs text-fg-secondary truncate min-w-0">{filePath}</span>
-        <span className={`text-xs ${statusConfig.colorClass} flex-shrink-0`}>{statusConfig.label}</span>
+        <span className={`text-xs ${statusConfig.colorClass} flex-shrink-0`}>{translateText(statusConfig.label)}</span>
 
         <div className="ml-auto flex items-center gap-1">
           {/* Markdown files toggle between the diff and a rendered preview of the
@@ -1132,21 +1127,21 @@ export function DiffViewer({
           {showImageLayoutToggle && (
             <>
               {isPreviewableSvg && <div className="w-px h-4 bg-edge mx-1" aria-hidden="true" />}
-              <Tooltip label="Side by side">
+              <Tooltip label={t`Side by side`}>
                 <button
                   onClick={() => onViewModeChange('split')}
                   className={toolbarButtonClass(viewMode === 'split')}
-                  aria-label="Side by side"
+                  aria-label={t`Side by side`}
                   data-testid="diff-view-split"
                 >
                   <Columns2 size={16} />
                 </button>
               </Tooltip>
-              <Tooltip label="Stacked">
+              <Tooltip label={t({ message: 'Stacked', context: 'image compare mode' })}>
                 <button
                   onClick={() => onViewModeChange('inline')}
                   className={toolbarButtonClass(viewMode === 'inline')}
-                  aria-label="Stacked"
+                  aria-label={t({ message: 'Stacked', context: 'image compare mode' })}
                   data-testid="diff-view-inline"
                 >
                   <Rows2 size={16} />
@@ -1162,21 +1157,21 @@ export function DiffViewer({
               {/* Next / previous change navigation. The tips draw the LIVE
                   combos as key chips (rebind-aware through `keys`), never
                   hardcoded strings. */}
-              <Tooltip label="Previous change" keys="changes.prevChange">
+              <Tooltip label={t`Previous change`} keys="changes.prevChange">
                 <button
                   onClick={() => navigateChange('prev')}
                   className={toolbarButtonClass(false)}
-                  aria-label="Previous change"
+                  aria-label={t`Previous change`}
                   data-testid="diff-prev-change"
                 >
                   <ChevronUp size={16} />
                 </button>
               </Tooltip>
-              <Tooltip label="Next change" keys="changes.nextChange">
+              <Tooltip label={t`Next change`} keys="changes.nextChange">
                 <button
                   onClick={() => navigateChange('next')}
                   className={toolbarButtonClass(false)}
-                  aria-label="Next change"
+                  aria-label={t`Next change`}
                   data-testid="diff-next-change"
                 >
                   <ChevronDown size={16} />
@@ -1189,7 +1184,7 @@ export function DiffViewer({
                   unified is the one diff control with a settled cross-tool
                   glyph (GitHub ships this exact toggle), and it is flipped
                   often enough to earn permanent space. */}
-              <Tooltip label="Side by side" detail={inlineWhenNarrow ? 'A narrow pane renders inline' : undefined}>
+              <Tooltip label={t`Side by side`} detail={inlineWhenNarrow ? t`A narrow pane renders inline` : undefined}>
                 <button
                   onClick={() => {
                     // Already split but showing inline after a widening drag:
@@ -1199,17 +1194,17 @@ export function DiffViewer({
                     onViewModeChange('split');
                   }}
                   className={toolbarButtonClass(viewMode === 'split')}
-                  aria-label="Side by side"
+                  aria-label={t`Side by side`}
                   data-testid="diff-view-split"
                 >
                   <Columns2 size={16} />
                 </button>
               </Tooltip>
-              <Tooltip label="Inline">
+              <Tooltip label={t({ message: 'Inline', context: 'image compare mode' })}>
                 <button
                   onClick={() => onViewModeChange('inline')}
                   className={toolbarButtonClass(viewMode === 'inline')}
-                  aria-label="Inline"
+                  aria-label={t({ message: 'Inline', context: 'image compare mode' })}
                   data-testid="diff-view-inline"
                 >
                   <Rows2 size={16} />
@@ -1253,13 +1248,13 @@ export function DiffViewer({
             // the host fell back to empty content. A spinner here would never end.
             <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center" data-testid="diff-image-load-failed">
               <ImageOff size={22} className="text-fg-disabled" aria-hidden="true" />
-              <span className="text-sm text-fg-muted">Could not read this image</span>
+              <span className="text-sm text-fg-muted"><Trans>Could not read this image</Trans></span>
             </div>
           )
         ) : binary ? (
           <div className="flex flex-col items-center justify-center h-full gap-2 p-4 text-center">
             <FileCode size={22} className="text-fg-disabled" />
-            <span className="text-sm text-fg-muted">Binary file - cannot display diff</span>
+            <span className="text-sm text-fg-muted"><Trans>Binary file - cannot display diff</Trans></span>
           </div>
         ) : contentFilePath === null ? (
           // Wait for the first content before mounting Monaco, so the editor is

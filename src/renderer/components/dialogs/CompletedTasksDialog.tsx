@@ -1,5 +1,7 @@
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { Search, ClipboardList, Loader2 } from 'lucide-react';
+import { Plural, Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
 import { BaseDialog } from './BaseDialog';
 import { ConfirmDialog } from './ConfirmDialog';
 import { DataTable } from '../DataTable';
@@ -20,6 +22,7 @@ interface CompletedTasksDialogProps {
 }
 
 export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
+  const { t } = useLingui();
   const archivedTasks = useBoardStore((state) => state.archivedTasks);
   const archivedTotalCount = useBoardStore((state) => state.archivedTotalCount);
   const swimlanes = useBoardStore((state) => state.swimlanes);
@@ -236,7 +239,16 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
     return { totalCost, totalInputTokens, totalOutputTokens, totalFilesChanged, totalLinesAdded, totalLinesRemoved };
   }, [filteredRows]);
 
-  const emptyMessage = searchQuery ? `No tasks match "${searchQuery}"` : 'No completed tasks yet';
+  const emptyMessage = searchQuery ? t`No tasks match "${searchQuery}"` : t`No completed tasks yet`;
+  const filteredCount = filteredRows.length;
+  // A named local, so a translator reads {totalFilesChanged} and not {0}.
+  const totalFilesChanged = aggregates.totalFilesChanged;
+  const totalCostText = formatCost(aggregates.totalCost);
+  const tokenCountText = formatTokenCount(aggregates.totalInputTokens + aggregates.totalOutputTokens);
+  const selectedCount = selectedIds.size;
+  const deleteCompleted = bulkDeleteProgress?.completed ?? 0;
+  const deleteTotal = bulkDeleteProgress?.total ?? 0;
+  const deleteFailureCount = bulkDeleteProgress?.failures.length ?? 0;
 
   return (
     <>
@@ -249,7 +261,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
           <div className="flex items-center gap-3 px-4 py-3">
             <ClipboardList size={18} className="text-fg-muted" />
             <h3 className="text-base font-semibold text-fg flex items-center gap-2">
-              Completed Tasks ({archivedTotalCount})
+              <Trans>Completed Tasks ({archivedTotalCount})</Trans>
               {loadingFullArchive && (
                 <Loader2 size={14} className="animate-spin text-fg-disabled" data-testid="archive-loading" />
               )}
@@ -261,7 +273,7 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
                 type="text"
                 value={searchQuery}
                 onChange={(event) => setSearchQuery(event.target.value)}
-                placeholder="Search tasks..."
+                placeholder={t`Search tasks...`}
                 className="w-64 bg-surface/50 border border-edge/50 rounded-md text-sm text-fg placeholder-fg-muted pl-8 pr-3 py-1.5 outline-none focus:border-edge-input"
                 data-testid="completed-tasks-search"
               />
@@ -271,17 +283,17 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
         footer={
           <div className="flex items-center gap-4 text-xs text-fg-muted tabular-nums bg-surface-inset/40 -mx-4 -my-3 px-4 py-3">
             <span>
-              {filteredRows.length !== archivedTotalCount
-                ? `${filteredRows.length} of ${archivedTotalCount} tasks`
-                : `${filteredRows.length} tasks`
+              {filteredCount !== archivedTotalCount
+                ? <Trans>{filteredCount} of <Plural value={archivedTotalCount} one="# task" other="# tasks" /></Trans>
+                : <Plural value={filteredCount} one="# task" other="# tasks" />
               }
             </span>
             <span className="text-edge">|</span>
-            <span>{formatCost(aggregates.totalCost)} total cost</span>
+            <span><Trans>{totalCostText} total cost</Trans></span>
             <span className="text-edge">|</span>
-            <span>{formatTokenCount(aggregates.totalInputTokens + aggregates.totalOutputTokens)} tokens</span>
+            <span><Trans>{tokenCountText} tokens</Trans></span>
             <span className="text-edge">|</span>
-            <span>{aggregates.totalFilesChanged} files changed</span>
+            <span><Plural value={totalFilesChanged} one="# file changed" other="# files changed" /></span>
             <span className="text-edge">|</span>
             <span>
               <span className="text-green-400/70">+{aggregates.totalLinesAdded}</span>
@@ -324,10 +336,10 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
             >
               <div className="w-4 h-4 border-2 border-edge border-t-accent rounded-full animate-spin" />
               <span className="text-sm text-fg-muted font-medium tabular-nums">
-                Deleting {bulkDeleteProgress.completed} of {bulkDeleteProgress.total}
+                <Trans>Deleting {deleteCompleted} of {deleteTotal}</Trans>
                 {bulkDeleteProgress.failures.length > 0 && (
                   <span className="text-red-400 ml-2">
-                    ({bulkDeleteProgress.failures.length} failed)
+                    <Trans>({deleteFailureCount} failed)</Trans>
                   </span>
                 )}
               </span>
@@ -360,12 +372,12 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
 
       {pendingDeleteId && (
         <ConfirmDialog
-          title="Delete completed task"
+          title={t`Delete completed task`}
           message={<>
-            <p>This will permanently delete the task, its session history, and any associated worktree.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p><Trans>This will permanently delete the task, its session history, and any associated worktree.</Trans></p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel="Delete"
+          confirmLabel={t`Delete`}
           variant="danger"
           showDontAskAgain
           onConfirm={handleConfirmDelete}
@@ -375,12 +387,18 @@ export function CompletedTasksDialog({ onClose }: CompletedTasksDialogProps) {
 
       {pendingBulkDelete && (
         <ConfirmDialog
-          title={`Delete ${selectedIds.size} completed tasks`}
+          title={t`${plural(selectedCount, { one: 'Delete # completed task', other: 'Delete # completed tasks' })}`}
           message={<>
-            <p>This will permanently delete {selectedIds.size} tasks, their session history, and any associated worktrees.</p>
-            <p className="text-red-400 font-medium">This action cannot be undone.</p>
+            <p>
+              <Plural
+                value={selectedCount}
+                one="This will permanently delete # task, its session history, and any associated worktrees."
+                other="This will permanently delete # tasks, their session history, and any associated worktrees."
+              />
+            </p>
+            <p className="text-red-400 font-medium"><Trans>This action cannot be undone.</Trans></p>
           </>}
-          confirmLabel={`Delete ${selectedIds.size} tasks`}
+          confirmLabel={t`${plural(selectedCount, { one: 'Delete # task', other: 'Delete # tasks' })}`}
           variant="danger"
           showDontAskAgain
           onConfirm={handleConfirmBulkDelete}

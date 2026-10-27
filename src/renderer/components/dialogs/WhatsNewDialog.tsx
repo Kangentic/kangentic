@@ -1,4 +1,5 @@
 import { Rocket, ExternalLink } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { BaseDialog } from './BaseDialog';
 import { MarkdownRenderer } from '../MarkdownRenderer';
 import { useUpdaterStore } from '../../stores/updater-store';
@@ -39,6 +40,7 @@ import { githubReleaseUrl } from '../../lib/github-release-url';
  * the release and the body's own headings section it.
  */
 export function WhatsNewDialog() {
+  const { t } = useLingui();
   const whatsNewOpen = useUpdaterStore((state) => state.whatsNewOpen);
   const whatsNewAutoOpened = useUpdaterStore((state) => state.whatsNewAutoOpened);
   const closeWhatsNew = useUpdaterStore((state) => state.closeWhatsNew);
@@ -49,6 +51,7 @@ export function WhatsNewDialog() {
   return (
     <BaseDialog
       onClose={closeWhatsNew}
+      // i18n-ok: the product name and version, a release-page header
       title={`Kangentic v${appVersion}`}
       icon={<Rocket size={16} className="text-accent" />}
       trapFocus={!whatsNewAutoOpened}
@@ -63,6 +66,7 @@ export function WhatsNewDialog() {
             data-testid="whats-new-github-link"
           >
             <ExternalLink size={12} />
+            {/* i18n-ok: the name of the GitHub release page */}
             GitHub Release
           </button>
           <button
@@ -70,7 +74,7 @@ export function WhatsNewDialog() {
             data-testid="whats-new-close"
             className="px-4 py-1.5 text-xs rounded transition-colors bg-accent-emphasis hover:bg-accent text-accent-on"
           >
-            Close
+            {t({ message: 'Close', context: 'button' })}
           </button>
         </div>
       }

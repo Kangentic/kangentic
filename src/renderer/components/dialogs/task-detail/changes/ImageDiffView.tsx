@@ -1,6 +1,11 @@
 import { useState, type CSSProperties, type ReactNode } from 'react';
 import { Blend, ChevronsLeftRight, Columns2, ImageOff, Loader2, Rows2, ScanSearch, SquareSplitHorizontal } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../../../../i18n/translate';
+import type { LocalizedText } from '../../../../../shared/i18n/text';
 import { formatBytes } from '../../../../lib/format-bytes';
 import { tipLabel } from '../../../../utils/tooltip';
 import { Tooltip } from '../../../Tooltip';
@@ -40,31 +45,32 @@ interface ImageDiffViewProps {
 
 interface ModeOption {
   value: ImageCompareMode;
-  label: string;
+  label: LocalizedText;
   /** The tip's second line: what the mode does. */
-  detail?: string;
+  detail?: LocalizedText;
   icon: LucideIcon;
 }
 
+// Descriptors, resolved with translateText where the mode row renders.
 function modeOptions(layout: 'split' | 'inline'): ModeOption[] {
   return [
     layout === 'inline'
-      ? { value: 'side-by-side', label: 'Stacked', icon: Rows2 }
-      : { value: 'side-by-side', label: 'Side by side', icon: Columns2 },
-    { value: 'slider', label: 'Slider', detail: 'Drag to reveal the new image', icon: SquareSplitHorizontal },
-    { value: 'overlay', label: 'Overlay', detail: 'Fade between the two images', icon: Blend },
-    { value: 'diff', label: 'Diff', detail: 'Highlight the pixels that changed', icon: ScanSearch },
+      ? { value: 'side-by-side', label: msg({ message: 'Stacked', context: 'image compare mode' }), icon: Rows2 }
+      : { value: 'side-by-side', label: msg`Side by side`, icon: Columns2 },
+    { value: 'slider', label: msg({ message: 'Slider', context: 'image compare mode' }), detail: msg`Drag to reveal the new image`, icon: SquareSplitHorizontal },
+    { value: 'overlay', label: msg({ message: 'Overlay', context: 'image compare mode' }), detail: msg`Fade between the two images`, icon: Blend },
+    { value: 'diff', label: msg({ message: 'Diff', context: 'image compare mode' }), detail: msg`Highlight the pixels that changed`, icon: ScanSearch },
   ];
 }
 
 /** Why Slider, Overlay and Diff are off: they draw both images on one canvas. */
-const COMPARE_DISABLED_REASON = 'Needs both images';
+const COMPARE_DISABLED_REASON = msg`Needs both images`;
 
-const PLACEHOLDER_TEXT: Record<Exclude<DiffImageSide['kind'], 'image'>, string> = {
-  'too-large': 'Too large to preview',
-  'lfs-pointer': 'Git LFS pointer',
-  undecodable: 'Not image data',
-  unreadable: 'Could not read',
+const PLACEHOLDER_TEXT: Record<Exclude<DiffImageSide['kind'], 'image'>, LocalizedText> = {
+  'too-large': msg`Too large to preview`,
+  'lfs-pointer': msg`Git LFS pointer`,
+  undecodable: msg`Not image data`,
+  unreadable: msg`Could not read`,
 };
 
 /**
@@ -93,6 +99,7 @@ function sizeOf(side: DiffImageSide | null): number | null {
 }
 
 export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: ImageDiffViewProps) {
+  const { t } = useLingui();
   const { original, modified } = image;
   const hasBothSides = original !== null && modified !== null;
   const decodedOriginal = original?.kind === 'image' ? original : null;
@@ -106,18 +113,22 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
   const presentSides = [original, modified].filter((side): side is DiffImageSide => side !== null);
   const everySideTooLarge = presentSides.length > 0 && presentSides.every((side) => side.kind === 'too-large');
 
+  const previewLimit = formatBytes(IMAGE_PREVIEW_MAX_BYTES);
+  const beforeLabel = t({ message: 'Before', context: 'image compare mode' });
+  const afterLabel = t({ message: 'After', context: 'image compare mode' });
+
   let stage: ReactNode;
   if (everySideTooLarge) {
     stage = (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center" data-testid="diff-image-too-large">
         <ImageOff size={22} className="text-fg-disabled" aria-hidden="true" />
-        <span className="text-sm text-fg-muted">Too large to preview</span>
-        <span className="text-xs text-fg-faint">Previews stop at {formatBytes(IMAGE_PREVIEW_MAX_BYTES)} per image</span>
+        <span className="text-sm text-fg-muted"><Trans>Too large to preview</Trans></span>
+        <span className="text-xs text-fg-faint"><Trans>Previews stop at {previewLimit} per image</Trans></span>
       </div>
     );
   } else if (!hasBothSides) {
     const onlySide = original ?? modified;
-    stage = onlySide ? <ImageBox side={onlySide} alt="Image preview" scalable={scalable} testId="diff-image-single" /> : null;
+    stage = onlySide ? <ImageBox side={onlySide} alt={t`Image preview`} scalable={scalable} testId="diff-image-single" /> : null;
   } else if (effectiveMode === 'side-by-side' || decodedOriginal === null || decodedModified === null) {
     // With both images decoded, each side draws inside the same frame (the
     // larger width by the larger height), pinned top-left, so both share one
@@ -128,8 +139,8 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
       : undefined;
     stage = (
       <div className={`flex min-h-0 min-w-0 flex-1 gap-3 ${layout === 'inline' ? 'flex-col' : 'flex-row'}`}>
-        <ImageBox side={original} alt="Before" scalable={scalable} frame={sharedFrame} testId="diff-image-before" />
-        <ImageBox side={modified} alt="After" scalable={scalable} frame={sharedFrame} testId="diff-image-after" />
+        <ImageBox side={original} alt={beforeLabel} scalable={scalable} frame={sharedFrame} testId="diff-image-before" />
+        <ImageBox side={modified} alt={afterLabel} scalable={scalable} frame={sharedFrame} testId="diff-image-after" />
       </div>
     );
   } else {
@@ -155,25 +166,25 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
       <ImageInfoBar original={original} modified={modified} pixelDiff={effectiveMode === 'diff' ? pixelDiff : null} />
       {effectiveMode === 'overlay' && (
         <div className="flex flex-shrink-0 items-center gap-2 px-3 pb-2 text-xs text-fg-tertiary">
-          <span>Before</span>
+          <span>{beforeLabel}</span>
           <input
             type="range"
             min={0}
             max={100}
             value={overlayOpacity}
             onChange={(event) => setOverlayOpacity(Number(event.target.value))}
-            aria-label="After image opacity"
+            aria-label={t`After image opacity`}
             data-testid="diff-image-overlay-opacity"
             className="h-1.5 min-w-0 flex-1 cursor-pointer accent-[var(--kng-accent)]"
           />
-          <span>After</span>
+          <span>{afterLabel}</span>
         </div>
       )}
       {showsModeRow && (
         <div className="flex-shrink-0 px-2 pb-1.5">
           <div
             role="radiogroup"
-            aria-label="Image comparison"
+            aria-label={t`Image comparison`}
             data-testid="diff-image-modes"
             className="flex gap-0.5 rounded border border-edge-input bg-surface-hover p-0.5"
           >
@@ -181,17 +192,18 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
               const active = effectiveMode === option.value;
               const disabled = option.value !== 'side-by-side' && !comparable;
               const Icon = option.icon;
+              const optionLabel = translateText(option.label);
               return (
                 <Tooltip
                   key={option.value}
-                  label={tipLabel({ disabled, disabledReason: COMPARE_DISABLED_REASON, tip: option.label })}
-                  detail={disabled ? undefined : option.detail}
+                  label={tipLabel({ disabled, disabledReason: translateText(COMPARE_DISABLED_REASON), tip: optionLabel })}
+                  detail={disabled || !option.detail ? undefined : translateText(option.detail)}
                 >
                   <button
                     type="button"
                     role="radio"
                     aria-checked={active}
-                    aria-label={option.label}
+                    aria-label={optionLabel}
                     disabled={disabled}
                     onClick={() => onModeChange(option.value)}
                     data-testid={`diff-image-mode-${option.value}`}
@@ -202,7 +214,7 @@ export function ImageDiffView({ image, layout, mode, onModeChange, scalable }: I
                     }`}
                   >
                     <Icon size={16} aria-hidden="true" />
-                    <span className="hidden whitespace-nowrap @[300px]/image-diff:block">{option.label}</span>
+                    <span className="hidden whitespace-nowrap @[300px]/image-diff:block">{optionLabel}</span>
                   </button>
                 </Tooltip>
               );
@@ -257,7 +269,7 @@ function ImageBox({ side, alt, scalable, frame, testId }: ImageBoxProps) {
           data-reason={side.kind}
         >
           <ImageOff size={18} className="text-fg-disabled" aria-hidden="true" />
-          <span className="text-xs text-fg-muted">{PLACEHOLDER_TEXT[side.kind]}</span>
+          <span className="text-xs text-fg-muted">{translateText(PLACEHOLDER_TEXT[side.kind])}</span>
         </div>
       )}
     </div>
@@ -282,6 +294,9 @@ interface CompositeStageProps {
  * dimensions changed.
  */
 function CompositeStage({ before, after, mode, scalable, sliderPosition, onSliderPositionChange, overlayOpacity, pixelDiff }: CompositeStageProps) {
+  const { t } = useLingui();
+  const beforeLabel = t({ message: 'Before', context: 'image compare mode' });
+  const afterLabel = t({ message: 'After', context: 'image compare mode' });
   const width = Math.max(before.width, after.width);
   const height = Math.max(before.height, after.height);
   const layerWidth = (side: DecodedImageSide) => `${(side.width / width) * 100}%`;
@@ -293,7 +308,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
           <>
             <img
               src={after.dataUrl}
-              alt="After, faded"
+              alt={t`After, faded`}
               draggable={false}
               className="absolute left-0 top-0 block opacity-30 grayscale"
               style={{ width: layerWidth(after) }}
@@ -301,7 +316,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
             {pixelDiff.status === 'done' && (
               <img
                 src={pixelDiff.maskUrl}
-                alt="Changed pixels"
+                alt={t`Changed pixels`}
                 draggable={false}
                 className="absolute inset-0 block h-full w-full"
                 data-testid="diff-image-diff-mask"
@@ -309,7 +324,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
             )}
             {pixelDiff.status === 'pending' && (
               <div className="absolute inset-0 flex items-center justify-center">
-                <Loader2 size={20} className="animate-spin text-fg-muted" aria-label="Comparing pixels" />
+                <Loader2 size={20} className="animate-spin text-fg-muted" aria-label={t`Comparing pixels`} />
               </div>
             )}
           </>
@@ -317,7 +332,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
           <>
             <img
               src={before.dataUrl}
-              alt="Before"
+              alt={beforeLabel}
               draggable={false}
               className="image-diff-checkerboard absolute left-0 top-0 block"
               style={{ width: layerWidth(before) }}
@@ -329,7 +344,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
             >
               <img
                 src={after.dataUrl}
-                alt="After"
+                alt={afterLabel}
                 draggable={false}
                 // Slider shows the new image as it is, transparency included; an
                 // overlaid checkerboard would wash out the Overlay blend.
@@ -352,14 +367,14 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
               step={0.5}
               value={sliderPosition}
               onChange={(event) => onSliderPositionChange(Number(event.target.value))}
-              aria-label="Slider position"
+              aria-label={t`Slider position`}
               data-testid="diff-image-slider"
               className="peer absolute inset-0 h-full w-full cursor-ew-resize appearance-none bg-transparent opacity-0"
             />
             {/* Fixed dark chips, not theme tokens: they sit on arbitrary image
                 pixels in every theme, so only a constant scrim keeps them legible. */}
-            <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">Before</span>
-            <span className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">After</span>
+            <span className="pointer-events-none absolute left-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">{beforeLabel}</span>
+            <span className="pointer-events-none absolute right-1.5 top-1.5 rounded bg-black/60 px-1.5 text-[11px] text-white">{afterLabel}</span>
             <div className="pointer-events-none absolute bottom-0 top-0 w-0.5 -translate-x-1/2 bg-fg" style={{ left: `${sliderPosition}%` }} />
             <div
               className="pointer-events-none absolute top-1/2 flex h-6 w-6 -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full bg-fg text-surface shadow peer-focus-visible:ring-2 peer-focus-visible:ring-accent"
@@ -375,6 +390,7 @@ function CompositeStage({ before, after, mode, scalable, sliderPosition, onSlide
 }
 
 function ImageInfoBar({ original, modified, pixelDiff }: { original: DiffImageSide | null; modified: DiffImageSide | null; pixelDiff: PixelDiffState | null }) {
+  const { t } = useLingui();
   const hasBothSides = original !== null && modified !== null;
   const dimensionsChanged = original?.kind === 'image' && modified?.kind === 'image'
     && (original.width !== modified.width || original.height !== modified.height);
@@ -387,11 +403,11 @@ function ImageInfoBar({ original, modified, pixelDiff }: { original: DiffImageSi
   return (
     <div className="flex flex-shrink-0 flex-col gap-1 px-2 pb-2" data-testid="diff-image-info">
       <div className="flex flex-col gap-1 @[300px]/image-diff:flex-row @[300px]/image-diff:gap-1.5">
-        {original && <InfoTile side={original} label={hasBothSides ? 'Before' : null} testId="diff-image-info-before" />}
+        {original && <InfoTile side={original} label={hasBothSides ? t({ message: 'Before', context: 'image compare mode' }) : null} testId="diff-image-info-before" />}
         {modified && (
           <InfoTile
             side={modified}
-            label={hasBothSides ? 'After' : null}
+            label={hasBothSides ? t({ message: 'After', context: 'image compare mode' }) : null}
             sizeDelta={sizeDelta}
             dimensionsChanged={dimensionsChanged}
             testId="diff-image-info-after"
@@ -418,11 +434,15 @@ interface InfoTileProps {
  * DOM and its test ids never change with the width.
  */
 function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, testId }: InfoTileProps) {
+  const { t, i18n } = useLingui();
   const dimensions = side.kind === 'image' ? `${side.width} x ${side.height}` : null;
   const sizeBytes = sizeOf(side);
   const size = sizeBytes === null ? null : formatBytes(sizeBytes);
   const deltaText = sizeDelta === null ? null : `${sizeDelta > 0 ? '+' : '-'}${formatBytes(Math.abs(sizeDelta))}`;
-  const summary = [label, dimensions, size ?? 'not readable'].filter((part) => part !== null).join(', ');
+  // "Before, 100 x 100, 12 KB" in English. Two casings of "not readable" are two
+  // messages: the summary reads in a sentence, the tile value starts one.
+  const summaryParts = [label, dimensions, size ?? t`not readable`].filter((part): part is string => part !== null);
+  const summary = new Intl.ListFormat(i18n.locale, { type: 'unit', style: 'short' }).format(summaryParts);
 
   return (
     <Tooltip label={summary}>
@@ -434,7 +454,7 @@ function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, te
               {dimensions}
             </span>
           )}
-          <span className="text-fg-muted" data-testid={`${testId}-size`}>{size ?? 'Not readable'}</span>
+          <span className="text-fg-muted" data-testid={`${testId}-size`}>{size ?? t`Not readable`}</span>
         </span>
         {deltaText && (
           <span
@@ -450,17 +470,22 @@ function InfoTile({ side, label, sizeDelta = null, dimensionsChanged = false, te
 }
 
 function PixelDiffTile({ state }: { state: PixelDiffState }) {
-  let text = 'Comparing pixels';
+  const { t, i18n } = useLingui();
+  let text = t`Comparing pixels`;
   // The exact counts behind the rounded share; '' (no tip) until they exist.
   let pixelCounts = '';
   if (state.status === 'done') {
-    const percent = (state.changedPixels / state.totalPixels) * 100;
-    if (state.changedPixels === 0) text = 'No pixel changes';
-    else if (percent < 0.1) text = 'Under 0.1% of pixels changed';
-    else text = `${percent.toFixed(1)}% of pixels changed`;
-    pixelCounts = `${state.changedPixels.toLocaleString()} of ${state.totalPixels.toLocaleString()} pixels differ`;
+    const changedShare = (state.changedPixels / state.totalPixels) * 100;
+    const percent = changedShare.toFixed(1);
+    if (state.changedPixels === 0) text = t`No pixel changes`;
+    else if (changedShare < 0.1) text = t`Under 0.1% of pixels changed`;
+    else text = t`${percent}% of pixels changed`;
+    // Grouped in the session's language; the total rides the plural.
+    const changedCount = new Intl.NumberFormat(i18n.locale).format(state.changedPixels);
+    const totalPixels = state.totalPixels;
+    pixelCounts = t`${changedCount} of ${plural(totalPixels, { one: '# pixel differs', other: '# pixels differ' })}`;
   } else if (state.status === 'failed') {
-    text = 'Could not compare pixels';
+    text = t`Could not compare pixels`;
   }
 
   return (

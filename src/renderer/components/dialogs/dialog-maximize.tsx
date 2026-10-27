@@ -1,4 +1,5 @@
 import { Maximize2, Minimize2 } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 
 /**
@@ -60,7 +61,8 @@ interface MaximizeToggleButtonProps {
 
 /** Header maximize/restore button shared by the dialogs above. */
 export function MaximizeToggleButton({ isMaximized, onToggle, testId = 'dialog-maximize' }: MaximizeToggleButtonProps) {
-  const label = isMaximized ? 'Restore dialog' : 'Maximize dialog';
+  const { t } = useLingui();
+  const label = isMaximized ? t`Restore dialog` : t`Maximize dialog`;
   return (
     <Tooltip label={label} keys="panel.maximize">
       <button

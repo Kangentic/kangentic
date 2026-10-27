@@ -1,4 +1,5 @@
 import React, { useMemo } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { AlertTriangle, CirclePlay, Pencil, Play, Plus, Trash2 } from 'lucide-react';
 import type { WorkflowDetail, WorkflowSummary } from '../../../shared/types';
 import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
@@ -7,6 +8,7 @@ import { ActivityMark } from '../ActivityMark';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { WorkflowPicker } from './WorkflowPicker';
+import { countsLine, progressBarTitle, progressText, stalledLine, stalledTip } from './workflow-text';
 
 /**
  * The Workflows view header, the same controls in the same places in every
@@ -93,25 +95,6 @@ function progressSegments(detail: WorkflowDetail | null, doneColumnColor: string
   return [...done, ...working];
 }
 
-/** "Stalled on #412", or "Stalled on 3 tasks". */
-function stalledLine(stalled: WorkflowSummary['stalledTasks']): string {
-  return stalled.length === 1 ? `Stalled on #${stalled[0].displayId}` : `Stalled on ${stalled.length} tasks`;
-}
-
-/** Each stalled task and why, for the stalled mark's tooltip. */
-function stalledTip(stalled: WorkflowSummary['stalledTasks']): string {
-  return stalled.map((entry) => `#${entry.displayId}: ${entry.reason}`).join(' ');
-}
-
-function countsLine(summary: WorkflowSummary): string {
-  const parts = [
-    summary.inProgressCount > 0 ? `${summary.inProgressCount} in progress` : null,
-    summary.queuedCount > 0 ? `${summary.queuedCount} queued` : null,
-    summary.blockedCount > 0 ? `${summary.blockedCount} blocked` : null,
-  ].filter((part): part is string => part !== null);
-  return parts.join(', ');
-}
-
 interface WorkflowHeaderProps {
   summaries: WorkflowSummary[];
   selected: WorkflowSummary | null;
@@ -143,59 +126,65 @@ export function WorkflowHeader({
   onDelete,
   onNew,
 }: WorkflowHeaderProps) {
+  const { t } = useLingui();
   const state = selected?.workflow.state ?? null;
   const started = state === 'running' || state === 'paused';
+  const renameLabel = t`Rename`;
+  const deleteLabel = t`Delete`;
+  const newWorkflowLabel = t`New workflow`;
   const segments = useMemo(() => progressSegments(detail, doneColumnColor), [detail, doneColumnColor]);
   const hasWorkflow = selected !== null;
 
   let lifecycle: React.ReactNode;
   if (state === 'running') {
+    const pauseLabel = t`Running. Pause workflow`;
     lifecycle = (
-      <Tooltip label="Running. Pause workflow">
+      <Tooltip label={pauseLabel}>
         <button
           type="button"
           onClick={onPause}
-          aria-label="Running. Pause workflow"
+          aria-label={pauseLabel}
           className={`${BUTTON} ${LADDER.lifecycleButton} border-active/40 text-active hover:bg-active/10`}
           data-testid="workflow-pause"
         >
           <ActivityMark mark="control-pause-working" size={16} />
-          <span className={LADDER.lifecycleLabel}>Running</span>
+          <span className={LADDER.lifecycleLabel}><Trans context="workflow state">Running</Trans></span>
         </button>
       </Tooltip>
     );
   } else if (state === 'paused') {
+    const resumeLabel = t`Resume workflow`;
     lifecycle = (
-      <Tooltip label="Resume workflow">
-        <button type="button" onClick={onResume} aria-label="Resume workflow" className={`${BUTTON} ${PRIMARY} ${LADDER.lifecycleButton}`} data-testid="workflow-resume">
+      <Tooltip label={resumeLabel}>
+        <button type="button" onClick={onResume} aria-label={resumeLabel} className={`${BUTTON} ${PRIMARY} ${LADDER.lifecycleButton}`} data-testid="workflow-resume">
           <CirclePlay size={14} className="shrink-0" />
-          <span className={LADDER.lifecycleLabel}>Resume</span>
+          <span className={LADDER.lifecycleLabel}><Trans context="workflow action">Resume</Trans></span>
         </button>
       </Tooltip>
     );
   } else {
     const empty = (detail?.tasks.length ?? 0) === 0;
-    const reason = !hasWorkflow ? 'No workflow to start' : planHeld ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : empty ? 'This workflow has no tasks yet.' : null;
+    const reason = !hasWorkflow ? t`No workflow to start` : planHeld ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : empty ? t`This workflow has no tasks yet.` : null;
     lifecycle = (
-      <Tooltip label={tipLabel({ disabled: reason !== null, disabledReason: reason, tip: 'Start this workflow' })}>
+      <Tooltip label={tipLabel({ disabled: reason !== null, disabledReason: reason, tip: t`Start this workflow` })}>
         <button
           type="button"
           onClick={onStart}
           disabled={reason !== null}
-          aria-label="Start workflow"
+          aria-label={t`Start workflow`}
           className={`${BUTTON} ${PRIMARY} ${LADDER.lifecycleButton}`}
           data-testid="workflow-start"
         >
           <Play size={12} className="shrink-0" />
-          <span className={LADDER.lifecycleLabel}>Start</span>
+          <span className={LADDER.lifecycleLabel}><Trans context="workflow action">Start</Trans></span>
         </button>
       </Tooltip>
     );
   }
 
-  const progress = selected && started ? `${selected.doneCount} of ${selected.taskCount} done` : '';
+  const progress = selected && started ? progressText(selected.doneCount, selected.taskCount) : '';
   const counts = selected && started ? countsLine(selected) : '';
-  const barTitle = `${[progress, counts].filter(Boolean).join('. ')}.`;
+  const barTitle = progressBarTitle(progress, counts);
 
   return (
     <div className="@container shrink-0 border-b border-edge" data-testid="workflow-header">
@@ -209,25 +198,25 @@ export function WorkflowHeader({
               controlClassName={LADDER.picker}
               pillClassName={LADDER.pickerPill}
             />
-            <Tooltip label="Rename">
-              <button type="button" onClick={onRename} aria-label="Rename" className={`${BUTTON} ${NEUTRAL} ${LADDER.actionButton}`} data-testid="workflow-rename">
+            <Tooltip label={renameLabel}>
+              <button type="button" onClick={onRename} aria-label={renameLabel} className={`${BUTTON} ${NEUTRAL} ${LADDER.actionButton}`} data-testid="workflow-rename">
                 <Pencil size={13} className="shrink-0" />
-                <span className={LADDER.actionLabel}>Rename</span>
+                <span className={LADDER.actionLabel}>{renameLabel}</span>
               </button>
             </Tooltip>
             <Divider />
             {lifecycle}
             <Divider />
-            <Tooltip label="Delete">
+            <Tooltip label={deleteLabel}>
               <button
                 type="button"
                 onClick={onDelete}
-                aria-label="Delete"
+                aria-label={deleteLabel}
                 className={`${BUTTON} ${LADDER.actionButton} border-danger/40 text-danger hover:bg-danger/10 hover:border-danger/60`}
                 data-testid="workflow-delete"
               >
                 <Trash2 size={13} className="shrink-0" />
-                <span className={LADDER.actionLabel}>Delete</span>
+                <span className={LADDER.actionLabel}>{deleteLabel}</span>
               </button>
             </Tooltip>
             {started && selected && (
@@ -274,10 +263,10 @@ export function WorkflowHeader({
           </>
         )}
         <span className="ml-auto" />
-        <Tooltip label="New workflow">
-          <button type="button" onClick={onNew} aria-label="New workflow" className={`${BUTTON} ${NEUTRAL} ${LADDER.newButton}`} data-testid="workflow-new">
+        <Tooltip label={newWorkflowLabel}>
+          <button type="button" onClick={onNew} aria-label={newWorkflowLabel} className={`${BUTTON} ${NEUTRAL} ${LADDER.newButton}`} data-testid="workflow-new">
             <Plus size={13} className="shrink-0" />
-            <span className={LADDER.actionLabel}>New workflow</span>
+            <span className={LADDER.actionLabel}>{newWorkflowLabel}</span>
           </button>
         </Tooltip>
       </div>

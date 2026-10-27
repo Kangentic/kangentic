@@ -1,5 +1,6 @@
 import React, { useCallback, useMemo, useRef } from 'react';
 import { Columns3Cog, GripVertical, Pencil, Plus, Trash2 } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { DndContext, closestCenter, PointerSensor, useSensor, useSensors, type CollisionDetection, type DragEndEvent, type Modifier } from '@dnd-kit/core';
 import { SortableContext, useSortable, verticalListSortingStrategy } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
@@ -143,6 +144,7 @@ function clampToBounds(
 
 export function AutomationsPane(props: AutomationsPaneProps) {
   const { column } = props;
+  const { t } = useLingui();
   // Pattern C: a DndContext's internal subscriptions go stale across a Fast
   // Refresh, so it is re-keyed on the HMR generation.
   const hmrGeneration = useHmrGeneration();
@@ -249,13 +251,13 @@ export function AutomationsPane(props: AutomationsPaneProps) {
   return (
     <SectionCard
       id="automations"
-      label="Automations"
+      label={t`Automations`}
       icon={Columns3Cog}
-      info="What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
+      info={t`What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order.`}
       className="flex flex-col min-h-0"
     >
       {props.readOnly && (
-        <DisabledSectionNotice reason="Automations are shared by every profile. Switch to Default to edit them." />
+        <DisabledSectionNotice reason={t`Automations are shared by every profile. Switch to Default to edit them.`} />
       )}
 
       <DndContext
@@ -285,7 +287,9 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
   trigger: AutomationTrigger;
   registerList: (node: HTMLUListElement | null) => void;
 }) {
+  const { t } = useLingui();
   const rows = rowsFor(props.drafts, trigger);
+  const columnName = props.column.name;
   // A group no row could ever run in (On task enter in To Do or Done; On agent
   // turn end with no agent here, or one that reports no turn end) is replaced
   // by the reason rather than shown empty with an Add control that would build
@@ -296,7 +300,7 @@ function AutomationGroup({ trigger, registerList, ...props }: AutomationsPanePro
   const group = canTriggerRun(columnFacts({ ...props.column, reportsTurnEnd: props.reportsTurnEnd }), trigger);
   const blockedReason = group.ok
     ? null
-    : (trigger === 'enter' ? `Nothing runs when a task enters ${props.column.name}.` : translateText(group.reason));
+    : (trigger === 'enter' ? t`Nothing runs when a task enters ${columnName}.` : translateText(group.reason));
 
   return (
     <section data-testid="column-automation-group" data-trigger={trigger}>
@@ -335,7 +339,7 @@ function AddAutomationButton({ trigger, onAdd }: { trigger: AutomationTrigger; o
       className="mt-1 flex w-full cursor-pointer items-center justify-center gap-1.5 rounded border border-dashed border-edge/70 py-1.5 text-xs text-fg-muted transition-colors hover:border-edge hover:text-fg-tertiary"
     >
       <Plus size={13} />
-      Add automation
+      <Trans>Add automation</Trans>
     </button>
   );
 }
@@ -352,6 +356,8 @@ function AutomationRow({
   isDirty,
   reorderable,
 }: AutomationsPaneProps & { draft: AutomationDraft; index: number; reorderable: boolean }) {
+  const { t } = useLingui();
+  const name = draft.name;
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: draft.id });
   const runnable = canRunRow(draft, { ...column, reportsTurnEnd });
   const entry = AUTOMATION_MANIFEST[draft.type];
@@ -413,7 +419,7 @@ function AutomationRow({
         {...(reorderable ? attributes : {})}
         {...(reorderable ? listeners : {})}
         {...(reorderable
-          ? { 'data-drag-handle': true, 'data-no-dismiss': true, 'aria-label': `Reorder ${draft.name}` }
+          ? { 'data-drag-handle': true, 'data-no-dismiss': true, 'aria-label': t`Reorder ${name}` }
           // Not a handle, so it is not announced as one and the light-dismiss
           // denylist has nothing to exempt: it is inert padding at this point.
           : { 'aria-hidden': true })}
@@ -495,7 +501,7 @@ function AutomationRow({
               picker's copy rows draw the same component. */}
           <AutomationMarks marks={marks} />
           {isDirty(draft) && (
-            <Tooltip label="Unsaved">
+            <Tooltip label={t`Unsaved`}>
               <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
             </Tooltip>
           )}
@@ -518,7 +524,7 @@ function AutomationRow({
             the row itself, not history, so it stays. */}
         {legacy && (
           <span data-testid="column-automation-lint" className="block truncate text-xs text-warning">
-            This is handled by the column&apos;s settings now. Remove it to use them.
+            <Trans>This is handled by the column&apos;s settings now. Remove it to use them.</Trans>
           </span>
         )}
       </span>
@@ -527,7 +533,7 @@ function AutomationRow({
         <>
           <RowButton
             testId="column-automation-edit"
-            label={`Edit ${draft.name}`}
+            label={t`Edit ${name}`}
             onClick={() => onEdit(draft)}
           >
             <Pencil size={13} />
@@ -537,7 +543,7 @@ function AutomationRow({
               undoes it. */}
           <RowButton
             testId="column-automation-delete"
-            label={`Delete ${draft.name}`}
+            label={t`Delete ${name}`}
             onClick={() => onDelete(draft)}
           >
             <Trash2 size={13} />
@@ -552,7 +558,7 @@ function AutomationRow({
       <span onClick={(event) => event.stopPropagation()} className="flex">
         <ToggleSwitch
           testId="column-automation-enabled"
-          ariaLabel={`${draft.name} enabled`}
+          ariaLabel={t`${name} enabled`}
           disabledReason={runnable.ok ? undefined : translateText(runnable.reason)}
           checked={switchedOn}
           disabled={readOnly || !runnable.ok}

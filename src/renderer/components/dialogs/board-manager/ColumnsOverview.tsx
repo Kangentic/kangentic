@@ -1,5 +1,6 @@
 import { createElement, type ReactNode } from 'react';
 import { Bot, CircleArrowUp, Columns3Cog, MessageSquare } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { DataTable, type DataTableColumn, type DataTableColumnGroup } from '../../DataTable';
 import { Tooltip } from '../../Tooltip';
 import { Pill } from '../../Pill';
@@ -139,13 +140,14 @@ function OverviewCell({ value }: { value: OverviewValue }) {
  * newer model in the column's own Model field.
  */
 function NewerMark({ newer }: { newer?: string }) {
+  const { t } = useLingui();
   if (!newer) return null;
   return (
-    <Tooltip label={`${newer} available`}>
+    <Tooltip label={t`${newer} available`}>
       <span
         data-overview-newer
         role="img"
-        aria-label={`${newer} available`}
+        aria-label={t`${newer} available`}
         className="ml-1 inline-flex flex-shrink-0 align-middle text-fg-faint"
       >
         <CircleArrowUp size={12} />
@@ -199,15 +201,16 @@ function OverviewColumnIcon({ row }: { row: OverviewRow }) {
 }
 
 export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
+  const { t } = useLingui();
   // The bands mirror the column page's cards and their order exactly, so "On
   // enter" appears once on the screen and means one thing. Their icons are the
   // same glyphs the SectionCard headers and the rail count use, and they are the
   // only icons in the table.
   const columnGroups: DataTableColumnGroup[] = [
     { label: '', span: 1 },
-    { label: 'Agent', span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
-    { label: 'Conversation', span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
-    { label: 'Automations', span: 3, icon: <Columns3Cog size={12} strokeWidth={1.75} /> },
+    { label: t({ message: 'Agent', context: 'board overview group' }), span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
+    { label: t`Conversation`, span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
+    { label: t`Automations`, span: 3, icon: <Columns3Cog size={12} strokeWidth={1.75} /> },
   ];
 
   // The widths reach the table through DataTable's <colgroup>; a grouped
@@ -220,45 +223,45 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
   const columns: DataTableColumn<OverviewRow>[] = [
     {
       key: 'name',
-      label: 'Column',
+      label: t({ message: 'Column', context: 'board overview column header' }),
       width: 'w-[12%]',
       render: (row) => (
         <span className="flex items-center gap-2 min-w-0">
           <OverviewColumnIcon row={row} />
-          <span className="truncate text-fg">{row.name || 'Untitled'}</span>
+          <span className="truncate text-fg">{row.name || t`Untitled`}</span>
           {row.role && (
             <Pill size="sm" className="bg-surface-hover/60 text-fg-faint flex-shrink-0">
-              {row.role === 'todo' ? 'To Do' : 'Done'}
+              {row.role === 'todo' ? t({ message: 'To Do', context: 'column role' }) : t({ message: 'Done', context: 'column role' })}
             </Pill>
           )}
           {row.dirty && (
-            <span aria-label="unsaved changes" className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
+            <span aria-label={t`unsaved changes`} className="w-1.5 h-1.5 rounded-full bg-accent flex-shrink-0" />
           )}
         </span>
       ),
     },
-    { key: 'autoSpawn', label: 'Start', width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
-    { key: 'agent', label: 'Agent', width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
-    { key: 'model', label: 'Model', width: 'w-[10%]', render: (row) => <OverviewCell value={row.model} /> },
-    { key: 'effort', label: 'Effort', width: 'w-[7%]', render: (row) => <OverviewCell value={row.effort} /> },
-    { key: 'permission', label: 'Permissions', width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
-    { key: 'handoff', label: 'Handoff', width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
-    { key: 'session', label: 'Session', width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
+    { key: 'autoSpawn', label: t({ message: 'Start', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
+    { key: 'agent', label: t({ message: 'Agent', context: 'board overview column header' }), width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
+    { key: 'model', label: t({ message: 'Model', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.model} /> },
+    { key: 'effort', label: t({ message: 'Effort', context: 'board overview column header' }), width: 'w-[7%]', render: (row) => <OverviewCell value={row.effort} /> },
+    { key: 'permission', label: t({ message: 'Permissions', context: 'board overview column header' }), width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
+    { key: 'handoff', label: t({ message: 'Handoff', context: 'board overview column header' }), width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
+    { key: 'session', label: t({ message: 'Session', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
     {
       key: 'onEnter',
-      label: 'On enter',
+      label: t`On enter`,
       width: 'w-[7%]',
       render: (row) => <span data-enter={row.onEnter.label}><OverviewCell value={row.onEnter} /></span>,
     },
     {
       key: 'onTurnEnd',
-      label: 'On turn end',
+      label: t`On turn end`,
       width: 'w-[8%]',
       render: (row) => <span data-turn-end={row.onTurnEnd.label}><OverviewCell value={row.onTurnEnd} /></span>,
     },
     {
       key: 'onExit',
-      label: 'On exit',
+      label: t`On exit`,
       width: 'w-[7%]',
       render: (row) => <span data-exit={row.onExit.label}><OverviewCell value={row.onExit} /></span>,
     },

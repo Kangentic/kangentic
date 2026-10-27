@@ -66,18 +66,21 @@ function tint(color: string, percent: number): string {
 
 /** The card's own Active / Idle mark: a status, not a button. */
 function TaskActivityMark({ task, size }: { task: Task; size: number }) {
+  const { t } = useLingui();
   const view = useTaskCardViewModel(task);
   if (view.isThinking) {
+    const activeLabel = t({ message: 'Active', context: 'task activity' });
     return (
-      <Tooltip label="Active">
-        <span className="inline-flex shrink-0 text-active" role="img" aria-label="Active"><ActivityMark mark="agent-working" size={size} /></span>
+      <Tooltip label={activeLabel}>
+        <span className="inline-flex shrink-0 text-active" role="img" aria-label={activeLabel}><ActivityMark mark="agent-working" size={size} /></span>
       </Tooltip>
     );
   }
   if (view.isIdle) {
+    const idleLabel = t({ message: 'Idle', context: 'task activity' });
     return (
-      <Tooltip label="Idle">
-        <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Idle"><ActivityMark mark="agent-idle" size={size} /></span>
+      <Tooltip label={idleLabel}>
+        <span className="inline-flex shrink-0 text-attention" role="img" aria-label={idleLabel}><ActivityMark mark="agent-idle" size={size} /></span>
       </Tooltip>
     );
   }
@@ -144,6 +147,7 @@ function EndRow({ end, current, color, icon, name }: {
   icon: string | null;
   name: string;
 }) {
+  const { t } = useLingui();
   const rail = end === 'todo'
     ? <Rail above={false} below aboveColor={RAIL_AHEAD} belowColor={current ? RAIL_AHEAD : RAIL_DONE} node={<RailNode kind={current ? 'current' : 'done'} color={color} />} />
     : <Rail above below={false} aboveColor={current ? RAIL_DONE : RAIL_AHEAD} belowColor={RAIL_AHEAD} node={<RailNode kind={current ? 'current' : 'end'} color={color} />} />;
@@ -162,7 +166,7 @@ function EndRow({ end, current, color, icon, name }: {
         checked
         onChange={() => undefined}
         disabled
-        disabledReason={end === 'todo' ? `Every route starts in ${name}` : `Every route ends in ${name}`}
+        disabledReason={end === 'todo' ? t`Every route starts in ${name}` : t`Every route ends in ${name}`}
         ariaLabel={name}
       />
     </div>
@@ -182,6 +186,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
   doneColumnColor: string;
   ends: WorkflowBoardEnds | null;
 }) {
+  const { t } = useLingui();
   const steps = task.steps;
   const firstOn = steps.findIndex((step) => step.state !== 'skipped');
   // The furthest row the task has reached: its current column, every row for a
@@ -201,6 +206,9 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
       {steps.map((step, index) => {
         const on = step.state !== 'skipped';
         const refusal = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : stepRefusal(task, index);
+        // Named, so the translator reads {stepName}, not a member expression.
+        const stepName = step.name;
+        const toggleLabel = on ? t`Skip ${stepName}` : t`Include ${stepName}`;
         const color = step.color ?? 'var(--color-fg-faint)';
         const kind = !on ? null : step.state === 'done' ? 'done' : step.state === 'current' ? 'current' : 'ahead';
         const interactive = refusal === null;
@@ -237,16 +245,16 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
                 checked={on}
                 onChange={() => onToggle(step)}
                 disabled={!interactive}
-                tip={`${on ? 'Skip' : 'Include'} ${step.name}`}
+                tip={toggleLabel}
                 disabledReason={refusal ?? undefined}
-                ariaLabel={`${on ? 'Skip' : 'Include'} ${step.name}`}
+                ariaLabel={toggleLabel}
                 testId={`workflow-route-switch-${step.swimlaneId}`}
               />
             </span>
           </div>
         );
       })}
-      <EndRow end="done" current={task.place === 'done'} color={doneColumnColor} icon={ends?.done?.icon ?? null} name={ends?.done?.name ?? 'Done'} />
+      <EndRow end="done" current={task.place === 'done'} color={doneColumnColor} icon={ends?.done?.icon ?? null} name={ends?.done?.name ?? t({ message: 'Done', context: 'column role' })} />
     </div>
   );
 }
@@ -257,6 +265,7 @@ function RouteRows({ task, held, onToggle, doneColumnColor, ends }: {
 
 /** Where a linked task is, as its card strip names it: To Do until it starts, its column while it works. */
 function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName: string | null }) {
+  const { t } = useLingui();
   const current = task.steps.find((step) => step.state === 'current');
   const prefix = projectName ? `${projectName} / ` : '';
   if (task.place === 'working' && current) {
@@ -270,7 +279,7 @@ function LinkColumn({ task, projectName }: { task: WorkflowViewTask; projectName
   return (
     <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
       <Layers size={11} strokeWidth={1.75} className="text-fg-faint" />
-      {prefix}To Do
+      {prefix}{t({ message: 'To Do', context: 'column role' })}
     </span>
   );
 }
@@ -282,6 +291,8 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
   onSelect: () => void;
   onRemove: () => void;
 }) {
+  const { t } = useLingui();
+  const removeLinkLabel = t`Remove link`;
   const number = linked.displayId ? <span className="shrink-0 font-mono text-xs text-fg-muted" data-testid="workflow-link-number">#{linked.displayId}</span> : null;
   return (
     <div className="flex items-stretch min-h-9 border border-edge/60 rounded-md bg-surface/35 overflow-hidden" data-testid="workflow-link-row" data-task-key={linked.key}>
@@ -302,12 +313,12 @@ function LinkRow({ linked, projectName, removeRefusal, onSelect, onRemove }: {
           </>
         )}
       </button>
-      <Tooltip label={tipLabel({ disabled: removeRefusal !== null, disabledReason: removeRefusal, tip: 'Remove link' })}>
+      <Tooltip label={tipLabel({ disabled: removeRefusal !== null, disabledReason: removeRefusal, tip: removeLinkLabel })}>
         <button
           type="button"
           onClick={onRemove}
           disabled={removeRefusal !== null}
-          aria-label="Remove link"
+          aria-label={removeLinkLabel}
           className="w-9 shrink-0 flex items-center justify-center border-l border-edge/60 text-fg-muted enabled:hover:text-fg enabled:hover:bg-surface-hover/40 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-unlink"
         >
@@ -326,6 +337,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
   onAdd: (blockerKey: string) => void;
   projectNameOf: (viewTask: WorkflowViewTask) => string | null;
 }) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -354,7 +366,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
 
   return (
     <>
-      <Tooltip label={tipLabel({ disabled: refusal !== null, disabledReason: refusal, tip: 'Make this task wait for another' })} enabled={!open}>
+      <Tooltip label={tipLabel({ disabled: refusal !== null, disabledReason: refusal, tip: t`Make this task wait for another` })} enabled={!open}>
         <button
           ref={triggerRef}
           type="button"
@@ -363,7 +375,7 @@ function AddBlocker({ detail, task, refusal, onAdd, projectNameOf }: {
           className="flex items-center justify-center gap-1.5 w-full h-[30px] mt-2 rounded border border-dashed border-edge text-xs text-fg-faint enabled:hover:text-fg-muted enabled:hover:border-edge-input disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
           data-testid="workflow-add-blocker"
         >
-          <Plus size={13} />Add blocker
+          <Plus size={13} /><Trans>Add blocker</Trans>
         </button>
       </Tooltip>
       <OverlayPopover
@@ -446,17 +458,16 @@ export function WorkflowInspector(props: WorkflowInspectorProps) {
 }
 
 function RunOrderRowMark({ task }: { task: Task }) {
+  const { t } = useLingui();
   const view = useTaskCardViewModel(task);
   if (!view.isIdle) return null;
+  const waitingLabel = t`Waiting for you`;
   return (
-    <Tooltip label="Waiting for you">
-      <span className="inline-flex shrink-0 text-attention" role="img" aria-label="Waiting for you"><ActivityMark mark="agent-idle" size={14} /></span>
+    <Tooltip label={waitingLabel}>
+      <span className="inline-flex shrink-0 text-attention" role="img" aria-label={waitingLabel}><ActivityMark mark="agent-idle" size={14} /></span>
     </Tooltip>
   );
 }
-
-const AUTOMATIC_TIP = 'Approve this task\'s plans for you. Questions the agent asks still wait.';
-const MANUAL_TIP = 'You approve this task\'s plans.';
 
 /**
  * A task's own plan approval, above its route. What is lit is what happens:
@@ -474,6 +485,7 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
   held: boolean;
   onSetTaskPlanApproval?: (key: string, planApproval: PlanApproval | null) => void;
 }) {
+  const { t } = useLingui();
   const view = task.planApproval;
   // Memoized: SegmentedControl keys its measuring effect on the options array.
   const options = useMemo((): SegmentedControlOption<PlanApproval>[] => {
@@ -484,22 +496,22 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
     return [
       {
         value: 'automatic',
-        label: 'Automatic',
-        tip: view.value === 'automatic' ? litTip : AUTOMATIC_TIP,
+        label: t({ message: 'Automatic', context: 'plan approval' }),
+        tip: view.value === 'automatic' ? litTip : t`Approve this task's plans for you. Questions the agent asks still wait.`,
         testId: 'workflow-task-plan-approval-automatic',
         disabled: held || !view.canApprove,
         disabledReason: heldReason ?? automaticOff,
       },
       {
         value: 'manual',
-        label: 'Manual',
-        tip: view.value === 'manual' ? litTip : MANUAL_TIP,
+        label: t({ message: 'Manual', context: 'plan approval' }),
+        tip: view.value === 'manual' ? litTip : t`You approve this task's plans.`,
         testId: 'workflow-task-plan-approval-manual',
         disabled: held,
         disabledReason: heldReason,
       },
     ];
-  }, [view, held]);
+  }, [view, held, t]);
   if (!view || view.passed) return null;
   return (
     <section
@@ -507,7 +519,7 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
       data-testid="workflow-task-plan-approval-section"
       data-set={view.set ?? 'columns'}
     >
-      <SectionHeading>Plan approval</SectionHeading>
+      <SectionHeading><Trans>Plan approval</Trans></SectionHeading>
       <SegmentedControl
         options={options}
         value={view.value}
@@ -522,7 +534,7 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
         disabled={held || !onSetTaskPlanApproval}
         fullWidth
         quiet
-        ariaLabel="Plan approval"
+        ariaLabel={t`Plan approval`}
         testId="workflow-task-plan-approval"
       />
     </section>
@@ -530,15 +542,16 @@ function TaskPlanApprovalSection({ task, held, onSetTaskPlanApproval }: {
 }
 
 function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorProps) {
+  const { t } = useLingui();
   const groups = useMemo(() => runOrder(detail)
     .map((group) => group.filter((task) => !visibleKeys || visibleKeys.has(task.key)))
     .filter((group) => group.length > 0), [detail, visibleKeys]);
   return (
     <>
-      <div className="shrink-0 px-4 pt-3.5 pb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint">Run order</div>
+      <div className="shrink-0 px-4 pt-3.5 pb-2.5 text-[11px] font-semibold uppercase tracking-[0.06em] text-fg-faint"><Trans>Run order</Trans></div>
       <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-3" data-testid="workflow-run-order">
         {groups.length === 0 && (
-          <div className="px-2 py-1.5 text-sm text-fg-faint">{detail.tasks.length === 0 ? 'No tasks yet.' : 'No task matches the search.'}</div>
+          <div className="px-2 py-1.5 text-sm text-fg-faint">{detail.tasks.length === 0 ? t`No tasks yet.` : t`No task matches the search.`}</div>
         )}
         {groups.map((group, index) => (
           <div key={group[0].key} className="relative flex gap-2 pb-3">
@@ -553,7 +566,7 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
             </div>
             <div className="flex-1 min-w-0">
               {group.map((task) => (
-                <Tooltip key={task.key} label="Select this task">
+                <Tooltip key={task.key} label={t`Select this task`}>
                   <button
                     type="button"
                     onClick={() => onSelectTask(task.key)}
@@ -626,6 +639,7 @@ function TaskPanel({
   onOpenWorkflow,
   onSetTaskPlanApproval,
 }: WorkflowInspectorProps & { task: WorkflowViewTask }) {
+  const { t } = useLingui();
   const acrossBoards = detail.tasks.some((other) => other.projectId !== detail.homeProjectId);
   const projectNameOf = (viewTask: WorkflowViewTask): string | null => (acrossBoards ? detail.projectNames[viewTask.projectId] ?? null : null);
   const blockedBy = detail.links.filter((link) => link.blockedKey === task.key).map((link) => findTask(detail, link.blockerKey)).filter((linked): linked is WorkflowViewTask => linked !== null);
@@ -635,14 +649,18 @@ function TaskPanel({
   const addRefusal = useMemo(() => (held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : addBlockerRefusal(detail, task)), [held, detail, task]);
   const removeReason = held ? translateText(WORKFLOW_REFUSAL_MESSAGES.agentWorking) : removeRefusal(task);
   const onAnotherBoard = task.projectId !== detail.homeProjectId;
-  const openLabel = variant === 'taskDetail' ? 'Open workflow' : onAnotherBoard ? `Open on ${detail.projectNames[task.projectId] ?? 'its board'}` : 'Open task';
+  // A board's name is data; the stand-in names a board the read could not.
+  const otherBoardName = detail.projectNames[task.projectId] ?? t({ message: 'its board', context: 'stand-in for a project name' });
+  const openLabel = variant === 'taskDetail' ? t`Open workflow` : onAnotherBoard ? t`Open on ${otherBoardName}` : t`Open task`;
   // A finished workflow has left the picker, so there is nothing to open; the
   // panel stays as the task's history, its controls disabled by their guards.
+  const workflowTitle = detail.workflow.title;
   const openRefusal = variant !== 'taskDetail'
     ? null
     : detail.workflow.state === 'done'
-      ? `${detail.workflow.title} is complete.`
-      : onOpenWorkflow ? null : 'Open the main window to see the workflow.';
+      ? t`${workflowTitle} is complete.`
+      : onOpenWorkflow ? null : t`Open the main window to see the workflow.`;
+  const boardName = detail.projectNames[task.projectId] ?? '';
 
   const toggleStep = (step: WorkflowRouteStep) => {
     const next = toggledRoute(task.steps, step.swimlaneId);
@@ -676,22 +694,22 @@ function TaskPanel({
         <section className="px-4 py-3.5 border-b border-edge/60">
           <SectionHeading
             trailing={acrossBoards ? (
-              <Tooltip label={detail.projectNames[task.projectId] ? `Columns on the ${detail.projectNames[task.projectId]} board` : 'Columns on its board'}>
+              <Tooltip label={boardName ? t`Columns on the ${boardName} board` : t`Columns on its board`}>
                 <span
                   className="ml-auto inline-flex items-center gap-1 text-xs font-medium normal-case tracking-normal text-fg-muted"
                   data-testid="workflow-route-board"
                 >
-                  <Folder size={12} />{detail.projectNames[task.projectId] ?? ''}
+                  <Folder size={12} />{boardName}
                 </span>
               </Tooltip>
             ) : undefined}
           >
-            Route
+            <Trans context="workflow section">Route</Trans>
           </SectionHeading>
           <RouteRows task={task} held={held} onToggle={toggleStep} doneColumnColor={otherBoardDoneColor(detail, task) ?? doneColumnColor} ends={detail.boardEnds[task.projectId] ?? null} />
         </section>
         <section className={`px-4 py-3.5 ${blocking.length > 0 ? 'border-b border-edge/60' : ''}`}>
-          <SectionHeading count={blockedBy.length}>Blocked by</SectionHeading>
+          <SectionHeading count={blockedBy.length}><Trans context="workflow section">Blocked by</Trans></SectionHeading>
           <div className="flex flex-col gap-1.5">
             {blockedBy.map((linked) => (
               <LinkRow
@@ -711,7 +729,7 @@ function TaskPanel({
         </section>
         {blocking.length > 0 && (
           <section className="px-4 py-3.5">
-            <SectionHeading count={blocking.length}>Blocking</SectionHeading>
+            <SectionHeading count={blocking.length}><Trans context="workflow section">Blocking</Trans></SectionHeading>
             <div className="flex flex-col gap-1.5">
               {blocking.map((linked) => (
                 <LinkRow
@@ -728,7 +746,7 @@ function TaskPanel({
         )}
       </div>
       <div className="grid grid-cols-2 gap-2 shrink-0 px-4 py-3.5 whitespace-nowrap" data-testid="workflow-inspector-footer">
-        <Tooltip label={tipLabel({ disabled: removeReason !== null, disabledReason: removeReason, tip: 'Take this task out of the workflow' })}>
+        <Tooltip label={tipLabel({ disabled: removeReason !== null, disabledReason: removeReason, tip: t`Take this task out of the workflow` })}>
           <button
             type="button"
             onClick={() => onRequestRemove(task.key)}
@@ -736,7 +754,7 @@ function TaskPanel({
             className="inline-flex items-center justify-center gap-1.5 py-2 rounded border border-edge-input text-[13px] text-fg-secondary enabled:hover:bg-surface-hover/40 disabled:opacity-45 disabled:cursor-not-allowed transition-colors"
             data-testid="workflow-remove-task"
           >
-            <X size={14} />Remove
+            <X size={14} /><Trans>Remove</Trans>
           </button>
         </Tooltip>
         {/* The tip is the full label, which the button can cut short, or the

@@ -16,6 +16,7 @@
  */
 import { useEffect, useRef, useState } from 'react';
 import { Check, ChevronDown } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../../OverlayPopover';
 import { Tooltip } from '../../Tooltip';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
@@ -34,6 +35,7 @@ export interface AutomationTypePickerProps {
 }
 
 export function AutomationTypePicker({ value, options, onChange, testId, ariaLabel }: AutomationTypePickerProps) {
+  const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -124,7 +126,7 @@ export function AutomationTypePicker({ value, options, onChange, testId, ariaLab
             const isSelected = type === value;
             return (
               // Only a retired type has a tip: the reason it cannot be chosen.
-              <Tooltip key={type} label={isLegacy ? 'This type is retired and cannot be chosen.' : ''}>
+              <Tooltip key={type} label={isLegacy ? t`This type is retired and cannot be chosen.` : ''}>
                 <button
                   type="button"
                   role="option"

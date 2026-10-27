@@ -1,5 +1,6 @@
 import React from 'react';
 import { Info, type LucideIcon } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../../Tooltip';
 import { SETTING_LABEL_CLASS, SETTING_DESCRIPTION_CLASS } from '../../SettingText';
 
@@ -45,6 +46,7 @@ export function SectionCard({ id, label, icon: SectionIcon, info, actions, child
   children: React.ReactNode;
   className?: string;
 }) {
+  const { t } = useLingui();
   return (
     <section
       data-testid={`board-manager-section-${id}`}
@@ -70,7 +72,7 @@ export function SectionCard({ id, label, icon: SectionIcon, info, actions, child
             <button
               type="button"
               data-testid={`board-manager-section-${id}-info`}
-              aria-label={`About ${label}`}
+              aria-label={t`About ${label}`}
               className="flex shrink-0 rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent cursor-help"
             >
               <Info size={13} aria-hidden="true" />

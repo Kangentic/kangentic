@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo, type ReactNode } from 'react';
 import { Check, ChevronDown, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { OverlayPopover } from '../OverlayPopover';
 import { Tooltip } from '../Tooltip';
 import { usePopoverPosition } from '../../hooks/usePopoverPosition';
@@ -72,7 +73,7 @@ export function Combobox({
   value,
   onChange,
   options,
-  placeholder = 'Default',
+  placeholder,
   className = '',
   testId = 'combobox',
   onOpen,
@@ -81,7 +82,12 @@ export function Combobox({
   placeholderVariant = 'resolved',
   leadingIcon,
 }: ComboboxProps) {
+  const { t } = useLingui();
+  // The default resolves here, not in the parameter list, so it reads the session's catalog.
+  const placeholderText = placeholder ?? t({ message: 'Default', context: 'placeholder' });
+  const clearLabel = t`Clear`;
   const [isOpen, setIsOpen] = useState(false);
+  const dropdownToggleLabel = isOpen ? t`Close dropdown` : t`Open dropdown`;
   const [filterText, setFilterText] = useState('');
   const inputRef = useRef<HTMLInputElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -272,7 +278,7 @@ export function Combobox({
           onChange={(e) => handleInputChange(e.target.value)}
           onFocus={handleInputFocus}
           onKeyDown={handleInputKeyDown}
-          placeholder={placeholder}
+          placeholder={placeholderText}
           data-testid={testId}
           disabled={disabled}
           // `fg-tertiary`, matching FIELD_CONTROL_BASE: see the note there on
@@ -282,12 +288,12 @@ export function Combobox({
           }`}
         />
         {allowClear && value && !disabled && (
-          <Tooltip label="Clear">
+          <Tooltip label={clearLabel}>
             <button
               type="button"
               onClick={handleClear}
               className="p-1 text-fg-faint hover:text-fg-muted transition-colors flex-shrink-0"
-              aria-label="Clear"
+              aria-label={clearLabel}
             >
               <X size={16} />
             </button>
@@ -296,13 +302,13 @@ export function Combobox({
         {options.length > 0 && (
           // Shut while disabled. A host that wraps the field in its own tip says why it is
           // off, and that tip shows instead.
-          <Tooltip label={isOpen ? 'Close dropdown' : 'Open dropdown'} enabled={!disabled}>
+          <Tooltip label={dropdownToggleLabel} enabled={!disabled}>
             <button
               type="button"
               onClick={handleToggleDropdown}
               disabled={disabled}
               className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input disabled:cursor-not-allowed"
-              aria-label={isOpen ? 'Close dropdown' : 'Open dropdown'}
+              aria-label={dropdownToggleLabel}
             >
               <ChevronDown
                 size={16}
@@ -356,7 +362,7 @@ export function Combobox({
             );
           })
         ) : (
-          <div className="px-3 py-2 text-xs text-fg-faint text-center">No matches</div>
+          <div className="px-3 py-2 text-xs text-fg-faint text-center"><Trans>No matches</Trans></div>
         )}
       </OverlayPopover>
     </div>

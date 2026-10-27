@@ -1,8 +1,9 @@
 import { Fragment, type ReactElement } from 'react';
 import { Info } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../../Tooltip';
-import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-match';
 import { translateText } from '../../../i18n/translate';
+import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-match';
 
 /**
  * The info icon after the Text match hint, and the rich tip it opens: what `*`
@@ -19,16 +20,24 @@ import { translateText } from '../../../i18n/translate';
  * version below as the button's description.
  */
 export function WildcardExamplesTip(): ReactElement {
+  const { t } = useLingui();
+  // The tip as plain text, for a screen reader.
+  const rows = TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => {
+    const pattern = example.pattern;
+    const rule = translateText(example.rule).toLowerCase();
+    const sample = example.sample;
+    return sample !== null ? t`${pattern}: ${rule}, as in ${sample}` : t`${pattern}: ${rule}`;
+  }).join('. ');
   return (
     <Tooltip
-      label={wildcardExamplesText()}
-      header={{ icon: <Info />, title: 'Wildcard examples' }}
+      label={t`Wildcard examples. ${rows}.`}
+      header={{ icon: <Info />, title: t`Wildcard examples` }}
       content={<WildcardExamplesGrid />}
       testId="edit-automation-wildcard-tip"
     >
       <button
         type="button"
-        aria-label="Wildcard examples"
+        aria-label={t`Wildcard examples`}
         data-testid="edit-automation-wildcard-info"
         className="inline-flex flex-shrink-0 cursor-help rounded text-fg-faint hover:text-fg-tertiary focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
       >
@@ -42,24 +51,20 @@ export function WildcardExamplesTip(): ReactElement {
 function WildcardExamplesGrid(): ReactElement {
   return (
     <div className="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-2">
-      {TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => (
-        <Fragment key={example.pattern}>
-          <code className="justify-self-start whitespace-pre rounded border border-edge-input bg-surface-control px-1.5 font-mono text-xs text-fg-secondary">
-            {example.pattern}
-          </code>
-          <span className="text-xs text-fg-tertiary">
-            {translateText(example.rule)}
-            {example.sample !== null && <span className="text-tooltip-rich-muted">, as in {example.sample}</span>}
-          </span>
-        </Fragment>
-      ))}
+      {TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => {
+        const sample = example.sample;
+        return (
+          <Fragment key={example.pattern}>
+            <code className="justify-self-start whitespace-pre rounded border border-edge-input bg-surface-control px-1.5 font-mono text-xs text-fg-secondary">
+              {example.pattern}
+            </code>
+            <span className="text-xs text-fg-tertiary">
+              {translateText(example.rule)}
+              {sample !== null && <span className="text-tooltip-rich-muted"><Trans>, as in {sample}</Trans></span>}
+            </span>
+          </Fragment>
+        );
+      })}
     </div>
   );
-}
-
-/** The tip as plain text, for a screen reader. */
-function wildcardExamplesText(): string {
-  const rows = TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => `${example.pattern}: ${translateText(example.rule).toLowerCase()}`
-    + (example.sample !== null ? `, as in ${example.sample}` : ''));
-  return `Wildcard examples. ${rows.join('. ')}.`;
 }

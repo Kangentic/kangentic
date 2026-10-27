@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { ExternalLink } from 'lucide-react';
 import type { Swimlane, Task, WorkflowViewTask } from '../../../shared/types';
 import { useBoardStore } from '../../stores/board-store';
@@ -37,6 +38,7 @@ interface WorkflowCardMenuProps {
 }
 
 export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, onDelete }: WorkflowCardMenuProps) {
+  const { t } = useLingui();
   const currentProjectId = useProjectStore((state) => state.currentProject?.id ?? null);
   const onThisBoard = viewTask.projectId === currentProjectId;
   const taskId = viewTask.task.id;
@@ -66,25 +68,28 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   const workflow = boardWorkflowOf(summaries, homeSummaries, task, currentProjectId);
   // A click on a toast about the task opens it, on the task's own board.
   const openTask = () => openTaskFromNotification(viewTask.projectId, taskId);
+  const taskTitle = task.title;
   const reportMoved = (targetName: string) => {
     useToastStore.getState().addToast({
-      title: 'Task moved',
-      message: `"${task.title}" is now in ${targetName}.`,
+      title: t`Task moved`,
+      message: t`"${taskTitle}" is now in ${targetName}.`,
       variant: 'success',
       onOpen: openTask,
     });
   };
   const reportMoveFailure = (error: unknown) => {
+    const reason = asSentence(describeIpcError(error));
     useToastStore.getState().addToast({
-      title: "Couldn't move task",
-      message: `"${task.title}": ${asSentence(describeIpcError(error))}`,
+      title: t`Couldn't move task`,
+      message: t`"${taskTitle}": ${reason}`,
       variant: 'warning',
       onOpen: openTask,
     });
   };
 
   const moveTo = (targetSwimlaneId: string) => {
-    const targetName = swimlanes.find((lane) => lane.id === targetSwimlaneId)?.name ?? 'column';
+    // A column's own name is data; the stand-in is for a column that has left the list.
+    const targetName = swimlanes.find((lane) => lane.id === targetSwimlaneId)?.name ?? t({ message: 'column', context: 'stand-in for a column name' });
     if (onThisBoard) {
       const { tasks, moveTask } = useBoardStore.getState();
       const position = tasks.filter((candidate) => candidate.swimlane_id === targetSwimlaneId).length;
@@ -112,6 +117,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
   // stays the whole label, so it never reads as pausing the workflow.
   const laneRole = swimlanes.find((lane) => lane.id === task.swimlane_id)?.role ?? null;
   const sessionToggleRow = sessionToggleRowFor(displayKind, laneRole, task);
+  const displayId = task.display_id;
 
   return (
     <TaskContextMenu
@@ -127,7 +133,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
           data-testid="workflow-card-menu-open-on-board"
         >
           <ExternalLink size={14} className="text-fg-faint" />
-          Open on board
+          <Trans>Open on board</Trans>
         </button>
       )}
       sessionToggle={sessionToggleRow ? {
@@ -151,7 +157,7 @@ export function WorkflowCardMenu({ viewTask, position, onClose, onOpenOnBoard, o
       onToggleAutomations={() => { void toggleTaskAutomations(task, viewTask.projectId); }}
       moveRefusal={(laneId) => boardMoveRefusal(workflow, task, swimlanes.find((lane) => lane.id === laneId))}
       // Every card here is in a started workflow, so Backlog and Archive are refused.
-      sendAwayRefusal={sendAwayRefusal(workflow, task) ?? `Remove #${task.display_id} from its workflow first.`}
+      sendAwayRefusal={sendAwayRefusal(workflow, task) ?? t`Remove #${displayId} from its workflow first.`}
       onEdit={() => openHere(true)}
       onShowChanges={() => {
         // Keyed by task id, so safe for a task on any board.

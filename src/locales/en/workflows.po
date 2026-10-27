@@ -7,11 +7,663 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgid "\"{taskTitle}\" is now in {targetName}."
+msgstr "\"{taskTitle}\" is now in {targetName}."
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "\"{taskTitle}\": {reason}"
+msgstr "\"{taskTitle}\": {reason}"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{blockedCount} blocked"
+msgstr "{blockedCount} blocked"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "{doneCount} of {taskCount}"
+msgstr "{doneCount} of {taskCount}"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{doneCount} of {taskCount} done"
+msgstr "{doneCount} of {taskCount} done"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "{idleTasks} idle"
+msgstr "{idleTasks} idle"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{inProgressCount} in progress"
+msgstr "{inProgressCount} in progress"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "{name}, {countText}"
+msgstr "{name}, {countText}"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{progress}."
+msgstr "{progress}."
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{progress}. {counts}."
+msgstr "{progress}. {counts}."
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{queuedCount} queued"
+msgstr "{queuedCount} queued"
+
+#: src/renderer/components/workflows/WorkflowStrip.tsx
+msgid "{stopName}: done"
+msgstr "{stopName}: done"
+
+#: src/renderer/components/workflows/WorkflowStrip.tsx
+msgid "{stopName}: next"
+msgstr "{stopName}: next"
+
+#: src/renderer/components/workflows/WorkflowStrip.tsx
+msgid "{stopName}: now"
+msgstr "{stopName}: now"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "{taskCount, plural, one {# task} other {# tasks}}"
+msgstr "{taskCount, plural, one {# task} other {# tasks}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{taskCount, plural, one {Creates # task. It starts automatically.} other {Creates # tasks. They start automatically in the order this workflow sets.}}"
+msgstr "{taskCount, plural, one {Creates # task. It starts automatically.} other {Creates # tasks. They start automatically in the order this workflow sets.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{taskCount, plural, one {Deletes its # planned task and the agent conversation. Nothing else changes.} other {Deletes its # planned tasks and the agent conversation. Nothing else changes.}}"
+msgstr "{taskCount, plural, one {Deletes its # planned task and the agent conversation. Nothing else changes.} other {Deletes its # planned tasks and the agent conversation. Nothing else changes.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+msgstr "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
+msgstr "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "{workflowTitle} is complete."
+msgstr "{workflowTitle} is complete."
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "#{displayId}: {reason}"
+msgstr "#{displayId}: {reason}"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "task activity"
+msgid "Active"
+msgstr "Active"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Add a task to this workflow"
+msgstr "Add a task to this workflow"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Add blocker"
+msgstr "Add blocker"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Add task"
+msgstr "Add task"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Agent active"
+msgstr "Agent active"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Agent idle"
+msgstr "Agent idle"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Agent idle, last message {lastMessageTime}"
+msgstr "Agent idle, last message {lastMessageTime}"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Agent paused"
+msgstr "Agent paused"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Another project"
+msgstr "Another project"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Approve this task's plans for you. Questions the agent asks still wait."
+msgstr "Approve this task's plans for you. Questions the agent asks still wait."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Ask for changes"
+msgstr "Ask for changes"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Auto layout"
+msgstr "Auto layout"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "plan approval"
+msgid "Automatic"
+msgstr "Automatic"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "workflow section"
+msgid "Blocked by"
+msgstr "Blocked by"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "workflow section"
+msgid "Blocking"
+msgstr "Blocking"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Choose a workflow agent"
+msgstr "Choose a workflow agent"
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "Close workflow panel"
+msgstr "Close workflow panel"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Collapse agent"
+msgstr "Collapse agent"
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgctxt "stand-in for a column name"
+msgid "column"
+msgstr "column"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Columns on its board"
+msgstr "Columns on its board"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Columns on the {boardName} board"
+msgstr "Columns on the {boardName} board"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgctxt "workflow state"
+msgid "Complete"
+msgstr "Complete"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Couldn't delete task"
+msgstr "Couldn't delete task"
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgid "Couldn't move task"
+msgstr "Couldn't move task"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Create your first workflow"
+msgstr "Create your first workflow"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Delete"
+msgstr "Delete"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Delete {workflowTitle}?"
+msgstr "Delete {workflowTitle}?"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Deletes the agent conversation. Nothing else changes."
+msgstr "Deletes the agent conversation. Nothing else changes."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Dismiss"
+msgstr "Dismiss"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "column role"
+msgid "Done"
+msgstr "Done"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Drag to resize"
+msgstr "Drag to resize"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Edit Task"
+msgstr "Edit Task"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Every route ends in {name}"
+msgstr "Every route ends in {name}"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Every route starts in {name}"
+msgstr "Every route starts in {name}"
+
+#: src/renderer/components/workflows/LazyWorkflowsView.tsx
+msgid "Failed to load the workflows"
+msgstr "Failed to load the workflows"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Fit every card in view"
+msgstr "Fit every card in view"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Fit view"
+msgstr "Fit view"
+
+#: src/renderer/components/workflows/workflow-aria-labels.ts
+msgctxt "canvas link port"
+msgid "Handle"
+msgstr "Handle"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "task activity"
+msgid "Idle"
+msgstr "Idle"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Include {stepName}"
+msgstr "Include {stepName}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "It exists only in this workflow, so it is gone for good."
+msgstr "It exists only in this workflow, so it is gone for good."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "It plans your workflows, and starts when you ask for changes."
+msgstr "It plans your workflows, and starts when you ask for changes."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "It plans your workflows, and starts when you close Settings."
+msgstr "It plans your workflows, and starts when you close Settings."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "It starts when you close Settings."
+msgstr "It starts when you close Settings."
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "It stays where it is, as an ordinary task."
+msgstr "It stays where it is, as an ordinary task."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "stand-in for a project name"
+msgid "its board"
+msgstr "its board"
+
+#. Stands in for a column name inside "has reached ..."
+#: src/renderer/components/workflows/workflow-graph.ts
+msgid "its column"
+msgstr "its column"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Linked tasks that run through your board on their own."
+msgstr "Linked tasks that run through your board on their own."
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "Loading..."
+msgstr "Loading..."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Make this task wait for another"
+msgstr "Make this task wait for another"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "plan approval"
+msgid "Manual"
+msgstr "Manual"
+
+#: src/renderer/components/workflows/workflow-aria-labels.ts
+msgid "Moved selected node {direction, select, left {left} right {right} up {up} down {down} other {}}. New position, x: {x}, y: {y}"
+msgstr "Moved selected node {direction, select, left {left} right {right} up {up} down {down} other {}}. New position, x: {x}, y: {y}"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "New workflow"
+msgstr "New workflow"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "No card has been moved"
+msgstr "No card has been moved"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "No conversation yet"
+msgstr "No conversation yet"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No task matches the search."
+msgstr "No task matches the search."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "No tasks yet."
+msgstr "No tasks yet."
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "No workflow to start"
+msgstr "No workflow to start"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "No workflows"
+msgstr "No workflows"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgctxt "workflow state"
+msgid "Not started"
+msgstr "Not started"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Nothing planned yet"
+msgstr "Nothing planned yet"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Open on {otherBoardName}"
+msgstr "Open on {otherBoardName}"
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgid "Open on board"
+msgstr "Open on board"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Open Settings"
+msgstr "Open Settings"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Open task"
+msgstr "Open task"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Open the main window to see the workflow."
+msgstr "Open the main window to see the workflow."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Open workflow"
+msgstr "Open workflow"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Or right-click a task and choose New workflow."
+msgstr "Or right-click a task and choose New workflow."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Pause session"
+msgstr "Pause session"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgctxt "workflow state"
+msgid "Paused"
+msgstr "Paused"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Paused {pausedTime}"
+msgstr "Paused {pausedTime}"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Plan approval"
+msgstr "Plan approval"
+
+#: src/renderer/components/workflows/workflow-aria-labels.ts
+msgid "Press enter or space to select a node. Press escape to cancel."
+msgstr "Press enter or space to select a node. Press escape to cancel."
+
+#: src/renderer/components/workflows/workflow-aria-labels.ts
+msgid "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel."
+msgstr "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel."
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Press Start and the tasks run automatically in order until complete."
+msgstr "Press Start and the tasks run automatically in order until complete."
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Put moved cards back in the automatic layout"
+msgstr "Put moved cards back in the automatic layout"
+
+#: src/renderer/components/workflows/WorkflowCanvas.tsx
+msgid "Release on a task to make it wait for {blockerLabel}"
+msgstr "Release on a task to make it wait for {blockerLabel}"
+
+#: src/renderer/components/workflows/WorkflowTaskNode.tsx
+msgid "Release to make {blockedLabel} wait for {blockerLabel}"
+msgstr "Release to make {blockedLabel} wait for {blockerLabel}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Remove"
+msgstr "Remove"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Remove {label} from {workflowTitle}?"
+msgstr "Remove {label} from {workflowTitle}?"
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgid "Remove #{displayId} from its workflow first."
+msgstr "Remove #{displayId} from its workflow first."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Remove link"
+msgstr "Remove link"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Rename"
+msgstr "Rename"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Rename workflow"
+msgstr "Rename workflow"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Resize the workflow agent"
+msgstr "Resize the workflow agent"
+
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 msgctxt "automations"
+msgid "Resume"
+msgstr "Resume"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgctxt "workflow action"
 msgid "Resume"
 msgstr "Resume"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
 msgid "Resume automations"
 msgstr "Resume automations"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Resume session"
+msgstr "Resume session"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Resume workflow"
+msgstr "Resume workflow"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Resuming agent..."
+msgstr "Resuming agent..."
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Review the plan, and click a task to change its route or blockers."
+msgstr "Review the plan, and click a task to change its route or blockers."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "workflow section"
+msgid "Route"
+msgstr "Route"
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Route step refused"
+msgstr "Route step refused"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Run order"
+msgstr "Run order"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgctxt "workflow state"
+msgid "Running"
+msgstr "Running"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Running. Pause workflow"
+msgstr "Running. Pause workflow"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Save"
+msgstr "Save"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Select this task"
+msgstr "Select this task"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Show the workflow agent"
+msgstr "Show the workflow agent"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Skip {stepName}"
+msgstr "Skip {stepName}"
+
+#: src/renderer/components/workflows/WorkflowStrip.tsx
+msgid "Stalled"
+msgstr "Stalled"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "Stalled on {stalledCount, plural, one {# task} other {# tasks}}"
+msgstr "Stalled on {stalledCount, plural, one {# task} other {# tasks}}"
+
+#: src/renderer/components/workflows/workflow-text.ts
+msgid "Stalled on #{displayId}"
+msgstr "Stalled on #{displayId}"
+
+#: src/renderer/components/workflows/WorkflowStrip.tsx
+msgid "Stalled: {reason}"
+msgstr "Stalled: {reason}"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgctxt "workflow action"
+msgid "Start"
+msgstr "Start"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Start {workflowTitle}?"
+msgstr "Start {workflowTitle}?"
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Start this workflow"
+msgstr "Start this workflow"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "Start workflow"
+msgstr "Start workflow"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Starting agent..."
+msgstr "Starting agent..."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Starting the workflow agent..."
+msgstr "Starting the workflow agent..."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Take this task out of the workflow"
+msgstr "Take this task out of the workflow"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Task {sourceTaskLabel} moves to Done."
+msgstr "Task {sourceTaskLabel} moves to Done."
+
+#: src/renderer/components/workflows/WorkflowCardMenu.tsx
+msgid "Task moved"
+msgstr "Task moved"
+
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Tell the workflow agent what to build, and it plans the tasks."
+msgstr "Tell the workflow agent what to build, and it plans the tasks."
+
+#: src/renderer/components/workflows/workflow-graph.ts
+msgid "That task is no longer in this workflow."
+msgstr "That task is no longer in this workflow."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "The earlier conversation could not be resumed, so the agent started a new one."
+msgstr "The earlier conversation could not be resumed, so the agent started a new one."
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "The workflow agent has not seen this plan"
+msgstr "The workflow agent has not seen this plan"
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "The workflow this task is in could not be loaded."
+msgstr "The workflow this task is in could not be loaded."
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "The workflow this task was in no longer exists."
+msgstr "The workflow this task was in no longer exists."
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "This task is no longer in {workflowTitle}."
+msgstr "This task is no longer in {workflowTitle}."
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "This task is not in a workflow."
+msgstr "This task is not in a workflow."
+
+#: src/renderer/components/workflows/WorkflowHeader.tsx
+msgid "This workflow has no tasks yet."
+msgstr "This workflow has no tasks yet."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "column role"
+msgid "To Do"
+msgstr "To Do"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "View conversation"
+msgstr "View conversation"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Waiting for a free agent slot..."
+msgstr "Waiting for a free agent slot..."
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Waiting for you"
+msgstr "Waiting for you"
+
+#: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+msgid "Workflow"
+msgstr "Workflow"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Workflow agent"
+msgstr "Workflow agent"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Workflow agent chosen"
+msgstr "Workflow agent chosen"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgid "Workflow agent is waiting for you"
+msgstr "Workflow agent is waiting for you"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#: src/renderer/components/workflows/WorkflowsView.tsx
+msgid "Workflow agent is working"
+msgstr "Workflow agent is working"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "Workflow name"
+msgstr "Workflow name"
+
+#: src/renderer/components/workflows/WorkflowPicker.tsx
+msgid "Workflows"
+msgstr "Workflows"
+
+#: src/renderer/components/workflows/WorkflowAgentPane.tsx
+msgctxt "agent pane state"
+msgid "Working"
+msgstr "Working"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "You approve this task's plans."
+msgstr "You approve this task's plans."

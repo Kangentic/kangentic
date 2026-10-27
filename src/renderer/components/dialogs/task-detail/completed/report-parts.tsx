@@ -1,6 +1,10 @@
 import { useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Check, ChevronDown, Wrench } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
+import { msg } from '@lingui/core/runtime-macro';
+import { translateText } from '../../../../i18n/translate';
 import { ColumnGlyph } from '../../../../utils/swimlane-icons';
 import { prefersDarkText, readableTextOn } from '../../../../utils/readable-text';
 import { ToolBreakdownPopover } from '../../../terminal/ToolBreakdownPopover';
@@ -62,9 +66,10 @@ export function LinkButton({ children, onClick, testId }: { children: ReactNode;
  * pill's tip names it instead.
  */
 export function SessionPill({ conversationId, isolated = false }: { conversationId: string; isolated?: boolean }) {
+  const { t } = useLingui();
   const [copied, setCopied] = useState(false);
   return (
-    <Tooltip label={isolated ? 'Copy isolated conversation ID' : 'Copy conversation ID'} detail={conversationId}>
+    <Tooltip label={isolated ? t`Copy isolated conversation ID` : t`Copy conversation ID`} detail={conversationId}>
       <button
         type="button"
         onClick={() => {
@@ -131,8 +136,9 @@ export function ColumnLabel({ column }: { column: TaskReportColumn }) {
   );
 }
 
-/** The tooltip line a Route pill or stay row adds once it opens the conversation. */
-export const OPENS_CONVERSATION_DETAIL = 'Opens this part of the conversation';
+/** The tooltip line a Route pill or stay row adds once it opens the conversation.
+ *  A descriptor: resolve it with `translateText` where it renders. */
+export const OPENS_CONVERSATION_DETAIL = msg`Opens this part of the conversation`;
 
 const COLUMN_PILL_CLASS = 'flex h-[30px] items-center gap-[7px] whitespace-nowrap rounded-md pl-[5px] pr-2.5 text-xs tabular-nums';
 
@@ -168,7 +174,7 @@ export function ColumnPill({ column, label, tip, onClick }: {
     </>
   );
   return (
-    <Tooltip label={tip} detail={onClick ? OPENS_CONVERSATION_DETAIL : undefined}>
+    <Tooltip label={tip} detail={onClick ? translateText(OPENS_CONVERSATION_DETAIL) : undefined}>
       {onClick ? (
         <button
           type="button"
@@ -190,6 +196,7 @@ export function ColumnPill({ column, label, tip, onClick }: {
  * below it. A run with no per-tool rows on record shows its count alone.
  */
 export function ToolCallsPill({ count, rows, testId }: { count: number; rows: PerToolStat[]; testId?: string }) {
+  const { t } = useLingui();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   if (rows.length === 0) return <span className="tabular-nums">{count}</span>;
@@ -200,7 +207,7 @@ export function ToolCallsPill({ count, rows, testId }: { count: number; rows: Pe
         type="button"
         onClick={() => setOpen((previous) => !previous)}
         aria-expanded={open}
-        aria-label={`${count} tool calls, by tool`}
+        aria-label={t`${plural(count, { one: '# tool call, by tool', other: '# tool calls, by tool' })}`}
         className={`inline-flex h-6 items-center gap-1 rounded border pl-[7px] pr-[5px] tabular-nums transition-colors ${
           open ? 'border-fg-faint bg-surface-hover' : 'border-edge hover:bg-surface-hover'
         }`}

@@ -1,4 +1,6 @@
 import { useSessionStore } from '../../../stores/session-store';
+import { i18n } from '@lingui/core';
+import { msg } from '@lingui/core/runtime-macro';
 import { useToastStore } from '../../../stores/toast-store';
 import { useWindowStore } from '../../../window-manager/store/window-store';
 import { captureTerminalScrollback } from '../../../utils/terminal-capture-registry';
@@ -56,8 +58,8 @@ export async function openTaskConversation(taskId: string, projectId: string | n
   const sessionId = reusedWindow?.anchor ?? liveSessionId ?? newestSessionId;
   if (!sessionId) {
     useToastStore.getState().addToast({
-      title: 'No conversation yet',
-      message: 'This task has no conversation history.',
+      title: i18n._(msg`No conversation yet`),
+      message: i18n._(msg`This task has no conversation history.`),
       variant: 'info',
     });
     return;

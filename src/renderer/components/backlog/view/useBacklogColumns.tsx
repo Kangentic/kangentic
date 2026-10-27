@@ -1,4 +1,5 @@
 import { useMemo } from 'react';
+import { useLingui } from '@lingui/react/macro';
 import { ExternalLink } from 'lucide-react';
 import { GitHubIcon } from '../../icons/GitHubIcon';
 import { formatRelativeTime } from '../../../lib/datetime';
@@ -41,7 +42,16 @@ export function useBacklogColumns(input: {
     handleDelete,
   } = input;
 
-  return useMemo(() => [
+  const { t } = useLingui();
+
+  // `t` is in the memo's deps so the headers and tips follow the session's catalog.
+  return useMemo(() => {
+    const openInSourceLabel = (externalSource: string | null | undefined): string => {
+      // A provider's own name, so it is not translated; any other source shows its raw id.
+      const sourceName = externalSource?.startsWith('github') ? 'GitHub' : externalSource; // i18n-ok: a provider's own name
+      return t`Open in ${sourceName}`;
+    };
+    return [
     {
       key: 'select' as SortKey,
       label: '',
@@ -72,21 +82,21 @@ export function useBacklogColumns(input: {
     },
     {
       key: 'priority' as SortKey,
-      label: 'Priority',
+      label: t({ message: 'Priority', context: 'column header' }),
       width: 'w-[80px]',
       sortValue: (item) => item.priority,
       render: (item) => <PriorityBadge priority={item.priority} showLabel />,
     },
     {
       key: 'title' as SortKey,
-      label: 'Title',
+      label: t({ message: 'Title', context: 'column header' }),
       width: 'min-w-[300px]',
       sortValue: (item) => item.title.toLowerCase(),
       render: (item) => (
         <div className="min-w-0">
           <div className="flex items-center gap-1.5">
             {item.external_source && item.external_url && (
-              <Tooltip label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}>
+              <Tooltip label={openInSourceLabel(item.external_source)}>
                 <button
                   type="button"
                   className="shrink-0 text-fg-faint hover:text-fg transition-colors"
@@ -94,7 +104,7 @@ export function useBacklogColumns(input: {
                     event.stopPropagation();
                     window.electronAPI.shell.openExternal(item.external_url!);
                   }}
-                  aria-label={`Open in ${item.external_source?.startsWith('github') ? 'GitHub' : item.external_source}`}
+                  aria-label={openInSourceLabel(item.external_source)}
                 >
                   {item.external_source?.startsWith('github') ? <GitHubIcon size={13} /> : <ExternalLink size={13} />}
                 </button>
@@ -110,7 +120,7 @@ export function useBacklogColumns(input: {
     },
     {
       key: 'labels' as SortKey,
-      label: 'Labels',
+      label: t({ message: 'Labels', context: 'column header' }),
       width: 'w-[200px]',
       render: (item) =>
         item.labels.length > 0 ? (
@@ -133,7 +143,7 @@ export function useBacklogColumns(input: {
     },
     {
       key: 'created' as SortKey,
-      label: 'Created',
+      label: t({ message: 'Created', context: 'column header' }),
       align: 'right',
       width: 'w-[160px]',
       sortValue: (item) => item.created_at,
@@ -157,5 +167,6 @@ export function useBacklogColumns(input: {
         />
       ),
     },
-  ], [selectedIds, toggleSelected, selectAll, swimlanes, handleMoveSingle, handleEdit, handleDelete, labelColors]);
+    ];
+  }, [selectedIds, toggleSelected, selectAll, swimlanes, handleMoveSingle, handleEdit, handleDelete, labelColors, t]);
 }

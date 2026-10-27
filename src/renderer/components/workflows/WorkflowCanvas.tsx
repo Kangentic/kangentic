@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { LayoutGrid, Plus, Scan } from 'lucide-react';
 import {
   Background,
@@ -29,6 +30,7 @@ import { arrangeChange, arrangeStart, type ArrangeChange, type ArrangeStart } fr
 import { LINK_HINT_CLASS, WorkflowTaskNode, type WorkflowFlowNode, type WorkflowNodeData } from './WorkflowTaskNode';
 import { WorkflowConnectionLine, WorkflowEdge, WORKFLOW_EDGE_MARKERS, type WorkflowFlowEdge } from './WorkflowEdge';
 import { WorkflowDetailContext } from './workflow-canvas-context';
+import { buildWorkflowAriaLabelConfig } from './workflow-aria-labels';
 
 /**
  * The Workflows canvas: React Flow for the interaction layer (pan, zoom, card
@@ -184,8 +186,12 @@ export function WorkflowCanvas({
   onCardContextMenu,
   doneColumnColor,
 }: WorkflowCanvasProps) {
+  const { t } = useLingui();
   const density = useConfigStore((state) => state.config.cardDensity);
   const reactFlow = useReactFlow<WorkflowFlowNode, WorkflowFlowEdge>();
+  // React Flow's hidden screen-reader text, in the session's language. The
+  // session has one language, so this is built once per mount.
+  const ariaLabelConfig = useMemo(() => buildWorkflowAriaLabelConfig(), []);
   // The blocker a link is being drawn from, or null. Changes at the two ends of the gesture only.
   const linkingFrom = useConnection((connection) => (connection.inProgress ? connection.fromNode.id : null));
 
@@ -227,11 +233,11 @@ export function WorkflowCanvas({
       editable: editable && !planHeld,
       // Every card names its project, on one board or several, so a card has
       // one shape whatever the workflow spans (sign-off 4b).
-      projectName: detail.projectNames[task.projectId] ?? 'Another project',
+      projectName: detail.projectNames[task.projectId] ?? t`Another project`,
       doneColor: otherBoardDoneColor(detail, task),
       ends: detail.boardEnds[task.projectId] ?? null,
     },
-  })), [detail, layout, selectedTaskKey, editable, planHeld, visibleKeys]);
+  })), [detail, layout, selectedTaskKey, editable, planHeld, visibleKeys, t]);
 
   // Controlled nodes: React Flow writes positions during a drag through
   // `onNodesChange`, and the layout re-seeds them whenever the workflow
@@ -497,6 +503,7 @@ export function WorkflowCanvas({
         fitView
         fitViewOptions={FIT_VIEW_OPTIONS}
         proOptions={PRO_OPTIONS}
+        ariaLabelConfig={ariaLabelConfig}
         nodeDragThreshold={DRAG_THRESHOLD}
         nodeClickDistance={DRAG_THRESHOLD}
         paneClickDistance={DRAG_THRESHOLD}
@@ -527,6 +534,7 @@ export function WorkflowCanvas({
  * re-renders on every move; it is the only thing that does.
  */
 function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
+  const { t } = useLingui();
   const drag = useConnection((connection) => (
     connection.inProgress
       ? {
@@ -545,13 +553,14 @@ function LinkPointerHint({ detail }: { detail: WorkflowDetail }) {
     && drag.overKey !== drag.blockerKey
     && (drag.valid || linkRefusal(detail, drag.blockerKey, drag.overKey) !== null);
   if (cardSpeaks) return null;
+  const blockerLabel = taskLabel(blocker);
   return (
     <div
       className={`${LINK_HINT_CLASS} absolute z-20`}
       style={{ left: drag.x + POINTER_HINT_OFFSET.x, top: drag.y + POINTER_HINT_OFFSET.y }}
       data-testid="workflow-link-canvas-hint"
     >
-      Release on a task to make it wait for {taskLabel(blocker)}
+      {t`Release on a task to make it wait for ${blockerLabel}`}
     </div>
   );
 }
@@ -594,24 +603,27 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
   onFitView: () => void;
   onAutoLayout: () => void;
 }) {
+  const { t } = useLingui();
   const tool = `${CANVAS_TOOL_CLASS} ${VIEW_TOOL_WIDTH}`;
+  const fitViewLabel = t`Fit view`;
+  const autoLayoutLabel = t`Auto layout`;
   return (
     <div className="grid grid-cols-2 gap-2" data-testid="workflow-canvas-tools">
-      <Tooltip label="Fit every card in view">
-        <button type="button" onClick={onFitView} aria-label="Fit view" className={tool} data-testid="workflow-fit-view">
-          <Scan size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Fit view</span>
+      <Tooltip label={t`Fit every card in view`}>
+        <button type="button" onClick={onFitView} aria-label={fitViewLabel} className={tool} data-testid="workflow-fit-view">
+          <Scan size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>{fitViewLabel}</span>
         </button>
       </Tooltip>
-      <Tooltip label={tipLabel({ disabled: !moved, disabledReason: 'No card has been moved', tip: 'Put moved cards back in the automatic layout' })}>
+      <Tooltip label={tipLabel({ disabled: !moved, disabledReason: t`No card has been moved`, tip: t`Put moved cards back in the automatic layout` })}>
         <button
           type="button"
           onClick={onAutoLayout}
           disabled={!moved}
-          aria-label="Auto layout"
+          aria-label={autoLayoutLabel}
           className={tool}
           data-testid="workflow-auto-layout"
         >
-          <LayoutGrid size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>Auto layout</span>
+          <LayoutGrid size={14} className="text-fg-muted" /><span className={VIEW_TOOL_LABEL}>{autoLayoutLabel}</span>
         </button>
       </Tooltip>
     </div>
@@ -627,8 +639,9 @@ function ViewTools({ moved, onFitView, onAutoLayout }: {
  * waits, with the reason, while the workflow agent works.
  */
 function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | null; onAddTask: () => void }) {
+  const { t } = useLingui();
   return (
-    <Tooltip label={tipLabel({ disabled: addTaskRefusal !== null, disabledReason: addTaskRefusal, tip: 'Add a task to this workflow' })}>
+    <Tooltip label={tipLabel({ disabled: addTaskRefusal !== null, disabledReason: addTaskRefusal, tip: t`Add a task to this workflow` })}>
       <button
         type="button"
         onClick={onAddTask}
@@ -636,7 +649,7 @@ function AddTaskTool({ addTaskRefusal, onAddTask }: { addTaskRefusal: string | n
         className={`${ADD_TASK_CLASS} ${TOOL_WIDTH}`}
         data-testid="workflow-add-task"
       >
-        <Plus size={14} />Add task
+        <Plus size={14} /><Trans>Add task</Trans>
       </button>
     </Tooltip>
   );

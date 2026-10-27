@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { LoaderCircle, MemoryStick, Play } from 'lucide-react';
+import { Plural, useLingui } from '@lingui/react/macro';
 import type { HostMemoryAgentPausedEvent } from '../../../shared/types';
 import { BaseDialog } from './BaseDialog';
 import { ActivityMark } from '../ActivityMark';
@@ -41,11 +42,12 @@ function PausedForMemoryDialogBody({ entries, onClose }: { entries: HostMemoryAg
   const ordered = orderPausedAgents(entries);
   const latestPausedAt = entries.reduce((latest, entry) => (entry.pausedAt > latest ? entry.pausedAt : latest), entries[0].pausedAt);
   const spansProjects = new Set(entries.map((entry) => entry.projectId)).size > 1;
-  const single = entries.length === 1;
+  const { t } = useLingui();
+  const agentCount = entries.length;
   return (
     <BaseDialog
       onClose={onClose}
-      title={single ? 'Agent paused to free memory' : `${entries.length} agents paused to free memory`}
+      title={<Plural value={agentCount} one="Agent paused to free memory" other="# agents paused to free memory" />}
       subtitle={(
         <Tooltip label={formatDateTime(latestPausedAt)}>
           <span data-testid="paused-for-memory-age">{formatTimeAgo(latestPausedAt, now)}</span>
@@ -64,14 +66,14 @@ function PausedForMemoryDialogBody({ entries, onClose }: { entries: HostMemoryAg
             data-testid="paused-for-memory-close"
             className="px-6 py-1.5 min-w-[96px] text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
           >
-            Close
+            {t({ message: 'Close', context: 'button' })}
           </button>
         </div>
       )}
     >
       <div className="flex flex-col gap-1.5">
         <p className="mb-2 text-sm text-fg-muted">
-          {single ? 'It stays paused until you resume it.' : 'They stay paused until you resume them.'}
+          <Plural value={agentCount} one="It stays paused until you resume it." other="They stay paused until you resume them." />
         </p>
         {/* Keyed by the pause too: a task paused again gets a fresh row, without
             the earlier one's own-click Running. */}
@@ -86,6 +88,7 @@ function PausedForMemoryDialogBody({ entries, onClose }: { entries: HostMemoryAg
 type RowState = 'paused' | 'resuming' | 'running';
 
 function PausedAgentRow({ entry, showProject }: { entry: HostMemoryAgentPausedEvent; showProject: boolean }) {
+  const { t } = useLingui();
   const [resuming, setResuming] = useState(false);
   const [resumed, setResumed] = useState(false);
   // Running however it came back: this Resume, its card, its window, a move.
@@ -108,7 +111,7 @@ function PausedAgentRow({ entry, showProject }: { entry: HostMemoryAgentPausedEv
   };
 
   const detail = pausedRowDetail(entry, showProject);
-  const title = entry.taskTitle ?? 'Untitled task';
+  const title = entry.taskTitle ?? t`Untitled task`;
   return (
     <div
       className="flex items-center gap-3 rounded-md bg-surface-hover/40 px-3 py-2"
@@ -130,6 +133,7 @@ function PausedAgentRow({ entry, showProject }: { entry: HostMemoryAgentPausedEv
 const ACTION_BASE_CLASS = 'flex h-7 w-[104px] flex-shrink-0 items-center justify-center gap-1.5 rounded-md border text-xs';
 
 function RowAction({ state, taskTitle, onResume }: { state: RowState; taskTitle: string; onResume: () => void }) {
+  const { t } = useLingui();
   if (state === 'running') {
     return (
       <span
@@ -137,7 +141,7 @@ function RowAction({ state, taskTitle, onResume }: { state: RowState; taskTitle:
         data-testid="paused-for-memory-running"
       >
         <ActivityMark mark="agent-working" size={16} className="text-fg-muted" aria-hidden="true" />
-        Running
+        {t({ message: 'Running', context: 'task status' })}
       </span>
     );
   }
@@ -145,7 +149,7 @@ function RowAction({ state, taskTitle, onResume }: { state: RowState; taskTitle:
     return (
       <button type="button" disabled className={`${ACTION_BASE_CLASS} border-accent/40 bg-accent/20 text-accent-fg opacity-80`} data-testid="paused-for-memory-resume">
         <LoaderCircle size={12} strokeWidth={2.5} className="animate-spin" aria-hidden="true" />
-        Resuming
+        {t({ message: 'Resuming', context: 'task status' })}
       </button>
     );
   }
@@ -153,12 +157,12 @@ function RowAction({ state, taskTitle, onResume }: { state: RowState; taskTitle:
     <button
       type="button"
       onClick={onResume}
-      aria-label={`Resume ${taskTitle}`}
+      aria-label={t`Resume ${taskTitle}`}
       data-testid="paused-for-memory-resume"
       className={`${ACTION_BASE_CLASS} border-accent/40 bg-accent/20 text-accent-fg transition-colors hover:bg-accent/30`}
     >
       <Play size={12} aria-hidden="true" />
-      Resume
+      {t({ message: 'Resume', context: 'task action' })}
     </button>
   );
 }

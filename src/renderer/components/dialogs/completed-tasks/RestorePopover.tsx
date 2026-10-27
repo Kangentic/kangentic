@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { Trans } from '@lingui/react/macro';
 import { usePopoverPosition } from '../../../hooks/usePopoverPosition';
 import { OverlayPopover } from '../../OverlayPopover';
 import type { Swimlane } from '../../../../shared/types';
@@ -67,7 +68,7 @@ export function RestorePopover({
       data-testid="restore-popover"
     >
       <div className="px-3 py-1.5 text-[11px] font-semibold uppercase tracking-wider text-fg-faint">
-        Restore to
+        <Trans>Restore to</Trans>
       </div>
       {targets.map((lane) => (
         <button

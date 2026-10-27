@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { GitBranch } from 'lucide-react';
+import { useLingui } from '@lingui/react/macro';
+import { plural } from '@lingui/core/macro';
+import { translateText } from '../../../../i18n/translate';
 import { layoutCommitGraph } from '../../../../lib/commit-graph-layout';
 import { CommitGraphSvg, ROW_HEIGHT_PX, laneColor } from './CommitGraphSvg';
 import { formatRelativeTime } from '../../../../lib/datetime';
@@ -77,19 +80,21 @@ function RefBadge({ label, tone }: { label: string; tone: 'tip' | 'base' | 'pr' 
  * its own button that opens the commit there; the row around it selects.
  */
 function CommitHash({ commit, color, providerName }: { commit: GitCommitGraphCommit; color: string | undefined; providerName: string | null }) {
+  const { t } = useLingui();
+  const shortHash = commit.shortHash;
   const webUrl = commit.webUrl ?? null;
   if (!webUrl || !providerName) {
     return <span className="shrink-0 font-mono text-[11px]" style={{ color }}>{commit.shortHash}</span>;
   }
   return (
-    <Tooltip label={`Open on ${providerName}`}>
+    <Tooltip label={t`Open on ${providerName}`}>
       <button
         type="button"
         onClick={(event) => {
           event.stopPropagation();
           void window.electronAPI.shell.openExternal(webUrl);
         }}
-        aria-label={`Open ${commit.shortHash} on ${providerName}`}
+        aria-label={t`Open ${shortHash} on ${providerName}`}
         className="pointer-events-auto relative shrink-0 rounded font-mono text-[11px] underline-offset-2 hover:underline focus:outline-none focus-visible:ring-1 focus-visible:ring-accent"
         style={{ color }}
         data-testid="commit-hash-link"
@@ -111,6 +116,7 @@ export function CommitGraphPanel({
   staticHistory,
   onLoaded,
 }: CommitGraphPanelProps) {
+  const { t } = useLingui();
   const [result, setResult] = useState<GitCommitGraphResult | null>(null);
   const [loaded, setLoaded] = useState(false);
   const initialFetchDoneRef = useRef(false);
@@ -186,6 +192,7 @@ export function CommitGraphPanel({
   const truncated = staticHistory ? staticHistory.truncated : (result?.truncated ?? false);
   const providerName = staticHistory ? staticHistory.webProviderName : (result?.webProviderName ?? null);
   const layout = useMemo(() => layoutCommitGraph(commits), [commits]);
+  const commitCount = commits.length;
 
   // Markers derived in the renderer: the tip and base come from the result; the
   // PR-head anchor is the task's persisted head_sha when a PR is linked. A
@@ -219,8 +226,8 @@ export function CommitGraphPanel({
 
   if (commits.length === 0) {
     const message = isStatic
-      ? EMPTY_REASON_COPY['no-commits']
-      : tipHash || result?.currentBranch ? 'No commits on this branch yet.' : 'No git history available.';
+      ? translateText(EMPTY_REASON_COPY['no-commits'])
+      : tipHash || result?.currentBranch ? t`No commits on this branch yet.` : t`No git history available.`;
     return (
       <div className="flex h-full min-h-0 flex-col" data-testid="commit-graph-panel">
         <div className="flex flex-1 flex-col items-center justify-center gap-2 p-4 text-center">
@@ -249,8 +256,13 @@ export function CommitGraphPanel({
               // base / PR refs render as bare dots there: the subject as the
               // label, the author and refs under it.
               const compactTipLabel = compact ? `${commit.shortHash} ${commit.subject}` : '';
+              const prNumber = task.pr_number;
               const compactTipDetail = compact
-                ? `${commit.authorName}${isBase ? `\nBase: ${baseBranch}` : ''}${isPr ? `\nPR #${task.pr_number}` : ''}`
+                ? [
+                  commit.authorName,
+                  ...(isBase ? [t`Base: ${baseBranch}`] : []),
+                  ...(isPr ? [t`PR #${prNumber}`] : []),
+                ].join('\n')
                 : undefined;
               // The row selects through a button stretched across it, and the
               // content above it passes clicks through, except the hash: a link
@@ -278,6 +290,7 @@ export function CommitGraphPanel({
                     <div className="flex min-w-0 items-center gap-2">
                       <CommitHash commit={commit} color={color} providerName={providerName} />
                       <span className="truncate text-xs text-fg">{commit.subject}</span>
+                      {/* i18n-ok: HEAD is git's own term */}
                       {commit.hash === tipHash && <RefBadge label="HEAD" tone="tip" />}
                       {isBase && (compact ? (
                         <span
@@ -295,14 +308,14 @@ export function CommitGraphPanel({
                           className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-accent"
                         />
                       ) : (
-                        <RefBadge label={`PR #${task.pr_number}`} tone="pr" />
+                        <RefBadge label={t`PR #${prNumber}`} tone="pr" />
                       ))}
                     </div>
                     <div className="flex items-center gap-1.5 text-[11px] text-fg-faint">
                       <span className="truncate">{commit.authorName}</span>
                       {commit.authorTimestamp && (
                         <>
-                          <span aria-hidden>&middot;</span>
+                          <span aria-hidden>{'·'}</span>
                           <span className="shrink-0">{formatRelativeTime(commit.authorTimestamp)}</span>
                         </>
                       )}
@@ -316,7 +329,7 @@ export function CommitGraphPanel({
       </div>
       {truncated && (
         <div className="shrink-0 border-t border-edge-subtle px-3 py-1.5 text-[11px] text-fg-faint">
-          Showing latest {commits.length} commits.
+          {t`Showing latest ${plural(commitCount, { one: '# commit', other: '# commits' })}.`}
         </div>
       )}
     </div>

@@ -6,3 +6,68 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Cancel"
+msgstr "Cancel"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Connect"
+msgstr "Connect"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Connect Asana"
+msgstr "Connect Asana"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Could not save the token."
+msgstr "Could not save the token."
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Create a Personal Access Token"
+msgstr "Create a Personal Access Token"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Hide token"
+msgstr "Hide token"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
+msgstr "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open app.asana.com/0/my-apps"
+msgstr "Open app.asana.com/0/my-apps"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open Asana developer settings"
+msgstr "Open Asana developer settings"
+
+#. The two highlighted phrases are labels in Asana's own English interface. Keep them as written.
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
+msgstr "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste it here"
+msgstr "Paste it here"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste your Personal Access Token to continue."
+msgstr "Paste your Personal Access Token to continue."
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Paste your token"
+msgstr "Paste your token"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Personal Access Token"
+msgstr "Personal Access Token"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Show token"
+msgstr "Show token"
+
+#: src/renderer/components/asana/AsanaSetupDialog.tsx
+msgid "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."
+msgstr "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."

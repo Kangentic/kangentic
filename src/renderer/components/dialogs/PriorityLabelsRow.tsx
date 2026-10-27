@@ -1,9 +1,11 @@
+import { useLingui } from '@lingui/react/macro';
 import { useConfigStore } from '../../stores/config-store';
 import { useAllExistingLabels } from '../../hooks/useAllExistingLabels';
 import { Field, FIELD_SELECT_CLASS } from '../Field';
 import { LabelInput } from '../LabelInput';
 import { Select } from '../settings/shared';
 import { DEFAULT_PRIORITY_CONFIG } from '../../../shared/types';
+import { displayPriorityLabel } from '../backlog/priority-labels';
 
 interface PriorityLabelsRowProps {
   priority: number;
@@ -36,13 +38,14 @@ export function PriorityLabelsRow({
   setLabels,
   testIdPrefix,
 }: PriorityLabelsRowProps) {
+  const { t } = useLingui();
   const labelColors = useConfigStore((state) => state.config.backlog?.labelColors) ?? {};
   const priorities = useConfigStore((state) => state.config.backlog?.priorities) ?? DEFAULT_PRIORITY_CONFIG;
   const allExistingLabels = useAllExistingLabels();
 
   return (
     <div className="flex gap-3">
-      <Field label="Priority" className="flex-1 min-w-0">
+      <Field label={t`Priority`} className="flex-1 min-w-0">
         <Select
           value={priority}
           onChange={(event) => setPriority(Number((event.target as HTMLSelectElement).value))}
@@ -50,11 +53,11 @@ export function PriorityLabelsRow({
           data-testid={`${testIdPrefix}priority`}
         >
           {priorities.map((priorityEntry, index) => (
-            <option key={index} value={index}>{priorityEntry.label}</option>
+            <option key={index} value={index}>{displayPriorityLabel(priorityEntry.label)}</option>
           ))}
         </Select>
       </Field>
-      <Field label="Labels" className="flex-1 min-w-0">
+      <Field label={t`Labels`} className="flex-1 min-w-0">
         <LabelInput
           labels={labels}
           setLabels={setLabels}

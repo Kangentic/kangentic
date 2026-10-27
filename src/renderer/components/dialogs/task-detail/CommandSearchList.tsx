@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useMemo } from 'react';
 import { Loader2, Search } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
 import type { AgentCommand } from '../../../../shared/types';
 
 interface CommandSearchListProps {
@@ -17,6 +18,7 @@ interface CommandSearchListProps {
  * box; the host sets the width / max-height and the surface chrome.
  */
 export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListProps) {
+  const { t } = useLingui();
   const [commands, setCommands] = useState<AgentCommand[]>([]);
   const [searchFilter, setSearchFilter] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -85,7 +87,7 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
         <input
           ref={searchInputRef}
           type="text"
-          placeholder="Search commands & skills..."
+          placeholder={t`Search commands & skills...`}
           value={searchFilter}
           onChange={(event) => {
             setSearchFilter(event.target.value);
@@ -104,7 +106,7 @@ export function CommandSearchList({ cwd, onSelect, onClose }: CommandSearchListP
           </div>
         ) : filteredCommands.length === 0 ? (
           <div className="px-3 py-6 text-center text-xs text-fg-faint">
-            No commands or skills found
+            <Trans>No commands or skills found</Trans>
           </div>
         ) : (
           filteredCommands.map((command, index) => (
