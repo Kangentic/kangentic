@@ -1,9 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
-import { backgroundShellHintCommandFor, shippedHintBridgePath } from '../../shared/background-command-hooks';
-import { COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, writeSessionConfig } from './hook-manager';
+import { backgroundShellHintCommandFor, shippedHintBridgePath, wslBackgroundShellHintCommandFor } from '../../shared/background-command-hooks';
+import { cliPathForTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { prepareWslHookTransport, wslHookEventCommand, wslStatusLineCommand } from '../../shared/wsl-hook-transport';
+import { COPILOT_BACKGROUND_COMMAND_SPEC, COPILOT_HOOK_SHELL, writeSessionConfig, type CopilotSessionHookOptions } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
 export interface CopilotCommandOptions {
@@ -24,6 +27,13 @@ export interface CopilotCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * A Copilot installed in a WSL distro (`CommandOptions.cliTarget`): named by
+   * the path the distro sees, its session config seeded from the distro's
+   * Copilot home with hooks and status line through the WSL hook transport,
+   * and on NAT networking Kangentic's server given as the transport's bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /**
@@ -69,6 +79,9 @@ function preparePrompt(prompt: string, shell?: string): string {
 export class CopilotCommandBuilder {
   buildCopilotCommand(options: CopilotCommandOptions): string {
     const { shell } = options;
+    // A Copilot in a WSL distro is started by the path the distro sees; the
+    // PTY's cwd reaches it as its `/mnt` path.
+    const place = options.cliTarget ?? null;
 
     // Write the per-session Copilot config home: the event-bridge hooks in
     // hooks/kangentic.json, plus copies of the user's settings.json and
@@ -82,7 +95,7 @@ export class CopilotCommandBuilder {
         sessionConfigDir,
         options.eventsOutputPath,
         options.statusOutputPath,
-        {
+        place ? this.wslHookOptions(options, options.eventsOutputPath, place) : {
           // Names kangentic_mark_background_service, so only a session
           // offered that tool gets it.
           backgroundShellHintCommand: backgroundShellHintCommandFor(
@@ -92,7 +105,7 @@ export class CopilotCommandBuilder {
       );
     }
 
-    const parts: string[] = [quoteArg(options.copilotPath, shell)];
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.copilotPath, shell)];
 
     // Resume an existing session or start a new one with the caller's UUID.
     // `--session-id <uuid>` does both (added in 1.0.51). `--resume <uuid>` no
@@ -107,7 +120,7 @@ export class CopilotCommandBuilder {
     // (1.0.97 assigns it to COPILOT_HOME), and older versions know no
     // COPILOT_HOME, so the flag stays.
     if (sessionConfigDir) {
-      parts.push('--config-dir', quoteArg(toForwardSlash(sessionConfigDir), shell));
+      parts.push('--config-dir', quoteArg(cliPathForTarget(sessionConfigDir, place), shell));
     }
 
     // Permission mode flags
@@ -161,17 +174,28 @@ export class CopilotCommandBuilder {
     if (!options.mcpServerEnabled || !options.mcpServerUrl || !options.mcpServerToken) {
       return [];
     }
+    const place = options.cliTarget ?? null;
     const mcpConfigDir = path.dirname(options.eventsOutputPath || options.cwd);
     const mcpConfigPath = path.join(mcpConfigDir, 'copilot-mcp.json');
+    // A Copilot in a WSL distro on NAT networking cannot reach this machine's
+    // loopback: its server is the WSL hook transport's stdio bridge, prepared
+    // in the session's directory, the token in the bridge's env (Copilot's MCP
+    // config: `type` `stdio` with `command`, `args` and `env`). A failed write
+    // of the bridge throws, as this file's write does.
+    const server = place && options.eventsOutputPath
+      ? kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) })
+      : null;
     const mcpConfig = {
       mcpServers: {
-        kangentic: {
-          type: 'http' as const,
-          url: options.mcpServerUrl,
-          headers: {
-            'X-Kangentic-Token': options.mcpServerToken,
+        kangentic: server?.kind === 'stdio'
+          ? { type: 'stdio' as const, command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } }
+          : {
+            type: 'http' as const,
+            url: options.mcpServerUrl,
+            headers: {
+              'X-Kangentic-Token': options.mcpServerToken,
+            },
           },
-        },
       },
     };
     // sync-write-ok: this must throw, not degrade - the path below is passed
@@ -183,8 +207,25 @@ export class CopilotCommandBuilder {
     fs.writeFileSync(mcpConfigPath, JSON.stringify(mcpConfig, null, 2));
     return [
       '--additional-mcp-config',
-      quoteArg(`@${toForwardSlash(mcpConfigPath)}`, options.shell),
+      quoteArg(`@${cliPathForTarget(mcpConfigPath, place)}`, options.shell),
     ];
+  }
+
+  /**
+   * The session config's hooks for a Copilot in a WSL distro, which may have
+   * no node: the WSL hook transport's `event` with the same events and
+   * directives, its `status` for the status line, and its `reply` for the
+   * background shell hint, all naming the session's own script (the config
+   * home is the session's alone). Seeded from the distro's Copilot home.
+   */
+  private wslHookOptions(options: CopilotCommandOptions, eventsOutputPath: string, place: CliPlace): CopilotSessionHookOptions {
+    const wslHooks = prepareWslHookTransport(path.dirname(eventsOutputPath));
+    return {
+      backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, COPILOT_BACKGROUND_COMMAND_SPEC, wslHooks, place),
+      eventCommand: (eventType, ...directives) => wslHookEventCommand(wslHooks, place, eventType, ...directives),
+      ...(options.statusOutputPath ? { statusLineCommand: wslStatusLineCommand(wslHooks, place, options.statusOutputPath) } : {}),
+      place,
+    };
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {

@@ -35,6 +35,10 @@ The user's Copilot home those copies come from is `$COPILOT_HOME` when set, else
 
 The adapter tracks these directories keyed by the session's own id (`CommandOptions.ptySessionId`), so `removeHooks(directory, sessionId?)` cleans that session's directory and never the one of the task's next session. It deletes Kangentic's files one by one and never recursively, because Copilot keeps the session's `session-state/` in the same config home and the next resume by `--session-id` needs it. The project-delete sweep (no `sessionId`) cleans every directory recorded for its folder.
 
+## WSL
+
+A Copilot installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Copilot's Linux path in a `wsl -d <distro>` shell, and `--config-dir` names the session's config home in the distro's form. That home is seeded from the distro's Copilot home (its own `COPILOT_HOME`, else the distro's `~/.copilot`), never this machine's, so the session keeps the distro's sign-in. The config home is the session's alone, so its hooks call the session's own copy of the WSL hook transport's script with the same events and directives (a distro may have no node). The status line is the transport's `status`, which renames Copilot's status JSON over `status.json`, and the background shell hint goes through its `reply`. Copilot passes a hook its payload on stdin, which the script reads. On mirrored networking `--additional-mcp-config` names the `http` entry. On NAT networking it is the transport's stdio bridge, `{"type": "stdio", "command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": <token>}}`, the shape Copilot's MCP config gives a local server. The history verifier's fallback, the model scan and the answer run's session cleanup read the distro's Copilot home. `--help` and a Knowledge Graph answer run through `wsl.exe`. Not yet run against a Copilot installed in a distro.
+
 ## Permission Modes
 
 | Mode | Flag | Copilot Mode |

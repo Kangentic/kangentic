@@ -2,6 +2,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { SubmissionContext, SubmissionVerifier } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
+import type { CliPlace } from '../../shared/cli-target';
 
 /**
  * Copilot's `command-injection` verifier. CONFIRM-ONLY.
@@ -64,8 +65,8 @@ export const COPILOT_HISTORY_FILE_NAME = 'command-history-state.json';
  * `--config-dir` (every Kangentic session) keeps its own in that folder
  * instead: 1.0.97 lists the file among the state that lives in the config home.
  */
-export function resolveCopilotHistoryPath(): string {
-  return path.join(copilotHomeDir(), COPILOT_HISTORY_FILE_NAME);
+export function resolveCopilotHistoryPath(place: CliPlace | null = null): string {
+  return path.join(copilotHomeDir(place), COPILOT_HISTORY_FILE_NAME);
 }
 
 /**

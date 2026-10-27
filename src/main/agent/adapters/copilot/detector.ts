@@ -20,6 +20,7 @@ export class CopilotDetector extends AgentDetector {
         const firstLine = raw.split('\n')[0] || '';
         return firstLine.replace(/^GitHub Copilot CLI\s+/i, '').replace(/\.\s*$/, '').trim() || null;
       },
+      supportsWslCli: true,
     });
   }
 }
