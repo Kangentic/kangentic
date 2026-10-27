@@ -88,7 +88,9 @@ describe('the sandboxed preload uses web APIs only', () => {
   it('walks the preload and the shared modules it bundles', () => {
     expect(files).toContain('src/preload/preload.ts');
     expect(files).toContain('src/shared/ipc-channels.ts');
-    expect(files).toContain('src/shared/pop-out.ts');
+    expect(files).toContain('src/shared/pop-out-arg.ts');
+    // pop-out.ts holds msg titles, whose runtime macro needs node:crypto.
+    expect(files).not.toContain('src/shared/pop-out.ts');
   });
 
   it('has no Buffer, setImmediate, clearImmediate, or events / timers / url / buffer import', () => {
