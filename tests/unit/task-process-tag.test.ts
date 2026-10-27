@@ -167,6 +167,13 @@ describe('listInWslEnv', () => {
     expect(result).toEqual({ KANGENTIC_EVENTS_PATH: '/x/events.jsonl', WSLENV: 'A/u:B/u' });
     expect(env).toEqual({ KANGENTIC_EVENTS_PATH: '/x/events.jsonl', WSLENV: 'A/u' });
   });
+
+  it('lists a name with the flags it is given, so a path value is translated (`up`)', () => {
+    expect(listInWslEnv({}, ['KANGENTIC_EVENTS_PATH'], 'A/u', 'up').WSLENV).toBe('A/u:KANGENTIC_EVENTS_PATH/up');
+    // A name already listed keeps its own flags, whatever is asked for.
+    expect(listInWslEnv({ WSLENV: 'KANGENTIC_EVENTS_PATH/u' }, ['KANGENTIC_EVENTS_PATH'], undefined, 'up').WSLENV)
+      .toBe('KANGENTIC_EVENTS_PATH/u');
+  });
 });
 
 describe('WSL reap', () => {

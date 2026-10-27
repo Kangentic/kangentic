@@ -6,7 +6,7 @@ import { trackEvent } from '../../analytics/analytics';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
-import type { AppConfig, BoardProfile, PermissionMode, Swimlane, Task } from '../../../shared/types';
+import type { AppConfig, BoardProfile, PermissionMode, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -22,6 +22,7 @@ import {
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
+import { resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 
 /**
@@ -57,6 +58,13 @@ export interface PreparedSpawn {
    */
   appliedModel: string | null;
   appliedEffort: string | null;
+  /**
+   * The shell the command was built for: `input.resolvedShell`, or the WSL
+   * distro's shell for a CLI installed there. The caller spawns in it.
+   */
+  shell: string;
+  /** Where the CLI runs when it is not this machine (a WSL distro), for the spawn and the session row. */
+  cliTarget: StoredCliTarget | null;
   /** Whether the command resumes the agent's conversation (`--resume`). */
   resumed: boolean;
   /**
@@ -194,6 +202,11 @@ export async function prepareAgentSpawn(input: {
     trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
     return { ok: false, reason: 'cli-not-found' };
   }
+  // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
+  // once for this spawn, as the board path does. A distro CLI runs in that
+  // distro's shell, whatever the Terminal setting says.
+  const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+  const shell = shellForTarget(cliTarget) ?? input.resolvedShell;
 
   await adapter.ensureTrust(cwd);
 
@@ -284,7 +297,7 @@ export async function prepareAgentSpawn(input: {
   // expired conversation's recap is the one prompt this path ever carries.
   const launch = await resolveShimLaunch({
     agentPath: detection.path,
-    shell: input.resolvedShell,
+    shell,
     prompt: prompt ?? undefined,
   });
 
@@ -319,7 +332,7 @@ export async function prepareAgentSpawn(input: {
     resume: canResume,
     statusOutputPath,
     eventsOutputPath,
-    shell: input.resolvedShell,
+    shell,
     mcpServerEnabled: config.mcpServer?.enabled ?? true,
     // Carries this session's own id so the MCP server can identify the caller
     // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
@@ -346,6 +359,7 @@ export async function prepareAgentSpawn(input: {
     // (releaseCommandHold).
     ptySessionId: sessionRecordId,
     bypassAvailable,
+    cliTarget,
   };
 
   const command = adapter.buildCommand(commandOptions);
@@ -374,6 +388,8 @@ export async function prepareAgentSpawn(input: {
       extraEnv,
       appliedModel: commandOptions.model ?? null,
       appliedEffort: commandOptions.effort ?? null,
+      shell,
+      cliTarget: toStoredCliTarget(cliTarget),
       resumed: canResume,
       prompt,
       startOver,

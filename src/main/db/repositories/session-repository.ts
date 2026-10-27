@@ -11,10 +11,11 @@ import { writeTransaction } from '../transaction';
  * (set via updateAppliedSettings, mirroring how metrics are maintained), and
  * the PTY grid (set via updatePtyGrid from the session manager's grid events),
  * and the reported transcript path (set via setTranscriptPath from usage updates).
+ * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path'
->;
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target'
+> & { cli_target?: string | null };
 
 export interface SessionMetricsInput {
   totalCostUsd: number | null;
@@ -154,8 +155,8 @@ export class SessionRepository {
 
   insert(record: SessionInsertInput): SessionRecord {
     this.db.prepare(`
-      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.task_id,
@@ -172,9 +173,11 @@ export class SessionRepository {
       record.suspended_at,
       record.exited_at,
       record.suspended_by,
+      record.cli_target ?? null,
     );
     return {
       ...record,
+      cli_target: record.cli_target ?? null,
       total_cost_usd: null,
       total_input_tokens: null,
       total_output_tokens: null,

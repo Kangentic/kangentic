@@ -45,6 +45,7 @@ export function makeSessionRecord(overrides: Partial<SessionRecord> = {}): Sessi
     last_pty_rows: null,
     result_tokens_read_at: null,
     transcript_path: null,
+    cli_target: null,
     ...overrides,
   };
 }

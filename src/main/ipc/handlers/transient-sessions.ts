@@ -18,6 +18,7 @@ import { trackFeatureUsed } from '../../analytics/usage';
 import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
+import { resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
@@ -248,9 +249,13 @@ export async function startCommandTerminal(
 
     const detection = await adapter.detect(cliPathOverride);
     if (!detection.found || !detection.path) throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
+    // once for this start, as the task spawns do.
+    const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
     // The shell the PTY types the command into: it decides the quoting style
-    // and which shim variant a `.cmd` head is swapped for (shim-launch.ts).
-    const shell = await context.sessionManager.getShell();
+    // and which shim variant a `.cmd` head is swapped for (shim-launch.ts). A
+    // distro CLI runs in that distro's shell, whatever the Terminal setting says.
+    const shell = shellForTarget(cliTarget) ?? await context.sessionManager.getShell();
     const permissionMode = config.agent.permissionMode as PermissionMode;
     const transientTaskId = uuidv4();
     const sessionId = uuidv4();
@@ -321,6 +326,7 @@ export async function startCommandTerminal(
       effort: project.default_effort ?? undefined,
       // The conversation to pick up, through the CLI's own resume.
       ...(resume ? { sessionId: resume.agentSessionId, resume: true } : {}),
+      cliTarget,
     };
     const command = adapter.buildCommand(commandOptions);
 
@@ -356,6 +362,9 @@ export async function startCommandTerminal(
       // A resumed terminal holds a conversation from its first frame, so it is
       // used already: another Earlier click never replaces it.
       ...(resume ? { agentSessionId: resume.agentSessionId, resuming: true, hasUserInput: true } : {}),
+      // The shell the command was built for, and where its CLI runs.
+      shell,
+      cliTarget: toStoredCliTarget(cliTarget),
     });
 
     // A shell that could not start (a configured shell not on PATH) comes back

@@ -68,8 +68,14 @@ export async function resolveCliTarget(
 }
 
 /** What a session record keeps of a target, enough to find its place again. */
-export function toStoredCliTarget(place: CliPlace | null): StoredCliTarget | null {
+export function toStoredCliTarget(place: StoredCliTarget | null): StoredCliTarget | null {
   return place ? { kind: place.kind, distro: place.distro } : null;
+}
+
+/** A target as a session row's `cli_target` column holds it: JSON, or null for this machine. */
+export function serializeCliTarget(place: StoredCliTarget | null): string | null {
+  const stored = toStoredCliTarget(place);
+  return stored ? JSON.stringify(stored) : null;
 }
 
 /** The stored form read back from a session row's JSON, or null for anything else. */

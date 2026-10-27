@@ -17,6 +17,8 @@ export function workflowAgentSessionRecord(input: {
   sessionType: string;
   cwd: string;
   startedAt: string;
+  /** Where the agent's CLI ran (`StoredCliTarget` JSON), or null for this machine. */
+  cliTarget?: string | null;
 }): SessionRecord {
   return {
     id: input.agentSessionId,
@@ -52,5 +54,6 @@ export function workflowAgentSessionRecord(input: {
     last_pty_rows: null,
     result_tokens_read_at: null,
     transcript_path: null,
+    cli_target: input.cliTarget ?? null,
   };
 }

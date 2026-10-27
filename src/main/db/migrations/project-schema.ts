@@ -2011,6 +2011,18 @@ export function runProjectMigrations(db: Database.Database): void {
   }
   // The prune keeps the newest ended rows, so it filters and sorts on ended_at.
   db.exec('CREATE INDEX IF NOT EXISTS idx_command_terminal_history_ended ON command_terminal_history(ended_at)');
+
+  // Migration: where a session's agent CLI ran when it was not this machine
+  // (#286), as JSON: `{"kind":"wsl","distro":"Ubuntu"}` for a CLI installed in
+  // a WSL distro. Its transcripts and rollouts live in that distro's home, and
+  // its leftovers are reaped there, which a reader and the reap need after the
+  // session ends. NULL = this machine, which every existing row is, so no
+  // backfill.
+  const hasSessionCliTarget = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
+    .some((column) => column.name === 'cli_target');
+  if (!hasSessionCliTarget) {
+    db.exec('ALTER TABLE sessions ADD COLUMN cli_target TEXT DEFAULT NULL');
+  }
 }
 
 /**

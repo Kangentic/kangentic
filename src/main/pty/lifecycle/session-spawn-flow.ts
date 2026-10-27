@@ -229,7 +229,9 @@ export async function performSpawn(
     throw new Error('Cannot spawn session during shutdown');
   }
 
-  const shell = await context.getShell();
+  // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI
+  // installed in that distro), else the Terminal setting, as before.
+  const shell = input.shell ?? await context.getShell();
   // EVERY registry row for the task, not the first match. The registry holds
   // one row per task by contract, but a stale suspended placeholder (a repeat
   // project open) or a suspended-in-place row (a settings restart) could
@@ -317,6 +319,17 @@ export async function performSpawn(
   if (wslShell) {
     const rendererKeys = [...SPAWN_SETTABLE_CLAUDE_CODE_KEYS].filter((key) => spawnEnv[key] !== undefined);
     spawnEnv = listInWslEnv(spawnEnv, rendererKeys, process.env.WSLENV);
+    // A CLI installed in the distro gets its whole environment from there, so
+    // every variable its adapter set is listed, and the events path is
+    // translated (`/up`) to the path the distro sees. A Windows CLI started
+    // through a WSL shell keeps exactly what it had.
+    if (input.cliTarget) {
+      const adapterKeys = Object.keys(input.env ?? {}).filter((key) => key !== 'WSLENV');
+      spawnEnv = listInWslEnv(spawnEnv, adapterKeys, process.env.WSLENV);
+      if (input.eventsOutputPath) {
+        spawnEnv = listInWslEnv(spawnEnv, ['KANGENTIC_EVENTS_PATH'], process.env.WSLENV, 'up');
+      }
+    }
   }
   const cleanEnv = buildSpawnEnv(spawnEnv);
 
@@ -482,6 +495,7 @@ export async function performSpawn(
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,
+    cliTarget: input.cliTarget ?? null,
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
   };
 

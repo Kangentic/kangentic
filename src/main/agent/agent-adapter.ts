@@ -1,4 +1,5 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
+import type { CliTarget } from './shared/cli-target';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type {
   AgentCallUsage,
@@ -307,6 +308,16 @@ export interface CommandOptions {
    * `executionTarget.workingDirectory`, which lives on the remote server.
    */
   executionTarget?: ResolvedExecutionTarget;
+  /**
+   * Where the CLI runs when it is not this machine: a WSL distro, with that
+   * distro's facts. Resolved once per spawn from the detected CLI path
+   * (`resolveCliTarget`), only for an adapter that declares `supportsWslCli`.
+   * The builder then names the CLI by its Linux path, converts every path it
+   * passes to the distro's form, and keeps the CLI's own files in the distro's
+   * home (the `cli-target.ts` helpers). Null or absent: this machine, and the
+   * command is exactly what it was before.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /** Agent-agnostic spawn options - renames `cliPath` to `agentPath`. */

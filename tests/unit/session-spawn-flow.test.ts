@@ -436,6 +436,70 @@ describe('performSpawn - KANGENTIC_TASK_ID task process tag', () => {
   });
 });
 
+describe('performSpawn - an agent CLI installed in a WSL distro', () => {
+  // A CLI configured by its \\wsl.localhost path runs in that distro's shell,
+  // which the build site passes as `input.shell`, and nothing of Kangentic's
+  // environment reaches it unless WSLENV names it.
+  //
+  // Red-green: reading the configured shell again in performSpawn fails the
+  // first case; dropping the adapter-key listing fails the second; listing the
+  // events path with `/u` instead of `/up` fails the second; running the
+  // listing without a target fails the third.
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+  const EVENTS_PATH = 'C:\\Users\\dev\\project\\.kangentic\\sessions\\s1\\activity.json';
+
+  beforeEach(() => {
+    vi.stubEnv('WSLENV', 'USERPROFILE/p');
+  });
+
+  afterEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
+  });
+
+  function wslEnvEntries(): string[] {
+    return ((ptySpawnMock.mock.calls[0]?.[2] as { env: Record<string, string> }).env.WSLENV ?? '').split(':');
+  }
+
+  it('spawns in the shell the input names, without reading the Terminal setting', async () => {
+    const context = makeContext();
+    const input = makeInput({ shell: 'wsl -d Ubuntu', cliTarget: { kind: 'wsl', distro: 'Ubuntu' } });
+    await performSpawn(input, context);
+
+    expect(context.getShell).not.toHaveBeenCalled();
+    expect(context.registry.get(input.id!)?.shell).toBe('wsl -d Ubuntu');
+    expect(context.registry.get(input.id!)?.cliTarget).toEqual({ kind: 'wsl', distro: 'Ubuntu' });
+  });
+
+  it('lists every adapter variable, and the events path translated for the distro', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput({
+      shell: 'wsl -d Ubuntu',
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+      env: { KANGENTIC_MCP_TOKEN: 'token', GOOSE_MODE: 'auto' },
+      eventsOutputPath: EVENTS_PATH,
+    }), context);
+
+    expect(wslEnvEntries()).toEqual(expect.arrayContaining([
+      'USERPROFILE/p',
+      'KANGENTIC_TASK_ID/u',
+      'KANGENTIC_MCP_TOKEN/u',
+      'GOOSE_MODE/u',
+      'KANGENTIC_EVENTS_PATH/up',
+    ]));
+  });
+
+  it('keeps a Windows CLI under a WSL shell exactly as it was: no adapter variable, no events path', async () => {
+    const context = makeContext();
+    vi.mocked(context.getShell).mockResolvedValue('wsl -d Ubuntu');
+    const input = makeInput({ env: { GOOSE_MODE: 'auto' }, eventsOutputPath: EVENTS_PATH });
+    await performSpawn(input, context);
+
+    expect(wslEnvEntries()).toEqual(['USERPROFILE/p', 'KANGENTIC_TASK_ID/u']);
+    expect(context.registry.get(input.id!)?.cliTarget).toBeNull();
+  });
+});
+
 describe('performSpawn - resume path does not adopt bg shells', () => {
   // Regression guard: reconcileBgShellsOnResume was deleted (bug fix for the
   // "activity engine stays thinking on idle sessions" phantom-adoption bug).

@@ -1451,6 +1451,12 @@ export interface SessionRecord {
    * NULL when the agent never reported one.
    */
   transcript_path: string | null;
+  /**
+   * Where the session's agent CLI ran when it was not this machine, as JSON
+   * (`StoredCliTarget`): a WSL distro. Its transcripts and leftovers are
+   * there. NULL for this machine.
+   */
+  cli_target: string | null;
 }
 
 /**
@@ -6980,6 +6986,19 @@ export interface SpawnSessionInput {
   /** Start the session as already used (`Session.hasUserInput`): a resumed
    *  Command Terminal holds a conversation from its first frame. */
   hasUserInput?: boolean;
+  /**
+   * The shell this session must run in, when its CLI decides it rather than
+   * the Terminal setting: `wsl -d <distro>` for a CLI installed in that
+   * distro. Omitted, the configured shell, as every session ran before.
+   */
+  shell?: string;
+  /**
+   * Where the session's agent CLI runs when it is not this machine (a WSL
+   * distro). The spawn then lists the agent's environment in `WSLENV`, since
+   * nothing else crosses into the distro, and the session carries it for its
+   * readers and its reap.
+   */
+  cliTarget?: StoredCliTarget | null;
 }
 
 export interface SpawnTransientSessionInput {

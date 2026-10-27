@@ -31,6 +31,7 @@ import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
+import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
 import { appendCallerSession } from '../agent/mcp-http/caller-url';
@@ -543,6 +544,10 @@ export class TransitionEngine {
       throw new AgentCliNotFoundError(agentName, adapter.displayName);
     }
     console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
+    // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
+    // once for this spawn. A distro CLI runs in that distro's shell, whatever
+    // the Terminal setting says.
+    const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
 
     // permissionOverride carries the destination lane's mode; the "plan
     // always wins, else task -> lane -> global" rule lives in
@@ -753,7 +758,7 @@ export class TransitionEngine {
       taskId: task.id,
     });
 
-    const shell = await this.sessionManager.getShell();
+    const shell = shellForTarget(cliTarget) ?? await this.sessionManager.getShell();
     // A `.cmd` head under a PowerShell or Git Bash host hands the multi-line
     // prompt to cmd.exe, which keeps only its first line (#353). Swap in the
     // sibling shim the host can run, else flatten the prompt. Sits after
@@ -789,6 +794,7 @@ export class TransitionEngine {
       // The session's own id, which a folder-shared adapter file is held under.
       ptySessionId,
       bypassAvailable,
+      cliTarget,
     };
     const command = adapter.buildCommand(commandOptions);
     notePlanApprovalSpawn(ptySessionId, { sessionDir, bypassAvailable });
@@ -829,6 +835,9 @@ export class TransitionEngine {
       // The grid recorded on the record this spawn retires. Only used when no
       // in-memory predecessor speaks for it (a resume after a desktop restart).
       ...(intent.restoredGrid ? { restoredGrid: intent.restoredGrid } : {}),
+      // The shell the command was built for, and where its CLI runs.
+      shell,
+      cliTarget: toStoredCliTarget(cliTarget),
     });
 
     console.log(`[spawnAgent] PTY session created: id=${session.id.slice(0, 8)} status=${session.status}`);
@@ -864,6 +873,7 @@ export class TransitionEngine {
         suspended_at: null,
         exited_at: null,
         suspended_by: null,
+        cli_target: serializeCliTarget(cliTarget),
       });
 
       // Record the model/effort this spawn/resume actually applied via the CLI

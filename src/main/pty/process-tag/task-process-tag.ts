@@ -74,16 +74,18 @@ export function addTaskProcessTag(
  * List variables in a spawn env's `WSLENV` (`/u`: only when a Win32 process
  * launches WSL), so they cross into a WSL shell's distro. The env's own
  * `WSLENV` is extended, else the inherited one; a name already listed is kept
- * as it is.
+ * as it is. `flags` replaces the default `u`: `up` also translates a Windows
+ * path value into the path the distro sees (`C:\x` to `/mnt/c/x`).
  */
 export function listInWslEnv(
   env: Record<string, string>,
   names: readonly string[],
   inheritedWslEnv?: string,
+  flags = 'u',
 ): Record<string, string> {
   const entries = (env.WSLENV ?? inheritedWslEnv ?? '').split(':').filter((entry) => entry.length > 0);
   for (const name of names) {
-    if (!entries.some((entry) => entry.split('/')[0] === name)) entries.push(`${name}/u`);
+    if (!entries.some((entry) => entry.split('/')[0] === name)) entries.push(`${name}/${flags}`);
   }
   return { ...env, WSLENV: entries.join(':') };
 }

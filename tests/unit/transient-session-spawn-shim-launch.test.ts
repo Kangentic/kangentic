@@ -44,6 +44,28 @@ vi.mock('../../src/main/agent/shared/shim-launch', () => ({
   resolveShimLaunch: resolveShimLaunchMock,
 }));
 
+// The real target resolution, run as on Windows with a distro's facts already
+// read, so the WSL case runs on any OS without calling wsl.exe. Every other
+// case's adapter declares no WSL support, so it resolves no target.
+const WSL_DISTRO_FACTS = vi.hoisted(() => ({
+  distro: 'Ubuntu',
+  homeLinux: '/home/dev',
+  homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+  uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  interactivePath: '/home/dev/.local/bin:/usr/bin',
+  env: {},
+  networkingMode: 'nat' as const,
+}));
+
+vi.mock('../../src/main/agent/shared/cli-target', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/agent/shared/cli-target')>();
+  return {
+    ...original,
+    resolveCliTarget: (cliPath: string | null | undefined, adapterSupportsWsl: boolean) =>
+      original.resolveCliTarget(cliPath, adapterSupportsWsl, { platform: 'win32', resolveFacts: async () => WSL_DISTRO_FACTS }),
+  };
+});
+
 vi.mock('electron', () => ({
   ipcMain: {
     handle: vi.fn((channel: string, handler: (...args: unknown[]) => unknown) => {
@@ -272,5 +294,31 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     const buildOrder = buildCommandMock.mock.invocationCallOrder[0];
     expect(ensureTrustOrder).toBeLessThan(resolveOrder);
     expect(resolveOrder).toBeLessThan(buildOrder);
+  });
+
+  // Red-green: building with `getShell()` alone fails the shell assertions;
+  // dropping `cliTarget` from the command options or the spawn input fails the
+  // matching assertion.
+  it('builds and spawns a distro CLI in that distro\'s shell, with its target', async () => {
+    mockAgentRegistryGetOrThrow.mockReturnValue({
+      name: 'claude',
+      displayName: 'Claude Code',
+      supportsWslCli: true,
+      detect: vi.fn(async () => ({ found: true, path: '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude', version: '2.1.311' })),
+      ensureTrust: ensureTrustMock,
+      buildCommand: buildCommandMock,
+    });
+
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(context.sessionManager.getShell).not.toHaveBeenCalled();
+    expect(buildCommandMock.mock.calls[0][0]).toMatchObject({
+      shell: 'wsl -d Ubuntu',
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/claude' },
+    });
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      shell: 'wsl -d Ubuntu',
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+    }));
   });
 });
