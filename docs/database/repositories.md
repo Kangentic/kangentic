@@ -202,7 +202,8 @@ Operates on a per-project DB.
 | `getLatestForTask(taskId)` | Find the most recent session record for a task (by `started_at` DESC) |
 | `listForTaskNewestFirst(taskId)` | All session records for a task, newest first. Used by `captureGitChurn` to enumerate the full record-id list for `setTaskGitStats`. |
 | `listTaskReportRecords(taskId)` | Every record of a task, newest first, with only the columns the completed task view's report reads (`TaskReportSessionRecord`). Leaves out `prompt` and `command`, which the report never reads. |
-| `getLatestAgentSessionForTask(taskId)` | The newest record of a task that has an `agent_session_id`, with only `session_type`, `agent_session_id` and `cwd`: what the completed task view's last-message read needs to find the transcript. Skips a newer record with no conversation id. |
+| `getLatestAgentSessionForTask(taskId)` | The newest record of a task that has an `agent_session_id`, with only `session_type`, `agent_session_id`, `cwd` and `cli_target`: what the completed task view's last-message read needs to find the transcript, in a WSL distro's home when the CLI ran there. Skips a newer record with no conversation id. |
+| `listCliTargetsOfTasks(taskIds)` | The distinct stored `cli_target` JSON values the given tasks' sessions ran under, null left out. The task reap runs its in-distro pass in each WSL distro they name, which a session that ended before a restart still does. Queried in chunks, past SQLite's limit on bound parameters. |
 | `getHeldPausedTaskIds()` | Get task IDs whose latest session is a held pause (`suspended_by` in `user`, `auto`) |
 | `listAllSessionIds()` | Get all distinct session record IDs (for stale session directory cleanup) |
 | `updateGitStats(id, stats)` | Update `lines_added`, `lines_removed`, `files_changed` for a single session record, unconditionally. |
