@@ -367,13 +367,13 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       const { top, bottom } = await terminalRegions(ownPage);
       const changedAt = pictureStages(recording)[1].at;
       const shown = recording.frames.filter((frame) => frame.at >= changedAt).map((frame) => ({
-        at: frame.at * 1000,
         bottom: brightPixelsIn(recording, frame.picture, bottom),
         top: brightPixelsIn(recording, frame.picture, top),
       }));
       const summary = shown.map((frame) => `${frame.top}/${frame.bottom}`).join(' ');
       // The swap, as the app traced it: when it hid the screen to resize and parse, when it showed
-      // it again, and how many frames painted in between.
+      // it again, and how many frames painted in between. Both times are on the page's clock, so
+      // only their difference is used. They are never compared with the screencast's frame stamps.
       const swap = await ownPage.evaluate(() => {
         const trace = (window as unknown as {
           __kangenticTerminalTrace: () => Array<{ ts: number; event: string; detail?: { framesHidden?: number } }>;
@@ -390,26 +390,36 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       // The swap hides the screen on purpose while xterm resizes and parses the agent's frame, and a
       // frame that paints in that gap is blank (a blank frame beats the old one reflowed onto the
       // new grid). Whether one does is the compositor's timing against the parse, which a loaded
-      // runner decides: this test saw one blank frame in 4 of 40 runs on two cores, each with the
+      // runner decides. This test saw one blank frame in 4 of 40 runs on two cores, each with the
       // trace's framesHidden at 1. So the held frames are strict, and a blank frame is accepted only
-      // where the app says it hid the screen. The slack covers the screencast's frame timestamps
-      // against the page's clock.
-      const SWAP_SLACK_MS = 100;
-      const blankFrames = shown.filter((frame) => frame.bottom <= 20);
-      // The input box is on the bottom rows in every frame the screen was not hidden for.
-      expect(
-        blankFrames.every((frame) => frame.at >= swapStartedAt - SWAP_SLACK_MS && frame.at <= swapFinishedAt + SWAP_SLACK_MS),
-        `a blank frame outside the swap (${swapStartedAt} to ${swapFinishedAt}): ${summary}`,
-      ).toBe(true);
-      // Every blank frame is one the app counted, and the screen was never hidden past the repaint
-      // wait's draw cap and its frame fallback (useTerminal's FRAME_HOLD_DRAW_MAX_MS and the 50 ms
-      // nextFrame fallback), with room for a starved runner.
-      expect(blankFrames.length, summary).toBeLessThanOrEqual(swap.framesHidden ?? 0);
-      expect(swapFinishedAt - swapStartedAt, summary).toBeLessThanOrEqual(1000);
+      // where the app hides the screen, which is one unbroken run after the kept frame was on screen
+      // and before the agent's frame is. That position is read from the recording's own order, not
+      // from timestamps. The screencast stamps its frames on the compositor's clock and the trace
+      // stamps the swap on the page's, and on a starved CI runner the two disagreed by more than the
+      // swap is wide (a 56 ms swap with its one blank frame stamped outside 100 ms of it).
       const firstFilled = shown.findIndex((frame) => frame.top >= 10);
       // Held at least a frame, then filled for good.
       expect(firstFilled, summary).toBeGreaterThan(0);
       expect(shown.slice(firstFilled).every((frame) => frame.top >= 10), summary).toBe(true);
+      const blankIndexes = shown.flatMap((frame, index) => (frame.bottom <= 20 ? [index] : []));
+      const blankAt = `blank frames at index ${blankIndexes.join(',') || 'none'} of ${shown.length}, the agent's frame from ${firstFilled}: ${summary}`;
+      // The input box is on the bottom rows in every frame the screen was not hidden for. The kept
+      // frame is on screen from the first frame the window restored on.
+      expect(shown[0].bottom > 20, `the first frame has no input box, ${blankAt}`).toBe(true);
+      // The screen is hidden once, so its blank frames are one unbroken run, never a flash that
+      // comes back and goes again.
+      const lastBlank = blankIndexes.at(-1) ?? -1;
+      expect(
+        blankIndexes.length === 0 || lastBlank - blankIndexes[0] + 1 === blankIndexes.length,
+        `the blank frames are not one run, ${blankAt}`,
+      ).toBe(true);
+      // And it ends before the agent's frame is on screen, never after it.
+      expect(lastBlank < firstFilled, `a blank frame at or after the agent's frame, ${blankAt}`).toBe(true);
+      // Every blank frame is one the app counted, and the screen was never hidden past the repaint
+      // wait's draw cap and its frame fallback (useTerminal's FRAME_HOLD_DRAW_MAX_MS and the 50 ms
+      // nextFrame fallback), with room for a starved runner.
+      expect(blankIndexes.length, summary).toBeLessThanOrEqual(swap.framesHidden ?? 0);
+      expect(swapFinishedAt - swapStartedAt, summary).toBeLessThanOrEqual(1000);
     } finally {
       await own.browser.close();
     }
