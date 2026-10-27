@@ -2,7 +2,7 @@
 
 ## Shells, paths and environment
 
-* [Shells and paths](shells-and-paths.md) - Shell detection order per OS, how adaptCommandForShell and quoteArg quote for PowerShell, cmd, bash, fish, nushell and WSL, npm .cmd shim launching, Windows cwd fixups, WSL interop limits, PTY environment stripping (CLAUDE_CODE_*, NO_COLOR, TERM), and config directory locations.
+* [Shells and paths](shells-and-paths.md) - Shell detection order per OS, how adaptCommandForShell and quoteArg quote for PowerShell, cmd, bash, fish, nushell and WSL, npm .cmd shim launching, Windows cwd fixups, WSL interop limits and agent CLIs installed in a WSL distro (paths, WSLENV, the hook transport, which agents run there), PTY environment stripping (CLAUDE_CODE_*, NO_COLOR, TERM), and config directory locations.
 
 ## Packaging
 

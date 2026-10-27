@@ -111,7 +111,7 @@ install-on-quit. See [Linux auto-update](../releases/deployment.md#linux-auto-up
 
 ### WSL Note
 
-Kangentic is a GUI desktop application. If you use WSL, install the **Windows** version -- it runs as a native Windows app and can use WSL shells for agent sessions. Do not attempt to install the Linux version inside WSL.
+Kangentic is a GUI desktop application. If you use WSL, install the **Windows** version -- it runs as a native Windows app and can use WSL shells for agent sessions. Do not attempt to install the Linux version inside WSL. An agent CLI installed inside a distro runs there when you set its path in Settings > Agent to the distro path, such as `\\wsl.localhost\Ubuntu\home\dev\.local\bin\claude`. Which agents support that is listed in [WSL Support](../platforms/shells-and-paths.md#wsl-support).
 
 ## From Source
 

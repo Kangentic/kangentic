@@ -513,17 +513,13 @@ id, and post-fork turns index as a new document. Note for MCP consumers: a task'
 
 ### WSL on Windows
 
-If Codex or Gemini runs under WSL on a Windows host, their history files live inside the WSL Linux filesystem (`\\wsl$\<distro>\home\<user>\.codex\...`). Node.js `fs.watch` on UNC paths is unreliable. In this case:
+A CLI configured by its `\\wsl.localhost\<distro>\...` path keeps its history in the distro, and Kangentic reads it through the distro's share. Aider is the one whose file sits in the cwd on the Windows drive, read as before. The session row's `cli_target` records the distro home's share path (`homeUnc`) and the agent home overrides the distro's shell sets, such as `CODEX_HOME`. Each parser's `locate()` rebuilds a place from it (`placeFromStored`) and looks under that home: Claude's `~/.claude/projects/<slug>/`, with the slug built from the `/mnt` path the CLI ran in, Codex's `<CODEX_HOME>/sessions/<date>/`, and the Gemini, Qwen Code and Grok folders. `FileWatcher` (`src/main/pty/readers/file-watcher.ts`) tails the file with a one-second poll that runs beside `fs.watch` whether or not the native watcher fires, which is why tailing over the share works. Background readers skip a stopped distro, since reading its share would start it (`mayReadPlaceUnattended`). The conversation indexer and the transcript archive read it on a later pass, and the Command Terminal's Earlier list keeps the row without looking. OpenCode is the exception. Its SQLite WAL cannot be read over the share, so Kangentic asks the distro's own CLI (`opencode session list`, `opencode export`), as [OpenCode](opencode.md#wsl) describes. A Windows CLI run through a WSL shell has no `cli_target`, and its files stay in this machine's home, where they are read as before.
 
-1. `locate()` typically returns `null` because `fs.readdirSync` on the WSL UNC path fails.
-2. The session still works via the existing PtyActivityTracker fallback.
-3. The card shows the "Starting agent…" spinner + working/idle dot, not the full telemetry pill.
-
-This is graceful degradation, not a regression - it matches pre-telemetry behavior. Fix (future): detect WSL mode and shell out to `wsl cat` to read the file from inside the WSL environment.
+Two gaps remain. A worktree rename does not move a cwd-keyed CLI's history in a distro, such as Claude's. [Migrate-on-resume](#migrate-on-resume-after-a-worktree-rename-not-the-canresumesession-guard) logs and skips it, so that resume reports "No conversation found". Project relocation (`onProjectRelocated`) also rewrites only this machine's files. For an OpenCode session in a distro, the Conversation viewer gets no pages and handoff gets no history file.
 
 ### Remote SSH sessions
 
-Same as WSL: the history file is on the remote machine, not accessible via local `fs`. Falls back to PtyActivityTracker.
+The history file of a session on a remote machine is not reachable through local `fs`. The session falls back to PtyActivityTracker.
 
 ### First-session race
 

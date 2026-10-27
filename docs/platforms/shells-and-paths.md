@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Shells and paths
-description: Shell detection order per OS, how adaptCommandForShell and quoteArg quote for PowerShell, cmd, bash, fish, nushell and WSL, npm .cmd shim launching, Windows cwd fixups, WSL interop limits, PTY environment stripping (CLAUDE_CODE_*, NO_COLOR, TERM), and config directory locations.
+description: Shell detection order per OS, how adaptCommandForShell and quoteArg quote for PowerShell, cmd, bash, fish, nushell and WSL, npm .cmd shim launching, Windows cwd fixups, WSL interop limits and agent CLIs installed in a WSL distro (paths, WSLENV, the hook transport, which agents run there), PTY environment stripping (CLAUDE_CODE_*, NO_COLOR, TERM), and config directory locations.
 tags: [shells, paths, quoting, wsl, environment]
 sources:
   - resource: src/main/pty/spawn/shell-resolver.ts
@@ -14,6 +14,10 @@ sources:
   - resource: src/main/agent/shared/exec-version.ts
   - resource: src/main/pty/lifecycle/session-spawn-flow.ts
     title: the adaptCommandForShell call site
+  - resource: src/main/agent/shared/cli-target.ts
+  - resource: src/main/agent/shared/wsl-distro.ts
+  - resource: src/main/agent/shared/wsl-hook-transport.ts
+  - resource: src/main/agent/shared/agent-detector.ts
 ---
 # Shells and paths
 
@@ -168,19 +172,54 @@ Overridable via `KANGENTIC_DATA_DIR` environment variable.
 - Shell spec: stored as `wsl -d Ubuntu` etc., split into exe (`wsl.exe`) + args (`-d Ubuntu`) at spawn time. The `.exe` extension is appended deliberately: node-pty's ConPTY executable search cannot resolve the extension-less bare name (the session exits -1 with no output)
 - Path conversion: the leading exe path of the agent command is converted to `/mnt/c/...`; the agent command itself is written into the PTY after the shell starts, never passed in argv
 
+A WSL shell can run an agent two ways. With a Windows CLI path, the shell runs the Windows binary through interop (next subsection). With a CLI path into the distro itself, the CLI runs there as a Linux process (the subsection after it).
+
 ### WSL runs the Windows binary (interop)
 
 Converting the CLI path to `/mnt/c/...` launches the **Windows** agent binary through WSL's
-binfmt interop, which can only execute PE `.exe` files. Two consequences, both accepted as
-documented limitations:
+binfmt interop, which can only execute PE `.exe` files. npm-installed `.cmd` / `.bat` shims
+cannot be launched from inside WSL (Git Bash can run them; WSL interop cannot), so users on WSL
+need the agent's native `.exe` install. Every path argument stays a Windows path, which is right
+for a Windows binary. CLI detection resolves on the Windows host, identically for every shell, so
+a CLI installed inside the distro is used only when its CLI path names it.
 
-- npm-installed `.cmd` / `.bat` shims cannot be launched from inside WSL (Git Bash can run
-  them; WSL interop cannot). Users on WSL need the agent's native `.exe` install.
-- A CLI installed *inside* the distro (e.g. `claude` under Linux) is not discovered: CLI
-  detection resolves on the Windows host only, identically for every shell. Preferring a
-  distro-native binary in WSL mode would also require converting every path *argument*
-  (`--settings`, `--mcp-config` are Windows paths, correct for a Windows binary, wrong for a
-  Linux one); it is a possible follow-up feature, not current behavior.
+### A CLI installed in the distro
+
+A CLI path of the form `\\wsl$\<distro>\...` or `\\wsl.localhost\<distro>\...` in the agent's CLI Path row
+(per project, see [Settings panel](../settings/settings-panel.md)) names a CLI installed inside that
+distro, and the CLI runs there (#286). Only on Windows (`parseWslCliPath`), and only for an
+adapter that declares `supportsWslCli`; for any other the row shows "No WSL support"
+(`unsupportedTarget`). Which agents declare it is in the table below.
+
+- **Detection** never stats the share. The version probe runs `wsl.exe -d <distro> -e env PATH=<interactive PATH> <linux path> --version`, and a failure shows its own error under the row (`detectionError`).
+- **Distro facts** (`wsl-distro.ts`) are read once per distro and kept until Re-detect. The user's own shell runs interactively and prints its environment between two markers, so rc output around it is ignored and a version-managed node is on its PATH (Ubuntu's `.bashrc` returns early for a non-interactive shell, and nvm appends below that guard). Only PATH, HOME and `WSL_ENV_KEYS` (agent home overrides such as `CODEX_HOME`, and the XDG base directories) are parsed, and the rest of the capture is never logged or stored: a distro's environment can carry the user's forwarded secrets. A second call prints the home and the root as Windows paths and the networking mode (`wslinfo`). A failed read is not kept, so a distro still booting answers next time.
+- **The target** is resolved once per spawn at each build site (`resolveCliTarget`) and carried on `CommandOptions.cliTarget`. The session's shell is `wsl -d <distro>` whatever shell is configured (`shellForTarget`). The session row keeps it as `cli_target`: the distro's homes, its agent home overrides and the CLI's own path, so a reader after the session finds the CLI's files with no call into the distro (`placeOfRecord`, see the [`sessions` table](../database/session-tables.md#sessions-table)). A null target is this machine, and every helper then returns what the code did before targets existed.
+- **Paths:** every path handed to the CLI goes through `cliPathForTarget` (`/mnt/c/...`), and every file Kangentic reads or writes in the distro through the home's share path or `hostPathForTarget`. Reading a stopped distro's share starts it, so a reader nobody asked for skips a stopped distro (`mayReadPlaceUnattended`) and reads it on a later pass.
+- **Environment:** a distro sees a Windows variable only when `WSLENV` names it. `performSpawn` lists every variable the adapter's `buildEnv` set (`/u`), and `KANGENTIC_EVENTS_PATH` and `KANGENTIC_WSL_HOOK_DIR` with `/up`, so those two arrive as distro paths. A run outside a terminal (`--help`, a model list, a title summary, a Knowledge Graph answer) starts `wsl.exe -d <distro> -e env PATH=<interactive PATH> <linux cli> <args>` (`cliInvocationForTarget`, `execCliForTarget`), with its variables in `WSLENV` and never in argv, so a token never shows in the distro's process list.
+- **Hooks:** a distro may have no node, and Kangentic's bridges are node scripts, so a distro CLI's hooks run one POSIX `sh` script that only publishes files (the WSL hook transport, `wsl-hook-transport.ts`), written into the session's `wsl-hooks/` folder at spawn. Its `event` mode writes one file per call into `inbox/` under a temporary name and renames it; `reply` publishes a request and prints the answer (plan approval, the background shell hint), or nothing when none comes in time, so the CLI asks the user; `status` renames the status line's JSON over `status.json`; `mcp` is the stdio bridge to the MCP server. Kangentic ingests the files with the bridges' own logic (`WslHookInbox`) and is the only writer of `events.jsonl`. Measured over the Windows drive from Ubuntu: sixteen parallel hooks appending to one shared file kept 158 of 640 records whole, where a file per call kept 640 of 640 at about 13 ms a hook. The script is a constant, not a shipped file: a CRLF checkout would break `sh`, and the distro cannot read into the asar. A CLI whose hook command every session in a folder shares names a per-folder copy (`copyWslHookScriptInto`), which finds its session through `KANGENTIC_WSL_HOOK_DIR`.
+- **MCP:** on mirrored networking a distro reaches the server's loopback URL. On WSL's default NAT network it cannot, so the session gets the script's `mcp` bridge, which Kangentic relays to the loopback server. See [How the MCP server works](../integrations/mcp-server/how-it-works.md).
+- **Leftover processes:** the in-distro reap runs in each distro a task's CLI ran in, read from `cli_target` (see [Process reaping](../architecture/worktrees/process-reaping.md)).
+- **Not covered:** a project stored inside the distro. Kangentic's git, worktrees and session files run on Windows against the project path, and Windows change notifications over the share are unreliable, so projects stay on a Windows drive.
+
+| Agent | Runs from a distro | Run against a real distro install |
+|-------|--------------------|-----------------------------------|
+| [Claude Code](../integrations/agents/claude-code.md) | Yes | Yes |
+| [Codex CLI](../integrations/agents/codex-cli.md) | Yes | No |
+| [Aider](../integrations/agents/aider.md) | Yes | No |
+| [Antigravity CLI](../integrations/agents/antigravity.md) | Yes | No |
+| [Cursor CLI](../integrations/agents/cursor-cli.md) | Yes | No |
+| [Droid](../integrations/agents/droid.md) | Yes | No |
+| [Gemini CLI](../integrations/agents/gemini-cli.md) | Yes | No |
+| [GitHub Copilot CLI](../integrations/agents/copilot-cli.md) | Yes | No |
+| [Goose CLI](../integrations/agents/goose-cli.md) | Yes | No |
+| [Grok Build](../integrations/agents/grok-build.md) | Yes | No |
+| [Ollama](../integrations/agents/ollama.md) | Yes | No |
+| [OpenCode](../integrations/agents/opencode.md) | Yes | No |
+| [Oz CLI](../integrations/agents/oz-cli.md) | Yes | No |
+| [Qwen Code](../integrations/agents/qwen-code.md) | Yes | No |
+| [Kimi Code](../integrations/agents/kimi-code.md) | No | No |
+
+Each "No" in the last column is an adapter built from its CLI's own docs and pinned by unit tests: `tests/unit/wsl-adapter-parity.test.ts` builds every distro-capable adapter's command for a NAT distro and fails on a drive or share path, the token in argv, or a missing transport folder, and `tests/unit/wsl-adapter-headless-runs.test.ts` fails a headless run that starts anything but `wsl.exe` for a distro path. Each agent's doc has a WSL section with what was taken from docs. Kimi Code has no WSL support: the adapter is built on `kimi-cli` 1.x, and its successor, which also installs as `kimi`, is a different CLI (see [Kimi Code](../integrations/agents/kimi-code.md)).
 
 ## Environment Stripping and Defaults
 
