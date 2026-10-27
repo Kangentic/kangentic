@@ -119,6 +119,18 @@ describe('the step from a WSL distro', () => {
       .toEqual({ connected: false, error: 'From Ubuntu: wsl.exe gave no answer in 30 s.' });
   });
 
+  // Measured against a real wsl.exe: the facts read's error carries the raw
+  // exec error as its cause, whose message is the whole command line.
+  it('reports a distro whose facts cannot be read in the distro\'s own words, without the command line', async () => {
+    const injected = deps({
+      resolveFacts: vi.fn(async () => {
+        throw new Error('There is no distribution with the supplied name.', { cause: new Error('Command failed: wsl.exe -d NoSuchDistro -e sh -c ...') });
+      }),
+    });
+    expect(await checkMcpConnection(input({ distros: ['NoSuchDistro'] }), injected))
+      .toEqual({ connected: false, error: 'From NoSuchDistro: There is no distribution with the supplied name.' });
+  });
+
   it('dials the loopback port from inside the distro on mirrored networking, the port as an argument', async () => {
     const injected = deps({ resolveFacts: vi.fn(async () => facts('mirrored')) });
     expect(await checkMcpConnection(input({ distros: ['Ubuntu'] }), injected)).toEqual({ connected: true });

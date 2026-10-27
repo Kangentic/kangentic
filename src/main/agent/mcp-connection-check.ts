@@ -160,7 +160,9 @@ async function checkFromDistro(distro: string, url: string, token: string, deps:
   try {
     facts = await deps.resolveFacts(distro);
   } catch (error) {
-    return describeFailure(error);
+    // Already the distro's own words (`describeWslFailure`); its cause is the
+    // raw exec error, whose message repeats the whole command line.
+    return error instanceof Error ? error.message : String(error);
   }
   if (facts.networkingMode === 'mirrored') return checkMirroredLoopback(distro, url, deps);
   return checkThroughBridge(distro, url, token, deps);
