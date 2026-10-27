@@ -17,6 +17,7 @@ import { getProjectDb } from '../../db/database';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { collectRemoteTargets } from '../../retrieval/remote-targets';
 import { agentRegistry } from '../../agent/agent-registry';
+import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { getProjectRepos } from './project-repos';
 import { assembleTaskReport, assembleTaskRoute } from './task-report-assemble';
 import type { IpcContext } from '../ipc-context';
@@ -146,7 +147,12 @@ export async function readTaskLastMessage(projectId: string, taskId: string): Pr
     const reply = await retrievalClient.call(
       'transcript.finalReply',
       {
-        facts: { sessionType: newest.session_type, agentSessionId: newest.agent_session_id, cwd: newest.cwd },
+        facts: {
+          sessionType: newest.session_type,
+          agentSessionId: newest.agent_session_id,
+          cwd: newest.cwd,
+          cliTarget: parseStoredCliTarget(newest.cli_target),
+        },
         remoteTargets: collectRemoteTargets(agentRegistry),
       },
       { timeoutMs: LAST_MESSAGE_TIMEOUT_MS },

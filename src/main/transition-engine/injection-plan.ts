@@ -2,6 +2,7 @@ import { DEFAULT_AGENT } from '../../shared/types';
 import type { Project, SessionRecord, SessionUsage, Swimlane, Task } from '../../shared/types';
 import { projectModelDefaultsApply } from './spawn-preamble';
 import type { AgentAdapter } from '../agent/agent-adapter';
+import { parseStoredCliTarget } from '../agent/shared/cli-target';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../db/repositories/session-own-record';
 import type { CommandVerifier, InjectionCommand, InjectionVerifyMode } from './terminal-submit-scheduler';
@@ -466,11 +467,14 @@ export function buildCommandInjectionVerifier(
     // where it would previously have stayed silently `unconfirmed`.
     if (!currentCwd) return false;
     if (needsAgentSessionId && !currentAgentSessionId) return false;
+    // A CLI in a WSL distro writes its transcript there.
+    const cliTarget = parseStoredCliTarget(currentRecord?.cli_target);
     const verifiedInCurrent = await submissionVerifier({
       type: 'command-injection',
       text: command,
       agentSessionId: currentAgentSessionId ?? undefined,
       cwd: currentCwd,
+      cliTarget,
       sentAt,
       mode,
     });
@@ -487,6 +491,7 @@ export function buildCommandInjectionVerifier(
       text: command,
       agentSessionId: capturedAgentSessionId,
       cwd: capturedCwd,
+      cliTarget,
       sentAt,
       mode,
     });

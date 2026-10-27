@@ -3,6 +3,7 @@ import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { codexHomeDir } from './config-toml';
+import type { CliPlace } from '../../shared/cli-target';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
@@ -212,9 +213,10 @@ function parseCodexRecord(
  * today/yesterday for the post-spawn capture window), this walks the
  * `~/.codex/sessions/<YYYY>/<MM>/<DD>` tree newest-first so an older session
  * can be viewed on demand. Returns the absolute path, or null if not found.
+ * `place` is where the CLI ran when it was not this machine (a WSL distro).
  */
-export function locateCodexTranscriptFile(agentSessionId: string): string | null {
-  const root = path.join(codexHomeDir(), 'sessions');
+export function locateCodexTranscriptFile(agentSessionId: string, place: CliPlace | null = null): string | null {
+  const root = path.join(codexHomeDir(place), 'sessions');
   const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
 

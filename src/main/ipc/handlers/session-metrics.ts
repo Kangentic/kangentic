@@ -5,7 +5,8 @@ import { parseToolBreakdown, type EarlierRunRecord, type SessionRepository } fro
 import { sumToolResultTokens } from '../../../shared/tool-call-totals';
 import type { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import type { SessionManager } from '../../pty/session-manager';
-import type { SessionRecord, Session } from '../../../shared/types';
+import type { SessionRecord, Session, StoredCliTarget } from '../../../shared/types';
+import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { workflowAgentEffort } from '../../workflows/workflow-agent-effort';
 
 /**
@@ -226,6 +227,8 @@ interface RunTranscriptLocation {
   transcriptPath: string | null;
   agentSessionId: string | null;
   cwd: string | null;
+  /** Where the session's CLI ran when it was not this machine (a WSL distro). */
+  cliTarget: StoredCliTarget | null;
   record: SessionRecord | null;
 }
 
@@ -253,7 +256,8 @@ function locateRunTranscript(
   const agentSessionId = record?.agent_session_id ?? null;
   const cwd = record?.cwd ?? null;
   if (!transcriptPath && !(agentSessionId && cwd)) return null;
-  return { agentName, transcriptPath, agentSessionId, cwd, record };
+  // The spawn wrote the record with its CLI target, so the record answers for a live run too.
+  return { agentName, transcriptPath, agentSessionId, cwd, cliTarget: parseStoredCliTarget(record?.cli_target), record };
 }
 
 /**
@@ -286,12 +290,12 @@ export function refineTranscriptTokens(
   try {
     const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, recordId, 'transcriptUsage');
     if (!located) return;
-    const { agentName, transcriptPath, agentSessionId, cwd } = located;
+    const { agentName, transcriptPath, agentSessionId, cwd, cliTarget } = located;
 
     // Read in the retrieval worker: a whole-file parse of a transcript that
     // can run to hundreds of MB, which used to stream through main.
     void transcriptReadQueue
-      .add(() => retrievalClient.call('transcript.usage', { agentName, transcriptPath, agentSessionId, cwd }, { timeoutMs: null }))
+      .add(() => retrievalClient.call('transcript.usage', { agentName, transcriptPath, agentSessionId, cwd, cliTarget }, { timeoutMs: null }))
       .then((transcriptUsage) => {
         if (!transcriptUsage) return;
         sessionRepo.updateTranscriptTokens(recordId, {
@@ -385,11 +389,11 @@ async function readLiveRunToolResultTokens(
   try {
     const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, sessionId, 'transcriptToolResultTokens');
     if (!located) return null;
-    const { agentName, transcriptPath, agentSessionId, cwd, record } = located;
+    const { agentName, transcriptPath, agentSessionId, cwd, cliTarget, record } = located;
 
     return await retrievalClient.call(
       'transcript.toolResultTokens',
-      { agentName, transcriptPath, agentSessionId, cwd, sinceMs: runStartMs(sessionManager, sessionId, record) },
+      { agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs: runStartMs(sessionManager, sessionId, record) },
       { timeoutMs: null },
     );
   } catch {
@@ -459,6 +463,8 @@ interface EarlierRunWindow {
    * can only ever lead to this conversation's transcript.
    */
   cwdCandidates: string[];
+  /** Where the run's CLI ran when it was not this machine (a WSL distro). */
+  cliTarget: StoredCliTarget | null;
 }
 
 /**
@@ -494,6 +500,7 @@ function earlierRunWindows(
       sinceMs,
       untilMs,
       cwdCandidates: transcriptCwdCandidates(records, index, liveSessionCwd),
+      cliTarget: parseStoredCliTarget(record.cli_target),
     });
   }
   return windows;
@@ -633,6 +640,7 @@ async function readEarlierRunWindow(
           transcriptPath: null,
           agentSessionId: window.agentSessionId,
           cwd,
+          cliTarget: window.cliTarget,
           sinceMs: window.sinceMs,
           untilMs: window.untilMs,
         },
@@ -707,7 +715,7 @@ export function refineTranscriptToolCounts(
   try {
     const located = locateRunTranscript(sessionManager, sessionRepo, sessionId, recordId, 'transcriptToolCounts');
     if (!located) return;
-    const { agentName, transcriptPath, agentSessionId, cwd, record } = located;
+    const { agentName, transcriptPath, agentSessionId, cwd, cliTarget, record } = located;
 
     // An agent whose reads ignore the time bounds counts its whole transcript,
     // and every run of a conversation writes to the same one. That count is
@@ -736,7 +744,7 @@ export function refineTranscriptToolCounts(
 
     // Read in the retrieval worker, as in refineTranscriptTokens.
     void transcriptReadQueue
-      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd, sinceMs, untilMs }, { timeoutMs: null }))
+      .add(() => retrievalClient.call('transcript.toolCounts', { agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs, untilMs }, { timeoutMs: null }))
       .then((counts) => {
         if (!counts) return;
         sessionRepo.updateTranscriptToolCounts(recordId, counts);

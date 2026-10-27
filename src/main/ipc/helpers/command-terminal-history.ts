@@ -23,7 +23,8 @@
  * quit keeps its row, and the list stamps its end the first time it reads it,
  * or deletes the row if nobody used that terminal.
  */
-import { EventType, PromptReason, type CommandTerminalHistoryEntry, type Session, type SessionEvent } from '../../../shared/types';
+import { EventType, PromptReason, type CommandTerminalHistoryEntry, type Session, type SessionEvent, type StoredCliTarget } from '../../../shared/types';
+import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { CommandTerminalHistoryRepository, CommandTerminalHistoryRow } from '../../db/repositories/command-terminal-history-repository';
 
@@ -49,6 +50,8 @@ export interface CommandTerminalHistorySessionSource {
   off(event: 'event', listener: SessionEventListener): unknown;
   getSession(sessionId: string): Session | undefined;
   getSessionAgentName(sessionId: string): string | undefined;
+  /** Where the session's CLI runs when it is not this machine (a WSL distro), or null. */
+  getSessionCliTarget?(sessionId: string): StoredCliTarget | null;
   listSessions(): Session[];
 }
 
@@ -60,7 +63,7 @@ export interface CommandTerminalHistoryDeps {
    * Whether the conversation can still be resumed: its agent resumes by id and
    * can still find the transcript (an agent purges old ones). Never throws.
    */
-  conversationAvailable(agentName: string, agentSessionId: string, cwd: string): Promise<boolean>;
+  conversationAvailable(agentName: string, agentSessionId: string, cwd: string, cliTarget: string | null): Promise<boolean>;
   /** Push `COMMAND_TERMINAL_HISTORY_CHANGED` for the project. */
   notifyChanged(projectId: string): void;
 }
@@ -218,7 +221,7 @@ export class CommandTerminalHistory {
    * the row. Never throws.
    */
   conversationAvailable(row: CommandTerminalHistoryRow): Promise<boolean> {
-    return this.deps.conversationAvailable(row.agent_name, row.agent_session_id, row.cwd);
+    return this.deps.conversationAvailable(row.agent_name, row.agent_session_id, row.cwd, row.cli_target ?? null);
   }
 
   /** The record of one conversation, for a resume. */
@@ -258,6 +261,8 @@ export class CommandTerminalHistory {
       cwd: session.cwd,
       label,
       touched,
+      // A terminal whose CLI runs in a WSL distro: its transcript is there.
+      cliTarget: serializeCliTarget(this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null),
     }), 'record');
     const conversation: HeldConversation = { projectId, agentSessionId, touched, labeled: label !== null, prompted: false };
     this.heldBySession.set(sessionId, conversation);

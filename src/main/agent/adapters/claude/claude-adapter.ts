@@ -23,7 +23,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
-import { cliPathForTarget, peekCliTarget, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, hostPathForTarget, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -276,11 +276,16 @@ function resolveRunTranscriptPath(input: {
   transcriptPath?: string | null;
   agentSessionId?: string | null;
   cwd?: string | null;
+  place?: CliPlace | null;
 }): string | null {
-  return input.transcriptPath
-    ?? (input.agentSessionId && input.cwd
-      ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd)
-      : null);
+  const place = input.place ?? null;
+  // A Claude in a WSL distro reports its transcript by its Linux path.
+  if (input.transcriptPath) {
+    return place && input.transcriptPath.startsWith('/') ? hostPathForTarget(input.transcriptPath, place) : input.transcriptPath;
+  }
+  return input.agentSessionId && input.cwd
+    ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd, place)
+    : null;
 }
 
 /**
@@ -572,8 +577,8 @@ export class ClaudeAdapter implements AgentAdapter {
     return humanizeClaudeModelId(modelId);
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
     // locateClaudeTranscriptFile returns the computed path without checking existence.
     // Verify the file actually exists before returning it.
     try {
@@ -588,12 +593,13 @@ export class ClaudeAdapter implements AgentAdapter {
     agentSessionId: string;
     reportedPaths: ReadonlyArray<string>;
     cwd: string;
+    place?: CliPlace | null;
   }): Promise<boolean> {
     return proveClaudeConversationGone(params);
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
+    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
     const entries = await parseClaudeTranscript(filePath);
     return { entries, sourcePath: filePath };
   }
@@ -608,8 +614,9 @@ export class ClaudeAdapter implements AgentAdapter {
     startByte: number,
     maxBytes: number,
     attributedMessageIds?: Set<string>,
+    place?: CliPlace | null,
   ): Promise<ParsedTranscriptWindow> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd);
+    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
     const window = await parseClaudeTranscriptWindow(
       filePath, startByte, maxBytes, attributedMessageIds,
     );
@@ -621,23 +628,24 @@ export class ClaudeAdapter implements AgentAdapter {
     agentSessionId: string,
     cwd: string,
     request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
   ): Promise<TranscriptPageReadResult> {
-    return readClaudeTranscriptPage(locateClaudeTranscriptFile(agentSessionId, cwd), request);
+    return readClaudeTranscriptPage(locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null), request);
   }
 
   /**
    * Staleness signature for the session's `subagents/` directory. Its own
    * signature, because a running subagent moves no byte of the main transcript.
    */
-  statSubagentTranscripts(agentSessionId: string, cwd: string): SubagentTranscriptSignature | null {
-    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd));
+  statSubagentTranscripts(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null {
+    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd, place ?? null));
   }
 
   /** Every Task-tool subagent's tokens for this session, folded to one turn per
    *  API message. See `subagent-usage-parser.ts` for why the fold rule differs
    *  from the main transcript's. */
-  async parseSubagentUsage(agentSessionId: string, cwd: string): Promise<ParsedSubagentUsage> {
-    return parseClaudeSubagentUsage(agentSessionId, cwd);
+  async parseSubagentUsage(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage> {
+    return parseClaudeSubagentUsage(agentSessionId, cwd, place ?? null);
   }
 
   /** Claude spawns a subagent with the `Task` tool, so a `Task` tool-use id is
@@ -665,6 +673,7 @@ export class ClaudeAdapter implements AgentAdapter {
     transcriptPath?: string | null;
     agentSessionId?: string | null;
     cwd?: string | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptUsage | null> {
     const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
@@ -677,6 +686,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
     untilMs?: number | null;
+    place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
     const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
@@ -689,6 +699,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     sinceMs?: number | null;
     untilMs?: number | null;
+    place?: CliPlace | null;
   }): Promise<Record<string, number> | null> {
     const filePath = resolveRunTranscriptPath(input);
     if (!filePath) return null;
@@ -877,7 +888,7 @@ export class ClaudeAdapter implements AgentAdapter {
         if (context.type !== 'command-injection' || !context.agentSessionId || !context.cwd) {
           return false;
         }
-        const filePath = locateClaudeTranscriptFile(context.agentSessionId, context.cwd);
+        const filePath = locateClaudeTranscriptFile(context.agentSessionId, context.cwd, placeFromStored(context.cliTarget));
         const verifier = createSlashCommandVerifier(filePath);
         if (!verifier) return false;
         // sentAt comes from TerminalSubmit.submitKeystrokes and is the FIRST

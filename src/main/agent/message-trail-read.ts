@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import type { AgentAdapter } from './agent-adapter';
 import type { AssistantMessageTrailEntry, TranscriptEntry } from '../../shared/types';
+import { placeFromStored, type CliPlace } from './shared/cli-target';
 import { assistantMessagePreviews } from './shared/message-preview';
 import { getCachedTranscript } from './transcript-cache';
 import { finalAgentReply, type AgentReply } from './shared/agent-reply';
@@ -46,10 +47,11 @@ export async function readTrail(
   cursor: number | null,
   fileSize: (filePath: string) => Promise<number> = statSize,
 ): Promise<TrailRead> {
+  const place = placeFromStored(facts.cliTarget ?? null);
   const parseWindow = adapter.parseTranscriptWindow;
   const locateFile = adapter.locateSessionHistoryFile;
   if (parseWindow && locateFile) {
-    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, cursor, fileSize, {
+    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, place, cursor, fileSize, {
       tailBytes: MESSAGE_TRAIL_TAIL_BYTES,
       maxWindows: MESSAGE_TRAIL_MAX_WINDOWS_PER_READ,
     });
@@ -60,7 +62,7 @@ export async function readTrail(
     const cached = await getCachedTranscript(
       facts.sessionType,
       facts.agentSessionId,
-      () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd),
+      () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd, place),
     );
     return { previews: previewsOf(cached.entries), cursor, usedFallback: true };
   }
@@ -107,13 +109,14 @@ export async function readFinalReply(
   since: TranscriptAnchor | null = null,
   fileSize: (filePath: string) => Promise<number> = statSize,
 ): Promise<AgentReply | null> {
+  const place = placeFromStored(facts.cliTarget ?? null);
   const parseWindow = adapter.parseTranscriptWindow;
   const locateFile = adapter.locateSessionHistoryFile;
   if (parseWindow && locateFile) {
     const start = since !== null && since.agentSessionId === facts.agentSessionId
-      ? await anchoredStart(adapter, locateFile, facts, since.byteOffset, fileSize)
+      ? await anchoredStart(adapter, locateFile, facts, place, since.byteOffset, fileSize)
       : null;
-    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, start, fileSize, {
+    const read = await readWindows(adapter, parseWindow, locateFile, facts.cwd, facts.agentSessionId, place, start, fileSize, {
       tailBytes: FINAL_REPLY_TAIL_BYTES,
       maxWindows: FINAL_REPLY_MAX_WINDOWS,
     });
@@ -124,7 +127,7 @@ export async function readFinalReply(
     const cached = await getCachedTranscript(
       facts.sessionType,
       facts.agentSessionId,
-      () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd),
+      () => parseTranscript.call(adapter, facts.agentSessionId, facts.cwd, place),
     );
     return finalAgentReply(cached.entries);
   }
@@ -142,10 +145,11 @@ async function anchoredStart(
   adapter: MessageTrailAdapter,
   locateFile: NonNullable<MessageTrailAdapter['locateSessionHistoryFile']>,
   facts: MessageTrailReadFacts,
+  place: CliPlace | null,
   byteOffset: number,
   fileSize: (filePath: string) => Promise<number>,
 ): Promise<number | null> {
-  const filePath = await locateFile.call(adapter, facts.agentSessionId, facts.cwd);
+  const filePath = await locateFile.call(adapter, facts.agentSessionId, facts.cwd, place);
   if (!filePath) return null;
   const size = await fileSize(filePath);
   if (byteOffset > size) {
@@ -169,13 +173,14 @@ async function readWindows(
   locateFile: NonNullable<MessageTrailAdapter['locateSessionHistoryFile']>,
   cwd: string,
   agentSessionId: string,
+  place: CliPlace | null,
   startCursor: number | null,
   fileSize: (filePath: string) => Promise<number>,
   bounds: { tailBytes: number; maxWindows: number },
 ): Promise<{ entries: TranscriptEntry[]; cursor: number | null }> {
   let cursor: number;
   if (startCursor === null) {
-    const filePath = await locateFile.call(adapter, agentSessionId, cwd);
+    const filePath = await locateFile.call(adapter, agentSessionId, cwd, place);
     if (!filePath) return { entries: [], cursor: null };
     const size = await fileSize(filePath);
     cursor = Math.max(0, size - bounds.tailBytes);
@@ -184,7 +189,7 @@ async function readWindows(
   }
   const collected: TranscriptEntry[] = [];
   for (let windowIndex = 0; windowIndex < bounds.maxWindows; windowIndex += 1) {
-    const window = await parseWindow.call(adapter, agentSessionId, cwd, cursor, MESSAGE_TRAIL_WINDOW_BYTES);
+    const window = await parseWindow.call(adapter, agentSessionId, cwd, cursor, MESSAGE_TRAIL_WINDOW_BYTES, undefined, place);
     if (window.totalBytes < cursor) {
       // The file shrank under the cursor (a rotate, or a reused id): re-anchor at the new tail.
       cursor = Math.max(0, window.totalBytes - bounds.tailBytes);

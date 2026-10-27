@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import { EventType } from '../../shared/types';
-import type { AssistantMessageTrailEntry, Session, SessionEvent } from '../../shared/types';
+import type { AssistantMessageTrailEntry, Session, SessionEvent, StoredCliTarget } from '../../shared/types';
 import type { TranscriptAnchor, TranscriptPositionSource } from './shared/transcript-anchor';
 
 /**
@@ -98,6 +98,8 @@ export interface MessageTrailSessionFacts {
   sessionType: string;
   agentSessionId: string | null;
   cwd: string;
+  /** Where the session's CLI ran when it was not this machine (a WSL distro): its transcript is there. */
+  cliTarget?: StoredCliTarget | null;
 }
 
 /** Session facts once the agent session id is known: what a read of its transcript needs. */

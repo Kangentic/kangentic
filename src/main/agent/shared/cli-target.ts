@@ -5,7 +5,7 @@ import type { StoredCliTarget } from '../../../shared/types';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
-import { peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
+import { WSL_ENV_KEYS, peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
 
 /**
  * Where an agent CLI runs and keeps its files, when that is not this machine
@@ -87,15 +87,53 @@ export function peekCliTarget(
   return facts ? { kind: 'wsl', distro: parsed.distro, linuxCliPath: parsed.linuxCliPath, facts } : null;
 }
 
-/** What a session record keeps of a target, enough to find its place again. */
-export function toStoredCliTarget(place: StoredCliTarget | null): StoredCliTarget | null {
-  return place ? { kind: place.kind, distro: place.distro } : null;
+/**
+ * What a session record keeps of a target: its distro, and from a resolved
+ * place the homes a reader needs (`placeFromStored`). Only the agent home
+ * overrides of the distro's environment are kept, never anything else.
+ */
+export function toStoredCliTarget(place: CliPlace | StoredCliTarget | null): StoredCliTarget | null {
+  if (!place) return null;
+  if ('facts' in place) {
+    return {
+      kind: place.kind,
+      distro: place.distro,
+      homeLinux: place.facts.homeLinux,
+      homeUnc: place.facts.homeUnc,
+      uncRoot: place.facts.uncRoot,
+      env: storedEnvironment(place.facts.env) ?? {},
+    };
+  }
+  const environment = storedEnvironment(place.env);
+  return {
+    kind: place.kind,
+    distro: place.distro,
+    ...(place.homeLinux ? { homeLinux: place.homeLinux } : {}),
+    ...(place.homeUnc ? { homeUnc: place.homeUnc } : {}),
+    ...(place.uncRoot ? { uncRoot: place.uncRoot } : {}),
+    ...(environment ? { env: environment } : {}),
+  };
 }
 
 /** A target as a session row's `cli_target` column holds it: JSON, or null for this machine. */
-export function serializeCliTarget(place: StoredCliTarget | null): string | null {
+export function serializeCliTarget(place: CliPlace | StoredCliTarget | null): string | null {
   const stored = toStoredCliTarget(place);
   return stored ? JSON.stringify(stored) : null;
+}
+
+function optionalString(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/** The agent home overrides a stored target may carry, named keys only. */
+function storedEnvironment(value: unknown): Record<string, string> | undefined {
+  if (value === null || typeof value !== 'object') return undefined;
+  const environment: Record<string, string> = {};
+  for (const key of WSL_ENV_KEYS) {
+    const entry = (value as Record<string, unknown>)[key];
+    if (typeof entry === 'string' && entry.length > 0) environment[key] = entry;
+  }
+  return environment;
 }
 
 /** The stored form read back from a session row's JSON, or null for anything else. */
@@ -106,13 +144,49 @@ export function parseStoredCliTarget(raw: string | null | undefined): StoredCliT
     if (parsed !== null && typeof parsed === 'object') {
       const record = parsed as Record<string, unknown>;
       if (record.kind === 'wsl' && typeof record.distro === 'string' && record.distro.length > 0) {
-        return { kind: 'wsl', distro: record.distro };
+        return toStoredCliTarget({
+          kind: 'wsl',
+          distro: record.distro,
+          homeLinux: optionalString(record.homeLinux),
+          homeUnc: optionalString(record.homeUnc),
+          uncRoot: optionalString(record.uncRoot),
+          env: storedEnvironment(record.env),
+        });
       }
     }
   } catch {
     // A row written by a later version, or damaged: read as this machine.
   }
   return null;
+}
+
+/**
+ * The place a stored target recorded, built from its homes with no call into
+ * the distro, for a reader after the session (in main or the retrieval
+ * worker): where the CLI keeps its transcripts, rollouts and settings. Null for
+ * this machine, and for a stored target without its homes, which then reads as
+ * this machine.
+ */
+export function placeFromStored(stored: StoredCliTarget | null | undefined): CliPlace | null {
+  if (!stored || !stored.homeUnc || !stored.uncRoot) return null;
+  return {
+    kind: 'wsl',
+    distro: stored.distro,
+    facts: {
+      distro: stored.distro,
+      homeLinux: stored.homeLinux ?? '',
+      homeUnc: stored.homeUnc,
+      uncRoot: stored.uncRoot,
+      interactivePath: '',
+      env: storedEnvironment(stored.env) ?? {},
+      networkingMode: 'unknown',
+    },
+  };
+}
+
+/** `placeFromStored` for a session row's `cli_target` column. */
+export function placeOfRecord(record: { cli_target?: string | null } | null | undefined): CliPlace | null {
+  return placeFromStored(parseStoredCliTarget(record?.cli_target));
 }
 
 /** The place a stored target names, with its facts read (cached), for readers after the session. */

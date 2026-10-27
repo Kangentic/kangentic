@@ -6,9 +6,11 @@ import {
   type SessionHistoryParseResult,
   type SessionUsage,
   type SessionEvent,
+  type StoredCliTarget,
 } from '../../../../shared/types';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 import { codexHomeDir } from './config-toml';
+import { cliPathForTarget, placeFromStored, type CliPlace } from '../../shared/cli-target';
 
 /**
  * Parser for Codex CLI's native session history files (rollout JSONL).
@@ -66,16 +68,20 @@ export class CodexSessionHistoryParser {
   static async captureSessionIdFromFilesystem(options: {
     spawnedAt: Date;
     cwd: string;
+    cliTarget?: StoredCliTarget | null;
     maxAttempts?: number;
   }): Promise<string | null> {
     const spawnedAtMs = options.spawnedAt.getTime();
     const mtimeFloorMs = spawnedAtMs - 30_000;       // coarse pre-filter
     const sessionCreatedFloorMs = spawnedAtMs - 1000; // precise ±1s window
     const sessionCreatedCeilMs = spawnedAtMs + 30_000;
-    const normalizedCwd = normalizeCwdForCompare(options.cwd);
+    // A Codex in a WSL distro writes its rollouts in the distro's home and
+    // records the cwd it was given, the `/mnt` form of ours.
+    const place = placeFromStored(options.cliTarget ?? null);
+    const normalizedCwd = normalizeCwdForCompare(cliPathForTarget(options.cwd, place));
     // rollout-<ISO-timestamp>-<UUID>.jsonl
     const pattern = /^rollout-.*-([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\.jsonl$/;
-    const directories = Array.from(new Set([codexSessionsDirForToday(), codexSessionsDirForYesterday()]));
+    const directories = Array.from(new Set([codexSessionsDirForToday(place), codexSessionsDirForYesterday(place)]));
 
     const maxAttempts = options.maxAttempts ?? 20; // ~10s at 500ms intervals
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
@@ -114,11 +120,13 @@ export class CodexSessionHistoryParser {
   static async locate(options: {
     agentSessionId: string;
     cwd: string;
+    cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
     const { agentSessionId } = options;
+    const place = placeFromStored(options.cliTarget ?? null);
     // UTC date for the directory structure. Codex writes the file under
     // the current UTC date regardless of local timezone.
-    const directory = codexSessionsDirForToday();
+    const directory = codexSessionsDirForToday(place);
     // Embed the session UUID in the filename regex. Codex writes:
     //   rollout-<ISO-timestamp>-<sessionUUID>.jsonl
     // We don't know the timestamp prefix, but the UUID suffix is unique.
@@ -132,7 +140,7 @@ export class CodexSessionHistoryParser {
       // On the first attempt, also check yesterday's dir in case the
       // session spans a UTC date rollover.
       if (attempt === 0) {
-        const yesterday = codexSessionsDirForYesterday();
+        const yesterday = codexSessionsDirForYesterday(place);
         if (yesterday !== directory) {
           const foundYesterday = findMatchingFile(yesterday, pattern);
           if (foundYesterday) return foundYesterday;
@@ -427,25 +435,26 @@ function parseTimestamp(value: unknown): number {
 
 /**
  * Compute `~/.codex/sessions/<YYYY>/<MM>/<DD>/` using the current UTC
- * date. Cross-platform path construction via path.join.
+ * date. Cross-platform path construction via path.join. `place` is where the
+ * CLI runs when it is not this machine: a distro Codex writes under its own home.
  */
-export function codexSessionsDirForToday(): string {
+export function codexSessionsDirForToday(place: CliPlace | null = null): string {
   const now = new Date();
-  return codexSessionsDirForDate(now);
+  return codexSessionsDirForDate(now, place);
 }
 
-export function codexSessionsDirForYesterday(): string {
+export function codexSessionsDirForYesterday(place: CliPlace | null = null): string {
   const yesterday = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  return codexSessionsDirForDate(yesterday);
+  return codexSessionsDirForDate(yesterday, place);
 }
 
-function codexSessionsDirForDate(date: Date): string {
+function codexSessionsDirForDate(date: Date, place: CliPlace | null): string {
   // toISOString() always returns UTC; slice(0, 10) → "YYYY-MM-DD".
   const iso = date.toISOString();
   const year = iso.slice(0, 4);
   const month = iso.slice(5, 7);
   const day = iso.slice(8, 10);
-  return path.join(codexHomeDir(), 'sessions', year, month, day);
+  return path.join(codexHomeDir(place), 'sessions', year, month, day);
 }
 
 /**

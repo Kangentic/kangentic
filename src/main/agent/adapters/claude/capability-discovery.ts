@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-import { execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
+import { cliHomeDir, execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
 import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
 import { buildModelCapabilityFields } from './model-display-name';
 import {
@@ -96,10 +96,11 @@ async function readModelsFromHead(filePath: string, lookupBytes: number): Promis
  * Bounded: walks the most-recent project dirs and the most-recent session
  * files per dir, reads only a small head of each file, and stops as soon as
  * it finds a model. Returns undefined on any directory listing failure or
- * when no models could be extracted.
+ * when no models could be extracted. `homeDir` is the CLI's home: a CLI in a
+ * WSL distro keeps its sessions in the distro's.
  */
-async function discoverHistoricalModels(): Promise<string[] | undefined> {
-  const projectsRoot = path.join(os.homedir(), '.claude', 'projects');
+async function discoverHistoricalModels(homeDir: string = os.homedir()): Promise<string[] | undefined> {
+  const projectsRoot = path.join(homeDir, '.claude', 'projects');
   // Sort projects by directory mtime (proxy for "recently active") so we scan
   // the freshest data first when capped by MAX_PROJECT_DIRS_TO_SCAN.
   const projectDirs = await listMostRecentDirs(projectsRoot, MAX_PROJECT_DIRS_TO_SCAN);
@@ -208,7 +209,10 @@ export async function rescanClaudeModels(
   cliPath: string,
   forceRefresh = false,
 ): Promise<ModelPickerScan | undefined> {
-  const transcriptModels = await discoverHistoricalModels();
+  // A distro whose facts cannot be read has no history to offer; the picker
+  // probe reports that distro's own error.
+  const target = await resolveCliTarget(cliPath, true).catch(() => undefined);
+  const transcriptModels = target === undefined ? undefined : await discoverHistoricalModels(cliHomeDir(target));
   const pickerScan = forceRefresh
     ? await probeModelPickerModels(cliPath, true)
     : getCachedModelPickerModels(cliPath);

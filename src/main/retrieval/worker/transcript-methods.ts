@@ -31,7 +31,9 @@ import { sliceTranscriptWindow, TranscriptSync, type TranscriptWindowSlice } fro
 import { adoptRemoteTargets, type RemoteTargets } from '../remote-targets';
 import { locateHistoryTurn, readHistoryPage, readHistoryTimeline } from '../../agent/transcript-history';
 import { historyReadQueue } from './history-read-queue';
+import { placeFromStored } from '../../agent/shared/cli-target';
 import type {
+  StoredCliTarget,
   TranscriptLocateRequest,
   TranscriptLocateResponse,
   TranscriptPageRequest,
@@ -49,6 +51,8 @@ export interface RunTranscriptRef {
   transcriptPath: string | null;
   agentSessionId: string | null;
   cwd: string | null;
+  /** Where the run's CLI ran when it was not this machine (a WSL distro): its transcript is there. */
+  cliTarget?: StoredCliTarget | null;
 }
 
 export interface TranscriptMethods {
@@ -381,21 +385,21 @@ export const transcriptHandlers: TranscriptHandlers = {
     return formatConversationTail(saved?.entries ?? [], maxChars);
   },
 
-  'transcript.usage': async ({ agentName, transcriptPath, agentSessionId, cwd }) => {
+  'transcript.usage': async ({ agentName, transcriptPath, agentSessionId, cwd, cliTarget }) => {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptUsage) return null;
-    return adapter.transcriptUsage({ transcriptPath, agentSessionId, cwd });
+    return adapter.transcriptUsage({ transcriptPath, agentSessionId, cwd, place: placeFromStored(cliTarget ?? null) });
   },
 
-  'transcript.toolCounts': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs, untilMs }) => {
+  'transcript.toolCounts': async ({ agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs, untilMs }) => {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolCounts) return null;
-    return adapter.transcriptToolCounts({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs });
+    return adapter.transcriptToolCounts({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs, place: placeFromStored(cliTarget ?? null) });
   },
 
-  'transcript.toolResultTokens': async ({ agentName, transcriptPath, agentSessionId, cwd, sinceMs, untilMs }) => {
+  'transcript.toolResultTokens': async ({ agentName, transcriptPath, agentSessionId, cwd, cliTarget, sinceMs, untilMs }) => {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.transcriptToolResultTokens) return null;
-    return adapter.transcriptToolResultTokens({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs });
+    return adapter.transcriptToolResultTokens({ transcriptPath, agentSessionId, cwd, sinceMs, untilMs, place: placeFromStored(cliTarget ?? null) });
   },
 };

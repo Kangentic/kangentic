@@ -1,4 +1,5 @@
 import type { SubmissionContext, SubmissionVerifier } from '../../../shared/types';
+import { placeFromStored, type CliPlace } from './cli-target';
 import { readTranscriptTailLines } from './transcript-tail-cache';
 
 /**
@@ -114,7 +115,8 @@ export async function scanForSubmittedText(
  * module-global map instead; that memo must be persistent, not one-shot.
  */
 export function createSubmittedTextSubmissionVerifier(options: {
-  resolvePath: (agentSessionId: string, cwd: string) => string | null;
+  /** `place`: where the CLI runs when it is not this machine (a WSL distro). */
+  resolvePath: (agentSessionId: string, cwd: string, place: CliPlace | null) => string | null;
   extractUserTurn: UserTurnExtractor;
 }): SubmissionVerifier {
   return async (context: SubmissionContext): Promise<boolean> => {
@@ -125,7 +127,7 @@ export function createSubmittedTextSubmissionVerifier(options: {
     // unverifiable 'none' mode is filtered one layer up, in
     // `buildCommandInjectionVerifier` and in `submitKeystrokes`'s `canVerify`.
     // Both modes are answered by the same exact-match scan (see the header).
-    const filePath = options.resolvePath(context.agentSessionId, context.cwd);
+    const filePath = options.resolvePath(context.agentSessionId, context.cwd, placeFromStored(context.cliTarget));
     if (!filePath) return false;
 
     return scanForSubmittedText(

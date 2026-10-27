@@ -12,6 +12,7 @@
 import type Database from 'better-sqlite3';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { agentRegistry } from './agent-registry';
+import { placeOfRecord } from './shared/cli-target';
 import { workflowAgentSessionRecord } from '../workflows/workflow-agent-record';
 import { RetrievalStore } from '../retrieval/retrieval-store';
 import type { StoredChunk } from '../retrieval/types';
@@ -286,7 +287,8 @@ export async function resolveSessionTranscript(
       const cached = await getCachedTranscript(
         record.session_type,
         agentSessionId,
-        () => adapter.parseTranscript!(agentSessionId, record.cwd),
+        // A session whose CLI ran in a WSL distro keeps its history there.
+        () => adapter.parseTranscript!(agentSessionId, record.cwd, placeOfRecord(record)),
       );
       entries = cached.entries;
       sourcePath = cached.sourcePath;

@@ -8,6 +8,7 @@ import { AutomationRepository } from '../../db/repositories/automation-repositor
 import { AUTOMATION_TRIGGER_LABELS, AUTOMATION_TRIGGERS } from '../../../shared/automation-manifest';
 import { resolveColumnMessage } from '../../transition-engine/column-strategy';
 import { agentRegistry } from '../../agent/agent-registry';
+import { placeOfRecord } from '../shared/cli-target';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { listActiveSwimlanes, listBoardColumns, isBoardColumn } from './column-resolver';
 import { readBoundedTail } from './bounded-tail-read';
@@ -557,7 +558,7 @@ export async function handleGetSessionHistory(
 
   // Find the latest session with an agent_session_id
   const record = db.prepare(
-    `SELECT id, session_type, agent_session_id, cwd FROM sessions
+    `SELECT id, session_type, agent_session_id, cwd, cli_target FROM sessions
      WHERE task_id = ? AND agent_session_id IS NOT NULL
      ORDER BY started_at DESC LIMIT 1`
   ).get(task.id) as {
@@ -565,6 +566,7 @@ export async function handleGetSessionHistory(
     session_type: string;
     agent_session_id: string;
     cwd: string;
+    cli_target: string | null;
   } | undefined;
 
   if (!record) {
@@ -576,7 +578,7 @@ export async function handleGetSessionHistory(
     return { success: false, error: `No adapter registered for session type "${record.session_type}"` };
   }
 
-  const filePath = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd);
+  const filePath = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd, placeOfRecord(record));
   if (!filePath) {
     return {
       success: true,

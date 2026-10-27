@@ -318,7 +318,14 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     });
     expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
       shell: 'wsl -d Ubuntu',
-      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+      cliTarget: {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        homeLinux: '/home/dev',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+        env: {},
+      },
     }));
   });
 });

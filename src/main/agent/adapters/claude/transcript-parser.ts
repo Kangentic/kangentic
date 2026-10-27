@@ -21,6 +21,7 @@ import {
 } from '../../shared/transcript-truncation';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /** Claude's entries carry their own uuids, so nothing counts lines. */
 const UUIDS_NUMBER_LINES = false;
@@ -1141,13 +1142,16 @@ function isCompleteJsonLine(text: string): boolean {
  * and original cwd. Returns null if the file does not exist (no polling -
  * unlike SessionHistoryReader.locate, this is called on demand and the
  * caller already knows the session has run).
+ *
+ * For a Claude installed in a WSL distro (`place`), under the distro's home,
+ * in the folder Claude named from the path it ran in (`/mnt/c/...`).
  */
-export function locateClaudeTranscriptFile(agentSessionId: string, cwd: string): string {
+export function locateClaudeTranscriptFile(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
   return path.join(
-    os.homedir(),
+    place ? place.facts.homeUnc : os.homedir(),
     '.claude',
     'projects',
-    claudeProjectSlug(cwd),
+    claudeProjectSlug(place ? cliPathForTarget(cwd, place) : cwd),
     `${agentSessionId}.jsonl`,
   );
 }

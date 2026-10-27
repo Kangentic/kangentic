@@ -184,6 +184,18 @@ export interface AgentCallUsage {
 export interface StoredCliTarget {
   kind: 'wsl';
   distro: string;
+  /**
+   * Where the CLI keeps its files, recorded when its session spawned, so a
+   * reader (in main or the retrieval worker) finds a transcript or rollout
+   * after the session with no call into the distro: the distro's home as it
+   * sees it and as Windows reaches it, and its root share. Absent on the agent
+   * list's copy, which only names the distro.
+   */
+  homeLinux?: string;
+  homeUnc?: string;
+  uncRoot?: string;
+  /** The agent home overrides the distro's shell set (`CODEX_HOME` and the like), named keys only. */
+  env?: Record<string, string>;
 }
 
 export interface AgentDetectionInfo {
@@ -2302,6 +2314,8 @@ export type SubmissionContext =
       text: string;
       agentSessionId?: string;
       cwd?: string;
+      /** Where the session's CLI runs when it is not this machine (a WSL distro): its transcript is there. */
+      cliTarget?: StoredCliTarget | null;
       /**
        * Wall-clock timestamp (ms since epoch) of the most recent Enter write
        * that this verifier should match against. Bounds the JSONL scan window
@@ -6401,6 +6415,8 @@ export interface AdapterRuntimeStrategy {
     fromFilesystem?(options: {
       spawnedAt: Date;
       cwd: string;
+      /** Where the CLI runs when it is not this machine (a WSL distro): it writes its files there. */
+      cliTarget?: StoredCliTarget | null;
     }): Promise<string | null>;
   };
 
@@ -6433,10 +6449,14 @@ export interface AdapterRuntimeStrategy {
      * persisted its first prompt entry). `locate` MUST confirm the
      * file exists before returning it - SessionHistoryReader treats
      * ENOENT on the initial read as "file disappeared" and detaches.
+     *
+     * `cliTarget`, here and on the hooks below, is the session's target when
+     * its CLI runs in a WSL distro: its files are in that distro's home.
      */
     locate(options: {
       agentSessionId: string;
       cwd: string;
+      cliTarget?: StoredCliTarget | null;
     }): Promise<string | null>;
 
     /**
@@ -6535,7 +6555,7 @@ export interface AdapterRuntimeStrategy {
      * layout, or the path could not be resolved). The watcher treats null
      * as "unsupported" and falls back to the count heuristic and caps.
      */
-    resolveOutputFile(options: { cwd: string; shellId: string }): string | null;
+    resolveOutputFile(options: { cwd: string; shellId: string; cliTarget?: StoredCliTarget | null }): string | null;
 
     /**
      * Report which of `shellIds` have a TERMINAL background-shell
@@ -6560,6 +6580,7 @@ export interface AdapterRuntimeStrategy {
       cwd: string;
       agentSessionId: string;
       shellIds: string[];
+      cliTarget?: StoredCliTarget | null;
     }): string[];
   };
 
@@ -6588,6 +6609,7 @@ export interface AdapterRuntimeStrategy {
       agentSessionId: string;
       toolIds: string[];
       sinceMs: number;
+      cliTarget?: StoredCliTarget | null;
     }): string[];
   };
 }

@@ -18,9 +18,11 @@ export interface CommandTerminalHistoryRow {
   touched_at: string | null;
   ended_at: string | null;
   updated_at: string;
+  /** Where the conversation's CLI ran when it was not this machine (`StoredCliTarget` JSON), or null. */
+  cli_target: string | null;
 }
 
-const COLUMNS = 'agent_session_id, agent_name, label, first_prompt, cwd, started_at, touched_at, ended_at, updated_at';
+const COLUMNS = 'agent_session_id, agent_name, label, first_prompt, cwd, started_at, touched_at, ended_at, updated_at, cli_target';
 
 /**
  * The conversations a project's Command Terminals held (migration 91). Written
@@ -34,20 +36,28 @@ export class CommandTerminalHistoryRepository {
   /**
    * Record a conversation when its terminal's agent reports its id. A row that
    * already exists (a resumed conversation reports the same id again) keeps its
-   * start and touch, and takes the newest cwd and agent.
+   * start and touch, and takes the newest cwd, agent and CLI target.
    */
-  recordConversation(entry: { agentSessionId: string; agentName: string; cwd: string; label: string | null; touched: boolean }): void {
+  recordConversation(entry: {
+    agentSessionId: string;
+    agentName: string;
+    cwd: string;
+    label: string | null;
+    touched: boolean;
+    cliTarget?: string | null;
+  }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO command_terminal_history (${COLUMNS})
-      VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?)
       ON CONFLICT(agent_session_id) DO UPDATE SET
         agent_name = excluded.agent_name,
         cwd = excluded.cwd,
         label = COALESCE(command_terminal_history.label, excluded.label),
         touched_at = COALESCE(command_terminal_history.touched_at, excluded.touched_at),
         ended_at = NULL,
-        updated_at = excluded.updated_at
+        updated_at = excluded.updated_at,
+        cli_target = excluded.cli_target
     `).run(
       entry.agentSessionId,
       entry.agentName,
@@ -56,6 +66,7 @@ export class CommandTerminalHistoryRepository {
       now,
       entry.touched ? now : null,
       now,
+      entry.cliTarget ?? null,
     );
     this.prune();
   }
