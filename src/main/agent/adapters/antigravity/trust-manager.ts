@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createSerialLock } from '../../shared/relocation-utils';
+import { cliPathForTarget, cliPlatformForTarget, type CliPlace } from '../../shared/cli-target';
 import { antigravitySettingsPath } from './data-paths';
 
 // Module-level promise chain serializing all settings.json access. Prevents
@@ -22,22 +23,33 @@ export const withAntigravityTrustLock = createSerialLock();
  * the preview E2E run), so unlike the Gemini trust manager there is no
  * ancestor-coverage skip - every spawn cwd gets its own entry, and
  * removeWorkspaceTrust / onWorktreeRemoved reap them per worktree.
+ *
+ * An agy installed in a WSL distro (`place`) keeps the store in the distro's
+ * settings file, the workspace written as the distro sees it (`/mnt/c/...`)
+ * and compared as Linux compares paths, case included.
  */
-export async function ensureWorkspaceTrust(workspacePath: string): Promise<void> {
-  return withAntigravityTrustLock(() => ensureWorkspaceTrustSync(workspacePath));
+export async function ensureWorkspaceTrust(workspacePath: string, place: CliPlace | null = null): Promise<void> {
+  return withAntigravityTrustLock(() => ensureWorkspaceTrustSync(workspacePath, place));
 }
 
-function ensureWorkspaceTrustSync(workspacePath: string): void {
-  const settingsPath = antigravitySettingsPath();
+/** The entry agy records a workspace under: as given here, the distro's view of it for an agy in a WSL distro. */
+function trustEntryOf(workspacePath: string, place: CliPlace | null): string {
+  return place ? cliPathForTarget(path.resolve(workspacePath), place) : workspacePath;
+}
+
+function ensureWorkspaceTrustSync(workspacePath: string, place: CliPlace | null): void {
+  const settingsPath = antigravitySettingsPath(place);
   const settings = readSettings(settingsPath);
   const entries = readTrustedWorkspaces(settings);
+  const platform = cliPlatformForTarget(place);
+  const entry = trustEntryOf(workspacePath, place);
 
-  const target = normalizeForCompare(workspacePath);
-  if (entries.some((entry) => normalizeForCompare(entry) === target)) return;
+  const target = normalizeForCompare(entry, platform);
+  if (entries.some((existing) => normalizeForCompare(existing, platform) === target)) return;
 
   // Store the path in the CLI's own style (native separators, as agy itself
   // writes them) so its normalize-and-compare lookup matches.
-  settings.trustedWorkspaces = [...entries, workspacePath];
+  settings.trustedWorkspaces = [...entries, entry];
 
   try {
     fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
@@ -55,14 +67,15 @@ function ensureWorkspaceTrustSync(workspacePath: string): void {
  * `trustedWorkspaces` does not grow one dead entry per task forever (the
  * Codex config.toml leak reached 473 entries before it was noticed). Only an
  * exact-path entry is removed - an ancestor entry also covering other
- * directories is left alone.
+ * directories is left alone. `place`: the distro's store, for an agy there.
  */
-export async function removeWorkspaceTrust(workspacePath: string): Promise<void> {
-  return withAntigravityTrustLock(() => removeWorkspaceTrustSync(workspacePath));
+export async function removeWorkspaceTrust(workspacePath: string, place: CliPlace | null = null): Promise<void> {
+  return withAntigravityTrustLock(() => removeWorkspaceTrustSync(workspacePath, place));
 }
 
-function removeWorkspaceTrustSync(workspacePath: string): void {
-  const settingsPath = antigravitySettingsPath();
+function removeWorkspaceTrustSync(workspacePath: string, place: CliPlace | null): void {
+  const settingsPath = antigravitySettingsPath(place);
+  const platform = cliPlatformForTarget(place);
   let settings: Record<string, unknown>;
   try {
     const parsed = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
@@ -73,8 +86,8 @@ function removeWorkspaceTrustSync(workspacePath: string): void {
   }
 
   const entries = readTrustedWorkspaces(settings);
-  const target = normalizeForCompare(workspacePath);
-  const kept = entries.filter((entry) => normalizeForCompare(entry) !== target);
+  const target = normalizeForCompare(trustEntryOf(workspacePath, place), platform);
+  const kept = entries.filter((entry) => normalizeForCompare(entry, platform) !== target);
   if (kept.length === entries.length) return;
 
   settings.trustedWorkspaces = kept;
@@ -110,8 +123,9 @@ function readTrustedWorkspaces(settings: Record<string, unknown>): string[] {
  * Fold a stored entry or lookup path into a comparable form: separators and
  * trailing slashes normalized always, case folded ONLY on Windows (POSIX
  * paths are case-sensitive). Same policy as the Gemini trust manager.
+ * `platform` is the CLI's: Linux for an agy in a WSL distro.
  */
-export function normalizeForCompare(value: string): string {
+export function normalizeForCompare(value: string, platform: NodeJS.Platform = process.platform): string {
   const normalized = value.replace(/\\/g, '/').replace(/\/+$/, '');
-  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+  return platform === 'win32' ? normalized.toLowerCase() : normalized;
 }

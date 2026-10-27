@@ -6,13 +6,14 @@
  * path, never the share path itself, which Windows cannot run.
  *
  * The run is caught where every runner starts its process (the pty host's
- * `spawnOffMainCli`), so the check holds whatever runner an adapter uses, and
+ * `spawnOffMainCli`, or `spawnOffMainPty` for a runner that needs a terminal),
+ * so the check holds whatever runner an adapter uses, and
  * the start throws so nothing runs. Capability discovery's one-shot probes
  * (`--help`, a model list) go through the off-main exec drop-in, which is
  * caught the same way: whatever it runs for a distro path is `wsl.exe`. `process.platform` is faked as win32 and
  * the distro's facts are a fixture, so this runs on every OS.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, afterAll } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -43,10 +44,30 @@ vi.mock('../../src/main/utility-process/off-main-cli', async (importOriginal) =>
     },
   };
 });
+// A runner that needs a terminal (Antigravity's print run) starts a hidden PTY
+// instead; caught the same way, so no unit run ever starts `wsl.exe` for real.
+vi.mock('../../src/main/utility-process/off-main-pty', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-pty')>();
+  return {
+    ...actual,
+    spawnOffMainPty: async (command: string, args: string[]) => {
+      started.push({ command, args });
+      throw new Error('stopped at the start, as the test intends');
+    },
+  };
+});
+// The distro's home is a temp folder: a run may write there before it starts
+// (Antigravity trusts its scratch folder), and a unit run must never write to
+// a real distro's share.
+const distroHome = vi.hoisted(() => ({ path: '' }));
 vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/agent/shared/wsl-distro')>();
+  const { mkdtempSync } = await import('node:fs');
+  const { tmpdir } = await import('node:os');
+  const { join } = await import('node:path');
+  distroHome.path = mkdtempSync(join(tmpdir(), 'kangentic-wsl-headless-home-'));
   const facts = {
-    distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu',
+    distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: distroHome.path, uncRoot: '\\\\wsl.localhost\\Ubuntu',
     interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as const,
   };
   return { ...actual, resolveWslDistroFacts: async () => facts, peekWslDistroFacts: () => facts };
@@ -66,6 +87,10 @@ beforeEach(() => {
 afterEach(() => {
   Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
   for (const directory of temporaryDirectories.splice(0)) fs.rmSync(directory, { recursive: true, force: true });
+});
+
+afterAll(() => {
+  if (distroHome.path) fs.rmSync(distroHome.path, { recursive: true, force: true });
 });
 
 const WSL_AGENTS = agentRegistry.list()

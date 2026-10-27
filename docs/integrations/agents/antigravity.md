@@ -70,6 +70,12 @@ Each conversation writes a parseable JSONL transcript at `~/.gemini/antigravity-
 
 The transcript flushes ON SUBMIT (measured: 84ms worst append latency across short and long turns), which is what qualifies the command-injection verifier - see [command-injection.md](../../architecture/automations/command-injection.md).
 
+## WSL
+
+An agy installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts agy's Linux path in a `wsl -d <distro>` shell. Its hooks call the WSL hook transport's script in place of the node bridge, since a distro may have no node: `sh <token> event <type> <directives>` (`wslAgentsHookCommand`). The token is the session's copy of the script, named relative to `.agents/` and space-free, by the same rule the bridge token follows, because agy splits a command on whitespace and keeps quotes literal. The script finds its folder from its own path, and agy passes the payload on stdin, which its `event` mode reads. On mirrored networking the MCP plugin keeps the `serverUrl` entry. On NAT networking it names the transport's stdio bridge, `{"command": "sh", "args": [<script>, "mcp", <url>], "env": {"KANGENTIC_MCP_TOKEN": <token>}}`, with the token as plaintext as the header form.
+
+The data root, the trust store, the transcripts and an answer's conversation cleanup are the distro's `~/.gemini/antigravity-cli`. Trust entries are the `/mnt` path, compared with Linux case, and a removed worktree's entry goes from the distro's settings while the distro runs. The title run's hidden PTY starts `wsl.exe` in place of the CLI, with its scratch folder trusted in the distro. `--help`, `agy models` and a Knowledge Graph answer run through `wsl.exe` too. Not yet run against an agy installed in a distro, and agy's stdio MCP entry shape comes from its config, not from a run.
+
 ## Limitations
 
 - No token/context/cost telemetry: neither the interactive transcript nor the hook payloads carry usage, so the adapter declares `liveTelemetryUnsupported` ("Telemetry: TUI only" - the agy footer shows the active model and effort). The board model pill is seeded from a `--model` override via `configuredModelFromCommand`.
