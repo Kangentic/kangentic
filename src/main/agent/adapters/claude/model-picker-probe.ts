@@ -56,6 +56,7 @@ import { compareModelVersion, parseModelFamily, parseModelId } from '../../../..
 import { redactPaths } from '../../../../shared/sentry-breadcrumbs';
 import type { ModelAliasOption } from '../../../../shared/types';
 import { isWindowsBatchShim, shimSibling } from '../../shared/shim-launch';
+import { cliInvocationForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { ensureWorktreeTrust } from './trust-manager';
 
 // The VT screen-grid renderer this probe parses through now lives in
@@ -603,12 +604,15 @@ async function exitProbeGracefully(
 async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | undefined> {
   const startedAtMs = Date.now();
   const scratchDirectory = probeScratchDirectory();
+  // A Claude installed in a WSL distro is probed there, trusted in its own home.
+  let target: CliTarget | null;
   try {
+    target = await resolveCliTarget(cliPath, true);
     fs.mkdirSync(scratchDirectory, { recursive: true });
     // Pre-trust the scratch cwd so the workspace-trust dialog never renders.
     // Belt and suspenders: if the dialog shows up anyway, the wait loop below
     // detects it and bails without sending a single keystroke.
-    await ensureWorktreeTrust(scratchDirectory);
+    await ensureWorktreeTrust(scratchDirectory, target);
   } catch (error) {
     logProbeStop('scratch-setup', startedAtMs, describeProbeError(error), null);
     return undefined;
@@ -628,9 +632,21 @@ async function runModelPickerProbe(cliPath: string): Promise<ProbeOutcome | unde
     };
     // --safe-mode: hooks, plugins, MCP servers, CLAUDE.md all skipped; auth
     // and model selection work normally (verified empirically on 2.1.170).
-    probeProcess = process.platform === 'win32'
-      ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, '--safe-mode'], spawnOptions)
-      : await spawnOffMainPty(cliPath, ['--safe-mode'], spawnOptions);
+    if (target) {
+      // Through wsl.exe; the renderer and TERM variables cross by WSLENV.
+      const invocation = cliInvocationForTarget(target, ['--safe-mode'], {
+        [PROBE_CLASSIC_RENDERER_ENV_KEY]: '1',
+        TERM: PROBE_TERM,
+      });
+      probeProcess = await spawnOffMainPty(invocation.file, invocation.args, {
+        ...spawnOptions,
+        env: { ...spawnOptions.env, ...invocation.env },
+      });
+    } else {
+      probeProcess = process.platform === 'win32'
+        ? await spawnOffMainPty('cmd.exe', ['/c', cliPath, '--safe-mode'], spawnOptions)
+        : await spawnOffMainPty(cliPath, ['--safe-mode'], spawnOptions);
+    }
   } catch (error) {
     logProbeStop('spawn', startedAtMs, describeProbeError(error), null);
     return undefined;

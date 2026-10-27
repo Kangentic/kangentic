@@ -560,7 +560,7 @@ export class TransitionEngine {
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
     // for demo mode where the project has never been opened in Claude Code).
-    await adapter.ensureTrust(cwd);
+    await adapter.ensureTrust(cwd, cliTarget);
     console.log(`[spawnAgent] Trust ensured for ${cwd}`);
 
     // Which session this spawn belongs to: null = the task's main session, the

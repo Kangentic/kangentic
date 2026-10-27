@@ -226,7 +226,8 @@ describe('SESSION_SPAWN_TRANSIENT handler: ensureTrust runs before buildCommand'
     await resultPromise;
 
     expect(ensureTrustMock).toHaveBeenCalledTimes(1);
-    expect(ensureTrustMock).toHaveBeenCalledWith(PROJECT_ROOT);
+    // The project root, and no CLI target: this CLI runs on this machine.
+    expect(ensureTrustMock).toHaveBeenCalledWith(PROJECT_ROOT, null);
     expect(buildCommandMock).toHaveBeenCalledTimes(1);
     expect(context.sessionManager.spawn).toHaveBeenCalledTimes(1);
   });

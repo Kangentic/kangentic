@@ -291,7 +291,7 @@ export async function startCommandTerminal(
     // tests/unit/spawn-entry-point-parity.test.ts (line order) and
     // tests/unit/transient-session-spawn-ensure-trust.test.ts (the runtime
     // guarantee: awaited, called once, with projectRoot, before buildCommand).
-    await adapter.ensureTrust(projectRoot);
+    await adapter.ensureTrust(projectRoot, cliTarget);
     // A `.cmd` head under a PowerShell or Git Bash host launches through
     // cmd.exe; hand the builder the sibling shim the shell can run instead
     // (shim-launch.ts). No prompt here, but the head must match what task

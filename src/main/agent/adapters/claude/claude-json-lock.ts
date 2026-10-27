@@ -2,6 +2,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { createSerialLock } from '../../shared/relocation-utils';
+import type { CliPlace } from '../../shared/cli-target';
 
 /**
  * The lock every Kangentic read-modify-write of `~/.claude.json` runs under.
@@ -52,12 +53,18 @@ export function isClaudeJsonLockError(error: unknown): error is ClaudeJsonLockEr
   return error instanceof ClaudeJsonLockError;
 }
 
-export function claudeJsonPath(): string {
-  return path.join(os.homedir(), '.claude.json');
+/**
+ * The `~/.claude.json` a Claude CLI reads: this machine's, or for a Claude
+ * installed in a WSL distro, the distro's, through its share. Claude in the
+ * distro locks it with `mkdir` the same way, and a `mkdir` through the share
+ * is one in the distro, so the lock below holds across the two.
+ */
+export function claudeJsonPath(place: CliPlace | null = null): string {
+  return path.join(place ? place.facts.homeUnc : os.homedir(), '.claude.json');
 }
 
-export function claudeJsonLockPath(): string {
-  return `${claudeJsonPath()}.lock`;
+export function claudeJsonLockPath(place: CliPlace | null = null): string {
+  return `${claudeJsonPath(place)}.lock`;
 }
 
 export interface ClaudeJsonFileLockOptions {
@@ -127,11 +134,13 @@ const inProcessLock = createSerialLock();
 
 /**
  * Run one read-modify-write of `~/.claude.json` under both layers. The
- * operation must do its read INSIDE, never before.
+ * operation must do its read INSIDE, never before. `place` names a WSL
+ * distro's file instead of this machine's (`claudeJsonPath`); one in-process
+ * chain serializes both.
  */
-export function withClaudeJsonLock<T>(operation: () => T | Promise<T>): Promise<T> {
+export function withClaudeJsonLock<T>(operation: () => T | Promise<T>, place: CliPlace | null = null): Promise<T> {
   return inProcessLock(async () => {
-    const lockPath = claudeJsonLockPath();
+    const lockPath = claudeJsonLockPath(place);
     await acquireClaudeJsonFileLock(lockPath);
     try {
       return await operation();
