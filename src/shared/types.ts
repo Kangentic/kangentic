@@ -3638,6 +3638,9 @@ export type DictationModelEngineKind =
   | 'offline-moonshine'
   | 'offline-cohere-transcribe';
 
+/** A transcription model's accuracy, as main's registry names it. The Dictation tab shows it in the session language. */
+export type DictationAccuracyLabel = 'Best accuracy' | 'High accuracy' | 'Good accuracy' | 'Fair accuracy' | 'Basic accuracy';
+
 /** A user-selectable transcription model (for the settings model dropdown). */
 export interface DictationModelOption {
   id: string;
@@ -3650,7 +3653,7 @@ export interface DictationModelOption {
   /** Higher is more accurate; the dropdowns sort on it. */
   accuracyRank: number;
   /** "Best accuracy" through "Basic accuracy", shown after the name. */
-  accuracyLabel: string;
+  accuracyLabel: DictationAccuracyLabel;
   license: ModelLicenseId;
 }
 

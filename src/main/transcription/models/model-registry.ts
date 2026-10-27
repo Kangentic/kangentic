@@ -1,6 +1,6 @@
 import { COHERE_TRANSCRIBE_LANGUAGE_CODES, MULTILINGUAL_LANGUAGE_CODES, PARAKEET_V3_LANGUAGE_CODES } from '../../../shared/dictation-languages';
 import type { ModelLicenseId } from '../../../shared/model-licenses';
-import type { DictationModelEngineKind } from '../../../shared/types';
+import type { DictationAccuracyLabel, DictationModelEngineKind } from '../../../shared/types';
 
 /** A single downloadable model file. `file` is its on-disk name under the
  *  model's directory; `url` is the direct (CDN-redirecting) download URL. */
@@ -34,7 +34,7 @@ export function isOfflineKind(kind: ModelEngineKind): boolean {
 export interface ModelAccuracy {
   /** Higher is more accurate; the dropdowns sort on it. */
   rank: number;
-  label: 'Best accuracy' | 'High accuracy' | 'Good accuracy' | 'Fair accuracy' | 'Basic accuracy';
+  label: DictationAccuracyLabel;
 }
 
 export interface ModelDef {
