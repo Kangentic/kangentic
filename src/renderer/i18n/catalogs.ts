@@ -16,6 +16,7 @@
 import { i18n, setupI18n, type I18n, type Messages } from '@lingui/core';
 import { SOURCE_LOCALE, isAppLocale, type AppLocale } from '../../shared/i18n/locales';
 import { englishI18n } from '../../shared/i18n/english';
+import { guardPlaceholderBackslashes } from '../../shared/i18n/placeholder-backslash-guard';
 
 interface CatalogModule {
   messages: Messages;
@@ -43,6 +44,8 @@ const englishMessages = mergeCatalogs(Object.values(englishCatalogs));
 // (index.tsx) imports it through ./index.ts and accepts nothing, so an edit here
 // or to anything it imports reloads the page (measured with hmr-guest-probe), and
 // the boot then runs activateLocale again for the session's language.
+// Before anything renders: `useLingui()` binds `i18n.t` when its provider renders.
+guardPlaceholderBackslashes(i18n);
 i18n.load(SOURCE_LOCALE, englishMessages);
 i18n.activate(SOURCE_LOCALE);
 englishI18n.load(SOURCE_LOCALE, englishMessages);
@@ -75,7 +78,9 @@ export async function activateLocale(locale: AppLocale): Promise<void> {
  */
 export async function createLocaleI18n(locale: AppLocale): Promise<I18n> {
   const messages = await loadLocaleMessages(locale);
-  return setupI18n({ locale, messages: { [locale]: messages } });
+  const localeI18n = setupI18n({ locale, messages: { [locale]: messages } });
+  guardPlaceholderBackslashes(localeI18n);
+  return localeI18n;
 }
 
 /** Kept in step with CATALOG_UPDATE_EVENT in scripts/vite-lingui-catalog-hmr.mjs. */
