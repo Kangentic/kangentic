@@ -1462,7 +1462,13 @@ export interface AgentAdapter {
    *
    * Best-effort and never fatal: the worktree is already gone by the time this
    * runs, and a failure only leaves a stale entry behind.
+   *
+   * Called once for this machine (`place` absent), and once more with the WSL
+   * distro the project's CLI path names for this adapter, while that distro
+   * runs, so the entry a distro CLI's trust step wrote in the distro's own
+   * config goes too. Only an adapter that declares `supportsWslCli` is given a
+   * place.
    */
-  onWorktreeRemoved?(worktreePath: string): Promise<void>;
+  onWorktreeRemoved?(worktreePath: string, place?: CliPlace | null): Promise<void>;
 
 }

@@ -383,8 +383,8 @@ export class CodexAdapter implements AgentAdapter {
    * `~/.codex/config.toml` tracking live worktrees instead of growing by one
    * dead table per task, forever.
    */
-  async onWorktreeRemoved(worktreePath: string): Promise<void> {
-    await removeWorktreeTrust(worktreePath);
+  async onWorktreeRemoved(worktreePath: string, place?: CliPlace | null): Promise<void> {
+    await removeWorktreeTrust(worktreePath, place ?? null);
   }
 
   /**

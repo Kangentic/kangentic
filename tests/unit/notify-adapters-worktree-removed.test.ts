@@ -34,7 +34,11 @@ vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {},
 }));
 
-const mockAdapters = new Map<string, { onWorktreeRemoved?: (path: string) => Promise<void> }>();
+const mockAdapters = new Map<string, {
+  name?: string;
+  supportsWslCli?: boolean;
+  onWorktreeRemoved?: (path: string, place?: CliPlace | null) => Promise<void>;
+}>();
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: {
@@ -43,13 +47,28 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   },
 }));
 
+const distro = vi.hoisted(() => ({ running: true }));
+const FACTS = vi.hoisted(() => ({
+  distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu',
+  interactivePath: '/usr/bin', env: {}, networkingMode: 'nat' as const,
+}));
+vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/agent/shared/wsl-distro')>();
+  return { ...actual, isWslDistroRunning: async () => distro.running, resolveWslDistroFacts: async () => FACTS };
+});
+
+import path from 'node:path';
 import { notifyAdaptersWorktreeRemoved } from '../../src/main/ipc/helpers/task-cleanup';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
 
 const WORKTREE_PATH = '/mock/project/.kangentic/worktrees/7';
+const realPlatform = process.platform;
 
 describe('notifyAdaptersWorktreeRemoved', () => {
   beforeEach(() => {
     mockAdapters.clear();
+    distro.running = true;
+    Object.defineProperty(process, 'platform', { value: realPlatform, configurable: true });
   });
 
   it('calls onWorktreeRemoved on every adapter that implements it', async () => {
@@ -99,5 +118,50 @@ describe('notifyAdaptersWorktreeRemoved', () => {
 
   it('is a no-op when no adapters are registered', async () => {
     await expect(notifyAdaptersWorktreeRemoved(WORKTREE_PATH)).resolves.toBeUndefined();
+  });
+
+  describe('an adapter whose CLI the project runs from a WSL distro (Windows)', () => {
+    const DISTRO_CLI_PATH = '\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\codex';
+
+    function registerCodex(): ReturnType<typeof vi.fn> {
+      const removed = vi.fn(async (_path: string, _place?: CliPlace | null) => {});
+      mockAdapters.set('codex', { name: 'codex', supportsWslCli: true, onWorktreeRemoved: removed });
+      Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
+      return removed;
+    }
+
+    it('is called again with the distro the project\'s CLI path names, read for the worktree\'s project', async () => {
+      const removed = registerCodex();
+      const cliPathsOf = vi.fn(() => ({ codex: DISTRO_CLI_PATH }));
+
+      await notifyAdaptersWorktreeRemoved(WORKTREE_PATH, cliPathsOf);
+
+      expect(cliPathsOf).toHaveBeenCalledWith(path.dirname(path.dirname(path.dirname(path.resolve(WORKTREE_PATH)))));
+      expect(removed).toHaveBeenCalledTimes(2);
+      expect(removed.mock.calls[0]).toEqual([WORKTREE_PATH]);
+      expect(removed.mock.calls[1]).toEqual([WORKTREE_PATH, { kind: 'wsl', distro: 'Ubuntu', facts: FACTS }]);
+    });
+
+    it('is not called for the distro while the distro is stopped, so a removal never starts one', async () => {
+      const removed = registerCodex();
+      distro.running = false;
+      await notifyAdaptersWorktreeRemoved(WORKTREE_PATH, () => ({ codex: DISTRO_CLI_PATH }));
+      expect(removed).toHaveBeenCalledTimes(1);
+    });
+
+    it('is called once for a CLI on this machine, an adapter without WSL support, or a folder that is not a worktree', async () => {
+      const removed = registerCodex();
+      await notifyAdaptersWorktreeRemoved(WORKTREE_PATH, () => ({ codex: 'C:\\Tools\\codex.exe' }));
+      expect(removed).toHaveBeenCalledTimes(1);
+
+      await notifyAdaptersWorktreeRemoved('/mock/elsewhere/7', () => ({ codex: DISTRO_CLI_PATH }));
+      expect(removed).toHaveBeenCalledTimes(2);
+
+      const geminiRemoved = vi.fn(async () => {});
+      mockAdapters.clear();
+      mockAdapters.set('gemini', { name: 'gemini', onWorktreeRemoved: geminiRemoved });
+      await notifyAdaptersWorktreeRemoved(WORKTREE_PATH, () => ({ gemini: DISTRO_CLI_PATH }));
+      expect(geminiRemoved).toHaveBeenCalledTimes(1);
+    });
   });
 });
