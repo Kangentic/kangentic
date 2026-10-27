@@ -28,6 +28,7 @@ import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-know
 import { registerSeedKnowledgeGraphDemoDevIpc } from '../devtools/main/seed-knowledge-graph-demo';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
+import { recordMcpServerStartFailure } from './agent/mcp-server-start-failure';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
 import { setAgentInputSender, isAgentDriving } from './browser/agent-input-signal';
@@ -1919,7 +1920,9 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.error('[APP] Failed to start MCP HTTP server:', err);
     // Continue without it -- agents will see "Unauthorized" or "Connection
-    // refused" but the rest of the app stays functional.
+    // refused" but the rest of the app stays functional. The MCP connection
+    // check reports this error as written.
+    recordMcpServerStartFailure(err);
   }
   // Settled either way: a handle on success, a deliberate null on failure.
   // Set once here, after the try/catch, so both paths are covered in one place.

@@ -942,6 +942,19 @@
     listeners.forEach(function (fn) { fn(payload); });
   };
 
+  // MCP connection hooks (the MCP connection row and the session-start toast).
+  // `__mockMcpConnection` is what checkConnection answers, a real answer by
+  // default; a spec sets it to `{ connected: false, error }` for the failed
+  // row, or a function of the request to hold or count calls.
+  // `__mockFireMcpConnectionFailed(error)` sends the once-per-run push.
+  window.__mockMcpConnection = { connected: true };
+  window.__mockMcpConnectionCalls = [];
+  window.__mockMcpConnectionFailedListeners = [];
+  window.__mockFireMcpConnectionFailed = function (error) {
+    var listeners = window.__mockMcpConnectionFailedListeners.slice();
+    listeners.forEach(function (fn) { fn({ error: error }); });
+  };
+
   // Notification-click test hook (App.tsx's `notifications.onClicked` handler,
   // including the isCommandTerminal branch). Installed eagerly for the same
   // reason as the update-downloaded hooks above. Unlike that hook, this one
@@ -5333,6 +5346,22 @@
         window.__mockAnnouncementsChangedListeners.push(callback);
         return function () {
           var listeners = window.__mockAnnouncementsChangedListeners || [];
+          var idx = listeners.indexOf(callback);
+          if (idx >= 0) listeners.splice(idx, 1);
+        };
+      },
+    },
+
+    mcpServer: {
+      checkConnection: async function (options) {
+        window.__mockMcpConnectionCalls.push(options || {});
+        var answer = window.__mockMcpConnection;
+        return typeof answer === 'function' ? answer(options || {}) : answer;
+      },
+      onConnectionFailed: function (callback) {
+        window.__mockMcpConnectionFailedListeners.push(callback);
+        return function () {
+          var listeners = window.__mockMcpConnectionFailedListeners || [];
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };

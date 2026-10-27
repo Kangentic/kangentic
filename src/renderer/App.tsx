@@ -253,6 +253,26 @@ export function App() {
       useSessionStore.getState().setBrowserOffscreenTasks(taskIds);
     });
 
+    // An agent session started whose MCP tools cannot connect. Main sends this
+    // once per run; the body is the error the check hit, the same text the MCP
+    // connection row shows, and Open settings lands on that row.
+    const cleanupMcpConnectionFailed = window.electronAPI.mcpServer?.onConnectionFailed(({ error }) => {
+      useToastStore.getState().addToast({
+        title: "Couldn't reach the MCP server",
+        message: error,
+        variant: 'warning',
+        persistent: true,
+        action: {
+          label: 'Open settings',
+          icon: 'settings',
+          onClick: () => {
+            useConfigStore.getState().setLastSettingsTab('mcpServer');
+            useConfigStore.getState().setSettingsOpen(true);
+          },
+        },
+      });
+    });
+
     return () => {
       if (mountTimerRafId !== undefined) cancelAnimationFrame(mountTimerRafId);
       cleanupAutoOpen();
@@ -265,6 +285,7 @@ export function App() {
       cleanupHostMemoryAgentPausedListener?.();
       cleanupAnnouncementsChanged?.();
       cleanupOffscreenSurfaces?.();
+      cleanupMcpConnectionFailed?.();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- mount-only bootstrap: every callee is a stable Zustand action or an IPC listener registered exactly once
   }, []);

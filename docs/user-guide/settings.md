@@ -282,6 +282,9 @@ The MCP Server tab controls the built-in Model Context Protocol server. When ena
 | Setting | Description |
 |---------|-------------|
 | Kangentic MCP Server | Enable or disable the built-in MCP server that gives agents board-aware tools |
+| MCP connection | Whether agents can reach the server: Connected, or Failed with the error the check hit. Checked each time the tab opens, from this machine and from any WSL distro a CLI path points into; Test connection checks again |
+
+If an agent session starts and its tools cannot connect, Kangentic shows one notice per run, "Couldn't reach the MCP server", with the same error and an Open settings button.
 
 ## Agent Browser
 

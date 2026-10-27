@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: App IPC channels
-description: "The remaining IPC channels: config, keybindings, mobile bridge, git and diff watching, shell, window, pop-out, Browser pane, clipboard, updater, GPU health, host memory, leftover processes, announcements, diagnostics, dictation and the dev-only preview channels."
+description: "The remaining IPC channels: config, keybindings, mobile bridge, git and diff watching, shell, window, pop-out, Browser pane, clipboard, updater, GPU health, host memory, leftover processes, announcements, the MCP connection check, diagnostics, dictation and the dev-only preview channels."
 tags: [ipc, channels, config, git, browser]
 sources:
   - resource: src/shared/ipc-channels.ts
@@ -14,6 +14,9 @@ sources:
   - resource: src/main/ipc/helpers/task-windows.ts
     title: Closing a task's windows when its work ends
   - resource: src/renderer/pop-out/pop-out-changed.ts
+  - resource: src/main/agent/mcp-connection-check.ts
+    title: The MCP connection check
+  - resource: src/main/ipc/helpers/mcp-connection-watch.ts
 ---
 # App IPC channels
 
@@ -230,6 +233,12 @@ page file, and fewer agents at once. Where commit goes per agent, and the page-f
 | `announcements:getHistory` | invoke | The local announcement archive (every announcement ever active for this client, plus read-state) |
 | `announcements:markRead` | invoke | Stamp `readAt` on one archive entry, clearing it from the megaphone's unread badge |
 | `announcements:changed` | on | Event: the filtered active announcement list changed since the last poll. Carries `{ active, history }`, since both derive from the same poll |
+
+## MCP server (2 channels)
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `mcpServer:checkConnection` | invoke | Whether agents can reach the MCP server (Settings > MCP Server's MCP connection row), via `ElectronAPI.mcpServer.checkConnection({ explicit })`. An authenticated loopback `initialize`, then one check from each WSL distro the open project's CLI paths point into: through the stdio bridge on NAT networking, a connect to the loopback port on mirrored. `explicit` (Test connection) checks a stopped distro too, which starts it; the check on arrival skips one. Returns `McpConnectionCheck` (`{ connected: true }` or `{ connected: false, error }`, the error as the check hit it). Never throws. See `src/main/agent/mcp-connection-check.ts` |
+| `mcpServer:connectionFailed` | on | Event: an agent session started and the same check failed. Sent at most once per run, by `McpConnectionWatch` at the session's first output. Carries `McpConnectionFailure` (`{ error }`); the renderer raises the persistent "Couldn't reach the MCP server" toast, whose Open settings lands on the MCP Server tab |
 
 ## Diagnostics (2 channels)
 | Channel | Pattern | Purpose |

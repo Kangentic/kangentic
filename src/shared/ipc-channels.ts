@@ -642,6 +642,12 @@ export const IPC = {
   ANNOUNCEMENTS_MARK_READ: 'announcements:markRead',
   ANNOUNCEMENTS_CHANGED: 'announcements:changed',
 
+  // MCP server: whether agents can reach it (Settings > MCP Server's MCP
+  // connection row), and the push an agent session's start sends once per run
+  // when they cannot (see src/main/agent/mcp-connection-check.ts).
+  MCP_SERVER_CHECK_CONNECTION: 'mcpServer:checkConnection',
+  MCP_SERVER_CONNECTION_FAILED: 'mcpServer:connectionFailed',
+
   // Search
   SEARCH_EVERYTHING: 'search:everything',
 

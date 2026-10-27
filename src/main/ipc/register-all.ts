@@ -62,6 +62,7 @@ import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
 import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
 import { registerMonitorHandlers } from './handlers/monitor';
+import { registerMcpServerHandlers } from './handlers/mcp-server';
 import { registerTaskDetailOwnershipHandlers } from './handlers/task-detail-ownership';
 import { retrievalService } from '../retrieval/retrieval-service';
 import { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service';
@@ -409,6 +410,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerSystemHandlers(context);
   registerMobileBridgeHandlers(context);
   registerMonitorHandlers(context);
+  registerMcpServerHandlers(context);
   registerTaskDetailOwnershipHandlers();
   registerPopOutHandlers(context);
 
