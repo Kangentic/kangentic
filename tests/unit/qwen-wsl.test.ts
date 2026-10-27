@@ -89,8 +89,13 @@ describe('a Qwen session in a WSL distro', () => {
     const settings = JSON.parse(fs.readFileSync(path.join(options.cwd, '.qwen', 'settings.json'), 'utf-8')) as QwenSettingsFile;
     const commands = Object.values(settings.hooks).flat().flatMap((entry) => entry.hooks.map((hook) => hook.command));
     expect(commands.length).toBeGreaterThan(0);
+    // The file is shared by every session in the folder, so the hooks name the
+    // folder's copy of the script, never this session's own folder.
+    const folderCopy = path.join(options.cwd, '.kangentic', 'qwen-wsl-hook.sh');
+    expect(fs.existsSync(folderCopy)).toBe(true);
     for (const hookCommand of commands) {
-      expect(hookCommand, hookCommand).toContain('wsl-hook.sh');
+      expect(hookCommand, hookCommand).toContain(cliPathForTarget(folderCopy, target));
+      expect(hookCommand).not.toContain('session-1');
       expect(hookCommand).not.toContain('event-bridge');
       // The payload arrives on stdin, so stdin is never closed for it.
       expect(hookCommand).not.toContain('</dev/null');

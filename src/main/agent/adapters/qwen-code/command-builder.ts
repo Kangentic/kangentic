@@ -14,7 +14,7 @@ import {
 } from '../../shared/background-command-hooks';
 import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
-import { prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
+import { copyWslHookScriptInto, prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import {
   buildHooks,
   QWEN_BACKGROUND_COMMAND_SPEC,
@@ -25,6 +25,9 @@ import {
 } from './hook-manager';
 import type { QwenHookEntry } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
+
+/** The workspace copy of the WSL hook transport's script a Qwen in a WSL distro runs its hooks with. */
+export const QWEN_WSL_HOOK_COPY_NAME = 'qwen-wsl-hook.sh';
 
 /** Qwen-specific subset of settings.json that we read/write. */
 interface QwenSettings {
@@ -347,12 +350,17 @@ export class QwenCommandBuilder {
     if (options.eventsOutputPath && place) {
       // A Qwen in a WSL distro may have no node, so its hooks publish through
       // the WSL hook transport (same event types and directives), and the
-      // background shell hint through its `reply`. No bridge copy or events
-      // path from the environment is needed: the script finds its own folder.
-      const wslHooks = prepareWslHookTransport(path.dirname(options.eventsOutputPath));
+      // background shell hint through its `reply`. The file is shared by every
+      // session in the folder, so the commands name the folder's copy of the
+      // script, never one session's: a sibling's session folder can be removed
+      // (its task done) while this session still runs. The copy finds the
+      // session's own folder through `KANGENTIC_WSL_HOOK_DIR`, which Qwen's
+      // hooks inherit.
+      const sessionHooks = prepareWslHookTransport(path.dirname(options.eventsOutputPath));
+      const folderHooks = { ...sessionHooks, script: copyWslHookScriptInto(options.cwd, QWEN_WSL_HOOK_COPY_NAME) };
       merged.hooks = buildHooks('', '', baseSettings.hooks || {}, {
-        backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, wslHooks, place),
-        eventCommand: (eventType, ...directives) => wslHookEventCommand(wslHooks, place, eventType, ...directives),
+        backgroundShellHintCommand: wslBackgroundShellHintCommandFor(options, QWEN_BACKGROUND_COMMAND_SPEC, folderHooks, place),
+        eventCommand: (eventType, ...directives) => wslHookEventCommand(folderHooks, place, eventType, ...directives),
       });
     } else if (eventsPath) {
       // On Windows a hook command reaches node through an escaped cmd line, and
