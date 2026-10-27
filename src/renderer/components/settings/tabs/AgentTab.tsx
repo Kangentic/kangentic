@@ -17,6 +17,12 @@ import { useSettingsProject } from '../use-settings-project';
 import { AgentExecutionFields } from './agent-execution-fields';
 import { AgentLaunchOptionFields } from './agent-launch-option-fields';
 
+/** "A", "A and B", "A, B and C". */
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join('');
+  return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+}
+
 export function AgentTab({ config, globalConfig, agentList }: {
   config: AppConfig;
   globalConfig: AppConfig;
@@ -85,6 +91,10 @@ export function AgentTab({ config, globalConfig, agentList }: {
   const agentPermissions: AgentPermissionEntry[] = shownAgentList.find((agent) => agent.name === effectiveAgent)?.permissions ?? DEFAULT_PERMISSIONS;
   const detectedAgents = useMemo(() => shownAgentList.filter((agent) => agent.found), [shownAgentList]);
   const undetectedAgents = useMemo(() => shownAgentList.filter((agent) => !agent.found), [shownAgentList]);
+  const wslCapableAgentNames = useMemo(
+    () => shownAgentList.filter((agent) => agent.supportsWslCli).map((agent) => agent.displayName),
+    [shownAgentList],
+  );
 
   const {
     models: defaultModelOptions,
@@ -198,15 +208,26 @@ export function AgentTab({ config, globalConfig, agentList }: {
             {...settingProps('agent.cliPaths')}
             label={`${agent.displayName} path`}
             trailing={
-              unauthenticated ? (
+              agent.unsupportedTarget ? (
+                <span className="text-xs flex items-center gap-1 text-attention" data-testid={`agent-cli-status-${agent.name}`}>
+                  <CircleAlert size={13} />No WSL support
+                </span>
+              ) : unauthenticated ? (
                 <span className="text-xs flex items-center gap-1 text-amber-400">
                   <CircleAlert size={13} />Not signed in
                 </span>
               ) : (
-                <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
-                  {agent.found
-                    ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
-                    : <><CircleAlert size={13} />Not found</>}
+                <span className="flex items-center gap-1.5" data-testid={`agent-cli-status-${agent.name}`}>
+                  {agent.cliTarget && (
+                    <span className="flex-shrink-0 rounded border border-edge px-1.5 text-[11px] leading-[18px] text-fg-muted">
+                      WSL: {agent.cliTarget.distro}
+                    </span>
+                  )}
+                  <span className={`text-xs flex items-center gap-1 ${agent.found ? 'text-fg-faint' : 'text-red-400/70'}`}>
+                    {agent.found
+                      ? <><Check size={13} className="text-green-400" />{agent.version ? `v${agent.version.replace(/^v/, '')}` : 'Detected'}</>
+                      : <><CircleAlert size={13} />Not found</>}
+                  </span>
                 </span>
               )
             }
@@ -240,6 +261,19 @@ export function AgentTab({ config, globalConfig, agentList }: {
                 </button>
               </Tooltip>
             </div>
+            {/* A failure shows the error the probe hit, word for word and selectable,
+                so it can be pasted into a search: no diagnosis and no advice. */}
+            {agent.unsupportedTarget ? (
+              wslCapableAgentNames.length > 0 && (
+                <p className="mt-1 text-xs text-attention" data-testid={`agent-cli-detail-${agent.name}`}>
+                  Kangentic runs {joinNames(wslCapableAgentNames)} from WSL.
+                </p>
+              )
+            ) : !agent.found && agent.detectionError ? (
+              <p className="mt-1 break-all font-mono text-xs text-red-400/80 select-text" data-testid={`agent-cli-detail-${agent.name}`}>
+                {agent.detectionError}
+              </p>
+            ) : null}
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
                 <span>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</span>

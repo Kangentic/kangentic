@@ -210,7 +210,9 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
   // version" with no detail. It now interpolates probeVersion's `detail`
   // field, so a user who configured a bad cliPath sees WHY the probe failed
   // rather than having to re-derive it themselves. Each test below pins one
-  // of probeVersion's three failure reasons reaching that interpolation.
+  // of probeVersion's three failure reasons reaching that interpolation, and
+  // the same detail on the result as `detectionError`, which the Agent tab
+  // shows under the path (#286: a failure shows the error it hit).
 
   it('embeds the "missing file" detail in the override failure warning', async () => {
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -221,7 +223,7 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
 
     const result = await detector.detect(overridePath);
 
-    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    expect(result).toEqual({ found: false, path: overridePath, version: null, detectionError: 'the file does not exist on disk' });
     const warnLine = warnSpy.mock.calls
       .map((call) => call.map(String).join(' '))
       .find((line) => line.includes(overridePath));
@@ -238,7 +240,7 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
 
     const result = await detector.detect(overridePath);
 
-    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    expect(result).toEqual({ found: false, path: overridePath, version: null, detectionError: 'ENOENT' });
     const warnLine = warnSpy.mock.calls
       .map((call) => call.map(String).join(' '))
       .find((line) => line.includes(overridePath));
@@ -264,7 +266,7 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
 
     const result = await detector.detect(overridePath);
 
-    expect(result).toEqual({ found: false, path: overridePath, version: null });
+    expect(result).toEqual({ found: false, path: overridePath, version: null, detectionError: 'UNRELATED_TOOL 4.0.0' });
     const warnLine = warnSpy.mock.calls
       .map((call) => call.map(String).join(' '))
       .find((line) => line.includes(overridePath));

@@ -26,6 +26,7 @@ import type {
   TranscriptHistoryPage,
   TranscriptPageDirection,
   TranscriptPageUnavailableReason,
+  StoredCliTarget,
 } from '../../shared/types';
 
 /**
@@ -205,6 +206,12 @@ export interface AgentInfo {
   found: boolean;
   path: string | null;
   version: string | null;
+  /** Set when `path` runs the CLI inside a WSL distro (see `cli-target.ts`). */
+  cliTarget?: StoredCliTarget;
+  /** The error a configured path's version probe hit, word for word. */
+  detectionError?: string;
+  /** The configured path is a WSL path and this agent does not run from WSL. */
+  unsupportedTarget?: boolean;
 }
 
 /** Options for building a CLI command to spawn an agent. */
@@ -438,6 +445,16 @@ export interface AgentAdapter {
 
   /** Detect whether the agent CLI is installed and return path + version. */
   detect(overridePath?: string | null): Promise<AgentInfo>;
+
+  /**
+   * True when this adapter runs a CLI installed inside a WSL distro, configured
+   * by its `\\wsl.localhost\<distro>\...` path: its command builder, trust,
+   * hooks, readers and headless runs all take the `CliTarget`
+   * (`shared/cli-target.ts`). Declare it only once that integration is in: a
+   * WSL path on an adapter without it is reported unsupported rather than
+   * half-working. Its detector config carries the same flag.
+   */
+  readonly supportsWslCli?: boolean;
 
   /** Invalidate any cached detection result (e.g. after user changes CLI path). */
   invalidateDetectionCache(): void;

@@ -92,6 +92,23 @@ export function isUncPath(p: string): boolean {
 }
 
 /**
+ * Parse a path into a WSL distro's own filesystem, as Windows names it:
+ * `\\wsl.localhost\<distro>\...` (what `wslpath -w` prints on current
+ * builds) or the older `\\wsl$\<distro>\...`, with either slash. Returns the
+ * distro and the path as the distro itself sees it, or null for anything
+ * else, a bare share root with no distro included.
+ *
+ *   \\wsl.localhost\Ubuntu\home\dev\.local\bin\claude
+ *     -> { distro: 'Ubuntu', linuxPath: '/home/dev/.local/bin/claude' }
+ */
+export function parseWslUncPath(p: string): { distro: string; linuxPath: string } | null {
+  const match = /^[\\/]{2}(?:wsl\$|wsl\.localhost)[\\/]+([^\\/]+)(?:[\\/]+(.*))?$/i.exec(p);
+  if (!match) return null;
+  const rest = (match[2] ?? '').replace(/[\\/]+/g, '/').replace(/\/$/, '');
+  return { distro: match[1], linuxPath: `/${rest}` };
+}
+
+/**
  * Replace `oldPrefix` with `newPrefix` in `target` when `target` is the
  * prefix itself or a path under it. Returns null when the target is not
  * under the old prefix (different drive, sibling directory, unrelated path).
@@ -130,10 +147,17 @@ export function toGitBashPath(windowsPath: string): string {
 
 /**
  * Convert a Windows-style path to WSL POSIX format.
- *   C:\Users\dev → /mnt/c/Users/dev
+ *   C:\Users\dev                        → /mnt/c/Users/dev
+ *   \\wsl.localhost\Ubuntu\home\dev     → /home/dev
+ *
+ * A path into a distro's own filesystem becomes the path that distro sees,
+ * on the assumption that it names the distro the session runs in: another
+ * distro's files have no path from inside this one.
  */
 export function toWslPath(windowsPath: string): string {
-  // UNC: WSL cannot access Windows UNC shares via /mnt/.
+  const wslUncPath = parseWslUncPath(windowsPath);
+  if (wslUncPath) return wslUncPath.linuxPath;
+  // Other UNC: WSL cannot access Windows UNC shares via /mnt/.
   // Convert slashes as best-effort; user must mount the share in WSL.
   if (isUncPath(windowsPath)) {
     return windowsPath.replace(/\\/g, '/');
@@ -363,26 +387,30 @@ export function quoteArg(
  */
 export function convertWindowsExePath(cmd: string, isWsl: boolean): string {
   const convertDrivePath = isWsl ? toWslPath : toGitBashPath;
-
   // UNC paths (\\server\share) - normalize slashes in the exe path only,
   // leaving arguments after it unchanged. Exe paths are almost never on
-  // network shares, but handle gracefully if they are.
+  // network shares, but handle gracefully if they are. For WSL, a path into a
+  // distro's own filesystem (a CLI installed in the distro, configured by its
+  // \\wsl.localhost path) becomes the path the distro sees.
+  const convertUncPath = (uncPath: string): string =>
+    (isWsl ? parseWslUncPath(uncPath)?.linuxPath : undefined) ?? toForwardSlash(uncPath);
+
   if (cmd.startsWith('"\\\\')) {
     return cmd.replace(
       /^"(\\\\[^"]+)"/,
-      (_m, uncPath: string) => `"${toForwardSlash(uncPath)}"`,
+      (_m, uncPath: string) => `"${convertUncPath(uncPath)}"`,
     );
   }
   if (cmd.startsWith("'\\\\")) {
     return cmd.replace(
       /^'(\\\\[^']+)'/,
-      (_m, uncPath: string) => `'${toForwardSlash(uncPath)}'`,
+      (_m, uncPath: string) => `'${convertUncPath(uncPath)}'`,
     );
   }
   if (cmd.startsWith('\\\\')) {
     return cmd.replace(
       /^(\\\\[^\s]+)/,
-      (_m, uncPath: string) => toForwardSlash(uncPath),
+      (_m, uncPath: string) => convertUncPath(uncPath),
     );
   }
 

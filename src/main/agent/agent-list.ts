@@ -21,6 +21,7 @@
 
 import { createCachedSingleton, type CachedSingleton } from '../shared/cached-singleton';
 import { agentRegistry } from './agent-registry';
+import { invalidateWslDistroFacts } from './shared/wsl-distro';
 import { canBeWorkflowAgent } from './shared/workflow-agent-capability';
 import type { AgentDetectionInfo } from '../../shared/types';
 
@@ -80,6 +81,10 @@ async function buildAgentList(
         found: info.found,
         path: info.path,
         version: info.version,
+        cliTarget: info.cliTarget,
+        detectionError: info.detectionError,
+        unsupportedTarget: info.unsupportedTarget,
+        supportsWslCli: adapter.supportsWslCli === true,
         authenticated,
         permissions: adapter.permissions,
         defaultPermission: adapter.defaultPermission,
@@ -118,6 +123,9 @@ export async function listAgents(
     for (const agentName of agentRegistry.list()) {
       agentRegistry.getOrThrow(agentName).invalidateDetectionCache();
     }
+    // A WSL distro's facts too: Re-detect is how a user picks up a CLI they just
+    // installed there or a PATH their .bashrc now sets.
+    invalidateWslDistroFacts();
     // Every inventory was built from the detections just dropped.
     invalidateAllAgentListCaches();
   }
