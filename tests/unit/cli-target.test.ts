@@ -27,6 +27,7 @@ import {
   resolveStoredCliPlace,
   serializeCliTarget,
   shellForTarget,
+  targetOfPlace,
   toStoredCliTarget,
   type CliTarget,
 } from '../../src/main/agent/shared/cli-target';
@@ -88,9 +89,19 @@ const STORED = {
   homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
   uncRoot: '\\\\wsl.localhost\\Ubuntu',
   env: { CODEX_HOME: '/home/dev/.config/codex' },
+  linuxCliPath: '/home/dev/.local/bin/claude',
 };
 
 describe('the stored form', () => {
+  it('keeps the CLI path, so a reader after the session can run the CLI there', () => {
+    const place = placeFromStored(parseStoredCliTarget(serializeCliTarget(TARGET)));
+    expect(targetOfPlace(place)).toEqual({ ...place, linuxCliPath: '/home/dev/.local/bin/claude' });
+    // A row from before the path was kept, and a path that is not the distro's, give no target.
+    expect(targetOfPlace(placeFromStored({ ...STORED, linuxCliPath: undefined } as StoredCliTarget))).toBeNull();
+    expect(parseStoredCliTarget(JSON.stringify({ ...STORED, linuxCliPath: 'C:\\bin\\claude.exe' }))?.linuxCliPath).toBeUndefined();
+    expect(targetOfPlace(null)).toBeNull();
+  });
+
   it('keeps the kind, the distro and the homes a reader needs, and reads them back', () => {
     expect(toStoredCliTarget(TARGET)).toEqual(STORED);
     expect(toStoredCliTarget(null)).toBeNull();

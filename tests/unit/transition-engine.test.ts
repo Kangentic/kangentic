@@ -1806,7 +1806,7 @@ describe('TransitionEngine - a CLI installed in a WSL distro', () => {
       shell: 'wsl -d Ubuntu',
       cliTarget: { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/claude', facts: WSL_DISTRO_FACTS },
     }));
-    // The spawn and the row keep the homes a reader needs after the session.
+    // The spawn and the row keep the homes a reader needs after the session, and the CLI's path.
     const stored = {
       kind: 'wsl',
       distro: 'Ubuntu',
@@ -1814,6 +1814,7 @@ describe('TransitionEngine - a CLI installed in a WSL distro', () => {
       homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
       uncRoot: '\\\\wsl.localhost\\Ubuntu',
       env: {},
+      linuxCliPath: '/home/dev/.local/bin/claude',
     };
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
       shell: 'wsl -d Ubuntu',

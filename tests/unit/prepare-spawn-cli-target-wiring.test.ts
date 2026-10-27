@@ -173,7 +173,7 @@ describe('prepareAgentSpawn: where the agent CLI runs', () => {
       cliTarget: { kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/claude', facts: FACTS },
     });
     expect(result.data.shell).toBe('wsl -d Ubuntu');
-    // The row keeps the homes a reader needs after the session.
+    // The row keeps the homes a reader needs after the session, and the CLI's path.
     expect(result.data.cliTarget).toEqual({
       kind: 'wsl',
       distro: 'Ubuntu',
@@ -181,6 +181,7 @@ describe('prepareAgentSpawn: where the agent CLI runs', () => {
       homeUnc: FACTS.homeUnc,
       uncRoot: FACTS.uncRoot,
       env: {},
+      linuxCliPath: '/home/dev/.local/bin/claude',
     });
   });
 
