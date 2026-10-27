@@ -82,9 +82,10 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
     markRunningAsOrphanedExcluding = (...args: unknown[]) =>
       sessionRepoMarkRunningAsOrphanedExcluding(...args);
     getLatestForTaskByTypeAndIsolation = vi.fn(() => null);
-    // First-ever-spawn detection for the preamble's override lock: no session
-    // history in these tests, so autoSpawnTasks derives hasSessionRecord=false.
-    getLatestForTask = vi.fn(() => undefined);
+    // autoSpawnTasks' first-ever-spawn detection: every task here had an agent
+    // before. A task with no session record goes to the board path, not to the
+    // fresh spawn whose isolation tagging these tests pin.
+    getLatestForTask = vi.fn(() => ({ id: 'record-earlier', status: 'exited' }));
     getHeldPausedTaskIds = vi.fn(() => new Set<string>());
     insert = vi.fn();
     updateAppliedSettings = vi.fn();

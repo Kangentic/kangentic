@@ -65,16 +65,8 @@ import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
+import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
-
-/**
- * Per-task AbortController to cancel in-flight moves when a newer move
- * supersedes the current one. Prevents orphaned sessions from spawning
- * when the user quickly moves a task back before the async spawn completes.
- * The signal propagates through the async call chain; each helper throws
- * AbortError when cancelled, and cleanup is centralized in a single catch.
- */
-const taskMoveControllers = new Map<string, AbortController>();
 
 /**
  * Suspend a live PTY session so Phase 3 can respawn it with new CLI flags:
@@ -311,13 +303,13 @@ export async function handleTaskMove(
 
   // Abort any in-flight move or promotion BEFORE queueing on the lock - the
   // existing holder must see its abort and return so we can acquire the lock.
-  taskMoveControllers.get(input.taskId)?.abort();
+  abortInFlightMove(input.taskId);
   abortBacklogPromotion(input.taskId);
   // Turn-end work is superseded inside Phase 1, once the move is known to
   // change columns and the lock has let it through (see there): a reorder or a
   // refused move must not cancel a step check the idle agent will not repeat.
   const moveController = new AbortController();
-  taskMoveControllers.set(input.taskId, moveController);
+  registerMoveController(input.taskId, moveController);
   const { signal } = moveController;
 
   // Tag every project-scoped log emitted across Phases 1-3 (worktree + spawn)
@@ -1552,8 +1544,16 @@ export async function handleTaskMove(
             console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} moved to a different column during Phase 2 - skipping spawn`);
             return;
           }
+          // Phase 1 found no session, so another path started an agent for the
+          // task while this move made its worktree. That agent did not get this
+          // move's prompt and may not run in the worktree. A warning, so it
+          // reaches the log even with info lines off (see
+          // docs/architecture/sessions/crash-recovery.md, step 8).
           if (current.session_id) {
-            console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} already has session ${current.session_id.slice(0, 8)} - skipping spawn`);
+            console.warn(
+              `[TASK_MOVE] Task ${task.id.slice(0, 8)} already has session ${current.session_id.slice(0, 8)},`
+              + ' started by another path while this move made its worktree - skipping spawn',
+            );
             return;
           }
 
@@ -1624,9 +1624,7 @@ export async function handleTaskMove(
     }
   } finally {
     // Clean up controller if this is still the active one for this task
-    if (taskMoveControllers.get(input.taskId) === moveController) {
-      taskMoveControllers.delete(input.taskId);
-    }
+    releaseMoveController(input.taskId, moveController);
   }
   };
 

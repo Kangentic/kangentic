@@ -36,6 +36,15 @@ export function registerResumeController(taskId: string, controller: AbortContro
   controllers.add(controller);
 }
 
+/**
+ * True while a resume or an `autoSpawnForTask` of the task has not settled. The
+ * startup pass reads it and leaves the spawn to that caller, which may be
+ * between its locked gates and its worktree.
+ */
+export function isResumeInFlight(taskId: string): boolean {
+  return sessionResumeControllers.has(taskId);
+}
+
 /** Remove a controller when its resume settles. Only its own entry, never another caller's. */
 export function releaseResumeController(taskId: string, controller: AbortController): void {
   const controllers = sessionResumeControllers.get(taskId);

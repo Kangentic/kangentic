@@ -17,7 +17,12 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 const mockPrepareAgentSpawn = vi.fn(async () => ({ ok: false as const, reason: 'cli-not-found' as const }));
 const mockTaskList = vi.fn();
-const mockGetLatestForTask = vi.fn(() => undefined);
+/**
+ * Every task here had an agent before: a task with no session record goes to
+ * the board path instead of the fresh spawn this file pins.
+ */
+const EARLIER_RECORD = { id: 'record-earlier', status: 'exited' };
+const mockGetLatestForTask = vi.fn((): unknown => EARLIER_RECORD);
 const mockGetHeldPausedTaskIds = vi.fn(() => new Set<string>());
 const mockSwimlaneList = vi.fn();
 
@@ -109,7 +114,7 @@ async function runAutoSpawn(boardProfiles?: BoardProfile[]) {
 describe('autoSpawnTasks: auto_spawn is resolved per task, not per lane', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockGetLatestForTask.mockReturnValue(undefined);
+    mockGetLatestForTask.mockReturnValue(EARLIER_RECORD);
     mockGetHeldPausedTaskIds.mockReturnValue(new Set());
   });
 

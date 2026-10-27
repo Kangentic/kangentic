@@ -153,6 +153,8 @@ vi.mock('../../src/main/ipc/helpers', () => ({
   ensureGitignore: vi.fn(async () => {}),
   reapTaskLeftovers: vi.fn(async () => {}),
   leftoverSweepOptions: vi.fn(() => ({ stoppingEnabled: () => true, onReport: () => {} })),
+  // The board path a recovery pass hands a task that never had an agent.
+  autoSpawnForTask: vi.fn(async () => {}),
 }));
 
 vi.mock('../../src/main/ipc/helpers/project-entry-search', () => ({
@@ -269,7 +271,7 @@ import {
   recoverSessionsAfterPtyHostLoss,
 } from '../../src/main/ipc/handlers/projects';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
-import { ensureGitignore } from '../../src/main/ipc/helpers';
+import { autoSpawnForTask, ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-project-delete';
 import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
@@ -1227,14 +1229,16 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
   // from the call in projects.ts and the first test goes red (`onlySessionIds`
   // is undefined).
   const resumeScopeOf = (call: unknown[]): unknown => resumeOptionsOf(call)?.onlySessionIds;
-  // autoSpawnTasks' tenth parameter is its scope, for the same reason: an
-  // unscoped pass would also restart a task whose agent exited earlier this run.
-  // It is `{ taskIds, lostSessionIds }`: the lost sessions' tasks, and the lost
-  // rows themselves, so the pass can tell them from a later row of the same task
-  // (a resume whose spawn failed leaves one) that must keep a fresh agent away.
-  // Red-green: pass `lostTaskIds` bare, or leave `lostSessionIds` out of the
-  // object, in projects.ts and the two tests that read it go red.
-  const AUTO_SPAWN_LOST_SCOPE_ARGUMENT = 9;
+  // autoSpawnTasks' tenth parameter, its options, carries its scope
+  // (`lostScope`) for the same reason: an unscoped pass would also restart a
+  // task whose agent exited earlier this run. It is `{ taskIds, lostSessionIds }`:
+  // the lost sessions' tasks, and the lost rows themselves, so the pass can tell
+  // them from a later row of the same task (a resume whose spawn failed leaves
+  // one) that must keep a fresh agent away. Red-green: pass `lostTaskIds` bare,
+  // or leave `lostSessionIds` out of the object, in projects.ts and the two
+  // tests that read it go red.
+  const AUTO_SPAWN_OPTIONS_ARGUMENT = 9;
+  const lostScopeOf = (call: Parameters<typeof autoSpawnTasks>) => call[AUTO_SPAWN_OPTIONS_ARGUMENT]?.lostScope;
 
   function registerProjects(context: MockContext, projects: Project[]): void {
     const byId = new Map(projects.map((project) => [project.id, project]));
@@ -1293,12 +1297,12 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     // Both lost tasks go in; which of them already has a session again is for
     // autoSpawnTasks to decide from the registry. `toEqual` on the object also
     // pins the shape: no key beyond these two.
-    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]).toEqual({
+    expect(lostScopeOf(autoSpawnCalls[0])).toEqual({
       taskIds: new Set(['task-1', 'task-2']),
       lostSessionIds: lostInA,
     });
     // The project's own lost set, not a copy that could drift from what the resume got.
-    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]?.lostSessionIds).toBe(lostInA);
+    expect(lostScopeOf(autoSpawnCalls[0])?.lostSessionIds).toBe(lostInA);
   });
 
   it('reads the lost tasks before the resume replaces the rows it brings back, and leaves out a lost row with no task', async () => {
@@ -1339,11 +1343,11 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     expect(autoSpawnCalls).toHaveLength(1);
     // The lost ids stay whole, session-a3 included: it has no task, so it is out
     // of `taskIds`, but it is still a lost row the scoped pass must not count.
-    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]).toEqual({
+    expect(lostScopeOf(autoSpawnCalls[0])).toEqual({
       taskIds: new Set(['task-1', 'task-2']),
       lostSessionIds: lostInA,
     });
-    expect(autoSpawnCalls[0][AUTO_SPAWN_LOST_SCOPE_ARGUMENT]?.lostSessionIds).toBe(lostInA);
+    expect(lostScopeOf(autoSpawnCalls[0])?.lostSessionIds).toBe(lostInA);
   });
 
   it('skips a project that left the index and one whose folder is gone, and still resumes the rest', async () => {
@@ -1533,6 +1537,87 @@ describe('the options each recovery pass hands resumeSuspendedSessions (recovery
       ['project-A', 'develop'],
       ['project-B', 'release'],
     ]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5c. firstAgentStarter (module-private): where each project open's
+//     autoSpawnTasks sends a task that never had an agent. A pass that lost it
+//     would leave such a task with no agent after a move cut short by a quit;
+//     a pass that started it itself would do so in the project root, with no
+//     prompt, before its worktree exists.
+//
+//     Red-green: drop the starter from any of the three open paths in
+//     projects.ts and its row fails.
+// ---------------------------------------------------------------------------
+
+describe('where each project open sends a task that never had an agent (firstAgentStarter)', () => {
+  // autoSpawnTasks' tenth parameter, its options (`lostScope`, `startFirstAgent`).
+  const AUTO_SPAWN_OPTIONS_ARGUMENT = 9;
+
+  async function waitForRecoveryToFinish(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  }
+
+  const openPasses: ReadonlyArray<readonly [string, (context: MockContext, project: Project) => Promise<void>]> = [
+    ['openProjectByPath', async (context, project) => {
+      context.projectRepo.list.mockReturnValue([project]);
+      await openProjectByPath(asIpcContext(context), project.path);
+    }],
+    ['the PROJECT_OPEN handler', async (context, project) => {
+      context.projectRepo.getById.mockReturnValue(project);
+      registerProjectHandlers(asIpcContext(context));
+      const handler = capturedHandlers.get(IPC.PROJECT_OPEN);
+      if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
+      await handler(null, project.id);
+    }],
+    ['activateAllProjects', async (context, project) => {
+      context.projectRepo.list.mockReturnValue([project]);
+      await activateAllProjects(asIpcContext(context));
+    }],
+  ];
+
+  it.each(openPasses)('%s: hands it to autoSpawnForTask for this project, never as an explicit Start', async (_label, runPass) => {
+    const context = createMockContext();
+    const project = makeProject();
+    state.existingPaths.add(project.path);
+
+    await runPass(context, project);
+    await waitForRecoveryToFinish();
+
+    const calls = vi.mocked(autoSpawnTasks).mock.calls;
+    expect(calls).toHaveLength(1);
+    const startFirstAgent = calls[0][AUTO_SPAWN_OPTIONS_ARGUMENT]?.startFirstAgent;
+    if (!startFirstAgent) throw new Error('autoSpawnTasks was called without a first-agent starter');
+    // No agent is started until the pass hands one over.
+    expect(autoSpawnForTask).not.toHaveBeenCalled();
+
+    await startFirstAgent({ id: 'task-first', title: 'First agent' }, 'lane-planning');
+
+    const handOffs = vi.mocked(autoSpawnForTask).mock.calls;
+    expect(handOffs).toHaveLength(1);
+    expect(handOffs[0][0]).toBe(context);
+    expect(handOffs[0].slice(1)).toEqual([project.id, { id: 'task-first', title: 'First agent' }, 'lane-planning']);
+    // No options argument at all: `explicitStart` belongs to a user's Start only.
+    expect(handOffs[0]).toHaveLength(4);
+  });
+
+  it('recoverSessionsAfterPtyHostLoss hands none: every task it starts had a session', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    state.existingPaths.add(project.path);
+    context.projectRepo.getById.mockReturnValue(project);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([[project.id, new Set(['lost-session'])]]));
+
+    const calls = vi.mocked(autoSpawnTasks).mock.calls;
+    expect(calls).toHaveLength(1);
+    const options = calls[0][AUTO_SPAWN_OPTIONS_ARGUMENT];
+    expect(options?.startFirstAgent).toBeUndefined();
+    // The scope still reaches the pass, now as an option.
+    expect(options?.lostScope?.lostSessionIds).toEqual(new Set(['lost-session']));
   });
 });
 

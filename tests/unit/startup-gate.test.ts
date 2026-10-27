@@ -925,3 +925,52 @@ describe('the startup gate is wired into src/main/index.ts', () => {
     ).toBe(false);
   });
 });
+
+/**
+ * The background activation of every other project (`activateAllProjects`)
+ * runs once per process. `did-finish-load` fires on every renderer load: a Vite
+ * full reload, Ctrl+R, a window rebuilt on macOS activate or a second-instance
+ * launch. Main's sessions and boards outlive all of those, so a second pass only
+ * replays startup recovery against boards that are live. On 2026-10-27 a reload
+ * 4 hours into a run did that while a workflow's moves were making their
+ * worktrees, and the pass started four agents with no prompt in the project
+ * root.
+ *
+ * Red-green: drop the `backgroundActivationScheduled` guard around the timer
+ * and the first test fails; move the flag into createWindow and the second does.
+ */
+describe('the background activation runs once per process', () => {
+  const SCHEDULE_CALL = 'activateAllProjectsTimer = setTimeout(';
+
+  it('schedules activateAllProjects only behind the once-per-process flag, and raises the flag where it schedules', () => {
+    const didFinishLoad = sliceCodeBetween("mainWindow.webContents.on('did-finish-load', async () => {", '\n  });');
+    const guardIndex = didFinishLoad.indexOf('if (!backgroundActivationScheduled) {');
+    const raiseIndex = didFinishLoad.indexOf('backgroundActivationScheduled = true;');
+    const scheduleIndex = didFinishLoad.indexOf(SCHEDULE_CALL);
+
+    expect(scheduleIndex, 'the did-finish-load handler no longer schedules activateAllProjects').toBeGreaterThan(-1);
+    expect(
+      guardIndex > -1 && guardIndex < scheduleIndex,
+      'the activateAllProjects timer must sit inside `if (!backgroundActivationScheduled)`: did-finish-load fires on every renderer load, and an unguarded timer replays startup recovery against live boards on each one',
+    ).toBe(true);
+    expect(
+      raiseIndex > guardIndex && raiseIndex < scheduleIndex,
+      'the flag must be raised inside the guard, before the timer is set, or every later load schedules another pass',
+    ).toBe(true);
+    // One schedule site in the whole file, so a second path cannot bypass the flag.
+    expect(INDEX_CODE.split(SCHEDULE_CALL).length - 1).toBe(1);
+  });
+
+  it('keeps the flag at module scope, so a rebuilt window does not get a fresh one', () => {
+    const declaration = 'let backgroundActivationScheduled = false;';
+    const declarationIndex = INDEX_SOURCE.indexOf(declaration);
+    const createWindowIndex = INDEX_SOURCE.indexOf('const createWindow = () => {');
+
+    expect(declarationIndex, `src/main/index.ts no longer declares ${declaration}`).toBeGreaterThan(-1);
+    expect(
+      declarationIndex < createWindowIndex,
+      'the flag must be declared at module scope, above createWindow: declared inside it, every rebuilt window would schedule its own pass',
+    ).toBe(true);
+    expect(INDEX_SOURCE.split(declaration).length - 1).toBe(1);
+  });
+});

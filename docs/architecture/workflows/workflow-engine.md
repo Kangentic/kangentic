@@ -123,9 +123,10 @@ src/main/workflows/
   read-write but only reads, because closing a read-only one left a `-wal` and a `-shm` behind on
   every database; read-write left none.
 
-  This moves work out of the boot window rather than removing it. `activateAllProjects`, 5 s
-  later, still opens and migrates every registered project whose folder or database file exists,
-  on purpose: the retrieval worker opens databases with migrations off and relies on it. A project
+  This moves work out of the boot window rather than removing it. `activateAllProjects`, once per
+  process and 5 s after the first renderer load, still opens and migrates every registered project
+  whose folder or database file exists, on purpose: the retrieval worker opens databases with
+  migrations off and relies on it. A project
   whose folder exists is also recovered, and gets a database if it has none, as on any open. One
   whose folder is gone is only migrated, and never given a file.
   Making activation lazy as well was weighed and not built. A database probe cannot decide most of

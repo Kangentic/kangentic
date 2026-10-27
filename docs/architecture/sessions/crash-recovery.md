@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Crash recovery and PTY host
-description: "The project-open recovery pipeline: orphan marking, getInterruptedExited records, per (task, isolated_swimlane_id) dedup, registerSuspendedPlaceholder, restoredGrid, task-locked resumes, the pass scoped to lost sessions after a pty host crash, and what the pty host owns (renderer ports, its spawn worker)."
+description: "The project-open recovery pipeline: orphan marking, getInterruptedExited records, per (task, isolated_swimlane_id) dedup, registerSuspendedPlaceholder, restoredGrid, task-locked resumes, the reconcile that leaves a task to an in-flight move and hands a never-spawned one to the board path, the pass scoped to lost sessions after a pty host crash, and what the pty host owns (renderer ports, its spawn worker)."
 tags: [sessions, crash-recovery, pty-host, startup]
 sources:
   - resource: src/main/transition-engine/session-startup/index.ts
@@ -9,6 +9,7 @@ sources:
   - resource: src/main/transition-engine/session-startup/prepare-spawn.ts
   - resource: src/main/transition-engine/session-startup/auto-spawn.ts
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
+  - resource: src/main/ipc/handlers/task-move-controllers.ts
   - resource: src/main/db/repositories/session-repository.ts
     title: getInterruptedExited
   - resource: src/main/ipc/handlers/projects.ts
@@ -42,7 +43,11 @@ On project open (`src/main/transition-engine/session-startup/`):
    - No session ID -- fresh `--session-id` with prompt from matching `spawn_agent` action
    - A resume that cannot be prepared (an unknown agent, a missing CLI, a detection or trust write that throws) keeps its conversation: the record is CAS-upgraded to `suspended` (system) and registered as a placeholder, so the card shows Resume, step 8 skips the task, and the next launch tries the resume again. Retiring it used to let step 8 start a fresh agent over it. A record with no conversation to resume (no agent session id yet) is still retired, so step 8 starts the task fresh, which is all a resume of it could have done.
    - The spawn starts at the grid recorded on the record it replaces (`last_pty_cols` / `last_pty_rows`, passed as `SpawnSessionInput.restoredGrid`). The registry is empty after a restart, so the in-memory respawn grid (see [Repaint-settled scrollback sampling](output-streaming.md#scrollback-replay)) cannot apply here, and every resume used to come up at 120x30, making a phone that opened the task pay a park mid-boot. A grid under 20 rows (the bottom panel's strip) is not restored. The same holds for a Resume or a move after a restart: `resolveSpawnIntent` carries the retired record's grid into `executeSpawnAgent`.
-8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session at all (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`
+8. **Reconcile** -- spawn fresh agents for tasks in auto_spawn columns with no session in the registry (skips user-paused tasks); fresh rows are tagged with the column's `isolated_swimlane_id`. Two kinds of task are not started here:
+   - **A task a board path is working on.** A move, a resume or an `autoSpawnForTask` registers a controller for its whole run (`task-move-controllers.ts`, `session-resume-controllers.ts`). Each can sit in an unlocked gap where the row is already in its new column with no session and no worktree yet. The pass skips such a task at discovery, again under the task lock before it spawns, and again before a hand-off. On 2026-10-27 a pass ran while a workflow's moves were making their worktrees, and it started four agents with no prompt in the project root; each move then found the session and skipped its own spawn, which `task-move.ts` now logs as a warning.
+   - **A task that never had an agent** (no session record: a new task, or one a move to To Do reset). A fresh spawn would start it in whatever directory the row names, with no prompt. It goes to the board path instead (`autoSpawnForTask`, wired by the three project-open callers in `handlers/projects.ts`): its worktree first, then the column's enter automations and the task prompt, as the move into the column would have done. That is what finishes a move a quit cut short after its column commit. A row whose `session_id` no record and no registry row backs has that pointer cleared under the task lock first: `spawnAgent` starts no agent for a row that names a session, yet still runs the enter automations. The hand-offs run one at a time after the pass's own spawns, and the pass awaits them, so what a caller chains after it waits too. A read that throws while the pass sorts a task skips that task, not the pass. One exception: when the column's enter automations already recorded a run on the task this visit (`AutomationRunRepository.hasEnterRunSince`, counted from `TaskMoveRepository.visitStartedAt`), the move reached its spawn and the agent failed to start, so the task is left alone rather than run those automations again at every launch. The run log is pruned to 200 rows per project on this same open, unawaited beside the pass, so `pruneTo` keeps the newest enter run of each such task in its current column; it goes once the task has a session record, moves on, or is archived. The crash's scoped pass hands nothing off: every task it starts had a session.
+
+The background activation of every other project (`activateAllProjects`) runs these passes once per process, 5 s after the first renderer load (`backgroundActivationScheduled` in `src/main/index.ts`). A reload or a rebuilt window does not re-run it: main's sessions and boards outlive the renderer, so a second pass would only replay startup recovery against live boards.
 
 The same pipeline recovers what a [pty host](#pty-host) crash takes down, mid-run, scoped to
 exactly those sessions: `recoverSessionsAfterPtyHostLoss` passes the lost session ids, so step 3's

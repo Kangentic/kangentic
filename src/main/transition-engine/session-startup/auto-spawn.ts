@@ -3,6 +3,8 @@ import { getProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
+import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { SessionManager } from '../../pty/session-manager';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
@@ -12,6 +14,8 @@ import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
+import { isMoveInFlight } from '../../ipc/handlers/task-move-controllers';
+import { isResumeInFlight } from '../../ipc/handlers/session-resume-controllers';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
@@ -27,14 +31,132 @@ export interface LostSessionScope {
 }
 
 /**
+ * Starts a task's first agent through the board path (`autoSpawnForTask`): the
+ * worktree first, then the branch, the column's enter automations and the task
+ * prompt, as the move into the column would have. Never an explicit Start.
+ */
+export type FirstAgentStarter = (task: { id: string; title: string }, swimlaneId: string) => Promise<void>;
+
+/** What scopes a pass and where it sends a task that never had an agent. */
+export interface AutoSpawnTasksOptions {
+  /**
+   * Start the crash's lost tasks and nothing else: the pty host's crash path,
+   * mid-run, for the tasks whose lost session could not be resumed (it had no
+   * agent session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`:
+   * an unscoped pass would also wake a task whose agent exited earlier this
+   * run. Startup omits it.
+   */
+  lostScope?: LostSessionScope;
+  /**
+   * Where a task that never had an agent goes (see `autoSpawnTasks`). The
+   * project open paths pass `autoSpawnForTask`; the crash's scoped pass passes
+   * none, since every task it starts had a session.
+   */
+  startFirstAgent?: FirstAgentStarter;
+}
+
+/** A task the discovery pass found with no agent history, for the board path. */
+interface FirstAgentCandidate {
+  task: Task;
+  swimlaneId: string;
+}
+
+/**
+ * A move, a resume or an `autoSpawnForTask` is working on the task. Each one
+ * spawns its own agent when it is done, and each can sit in an unlocked gap
+ * where the row is already in its new column with no session and no worktree
+ * yet. A spawn here then started an agent with no prompt in the project root,
+ * and the move found the session and skipped its own spawn (2026-10-27: a
+ * workflow moved four tasks while a renderer reload ran this pass).
+ */
+function boardSpawnInFlight(taskId: string): boolean {
+  return isMoveInFlight(taskId) || isResumeInFlight(taskId);
+}
+
+/**
+ * Clears a task's `session_id` when nothing backs it: no record and no
+ * registry row. `spawnAgent` starts no agent for a row that names a session,
+ * yet still runs the column's enter automations, and the next launch's
+ * enter-run guard would then leave the task alone for good. Its own lock
+ * block, before the hand-off, as `startTaskSession` reconciles the pointer
+ * before its start: `autoSpawnForTask` takes the lock itself, and the lock is
+ * not reentrant.
+ */
+async function clearStaleSessionPointer(
+  taskId: string,
+  taskRepo: TaskRepository,
+  sessionRepo: SessionRepository,
+  sessionManager: SessionManager,
+): Promise<void> {
+  await withTaskLock(taskId, async () => {
+    const current = taskRepo.getById(taskId);
+    if (!current?.session_id) return;
+    if (sessionManager.hasSessionForTask(taskId) || sessionRepo.getLatestForTask(taskId) !== undefined) return;
+    console.log(`[AUTO_SPAWN] Cleared the session pointer of task ${taskId}: no record or session backs it`);
+    taskRepo.update({ id: taskId, session_id: null });
+  });
+}
+
+/**
+ * The board path, one task at a time: each can create a worktree and check
+ * out a branch (the same reason the auto_spawn reconcile runs its spawns in
+ * sequence). It runs after the pass's own spawns, which need no git work, and
+ * the pass awaits it, so a caller's later steps (the tool-breakdown repair,
+ * the background activation marking the project recovered) wait for these
+ * starts too. Such tasks are rare: a quit cut a move short after its column
+ * commit.
+ */
+async function handOffFirstAgents(
+  firstAgents: ReadonlyArray<FirstAgentCandidate>,
+  startFirstAgent: FirstAgentStarter,
+  taskRepo: TaskRepository,
+  sessionRepo: SessionRepository,
+  sessionManager: SessionManager,
+): Promise<void> {
+  let handedOff = 0;
+  for (const { task, swimlaneId } of firstAgents) {
+    if (isShuttingDown()) return;
+    // Discovery ran before every await of the pass: a move or a resume that
+    // took the task since then owns its spawn.
+    if (boardSpawnInFlight(task.id)) {
+      console.log(`[AUTO_SPAWN] Skipped task ${task.id}: a move or a resume took it before its first agent started`);
+      continue;
+    }
+    try {
+      if (task.session_id) await clearStaleSessionPointer(task.id, taskRepo, sessionRepo, sessionManager);
+      await startFirstAgent({ id: task.id, title: task.title }, swimlaneId);
+      handedOff++;
+    } catch (error) {
+      console.error(`[AUTO_SPAWN] First agent failed for task ${task.id}:`, error);
+    }
+  }
+  if (handedOff > 0) {
+    console.log(`[AUTO_SPAWN] Handed ${handedOff} task(s) with no agent history to the board path`);
+  }
+}
+
+/**
  * Enforce the auto-spawn invariant on project open: find tasks in
  * `auto_spawn=true` columns that have no running PTY session, and
- * start a fresh agent for each.
+ * start an agent for each.
  *
  * Handles the case where a task is in an active column but has no
  * session (e.g. the session exited, the app closed without suspend,
  * or the task was placed there manually). Unlike resumeSuspendedSessions,
- * this always starts a fresh agent - no resume semantics.
+ * it never resumes: what it starts is a fresh agent.
+ *
+ * Two kinds of task are not started here:
+ *
+ * - A task a board path is working on (`boardSpawnInFlight`). Its own spawn
+ *   follows, in its worktree and with its prompt.
+ * - A task that never had an agent (no session record at all: a new task, or
+ *   one a move to To Do reset). A fresh spawn here would start it in whatever
+ *   directory the row names, with no prompt, and its worktree may not exist
+ *   yet. It goes to `startFirstAgent` instead, which is the board path. With
+ *   no starter it is left alone. A task whose column's enter automations
+ *   already ran this visit is left alone too: its move reached the spawn and
+ *   the agent failed to start, and handing it off would run those automations
+ *   again at every launch.
  *
  * Callers typically run resumeSuspendedSessions first (so dirty-shutdown
  * state is picked up as a resume rather than a fresh spawn), then this
@@ -51,15 +173,9 @@ export async function autoSpawnTasks(
   projectDefaultEffort?: string | null,
   /** Board Board Profiles, so a profiled task spawns on its own rung for this column. */
   boardProfiles?: ReadonlyArray<BoardProfile>,
-  /**
-   * Start the crash's lost tasks and nothing else: the pty host's crash path,
-   * mid-run, for the tasks whose lost session could not be resumed (it had no
-   * agent session id yet). Mirrors `resumeSuspendedSessions`' `onlySessionIds`:
-   * an unscoped pass would also wake a task whose agent exited earlier this
-   * run. Startup omits it.
-   */
-  lostScope?: LostSessionScope,
+  options: AutoSpawnTasksOptions = {},
 ): Promise<void> {
+  const { lostScope, startFirstAgent } = options;
   if (isShuttingDown()) return;
   if (lostScope && lostScope.taskIds.size === 0) return;
   // The lost rows stay in the registry, exited, so in a scoped pass every row
@@ -119,7 +235,11 @@ export async function autoSpawnTasks(
   // The lane is folded ONCE here and carried on the candidate, so every
   // downstream read (prepareAgentSpawn's `swimlane`, resolveIsolatedSwimlaneId)
   // sees the task's own rung rather than the column's base settings.
-  const candidates: Array<{ lane: Swimlane; task: Task }> = [];
+  const candidates: Array<{ lane: Swimlane; task: Task; hasSessionRecord: boolean }> = [];
+  // Tasks that never had an agent, for the board path once this pass is done.
+  const firstAgents: FirstAgentCandidate[] = [];
+  const automationRunRepo = new AutomationRunRepository(db);
+  const taskMoveRepo = new TaskMoveRepository(db);
   for (const lane of lanesToScan) {
     for (const task of taskRepo.list(lane.id)) {
       if (lostScope && !lostScope.taskIds.has(task.id)) continue;
@@ -130,11 +250,50 @@ export async function autoSpawnTasks(
         allLanes,
       ) ?? lane;
       if (!laneForTask.auto_spawn) continue;
-      candidates.push({ lane: laneForTask, task });
+      if (boardSpawnInFlight(task.id)) {
+        console.log(`[AUTO_SPAWN] Skipped task ${task.id}: a move or a resume is working on it, and starts its agent`);
+        continue;
+      }
+      // A failed read skips this task, not the pass: the preparation pass
+      // below treats a throw the same way.
+      try {
+        // First-ever-spawn detection: the board path for a task with none,
+        // and the override lock's input for the rest (prepareAgentSpawn below).
+        const hasSessionRecord = sessionRepo.getLatestForTask(task.id) !== undefined;
+        if (!hasSessionRecord) {
+          if (!startFirstAgent) {
+            console.log(`[AUTO_SPAWN] Skipped task ${task.id}: it never had an agent, and this pass starts none through the board path`);
+            continue;
+          }
+          // `AutomationRunRepository.pruneTo` keeps the newest enter run of
+          // such a task for this read: change the two together.
+          const visitStartedAt = taskMoveRepo.visitStartedAt(task.id, lane.id);
+          if (automationRunRepo.hasEnterRunSince(task.id, lane.id, visitStartedAt)) {
+            console.warn(
+              `[AUTO_SPAWN] Skipped task ${task.id}: it never had an agent, but its column's enter automations`
+              + ' already ran this visit, so its agent failed to start. Leaving it alone so they do not run again.',
+            );
+            continue;
+          }
+          firstAgents.push({ task, swimlaneId: lane.id });
+          continue;
+        }
+        candidates.push({ lane: laneForTask, task, hasSessionRecord });
+      } catch (error) {
+        console.error(`[AUTO_SPAWN] Discovery failed for task ${task.id}:`, error);
+      }
     }
   }
+
+  const handOff = (): Promise<void> => (
+    startFirstAgent
+      ? handOffFirstAgents(firstAgents, startFirstAgent, taskRepo, sessionRepo, sessionManager)
+      : Promise.resolve()
+  );
+
   if (candidates.length === 0) {
     done(0);
+    await handOff();
     return;
   }
 
@@ -152,7 +311,7 @@ export async function autoSpawnTasks(
   // spawns fresh - it just records the correct isolation on that fresh row.
   const spawnInputs: Array<PreparedSpawn & { task: Task; isolatedSwimlaneId: string | null }> = [];
 
-  for (const { lane, task } of candidates) {
+  for (const { lane, task, hasSessionRecord } of candidates) {
     // Defensive re-check: a session may have been registered for this task
     // during the `await getShell()` above (a concurrent project open or
     // resumeSuspendedSessions). Placeholders registered by
@@ -200,10 +359,10 @@ export async function autoSpawnTasks(
         resolvedShell,
         mcpServerHandle,
         resume: null,
-        // First-ever-spawn detection for the override lock: a task placed in
-        // an auto_spawn lane that never spawned anywhere gets its Advanced
-        // overrides locked by this startup spawn, exactly like a board spawn.
-        hasSessionRecord: sessionRepo.getLatestForTask(task.id) !== undefined,
+        // First-ever-spawn detection for the override lock, read once in the
+        // discovery pass. A task with no record went to the board path there,
+        // whose preamble locks its overrides, so every task here has one.
+        hasSessionRecord,
         tasks: taskRepo,
         boardProfiles,
       });
@@ -227,7 +386,8 @@ export async function autoSpawnTasks(
   if (isShuttingDown()) {
     // Every prepared command took a hold that no spawn will now release. A
     // hold left behind keeps its folder's file through the quit, since the
-    // folder's last live session would no longer be its last holder.
+    // folder's last live session would no longer be its last holder. No task
+    // is handed to the board path either: the quit is under way.
     for (const input of spawnInputs) releaseCommandHold(input.adapter, input.cwd, input.sessionRecordId);
     done(0);
     return;
@@ -238,12 +398,16 @@ export async function autoSpawnTasks(
   // detection, and a move, a Resume or a reset that took the task in that time
   // owns it now. Without the lock this pass spawned into a task the user had
   // just moved, To Do included. A reset shows as a changed `session_id`, which
-  // it clears. A skipped task keeps the session directory its preparation
-  // made, which the next launch's orphan cleanup removes. What the adapter's
-  // command builder wrote for that run (Gemini's hooks file in the worktree)
-  // is held under the prepared session's id, so a skip releases that hold. A
-  // hold never released keeps the folder's file in place for the rest of the
-  // run: no later session's release can empty the folder's holds.
+  // it clears. A move still making its worktree shows as nothing on the row:
+  // its Phase 1 committed the column, and the worktree and the spawn come
+  // after the lock is released, so only its registered controller says so.
+  //
+  // A skipped task keeps the session directory its preparation made, which
+  // the next launch's orphan cleanup removes. What the adapter's command
+  // builder wrote for that run (Gemini's hooks file in the worktree) is held
+  // under the prepared session's id, so a skip releases that hold. A hold
+  // never released keeps the folder's file in place for the rest of the run:
+  // no later session's release can empty the folder's holds.
   const spawnResults = await Promise.allSettled(
     spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
       // Until spawn() takes the command, this pass owns its hold. spawn()
@@ -262,6 +426,7 @@ export async function autoSpawnTasks(
           || (current.worktree_path || projectPath) !== input.cwd
           || !fs.existsSync(input.cwd)
           || hasSession(input.task.id)
+          || boardSpawnInFlight(input.task.id)
         ) {
           // Logged, so a task this pass left without an agent leaves a trace.
           console.log(`[AUTO_SPAWN] Skipped task ${input.task.id}: it changed while its spawn was prepared`);
@@ -349,4 +514,5 @@ export async function autoSpawnTasks(
     console.log(`[AUTO_SPAWN] Spawned ${spawned} session(s) for tasks without agents`);
   }
   done(spawned);
+  await handOff();
 }
