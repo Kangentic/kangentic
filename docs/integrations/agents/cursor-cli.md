@@ -6,6 +6,7 @@ tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
   - resource: src/main/agent/adapters/cursor/project-mcp-config.ts
+  - resource: src/main/agent/adapters/cursor/answer-workspace.ts
   - resource: src/main/agent/adapters/cursor/stream-parser.ts
 ---
 # Cursor CLI
@@ -45,6 +46,14 @@ agent --resume="<chat-id>"
 ```
 
 The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
+
+## WSL
+
+A Cursor installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Cursor's Linux path in a `wsl -d <distro>` shell. `create-chat`, `about`, `--help`, `--list-models`, a title summary and a Knowledge Graph answer all run through `wsl.exe`. `about` asks the CLI the session was started with, not the Cursor on PATH, which on a machine with both installed reported the Windows Cursor's model for a distro session.
+
+Kangentic's MCP server stays a static entry in the project's `.cursor/mcp.json`. On mirrored networking the distro reaches this machine's loopback, so the entry is the URL one. On NAT networking it is the WSL hook transport's stdio bridge (`CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY`): `sh` with the script, `mcp` and the URL, and the token in the server's `env`. The script path, URL and token are `${env:...}` references, filled from the session's `KANGENTIC_MCP_BRIDGE_SCRIPT`, `KANGENTIC_MCP_URL` and `KANGENTIC_MCP_TOKEN`, which cross into the distro through `WSLENV`. That Cursor fills references in `command`, `args` and `env` comes from Cursor's MCP docs ("Config interpolation"); only the `url` and `headers` case was measured, by the answer path. The CLI path is the project's, so every session sharing a folder shares the entry.
+
+A Knowledge Graph answer from a distro starts in `wsl-<distro>` inside the shared answer home (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads, and its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
 
 ## Permission Modes
 

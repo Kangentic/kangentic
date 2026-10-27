@@ -9,19 +9,18 @@
  * session's own values ride its environment (`buildEnv`). Two sessions sharing
  * the folder write the same entry and each reads its own URL, which keeps a
  * caller-scoped URL (a workflow agent's) its own. The user's other servers in
- * the file stay as they are.
+ * the file stay as they are. A Cursor in a WSL distro on NAT networking gets
+ * the bridge entry instead, as static (`CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY`).
+ * The CLI path is the project's, so the sessions in one folder share a place,
+ * and with it an entry.
  */
 
 import fs from 'node:fs';
 import path from 'node:path';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV } from './answer-workspace';
+import { CURSOR_KANGENTIC_MCP_ENTRY, type CursorKangenticMcpEntry } from './answer-workspace';
 
-/** The entry every session writes: identical, so a sibling's write changes nothing. */
-export const CURSOR_KANGENTIC_MCP_ENTRY = {
-  url: `\${env:${CURSOR_MCP_URL_ENV}}`,
-  headers: { 'X-Kangentic-Token': `\${env:${CURSOR_MCP_TOKEN_ENV}}` },
-} as const;
+export { CURSOR_KANGENTIC_MCP_ENTRY };
 
 type JsonObject = Record<string, unknown>;
 
@@ -72,20 +71,23 @@ function readConfig(configPath: string): ProjectMcpConfig {
  * session without Kangentic's tools, as an MCP server that failed to start
  * would.
  */
-export function writeCursorProjectMcpConfig(directory: string): boolean {
+export function writeCursorProjectMcpConfig(
+  directory: string,
+  entry: CursorKangenticMcpEntry = CURSOR_KANGENTIC_MCP_ENTRY,
+): boolean {
   const configPath = configPathOf(directory);
   const current = readConfig(configPath);
   if (current.kind === 'unusable') {
     console.warn(`[cursor] Left ${configPath} as it is: it is not JSON Kangentic can merge its server into.`);
     return false;
   }
-  if (current.kind === 'usable' && JSON.stringify(current.servers.kangentic) === JSON.stringify(CURSOR_KANGENTIC_MCP_ENTRY)) {
+  if (current.kind === 'usable' && JSON.stringify(current.servers.kangentic) === JSON.stringify(entry)) {
     return true;
   }
   const existing = current.kind === 'usable' ? current : { config: {}, servers: {} };
   const merged = {
     ...existing.config,
-    mcpServers: { ...existing.servers, kangentic: CURSOR_KANGENTIC_MCP_ENTRY },
+    mcpServers: { ...existing.servers, kangentic: entry },
   };
   try {
     fs.mkdirSync(path.dirname(configPath), { recursive: true });

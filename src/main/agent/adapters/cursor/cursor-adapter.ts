@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { AgentDetector } from '../../shared/agent-detector';
 import { interpolateTemplate } from '../../shared/template-utils';
@@ -7,9 +9,23 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
+import { cliPathForTarget, execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
+import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
+import { wslHookPaths } from '../../shared/wsl-hook-transport';
+import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { discoverCursorCapabilities } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
-import { CURSOR_MCP_TOKEN_ENV, CURSOR_MCP_URL_ENV, removeCursorChat, writeCursorAnswerWorkspace } from './answer-workspace';
+import {
+  CURSOR_KANGENTIC_MCP_ENTRY,
+  CURSOR_MCP_BRIDGE_SCRIPT_ENV,
+  CURSOR_MCP_TOKEN_ENV,
+  CURSOR_MCP_URL_ENV,
+  cursorAnswerHome,
+  cursorKangenticMcpEntry,
+  removeCursorChat,
+  writeCursorAnswerWorkspace,
+  type CursorKangenticMcpEntry,
+} from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
 import type {
@@ -34,6 +50,37 @@ function cursorMcpWiringEnabled(
 }
 
 /**
+ * The entry a session's folder gets. A Cursor in a WSL distro on NAT
+ * networking gets the bridge, prepared in the session's own directory, whose
+ * relay the session's spawn attaches. Null when that cannot be written: the
+ * session then starts without Kangentic's tools, as one whose server failed
+ * to start would.
+ */
+function cursorSessionMcpEntry(
+  options: SpawnCommandOptions & { mcpServerUrl: string; mcpServerToken: string },
+): CursorKangenticMcpEntry | null {
+  const place = options.cliTarget ?? null;
+  if (!place) return CURSOR_KANGENTIC_MCP_ENTRY;
+  if (!options.eventsOutputPath) return null;
+  try {
+    return cursorKangenticMcpEntry(kangenticMcpServer({
+      url: options.mcpServerUrl,
+      token: options.mcpServerToken,
+      place,
+      directory: path.dirname(options.eventsOutputPath),
+    }));
+  } catch (error) {
+    console.warn('[cursor] Could not prepare the WSL MCP bridge; the session runs without Kangentic tools:', error);
+    return null;
+  }
+}
+
+/** The bridge entry's script as the distro sees it, for a session or run whose bridge lives in `directory`. */
+function bridgeScriptEnv(directory: string, place: CliPlace): Record<string, string> {
+  return { [CURSOR_MCP_BRIDGE_SCRIPT_ENV]: cliPathForTarget(wslHookPaths(directory).script, place) };
+}
+
+/**
  * Run `<cursorPath> <args>` and return stdout. `args` are fixed words, never
  * user text, so the Windows command line joins them as they are.
  *
@@ -42,13 +89,19 @@ function cursorMcpWiringEnabled(
  * mitigation refuses to execute .cmd/.bat without a shell. We use `exec`
  * with a quoted command string on Windows (same pattern as
  * `shared/exec-version.ts`) and keep `execFile` on macOS/Linux where
- * the binary is a native ELF/Mach-O.
+ * the binary is a native ELF/Mach-O. A Cursor installed in a WSL distro
+ * (`target`) runs there, through `wsl.exe`, in the distro's view of
+ * `workingDirectory`.
  */
 async function runCursorCli(
   cursorPath: string,
   args: readonly string[],
-  options: { timeoutMs: number; workingDirectory?: string },
+  options: { timeoutMs: number; workingDirectory?: string; target?: CliTarget | null },
 ): Promise<string> {
+  if (options.target) {
+    const { stdout } = await execCliForTarget(options.target, args, { timeout: options.timeoutMs, cwd: options.workingDirectory });
+    return stdout;
+  }
   const execOptions = { timeout: options.timeoutMs, windowsHide: true, cwd: options.workingDirectory };
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cursorPath)} ${args.join(' ')}`, execOptions);
@@ -59,8 +112,14 @@ async function runCursorCli(
 }
 
 /** `about --format json`, which answers from the local install in under a second. */
-function runAgentAbout(cursorPath: string): Promise<string> {
-  return runCursorCli(cursorPath, ['about', '--format', 'json'], { timeoutMs: 5000 });
+function runAgentAbout(cursorPath: string, target: CliTarget | null): Promise<string> {
+  return runCursorCli(cursorPath, ['about', '--format', 'json'], { timeoutMs: 5000, target });
+}
+
+/** The CLI a session was started with, kept for its out-of-band `about` call. */
+interface CursorSessionLaunch {
+  cliPath: string;
+  target: CliTarget | null;
 }
 
 /** A whole line that is a chat id, as `create-chat` prints it (measured: the bare UUID). */
@@ -118,8 +177,12 @@ export class CursorAdapter implements AgentAdapter {
   // A static `.cursor/mcp.json` entry whose url and token are `${env:...}`
   // references, filled per session by `buildEnv` (project-mcp-config.ts).
   readonly kangenticMcp = 'per-session' as const;
+  /** A Cursor installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */
   private readonly mcpHolds = new SharedFolderHolds();
+  /** Each live session's CLI, by its PTY session id, until the session ends. */
+  private readonly sessionLaunches = new Map<string, CursorSessionLaunch>();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
@@ -158,6 +221,7 @@ export class CursorAdapter implements AgentAdapter {
       // alias above would let one vendor's CLI masquerade as another's.
       return /^\d/.test(cleaned) ? cleaned : null;
     },
+    supportsWslCli: true,
   });
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
@@ -173,7 +237,11 @@ export class CursorAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;
-    const parts: string[] = [quoteArg(options.agentPath, shell)];
+    // A Cursor in a WSL distro is started by the path the distro sees; the
+    // PTY's cwd reaches it as its `/mnt` path.
+    const place = options.cliTarget ?? null;
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.agentPath, shell)];
+    if (options.ptySessionId) this.sessionLaunches.set(options.ptySessionId, { cliPath: options.agentPath, target: place });
 
     // Kangentic's MCP server, on every start and resume: the project's
     // `.cursor/mcp.json` entry plus `--approve-mcps`, which loads the project's
@@ -182,9 +250,12 @@ export class CursorAdapter implements AgentAdapter {
     // own project servers too, as running Cursor there with the flag would, so
     // it rides only a start whose entry is in place: a file Kangentic could not
     // merge into gets neither the entry nor the approval.
-    if (cursorMcpWiringEnabled(options) && writeCursorProjectMcpConfig(options.cwd)) {
-      this.mcpHolds.retain(options.ptySessionId, options.cwd);
-      parts.push('--approve-mcps');
+    if (cursorMcpWiringEnabled(options)) {
+      const entry = cursorSessionMcpEntry(options);
+      if (entry && writeCursorProjectMcpConfig(options.cwd, entry)) {
+        this.mcpHolds.retain(options.ptySessionId, options.cwd);
+        parts.push('--approve-mcps');
+      }
     }
 
     if (options.sessionId) {
@@ -258,7 +329,9 @@ export class CursorAdapter implements AgentAdapter {
    */
   async createSessionId(cliPath: string, workingDirectory: string): Promise<string | null> {
     try {
-      const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory });
+      // A Cursor in a WSL distro makes the chat there, so the session opens it.
+      const target = await resolveCliTarget(cliPath, true);
+      const stdout = await runCursorCli(cliPath, ['create-chat'], { timeoutMs: CREATE_CHAT_TIMEOUT_MS, workingDirectory, target });
       const match = stdout.match(CHAT_ID_LINE);
       if (match) return match[0].toLowerCase();
       console.warn(`[cursor] create-chat printed no chat id: ${stdout.trim().slice(0, 200)}`);
@@ -279,10 +352,19 @@ export class CursorAdapter implements AgentAdapter {
     return `${this.displayName} cannot load Kangentic's tools here: ${problem}. Fix or remove it, then close Settings to retry.`;
   }
 
-  /** The session's own server URL and token, which the static entry's `${env:...}` references read. */
+  /**
+   * The session's own server URL and token, which the static entry's
+   * `${env:...}` references read, and for a Cursor in a WSL distro the bridge
+   * entry's script (read on NAT networking, unused on mirrored).
+   */
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
     if (!cursorMcpWiringEnabled(options)) return null;
-    return { [CURSOR_MCP_URL_ENV]: options.mcpServerUrl, [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken };
+    const place = options.cliTarget ?? null;
+    return {
+      [CURSOR_MCP_URL_ENV]: options.mcpServerUrl,
+      [CURSOR_MCP_TOKEN_ENV]: options.mcpServerToken,
+      ...(place && options.eventsOutputPath ? bridgeScriptEnv(path.dirname(options.eventsOutputPath), place) : {}),
+    };
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -333,10 +415,14 @@ export class CursorAdapter implements AgentAdapter {
    *
    * The fetch is fire-and-forget. `dispose()` sets a cancel flag so a
    * late-arriving result does not push usage into a torn-down session.
+   *
+   * It asks the CLI the session was started with (a project's own CLI path,
+   * or a Cursor in a WSL distro, through `wsl.exe`), and falls back to the
+   * Cursor on PATH for a session whose start it did not see.
    */
   attachSession(context: SessionContext): SessionAttachment {
     let disposed = false;
-    this.fetchAboutUsage()
+    this.fetchAboutUsage(this.sessionLaunches.get(context.sessionId) ?? null)
       .then((usage) => {
         if (disposed || !usage) return;
         context.applyUsage(usage);
@@ -348,14 +434,21 @@ export class CursorAdapter implements AgentAdapter {
         // the pre-fix behavior.
       });
     return {
-      dispose: () => { disposed = true; },
+      dispose: () => {
+        disposed = true;
+        this.sessionLaunches.delete(context.sessionId);
+      },
     };
   }
 
-  private async fetchAboutUsage(): Promise<Partial<SessionUsage> | null> {
-    const detection = await this.detector.detect();
-    if (!detection.found || !detection.path) return null;
-    const stdout = await runAgentAbout(detection.path);
+  private async fetchAboutUsage(launch: CursorSessionLaunch | null): Promise<Partial<SessionUsage> | null> {
+    let cliPath = launch?.cliPath ?? null;
+    if (!cliPath) {
+      const detection = await this.detector.detect();
+      if (!detection.found || !detection.path) return null;
+      cliPath = detection.path;
+    }
+    const stdout = await runAgentAbout(cliPath, launch?.target ?? null);
     const payload: unknown = JSON.parse(stdout);
     if (!isAboutPayload(payload)) return null;
     return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
@@ -369,6 +462,7 @@ export class CursorAdapter implements AgentAdapter {
     // killed) strips it.
     const folder = this.mcpHolds.release(sessionId, directory);
     if (folder) removeCursorProjectMcpConfig(folder);
+    if (sessionId) this.sessionLaunches.delete(sessionId);
   }
 
   getExitSequence(): string[] {
@@ -434,6 +528,8 @@ export class CursorAdapter implements AgentAdapter {
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
+      // A Cursor installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
@@ -468,6 +564,10 @@ export class CursorAdapter implements AgentAdapter {
    * Each run's chat is removed from `~/.cursor/chats` afterwards: an answer is
    * not a chat to resume.
    *
+   * A Cursor installed in a WSL distro runs there, from its own answer home
+   * (`cursorAnswerHome`), and on NAT networking reaches the search tool through
+   * the bridge entry, whose relay lives as long as this one call.
+   *
    * The prompt, its rules and the retrieval budget are all built upstream and
    * handed over whole; this only decides the CLI's flags.
    */
@@ -479,13 +579,51 @@ export class CursorAdapter implements AgentAdapter {
     options?: AnswerFromContextOptions,
   ): Promise<string> {
     const retrieval = options?.retrieval;
-    const onEvent = options?.onEvent;
-    if (retrieval) await writeCursorAnswerWorkspace(cwd);
+    const cliTarget = await resolveCliTarget(cliPath, true);
+    const answerHome = cursorAnswerHome(cwd, cliTarget);
+    if (!retrieval) {
+      if (cliTarget) await fs.promises.mkdir(answerHome, { recursive: true });
+      return this.runAnswer({ prompt, cliPath, cliTarget, cwd: answerHome, model, onEvent: options?.onEvent, search: null });
+    }
+    // Only a bridge writes into the directory: a CLI that dials the URL needs
+    // none, so a run on this machine without one is not given one.
+    const inRunDirectory = <T>(work: (directory: string) => Promise<T>): Promise<T> =>
+      options?.runDirectory || !cliTarget ? work(options?.runDirectory ?? answerHome) : withAnswerRunDirectory(work);
+    return inRunDirectory(async (runDirectory) => {
+      const server = kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: runDirectory });
+      await writeCursorAnswerWorkspace(answerHome, cursorKangenticMcpEntry(server));
+      const env = {
+        [CURSOR_MCP_URL_ENV]: retrieval.url,
+        [CURSOR_MCP_TOKEN_ENV]: retrieval.token,
+        ...(server.kind === 'stdio' && cliTarget ? bridgeScriptEnv(runDirectory, cliTarget) : {}),
+      };
+      const stopRelay = startRunMcpRelay(runDirectory, server);
+      try {
+        return await this.runAnswer({ prompt, cliPath, cliTarget, cwd: answerHome, model, onEvent: options?.onEvent, search: { env } });
+      } finally {
+        stopRelay();
+      }
+    });
+  }
+
+  /** One ask-mode answer run, and the removal of the chat it leaves. */
+  private async runAnswer(input: {
+    prompt: string;
+    cliPath: string;
+    cliTarget: CliTarget | null;
+    cwd: string;
+    model: string | null | undefined;
+    onEvent: AnswerFromContextOptions['onEvent'];
+    /** The search server's variables, or null for a run without search. */
+    search: { env: Record<string, string> } | null;
+  }): Promise<string> {
+    const { cliPath, cliTarget, cwd, model, onEvent, search } = input;
     let sessionId: string | null = null;
     const reduce = createCursorAnswerReducer();
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model flag is OMITTED when none is chosen: passing an
         // empty value is an error.
         args: [
@@ -493,11 +631,11 @@ export class CursorAdapter implements AgentAdapter {
           '--mode', 'ask',
           '--output-format', 'stream-json',
           ...(onEvent ? ['--stream-partial-output'] : []),
-          ...(retrieval ? ['--approve-mcps'] : []),
+          ...(search ? ['--approve-mcps'] : []),
           ...(model ? ['--model', model] : []),
           '-p',
         ],
-        prompt,
+        prompt: input.prompt,
         cwd,
         extractRaw: extractCursorAnswer,
         outputBudget: ANSWER_STREAM_OUTPUT_BUDGET,
@@ -505,12 +643,10 @@ export class CursorAdapter implements AgentAdapter {
           sessionId ??= cursorInitSessionId(line);
           if (onEvent) for (const event of reduce(line)) onEvent(event);
         }),
-        ...(retrieval
-          ? { env: { [CURSOR_MCP_URL_ENV]: retrieval.url, [CURSOR_MCP_TOKEN_ENV]: retrieval.token } }
-          : {}),
+        ...(search ? { env: search.env } : {}),
       });
     } finally {
-      if (sessionId) await removeCursorChat(sessionId);
+      if (sessionId) await removeCursorChat(sessionId, cliTarget);
     }
   }
 

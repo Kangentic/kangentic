@@ -11,18 +11,42 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { cliHomeDir, type CliPlace } from '../../shared/cli-target';
+import type { KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { WSL_MCP_REQUEST_HEAD, WSL_MCP_TOKEN_ENV } from '../../shared/wsl-hook-transport';
 
 export const CURSOR_MCP_URL_ENV = 'KANGENTIC_MCP_URL';
 export const CURSOR_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
+/** The WSL hook transport's script, as the distro sees it, for the bridge entry. */
+export const CURSOR_MCP_BRIDGE_SCRIPT_ENV = 'KANGENTIC_MCP_BRIDGE_SCRIPT';
 
-const MCP_CONFIG = JSON.stringify({
-  mcpServers: {
-    kangentic: {
-      url: `\${env:${CURSOR_MCP_URL_ENV}}`,
-      headers: { 'X-Kangentic-Token': `\${env:${CURSOR_MCP_TOKEN_ENV}}` },
-    },
-  },
-}, null, 2);
+/** Kangentic's entry for a Cursor that dials the server's URL itself. */
+export const CURSOR_KANGENTIC_MCP_ENTRY = {
+  url: `\${env:${CURSOR_MCP_URL_ENV}}`,
+  headers: { 'X-Kangentic-Token': `\${env:${CURSOR_MCP_TOKEN_ENV}}` },
+} as const;
+
+/**
+ * Kangentic's entry for a Cursor in a WSL distro on NAT networking, which
+ * cannot reach this machine's loopback: the hook transport's stdio bridge
+ * (`wslMcpServerLaunch`). Static like the URL entry. Cursor fills `${env:...}`
+ * in a server's `command`, `args` and `env` as in its `url` and `headers`
+ * (Cursor's MCP docs, "Config interpolation"), so the script path, the URL and
+ * the token all come from the CLI's environment, and the token is handed to
+ * the bridge in its own environment, never argv or disk.
+ */
+export const CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY = {
+  command: 'sh',
+  args: [`\${env:${CURSOR_MCP_BRIDGE_SCRIPT_ENV}}`, WSL_MCP_REQUEST_HEAD, `\${env:${CURSOR_MCP_URL_ENV}}`],
+  env: { [WSL_MCP_TOKEN_ENV]: `\${env:${CURSOR_MCP_TOKEN_ENV}}` },
+} as const;
+
+export type CursorKangenticMcpEntry = typeof CURSOR_KANGENTIC_MCP_ENTRY | typeof CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY;
+
+/** The entry that gives Cursor `server`. */
+export function cursorKangenticMcpEntry(server: KangenticMcpServer): CursorKangenticMcpEntry {
+  return server.kind === 'stdio' ? CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY : CURSOR_KANGENTIC_MCP_ENTRY;
+}
 
 /**
  * Ask mode refuses an MCP call it was not told to allow. This allows ours by
@@ -42,22 +66,37 @@ async function writeIfChanged(filePath: string, content: string): Promise<void> 
   await fs.promises.writeFile(filePath, content, 'utf-8');
 }
 
-export async function writeCursorAnswerWorkspace(answerHome: string): Promise<void> {
-  await writeIfChanged(path.join(answerHome, '.cursor', 'mcp.json'), MCP_CONFIG);
+/**
+ * The folder an answer run starts in. A Cursor in a WSL distro gets a stable
+ * folder inside the shared answer home, one per distro, so its entry (the
+ * bridge, on NAT networking) and the URL entry of a Cursor on this machine
+ * each keep a file of their own instead of overwriting one another between
+ * runs. Inside, so it shares the home's lifetime and its owner check.
+ */
+export function cursorAnswerHome(answerHome: string, place: CliPlace | null): string {
+  if (!place) return answerHome;
+  return path.join(answerHome, `wsl-${place.distro.replace(/[^\w.-]/g, '_')}`);
+}
+
+export async function writeCursorAnswerWorkspace(
+  answerHome: string,
+  entry: CursorKangenticMcpEntry = CURSOR_KANGENTIC_MCP_ENTRY,
+): Promise<void> {
+  await writeIfChanged(path.join(answerHome, '.cursor', 'mcp.json'), JSON.stringify({ mcpServers: { kangentic: entry } }, null, 2));
   await writeIfChanged(path.join(answerHome, '.cursor', 'cli.json'), PERMISSIONS);
 }
 
 /**
- * Remove one chat from `~/.cursor/chats/<workspace hash>/<chat id>`. The
- * workspace hash is Cursor's, so the chat is found by its id rather than by
- * recomputing the hash. Best-effort.
+ * Remove one chat from `~/.cursor/chats/<workspace hash>/<chat id>`, in the
+ * home of the place the CLI ran in. The workspace hash is Cursor's, so the
+ * chat is found by its id rather than by recomputing the hash. Best-effort.
  */
-export async function removeCursorChat(chatId: string): Promise<void> {
+export async function removeCursorChat(chatId: string, place: CliPlace | null = null): Promise<void> {
   // The id comes off the CLI's own output and becomes a path segment of a
   // recursive delete, so only a plain id is trusted: `..` would name the chats
   // folder itself, and an empty one a whole workspace.
   if (!/^[\w-]+$/.test(chatId)) return;
-  const chatsRoot = path.join(os.homedir(), '.cursor', 'chats');
+  const chatsRoot = path.join(place ? cliHomeDir(place) : os.homedir(), '.cursor', 'chats');
   const workspaces = await fs.promises.readdir(chatsRoot).catch(() => [] as string[]);
   for (const workspace of workspaces) {
     const chatDirectory = path.join(chatsRoot, workspace, chatId);
