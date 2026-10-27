@@ -324,9 +324,13 @@ export const handleGetCurrentTask: CommandHandler = async (
   // match is full-path equality against task.worktree_path). Folder names are the
   // task's display_id now and `<slug>-<shortId>` for worktrees created before
   // that; both work here, because the fallback compares the whole final segment.
+  // The LAST `.kangentic/worktrees/` segment: a project can itself sit inside
+  // another checkout's worktrees folder (a preview's projects do), and the first
+  // one names that checkout. The fallback is also what matches a CLI in a WSL
+  // distro, whose cwd names the worktree by its /mnt drive path.
   let slug: string | null = null;
   if (cwdNormalized) {
-    const slugMatch = cwdNormalized.match(/(?:^|\/)\.kangentic\/worktrees\/([^/]+)/);
+    const slugMatch = cwdNormalized.match(/^.*(?:^|\/)\.kangentic\/worktrees\/([^/]+)/);
     if (slugMatch) slug = slugMatch[1];
   }
 
