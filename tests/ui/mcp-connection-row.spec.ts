@@ -196,6 +196,7 @@ test('a failed check at a session start raises one persistent toast whose Open s
   const toast = page.getByTestId('toast');
   await expect(toast.getByTestId('toast-title')).toHaveText("Couldn't reach the MCP server");
   await expect(toast.getByTestId('toast-body')).toHaveText('From Ubuntu: wsl.exe gave no answer in 30 s.');
+  // toast-count-ok: the toast is persistent and never auto-dismisses, so a retry cannot pass because it left
   await expect(toast.getByTestId('toast-countdown')).toHaveCount(0);
 
   await toast.getByTestId('toast-action').click();

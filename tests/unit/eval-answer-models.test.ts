@@ -169,7 +169,8 @@ describe('tableRefsOf and inventedRefs', () => {
   it('reads the table out of the stdin line the Claude adapter\'s own formatTurn writes', () => {
     const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'answer-replay-test-'));
     try {
-      sessionSpy.mockReturnValue({});
+      // A session's `exited` is what ends a distro bridge's relay.
+      sessionSpy.mockReturnValue({ exited: Promise.resolve() });
       new ClaudeAdapter().openAnswerSession({
         cliPath: '/bin/claude',
         cwd: '/answer-home',

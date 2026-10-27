@@ -160,7 +160,13 @@ describe('answerFromContext parity', () => {
     // would look different, and only a token measurement would ever notice.
     const claude = adapterSources().find((entry) => entry.file.includes('claude-adapter'));
     expect(claude, 'the Claude adapter must exist for this to mean anything').toBeTruthy();
-    const method = claude?.source.match(/async answerFromContext\([\s\S]*?\n  \}/)?.[0] ?? '';
+    // The fresh run is the method plus `runAnswer`, which it hands the run to so
+    // a distro bridge's relay ends with the call whichever way the run ends.
+    const method = [
+      claude?.source.match(/async answerFromContext\([\s\S]*?\n  \}/)?.[0] ?? '',
+      // Through its own closing brace: the parameter type closes with `  })`.
+      claude?.source.match(/private runAnswer\([\s\S]*?\n  \}\n/)?.[0] ?? '',
+    ].join('\n');
     // The flags live in one function both answer paths build from, the fresh
     // run and the warm session, so the two cannot drift apart.
     // Through its `return [`: the parameter type closes with a column-0 brace too.
