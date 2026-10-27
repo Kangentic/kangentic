@@ -4,13 +4,8 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { cliPathForTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
-import {
-  WSL_MCP_TOKEN_ENV,
-  copyWslHookScriptInto,
-  prepareWslHookTransport,
-  wslMcpServerLaunch,
-  wslReachesLoopback,
-} from '../../shared/wsl-hook-transport';
+import { copyWslHookScriptInto, prepareWslHookTransport, wslReachesLoopback } from '../../shared/wsl-hook-transport';
+import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME } from './hook-manager';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue } from '../../../pty/process-tag/task-process-tag';
 import type { PermissionMode } from '../../../../shared/types';
@@ -185,24 +180,25 @@ const TOML_LITERAL_SAFE = /^[^'"%`$\r\n]+$/;
  * QUOTING CONTRACT as buildHookArgs: TOML literal strings, and a value with a
  * quote or a shell-expanded character is not passed at all.
  */
-function buildWslMcpBridgeArgs(options: CodexCommandOptions & { mcpServerUrl: string }, place: CliPlace): string[] {
+function buildWslMcpBridgeArgs(options: CodexCommandOptions & { mcpServerUrl: string; mcpServerToken: string }, place: CliPlace): string[] {
   if (!options.eventsOutputPath) return [];
-  let launch: { command: string; args: string[] };
+  let server: KangenticMcpServer;
   try {
-    launch = wslMcpServerLaunch(prepareWslHookTransport(path.dirname(options.eventsOutputPath)), place, options.mcpServerUrl);
+    server = kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) });
   } catch (error) {
     console.warn('[codex] Could not prepare the WSL MCP bridge; the session runs without Kangentic tools:', error);
     return [];
   }
-  if (![launch.command, ...launch.args].every((value) => TOML_LITERAL_SAFE.test(value))) {
+  if (server.kind !== 'stdio') return [];
+  if (![server.command, ...server.args].every((value) => TOML_LITERAL_SAFE.test(value))) {
     console.warn('[codex] The WSL MCP bridge path holds a character Codex cannot be passed safely; the session runs without Kangentic tools');
     return [];
   }
   const literalArray = (values: readonly string[]): string => `[${values.map((value) => `'${value}'`).join(',')}]`;
   return [
-    `mcp_servers.kangentic.command='${launch.command}'`,
-    `mcp_servers.kangentic.args=${literalArray(launch.args)}`,
-    `mcp_servers.kangentic.env_vars=${literalArray([WSL_MCP_TOKEN_ENV])}`,
+    `mcp_servers.kangentic.command='${server.command}'`,
+    `mcp_servers.kangentic.args=${literalArray(server.args)}`,
+    `mcp_servers.kangentic.env_vars=${literalArray([server.tokenEnv])}`,
   ].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
 }
 
