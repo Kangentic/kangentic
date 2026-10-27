@@ -52,26 +52,14 @@
  * 0, so the CLI shows its own dialog and the user decides. Diagnostics go to
  * the sibling `plan-approval-bridge.error.log`, never to stdout, which the CLI
  * parses as the hook's answer.
+ *
+ * Main also loads this file, for a CLI installed in a WSL distro: there the
+ * hook publishes its request to a file (`wsl-hook-transport.ts`) and Kangentic
+ * answers it with `planApprovalAnswer`. Loading it has no side effect.
  */
 
 const fs = require('fs');
 const path = require('path');
-
-const [, , decisionPath, eventsPath, encodedSpec] = process.argv;
-
-function logError(message) {
-  if (!decisionPath) return;
-  try {
-    const errorPath = path.join(path.dirname(decisionPath), 'plan-approval-bridge.error.log');
-    fs.appendFileSync(errorPath, `${new Date().toISOString()} ${message}\n`);
-  } catch {
-    // Nothing more to do.
-  }
-}
-
-function readJson(filePath) {
-  return JSON.parse(fs.readFileSync(filePath, 'utf8'));
-}
 
 /** Copy the reply template, putting the tool input and the mode in place. */
 function fill(template, toolInput, mode) {
@@ -86,27 +74,9 @@ function fill(template, toolInput, mode) {
   return template;
 }
 
-/** The session's decision when it approves the plan, or null. */
-function readApprovingDecision() {
-  let decision;
-  try {
-    decision = readJson(decisionPath);
-  } catch {
-    // No decision yet (a session spawned before this build, or main has not
-    // written one): the user approves, as they always did.
-    return null;
-  }
+/** The decision when it approves the plan, or null. */
+function approvingDecision(decision) {
   return decision && decision.approve === true ? decision : null;
-}
-
-/**
- * Approve: the marker first, then the reply. If the marker cannot be written
- * the pipeline would show the prompt as "needs you" for a call the CLI runs,
- * so the throw reaches the caller's catch and nothing is printed.
- */
-function sendApproval(marker, reply) {
-  if (eventsPath) fs.appendFileSync(eventsPath, JSON.stringify(marker) + '\n');
-  process.stdout.write(reply);
 }
 
 /** The tool spec carries `tools` and `prefixes`; the plan spec carries neither. */
@@ -130,54 +100,94 @@ function toolSpecNames(spec, tool) {
  * The tool spec: answer a prompt for a tool the spec names, in a mode it
  * names, while the decision approves the plan. The reply is printed as it is.
  */
-function answerToolPrompt(spec, context) {
+function answerToolPrompt(spec, context, readDecision, now) {
   const tool = context[spec.toolField];
-  if (!toolSpecNames(spec, tool)) return;
-  if (!stringList(spec.modes).includes(context[spec.modeField])) return;
-  if (!readApprovingDecision()) return;
-  sendApproval({ ts: Date.now(), type: 'tool_approval_sent', tool }, JSON.stringify(spec.reply));
+  if (!toolSpecNames(spec, tool)) return null;
+  if (!stringList(spec.modes).includes(context[spec.modeField])) return null;
+  if (!approvingDecision(readDecision())) return null;
+  return { marker: { ts: now, type: 'tool_approval_sent', tool }, reply: JSON.stringify(spec.reply) };
 }
 
-let input = '';
-process.stdin.setEncoding('utf8');
-process.stdin.on('data', (chunk) => { input += chunk; });
-process.stdin.on('end', () => {
+/**
+ * What to answer one prompt with, or null to leave it to the user. Approving
+ * means writing `marker` to the events file and only then printing `reply`: a
+ * marker that cannot be written must leave the prompt unanswered, or the
+ * pipeline would show "needs you" for a call the CLI runs.
+ *
+ * `readDecision` returns the parsed decision file, or null when there is none
+ * (a session spawned before this build, or main has not written one: the user
+ * approves, as they always did). It is called only for a prompt the spec names.
+ * Throws on a malformed spec or a tool input that is missing; the caller logs it.
+ *
+ * @param {{ encodedSpec: string, input: string, readDecision: () => unknown, now: number }} options
+ * @returns {{ marker: object, reply: string } | null}
+ */
+function planApprovalAnswer(options) {
+  const { encodedSpec, input, readDecision, now } = options;
+  if (!encodedSpec) return null;
+  const spec = JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'));
+  if (!spec || typeof spec !== 'object' || !spec.reply) throw new Error('malformed spec');
+
+  let context;
   try {
-    if (!decisionPath || !encodedSpec) return;
-    const spec = JSON.parse(Buffer.from(encodedSpec, 'base64').toString('utf8'));
-    if (!spec || typeof spec !== 'object' || !spec.reply) {
-      logError('malformed spec');
-      return;
-    }
-
-    let context;
-    try {
-      context = JSON.parse(input);
-    } catch {
-      return;
-    }
-    if (!context || typeof context !== 'object') return;
-    if (isToolSpec(spec)) {
-      answerToolPrompt(spec, context);
-      return;
-    }
-    if (context[spec.toolField] !== spec.tool) return;
-
-    const decision = readApprovingDecision();
-    if (!decision || typeof decision.mode !== 'string') return;
-
-    const toolInput = context[spec.inputField];
-    if (toolInput === undefined) {
-      logError(`stdin has no ${spec.inputField}`);
-      return;
-    }
-    const mode = spec.modes && typeof spec.modes[decision.mode] === 'string' ? spec.modes[decision.mode] : decision.mode;
-    const reply = JSON.stringify(fill(spec.reply, toolInput, mode));
-
-    const marker = { ts: Date.now(), type: 'plan_approval_sent' };
-    if (typeof decision.detail === 'string') marker.detail = decision.detail.slice(0, 200);
-    sendApproval(marker, reply);
-  } catch (error) {
-    logError(error && error.message ? error.message : String(error));
+    context = JSON.parse(input);
+  } catch {
+    return null;
   }
-});
+  if (!context || typeof context !== 'object') return null;
+  if (isToolSpec(spec)) return answerToolPrompt(spec, context, readDecision, now);
+  if (context[spec.toolField] !== spec.tool) return null;
+
+  const decision = approvingDecision(readDecision());
+  if (!decision || typeof decision.mode !== 'string') return null;
+
+  const toolInput = context[spec.inputField];
+  if (toolInput === undefined) throw new Error(`stdin has no ${spec.inputField}`);
+  const mode = spec.modes && typeof spec.modes[decision.mode] === 'string' ? spec.modes[decision.mode] : decision.mode;
+  const reply = JSON.stringify(fill(spec.reply, toolInput, mode));
+
+  const marker = { ts: now, type: 'plan_approval_sent' };
+  if (typeof decision.detail === 'string') marker.detail = decision.detail.slice(0, 200);
+  return { marker, reply };
+}
+
+module.exports = { planApprovalAnswer };
+
+if (require.main === module) {
+  const [, , decisionPath, eventsPath, encodedSpec] = process.argv;
+
+  const logError = (message) => {
+    if (!decisionPath) return;
+    try {
+      const errorPath = path.join(path.dirname(decisionPath), 'plan-approval-bridge.error.log');
+      fs.appendFileSync(errorPath, `${new Date().toISOString()} ${message}\n`);
+    } catch {
+      // Nothing more to do.
+    }
+  };
+
+  const readDecision = () => {
+    try {
+      return JSON.parse(fs.readFileSync(decisionPath, 'utf8'));
+    } catch {
+      return null;
+    }
+  };
+
+  let input = '';
+  process.stdin.setEncoding('utf8');
+  process.stdin.on('data', (chunk) => { input += chunk; });
+  process.stdin.on('end', () => {
+    try {
+      if (!decisionPath || !encodedSpec) return;
+      const answer = planApprovalAnswer({ encodedSpec, input, readDecision, now: Date.now() });
+      if (!answer) return;
+      // The marker first, then the reply. A marker that cannot be written
+      // throws into the catch below, and nothing is printed.
+      if (eventsPath) fs.appendFileSync(eventsPath, JSON.stringify(answer.marker) + '\n');
+      process.stdout.write(answer.reply);
+    } catch (error) {
+      logError(error && error.message ? error.message : String(error));
+    }
+  });
+}

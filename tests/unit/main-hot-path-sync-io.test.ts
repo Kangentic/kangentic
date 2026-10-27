@@ -22,6 +22,7 @@ const HOT_PATH_MODULES = [
   'src/main/pty/readers/status-file-reader.ts',
   'src/main/pty/readers/session-history-reader.ts',
   'src/main/pty/readers/file-watcher.ts',
+  'src/main/pty/readers/wsl-hook-inbox.ts',
   'src/main/pty/buffer/transcript-writer.ts',
   'src/main/agent/adapters/claude/trust-manager.ts',
   'src/main/agent/commands/bounded-tail-read.ts',
