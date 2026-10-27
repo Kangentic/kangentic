@@ -209,9 +209,14 @@ export function AgentTab({ config, globalConfig, agentList }: {
             label={`${agent.displayName} path`}
             trailing={
               agent.unsupportedTarget ? (
-                <span className="text-xs flex items-center gap-1 text-attention" data-testid={`agent-cli-status-${agent.name}`}>
-                  <CircleAlert size={13} />No WSL support
-                </span>
+                // The status is the message; which agents do run from WSL is
+                // the reason, so it sits in the tip rather than a line under
+                // the field. An empty list holds the tip shut.
+                <Tooltip label={wslCapableAgentNames.length > 0 ? `Kangentic runs ${joinNames(wslCapableAgentNames)} from WSL.` : ''}>
+                  <span className="text-xs flex items-center gap-1 text-attention" data-testid={`agent-cli-status-${agent.name}`}>
+                    <CircleAlert size={13} />No WSL support
+                  </span>
+                </Tooltip>
               ) : unauthenticated ? (
                 <span className="text-xs flex items-center gap-1 text-amber-400">
                   <CircleAlert size={13} />Not signed in
@@ -263,13 +268,7 @@ export function AgentTab({ config, globalConfig, agentList }: {
             </div>
             {/* A failure shows the error the probe hit, in its own words: no
                 diagnosis and no advice. */}
-            {agent.unsupportedTarget ? (
-              wslCapableAgentNames.length > 0 && (
-                <p className="mt-1 text-xs text-attention" data-testid={`agent-cli-detail-${agent.name}`}>
-                  Kangentic runs {joinNames(wslCapableAgentNames)} from WSL.
-                </p>
-              )
-            ) : !agent.found && agent.detectionError ? (
+            {!agent.unsupportedTarget && !agent.found && agent.detectionError ? (
               <ReportedError error={agent.detectionError} testId={`agent-cli-detail-${agent.name}`} />
             ) : null}
             {unauthenticated && loginCommand && (

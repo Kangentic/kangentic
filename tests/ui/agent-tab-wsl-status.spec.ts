@@ -3,8 +3,9 @@
  *   - a CLI found inside a distro shows a "WSL: <distro>" tag before its version;
  *   - a probe that failed shows "Not found" and the error it hit, in its own
  *     words, in sentence case, in a square pill like the row's tags;
- *   - an agent that does not run from WSL shows "No WSL support" and one line
- *     naming the agents that do, read from the list's own flags.
+ *   - an agent that does not run from WSL shows "No WSL support", with no line
+ *     under the field; the agents that do, read from the list's own flags, are
+ *     in the status's tip.
  *
  * Tier: UI. The states come from the mock's agents.list() via
  * __mockAgentListOverrides, set before the mock loads.
@@ -105,7 +106,9 @@ test.describe('AgentTab - CLI path status for a WSL path', () => {
     await expect(detail).toHaveCSS('border-top-style', 'solid');
   });
 
-  test('an agent without WSL support says so and names the agents that run from WSL', async () => {
+  // Red-green: the line it replaced stood under the field, so the detail count
+  // was 1 and the status had no description.
+  test('an agent without WSL support says so, with no line under the field, and names the agents that run from WSL in the status tip', async () => {
     let page: Page;
     ({ browser, page } = await launchWithOverrides({
       claude: { found: false, path: WSL_CLI_PATH, version: null, cliTarget: { kind: 'wsl', distro: 'Ubuntu' }, unsupportedTarget: true, supportsWslCli: false },
@@ -113,8 +116,9 @@ test.describe('AgentTab - CLI path status for a WSL path', () => {
     }));
     await openAgentTab(page, 'wsl-status-unsupported');
 
-    await expect(page.getByTestId('agent-cli-status-claude')).toHaveText('No WSL support');
-    await expect(page.getByTestId('agent-cli-detail-claude')).toHaveText(/^Kangentic runs .+ from WSL\.$/);
-    await expect(page.getByTestId('agent-cli-detail-claude')).toContainText('Codex');
+    const status = page.getByTestId('agent-cli-status-claude');
+    await expect(status).toHaveText('No WSL support');
+    await expect(page.getByTestId('agent-cli-detail-claude')).toHaveCount(0);
+    await expect(status).toHaveAccessibleDescription(/^Kangentic runs .*Codex.* from WSL\.$/);
   });
 });
