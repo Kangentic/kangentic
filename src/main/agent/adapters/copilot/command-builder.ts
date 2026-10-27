@@ -179,16 +179,17 @@ export class CopilotCommandBuilder {
     const mcpConfigPath = path.join(mcpConfigDir, 'copilot-mcp.json');
     // A Copilot in a WSL distro on NAT networking cannot reach this machine's
     // loopback: its server is the WSL hook transport's stdio bridge, prepared
-    // in the session's directory, the token in the bridge's env (Copilot's MCP
-    // config: `type` `stdio` with `command`, `args` and `env`). A failed write
-    // of the bridge throws, as this file's write does.
+    // in the session's directory, the token in the bridge's env. GitHub's CLI
+    // command reference: a local server's `type` is `local` or `stdio`, and
+    // `command`, `args` and `tools` are required (`["*"]` enables them all).
+    // A failed write of the bridge throws, as this file's write does.
     const server = place && options.eventsOutputPath
       ? kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) })
       : null;
     const mcpConfig = {
       mcpServers: {
         kangentic: server?.kind === 'stdio'
-          ? { type: 'stdio' as const, command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } }
+          ? { type: 'stdio' as const, command: server.command, args: server.args, env: { [server.tokenEnv]: server.token }, tools: ['*'] }
           : {
             type: 'http' as const,
             url: options.mcpServerUrl,

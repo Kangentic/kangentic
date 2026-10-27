@@ -19,6 +19,7 @@ import { ActivityDetection } from '../../../../shared/types';
 import { copilotHomeDir } from './copilot-home';
 import { cliPathForTarget, placeFromStored, resolveCliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
+import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 
 /**
  * GitHub Copilot CLI adapter - wraps CopilotDetector, CopilotCommandBuilder,
@@ -314,6 +315,11 @@ export class CopilotAdapter implements AgentAdapter {
     const sessionId = randomUUID();
     // A Copilot installed in a WSL distro runs there, and its session is removed there.
     const cliTarget = await resolveCliTarget(cliPath, true);
+    // Its search bridge writes into the run's directory, which must be the
+    // run's own: in the shared answer home two runs would share one relay folder.
+    if (retrieval && cliTarget && !options?.runDirectory) {
+      return withAnswerRunDirectory((runDirectory) => this.answerFromContext(prompt, cliPath, cwd, model, { ...options, runDirectory }));
+    }
     const searchArgs: string[] = [];
     // A run directory goes with its run. Without one the config lands in the
     // shared answer home, so this run removes it, token and all, when it ends.
@@ -332,7 +338,7 @@ export class CopilotAdapter implements AgentAdapter {
       fs.writeFileSync(configPath, JSON.stringify({
         mcpServers: {
           kangentic: server.kind === 'stdio'
-            ? { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: server.token } }
+            ? { type: 'stdio', command: server.command, args: server.args, env: { [server.tokenEnv]: server.token }, tools: ['*'] }
             : { type: 'http', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token } },
         },
       }));
