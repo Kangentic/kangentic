@@ -1,0 +1,56 @@
+{
+  "about": "The bake-off's arms. A local arm runs on llama.cpp's llama-server (one model at a time, started with serverArgs plus -m <file>); eligible arms can become the refill engine. claude-opus is the reference that calibrates the judge, and TranslateGemma is the baseline: its Gemma terms and fixed prompt (no glossary, no context) rule it out as the refill engine.",
+  "locales": ["zh-CN", "ja", "de", "ru", "pl"],
+  "serverArgs": ["-ngl", "999", "-c", "16384", "--flash-attn", "on", "--jinja", "--port", "9931"],
+  "arms": [
+    {
+      "name": "claude-opus",
+      "engine": "claude",
+      "model": "claude-opus-5-5",
+      "license": "Anthropic",
+      "eligible": false,
+      "role": "reference"
+    },
+    {
+      "name": "gemma-4-31b",
+      "engine": "local",
+      "huggingFace": "google/gemma-4-31B-it-qat-q4_0-gguf",
+      "file": "gemma-4-31B_q4_0-it.gguf",
+      "quant": "q4_0 (QAT)",
+      "license": "Apache 2.0",
+      "eligible": true,
+      "role": "candidate"
+    },
+    {
+      "name": "gemma-4-26b-a4b",
+      "engine": "local",
+      "huggingFace": "google/gemma-4-26B-A4B-it-qat-q4_0-gguf",
+      "file": "gemma-4-26B_q4_0-it.gguf",
+      "quant": "q4_0 (QAT)",
+      "license": "Apache 2.0",
+      "eligible": true,
+      "role": "candidate"
+    },
+    {
+      "name": "qwen3.6-27b",
+      "engine": "local",
+      "huggingFace": "ggml-org/Qwen3.6-27B-GGUF",
+      "file": "Qwen3.6-27B-Q4_K_M.gguf",
+      "quant": "Q4_K_M",
+      "license": "Apache 2.0 (model card, checked 2026-10-27)",
+      "eligible": true,
+      "role": "candidate"
+    },
+    {
+      "name": "translategemma-12b",
+      "engine": "local",
+      "promptStyle": "translategemma",
+      "huggingFace": "mradermacher/translategemma-12b-it-GGUF",
+      "file": "translategemma-12b-it.Q8_0.gguf",
+      "quant": "Q8_0",
+      "license": "Gemma terms",
+      "eligible": false,
+      "role": "baseline"
+    }
+  ]
+}

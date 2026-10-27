@@ -33,9 +33,11 @@ const rootTag = createHash('sha256').update(repoRoot).digest('hex').slice(0, 8);
  *
  * Native and Electron dependencies stay external: nothing here runs inside Electron. better-sqlite3
  * is the one native dependency the parsers reach, and it is a Node-API module that loads under the
- * plain Node this tooling runs on.
+ * plain Node this tooling runs on. `external` adds more, for a package that cannot run bundled as
+ * ESM: the TypeScript compiler reads `__filename` at load, which an ESM bundle does not have.
+ * `define` sets build-time constants such as `__KANGENTIC_DEV__` for a graph that reaches app code.
  */
-export async function importTsModule(entryPoint) {
+export async function importTsModule(entryPoint, { external = [], define = {} } = {}) {
   fs.mkdirSync(cacheDir, { recursive: true });
   const outfile = path.join(cacheDir, `${path.basename(entryPoint, '.ts')}-${rootTag}.mjs`);
   await build({
@@ -45,7 +47,8 @@ export async function importTsModule(entryPoint) {
     platform: 'node',
     format: 'esm',
     target: 'node24',
-    external: ['better-sqlite3', 'electron', 'node-pty'],
+    external: ['better-sqlite3', 'electron', 'node-pty', ...external],
+    define,
     // ESM has no `require` binding, so a lazy `require(...)` in the graph (the OpenCode parser's
     // `loadBetterSqlite3` keeps the native binding lazy on purpose, and esbuild cannot rewrite a
     // dynamic require) throws ReferenceError and the caller sees the dependency reported as merely

@@ -1,0 +1,134 @@
+{
+  "about": "Names kept exactly as written in every language, and git terms with one fixed translation per language. The fixed terms follow VS Code's language packs (microsoft/vscode-loc, MIT) so a VS Code user meets the words they know, with two exceptions: commit stays the word developers use where VS Code translates it (fr, es, ru, pl, cs), and pull request stays English where VS Code's translation runs to a phrase. VS Code ships no Hungarian pack, so Hungarian has no fixed terms yet. Cursor and Linear are left out of the kept names because the same words are ordinary UI text (the terminal's cursor style). A fixed translation is a string, or { term, match } where match is the part every inflected form contains. See docs/contributing/translations.md.",
+  "keep": [
+    "Kangentic",
+    "Claude Code",
+    "Claude",
+    "Aider",
+    "Antigravity",
+    "Codex",
+    "Copilot",
+    "Droid",
+    "Gemini CLI",
+    "Gemini",
+    "Goose",
+    "Grok",
+    "Kimi",
+    "Ollama",
+    "OpenCode",
+    "Qwen Code",
+    "Warp",
+    "GitHub",
+    "GitLab",
+    "Azure DevOps",
+    "Jira",
+    "Asana",
+    "Trello",
+    "Sentry",
+    "MCP",
+    "PTY",
+    "WSL",
+    "PowerShell",
+    "Git",
+    "PR"
+  ],
+  "terms": [
+    {
+      "english": "worktree",
+      "note": "a git worktree: a second checkout of the repository on its own branch",
+      "translations": {
+        "zh-CN": "工作树",
+        "zh-TW": "工作樹",
+        "fr": { "term": "arborescence de travail", "match": "arborescence" },
+        "de": "Worktree",
+        "it": { "term": "albero di lavoro", "match": "alber" },
+        "es": { "term": "árbol de trabajo", "match": "árbol" },
+        "ja": "ワークツリー",
+        "ko": "작업 트리",
+        "ru": { "term": "рабочее дерево", "match": "дерев" },
+        "pt-BR": { "term": "árvore de trabalho", "match": "árvore" },
+        "tr": { "term": "çalışma ağacı", "match": "ağa" },
+        "pl": { "term": "drzewo robocze", "match": "drzew" },
+        "cs": { "term": "pracovní strom", "match": "strom" }
+      }
+    },
+    {
+      "english": "branch",
+      "alsoMatches": ["branches"],
+      "note": "a git branch (the noun)",
+      "translations": {
+        "zh-CN": "分支",
+        "zh-TW": "分支",
+        "fr": "branche",
+        "de": "Branch",
+        "it": { "term": "ramo", "match": "ram" },
+        "es": "rama",
+        "ja": "ブランチ",
+        "ko": "분기",
+        "ru": { "term": "ветвь", "match": "ветв" },
+        "pt-BR": "branch",
+        "tr": "dal",
+        "pl": { "term": "gałąź", "match": "gał" },
+        "cs": { "term": "větev", "match": "vět" }
+      }
+    },
+    {
+      "english": "commit",
+      "note": "a git commit (noun or verb)",
+      "translations": {
+        "zh-CN": "提交",
+        "zh-TW": "提交",
+        "fr": "commit",
+        "de": "Commit",
+        "it": "commit",
+        "es": "commit",
+        "ja": "コミット",
+        "ko": "커밋",
+        "ru": { "term": "коммит", "match": "коммит" },
+        "pt-BR": "commit",
+        "tr": "commit",
+        "pl": "commit",
+        "cs": "commit"
+      }
+    },
+    {
+      "english": "pull request",
+      "note": "a GitHub pull request",
+      "translations": {
+        "zh-CN": "拉取请求",
+        "zh-TW": "提取要求",
+        "fr": "pull request",
+        "de": "Pull Request",
+        "it": "pull request",
+        "es": "pull request",
+        "ja": "pull request",
+        "ko": "끌어오기 요청",
+        "ru": "pull request",
+        "pt-BR": "pull request",
+        "tr": "pull request",
+        "pl": "pull request",
+        "cs": "pull request"
+      }
+    },
+    {
+      "english": "repository",
+      "alsoMatches": ["repositories", "repo"],
+      "note": "a git repository",
+      "translations": {
+        "zh-CN": "仓库",
+        "zh-TW": "存放庫",
+        "fr": "dépôt",
+        "de": "Repository",
+        "it": "repository",
+        "es": "repositorio",
+        "ja": "リポジトリ",
+        "ko": "리포지토리",
+        "ru": { "term": "репозиторий", "match": "репозитори" },
+        "pt-BR": "repositório",
+        "tr": "depo",
+        "pl": { "term": "repozytorium", "match": "repozytori" },
+        "cs": { "term": "úložiště", "match": "úložiš" }
+      }
+    }
+  ]
+}
