@@ -9,6 +9,7 @@ sources:
   - resource: src/main/agent/adapters/antigravity/command-builder.ts
   - resource: src/main/agent/adapters/antigravity/hook-manager.ts
   - resource: src/main/agent/adapters/antigravity/trust-manager.ts
+  - resource: src/main/agent/adapters/antigravity/data-paths.ts
   - resource: src/main/agent/adapters/antigravity/transcript-parser.ts
   - resource: src/main/agent/shared/git-exclude.ts
 ---

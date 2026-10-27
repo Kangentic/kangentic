@@ -145,6 +145,8 @@ type SubmissionContext =
       cwd?: string;
       sentAt?: number;
       mode?: 'command-match' | 'submitted';
+      /** Where the session's CLI runs when it is a WSL distro: its history is there. */
+      cliTarget?: StoredCliTarget | null;
     };
 
 type SubmissionVerifier = (context: SubmissionContext) => Promise<boolean>;

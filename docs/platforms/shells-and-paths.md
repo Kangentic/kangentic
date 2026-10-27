@@ -17,6 +17,7 @@ sources:
   - resource: src/main/agent/shared/cli-target.ts
   - resource: src/main/agent/shared/wsl-distro.ts
   - resource: src/main/agent/shared/wsl-hook-transport.ts
+  - resource: src/main/pty/readers/wsl-hook-inbox.ts
   - resource: src/main/agent/shared/agent-detector.ts
 ---
 # Shells and paths
