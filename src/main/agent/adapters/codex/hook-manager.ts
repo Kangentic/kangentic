@@ -14,14 +14,30 @@ import { extractTool, extractToolId, extractDetail, setDetail } from '../../shar
 export const CODEX_EVENT_BRIDGE_COPY_NAME = 'codex-event-bridge.cjs';
 const CODEX_EVENT_BRIDGE_RELATIVE = `.kangentic/${CODEX_EVENT_BRIDGE_COPY_NAME}`;
 
+/**
+ * For a Codex installed in a WSL distro, the workspace copy of the WSL hook
+ * transport's script (`copyWslHookScriptInto`) in place of the node bridge,
+ * which the distro may have no node for. The same bare-token rule applies: the
+ * copy finds its session's folder through `KANGENTIC_WSL_HOOK_DIR`, so the
+ * command is the same for every session and one trust read still covers them.
+ */
+export const CODEX_WSL_HOOK_COPY_NAME = 'codex-wsl-hook.sh';
+const CODEX_WSL_HOOK_RELATIVE = `.kangentic/${CODEX_WSL_HOOK_COPY_NAME}`;
+
 /** Seconds each hook may run. Written out because Codex hashes a hook with its timeout, and fills 600 when absent. */
 const CODEX_HOOK_TIMEOUT_SECONDS = 10;
 
 /** Characters a token of a Codex hook command may hold: a bare word on sh, PowerShell and cmd, and no TOML quote. */
 const CODEX_HOOK_TOKEN = /^[A-Za-z0-9_./:+=-]+$/;
 
-function codexHookCommand(eventType: string, ...directives: string[]): string {
-  const tokens = ['node', CODEX_EVENT_BRIDGE_RELATIVE, EVENTS_PATH_FROM_ENVIRONMENT, eventType, ...directives];
+/** Where the hooks run: Codex on this machine (the node bridge) or in a WSL distro (the transport script). */
+export type CodexHookRunner = 'node' | 'wsl';
+
+function codexHookCommand(runner: CodexHookRunner, eventType: string, ...directives: string[]): string {
+  const head = runner === 'wsl'
+    ? ['sh', CODEX_WSL_HOOK_RELATIVE, 'event']
+    : ['node', CODEX_EVENT_BRIDGE_RELATIVE, EVENTS_PATH_FROM_ENVIRONMENT];
+  const tokens = [...head, eventType, ...directives];
   for (const token of tokens) {
     if (!CODEX_HOOK_TOKEN.test(token)) throw new Error(`A Codex hook command cannot carry this token: ${token}`);
   }
@@ -37,22 +53,23 @@ function codexHookCommand(eventType: string, ...directives: string[]): string {
  * the engine awaits the pending tool PreToolUse opened. SessionEnd is left out:
  * Codex clamps its timeout to 3 s before hashing it.
  */
-function codexHookCommands(): ReadonlyArray<readonly [event: string, command: string]> {
+function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [event: string, command: string]> {
+  const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
   return [
-    ['SessionStart', codexHookCommand(EventType.SessionStart)],
-    ['UserPromptSubmit', codexHookCommand(EventType.Prompt)],
-    ['PreToolUse', codexHookCommand(EventType.ToolStart,
+    ['SessionStart', command(EventType.SessionStart)],
+    ['UserPromptSubmit', command(EventType.Prompt)],
+    ['PreToolUse', command(EventType.ToolStart,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),
       extractDetail(['command'], { nested: 'tool_input' }))],
-    ['PostToolUse', codexHookCommand(EventType.ToolEnd,
+    ['PostToolUse', command(EventType.ToolEnd,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']))],
-    ['PermissionRequest', codexHookCommand(EventType.Idle,
+    ['PermissionRequest', command(EventType.Idle,
       setDetail('permission'),
       extractTool('tool_name'))],
-    ['Stop', codexHookCommand(EventType.Idle)],
-    ['PreCompact', codexHookCommand(EventType.Compact)],
+    ['Stop', command(EventType.Idle)],
+    ['PreCompact', command(EventType.Compact)],
   ];
 }
 
@@ -67,11 +84,12 @@ export interface CodexHookDefinition {
  * Kangentic's hooks for one Codex process, in Codex's session-flags layer:
  * nothing is written to `~/.codex` or the repo, and the user's own hooks in
  * their config load beside these. Identical for every session (the events path
- * comes from `KANGENTIC_EVENTS_PATH`), which is what lets one trust check per
- * Codex binary cover every spawn.
+ * comes from `KANGENTIC_EVENTS_PATH`, or the hook folder from
+ * `KANGENTIC_WSL_HOOK_DIR`), which is what lets one trust check per Codex
+ * binary cover every spawn.
  */
-export function codexHookDefinitions(): CodexHookDefinition[] {
-  return codexHookCommands().map(([event, command]) => ({
+export function codexHookDefinitions(runner: CodexHookRunner = 'node'): CodexHookDefinition[] {
+  return codexHookCommands(runner).map(([event, command]) => ({
     command,
     timeoutSeconds: CODEX_HOOK_TIMEOUT_SECONDS,
     override: `hooks.${event}=[{hooks=[{type='command',command='${command}',timeout=${CODEX_HOOK_TIMEOUT_SECONDS}}]}]`,
@@ -79,8 +97,8 @@ export function codexHookDefinitions(): CodexHookDefinition[] {
 }
 
 /** The `-c` values that register Kangentic's hooks (`codexHookDefinitions`). */
-export function buildCodexHookOverrides(): string[] {
-  return codexHookDefinitions().map((definition) => definition.override);
+export function buildCodexHookOverrides(runner: CodexHookRunner = 'node'): string[] {
+  return codexHookDefinitions(runner).map((definition) => definition.override);
 }
 
 /** One hook's trust entry, as Codex's `hooks/list` reported it. */

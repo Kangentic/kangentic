@@ -16,6 +16,7 @@ import { attachAdapter, disposeAdapterAttachment, removeAdapterHooks } from './a
 import { safeKillPty } from './pty-kill';
 import { resolveShellArgs, buildSpawnEnv, resolveSpawnCwd, SPAWN_SETTABLE_CLAUDE_CODE_KEYS } from '../spawn/pty-spawn';
 import { addTaskProcessTag, listInWslEnv, parseWslShellSpec } from '../process-tag/task-process-tag';
+import { WSL_HOOK_DIRECTORY_ENV, wslHookPaths } from '../../agent/shared/wsl-hook-transport';
 import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
@@ -327,7 +328,10 @@ export async function performSpawn(
       const adapterKeys = Object.keys(input.env ?? {}).filter((key) => key !== 'WSLENV');
       spawnEnv = listInWslEnv(spawnEnv, adapterKeys, process.env.WSLENV);
       if (input.eventsOutputPath) {
-        spawnEnv = listInWslEnv(spawnEnv, ['KANGENTIC_EVENTS_PATH'], process.env.WSLENV, 'up');
+        // The hook folder its hooks publish into (wsl-hook-transport.ts), for
+        // a hook script that does not live in it.
+        spawnEnv[WSL_HOOK_DIRECTORY_ENV] = wslHookPaths(path.dirname(input.eventsOutputPath)).directory;
+        spawnEnv = listInWslEnv(spawnEnv, ['KANGENTIC_EVENTS_PATH', WSL_HOOK_DIRECTORY_ENV], process.env.WSLENV, 'up');
       }
     }
   }

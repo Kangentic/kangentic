@@ -168,6 +168,8 @@ async function readDistroFacts(distro: string, run: WslExec): Promise<WslDistroF
 }
 
 const factsByDistro = new Map<string, Promise<WslDistroFacts>>();
+/** The reads that finished, for a caller that cannot wait (`peekWslDistroFacts`). */
+const settledFactsByDistro = new Map<string, WslDistroFacts>();
 
 /**
  * The facts for `distro`, read on first use and cached. A failure is not
@@ -179,18 +181,31 @@ export function resolveWslDistroFacts(distro: string, run: WslExec = defaultWslE
   if (cached) return cached;
   const reading = readDistroFacts(distro, run);
   factsByDistro.set(distro, reading);
-  reading.catch(() => {
+  reading.then((facts) => {
+    if (factsByDistro.get(distro) === reading) settledFactsByDistro.set(distro, facts);
+  }, () => {
     if (factsByDistro.get(distro) === reading) factsByDistro.delete(distro);
   });
   return reading;
 }
 
+/**
+ * The facts a finished read holds for `distro`, or null when none has
+ * finished. For a caller that must answer synchronously; detection of a CLI
+ * path in the distro reads them first.
+ */
+export function peekWslDistroFacts(distro: string): WslDistroFacts | null {
+  return settledFactsByDistro.get(distro) ?? null;
+}
+
 /** Forget every distro's facts, so the next read asks again (Re-detect). */
 export function invalidateWslDistroFacts(): void {
   factsByDistro.clear();
+  settledFactsByDistro.clear();
 }
 
 /** Test seam: drop every cached read. */
 export function resetWslDistroCacheForTests(): void {
   factsByDistro.clear();
+  settledFactsByDistro.clear();
 }

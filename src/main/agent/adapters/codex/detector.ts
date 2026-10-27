@@ -13,6 +13,8 @@ export class CodexDetector extends AgentDetector {
       binaryName: 'codex',
       fallbackPaths: standardUnixFallbackPaths('codex'),
       parseVersion: (raw) => raw.replace(/^codex-cli\s+/i, '').trim() || null,
+      // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+      supportsWslCli: true,
     });
   }
 }

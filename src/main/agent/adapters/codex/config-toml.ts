@@ -1,6 +1,7 @@
 import * as path from 'node:path';
 import os from 'node:os';
 import { createSerialLock } from '../../shared/relocation-utils';
+import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
 
 /**
  * Shared low-level access to `~/.codex/config.toml`.
@@ -49,15 +50,23 @@ const LONG_PATH_PREFIX = '\\\\?\\';
  * Codex's own files (rollouts, transcripts) resolves through this too: with
  * `~/.codex` hard-coded, a user with `CODEX_HOME` set got no rollout telemetry.
  */
-export function codexHomeDir(): string {
+export function codexHomeDir(place: CliPlace | null = null): string {
+  // A Codex installed in a WSL distro keeps its files in the distro's home,
+  // under the CODEX_HOME its own shell sets, reached through the share.
+  if (place) {
+    const distroOverride = place.facts.env.CODEX_HOME;
+    return distroOverride && distroOverride.trim().length > 0
+      ? hostPathForTarget(distroOverride.trim(), place)
+      : path.join(place.facts.homeUnc, '.codex');
+  }
   const override = process.env.CODEX_HOME;
   return override && override.trim().length > 0
     ? path.resolve(override)
     : path.join(os.homedir(), '.codex');
 }
 
-export function configTomlPath(): string {
-  return path.join(codexHomeDir(), 'config.toml');
+export function configTomlPath(place: CliPlace | null = null): string {
+  return path.join(codexHomeDir(place), 'config.toml');
 }
 
 export interface ParsedHeader {

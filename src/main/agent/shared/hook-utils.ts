@@ -58,7 +58,9 @@ export function isKangenticHookCommand(command: string | undefined): boolean {
   const hasBridge = command.includes('activity-bridge')
     || command.includes('event-bridge')
     || command.includes('plan-approval-bridge')
-    || command.includes('background-shell-hint-bridge');
+    || command.includes('background-shell-hint-bridge')
+    // The WSL hook transport's script, a session's own or a workspace copy.
+    || command.includes('wsl-hook.sh');
   if (!hasBridge) return false;
   if (command.includes('.kangentic') || command.includes('/kangentic/')) return true;
   if (command.includes(EVENTS_PATH_FROM_ENVIRONMENT)) return true;

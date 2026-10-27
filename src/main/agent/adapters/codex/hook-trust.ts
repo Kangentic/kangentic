@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnCli, stopCli } from '../../shared/cli-print';
+import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
 import type { CliChildProcess } from '../../../utility-process/off-main-cli';
 import { codexHookDefinitions, codexHookStateOverride, type CodexHookDefinition, type CodexHookTrustEntry } from './hook-manager';
 
@@ -122,19 +123,28 @@ export async function readCodexHookTrust(
   codexPath: string,
   definitions: readonly CodexHookDefinition[],
   spawn: typeof spawnCli = spawnCli,
+  target: CliTarget | null = null,
 ): Promise<CodexHookTrustEntry[] | null> {
   const overrides = definitions.map((definition) => definition.override);
   // A scratch home and folder: the read touches neither the user's Codex state
-  // nor a project, and the listing holds only the session-flags hooks.
+  // nor a project, and the listing holds only the session-flags hooks. A Codex
+  // in a WSL distro reads them as the distro sees them, under /mnt.
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-codex-hooks-'));
   const codexHome = path.join(scratch, 'home');
   const workingDirectory = path.join(scratch, 'folder');
+  const cliPath = (windowsPath: string): string => (target ? cliPathForTarget(windowsPath, target) : windowsPath);
   let child: CliChildProcess | null = null;
   try {
     fs.mkdirSync(codexHome); // sync-write-ok: a scratch folder under os.tmpdir(); a throw rejects the read, which leaves the session without hooks.
     fs.mkdirSync(workingDirectory); // sync-write-ok: as above.
-    child = spawn(codexPath, ['app-server', ...overrides.flatMap((override) => ['-c', override])], workingDirectory, { CODEX_HOME: codexHome });
-    const result = await listSessionFlagHooks(child, workingDirectory);
+    child = spawn(
+      codexPath,
+      ['app-server', ...overrides.flatMap((override) => ['-c', override])],
+      workingDirectory,
+      { CODEX_HOME: cliPath(codexHome) },
+      target,
+    );
+    const result = await listSessionFlagHooks(child, cliPath(workingDirectory));
     const entries = trustEntriesOf(result, definitions);
     if (!entries) console.warn('[codex] hook trust read did not list Kangentic\'s hooks as passed; sessions run without hooks');
     return entries;
@@ -202,11 +212,20 @@ interface TrustRead {
   /** The path `detect` found, whose file the stamp describes. */
   detectedPath: string;
   stamp: string;
+  /** True when the stamp is the detected version of a Codex in a WSL distro, not the file's. */
+  stampedByVersion: boolean;
   pending: Promise<void>;
   /** Undefined while the read runs; null when Codex did not confirm the hooks. */
   stateOverride: string | null | undefined;
   /** When the read failed to run (the read rejected); null for an answer or a read in flight. */
   failedAt: number | null;
+}
+
+/** A Codex installed in a WSL distro, for a trust read run there. */
+export interface CodexTrustReadTarget {
+  target: CliTarget;
+  /** The version detection read, which keys the read: the binary's file cannot be stat'ed through the share. */
+  version: string;
 }
 
 /**
@@ -218,19 +237,30 @@ export class CodexHookTrustCheck {
   private readonly reads = new Map<string, TrustRead>();
 
   constructor(
-    private readonly read: (codexPath: string, definitions: readonly CodexHookDefinition[]) => Promise<CodexHookTrustEntry[] | null> = readCodexHookTrust,
+    private readonly read: (
+      codexPath: string,
+      definitions: readonly CodexHookDefinition[],
+      target: CliTarget | null,
+    ) => Promise<CodexHookTrustEntry[] | null> = (codexPath, definitions, target) => readCodexHookTrust(codexPath, definitions, spawnCli, target),
     private readonly stampOf: (filePath: string) => string | null = binaryStampOf,
     private readonly now: () => number = Date.now,
   ) {}
 
-  start(codexPath: string): void {
-    const stamp = this.stampOf(codexPath);
+  /**
+   * Begin a read for the binary at `codexPath`. A Codex in a WSL distro
+   * (`wsl`) is read there, for the hooks it runs (the transport script), and
+   * keyed by its detected version.
+   */
+  start(codexPath: string, wsl: CodexTrustReadTarget | null = null): void {
+    const stamp = wsl ? `version:${wsl.version}` : this.stampOf(codexPath);
     if (!stamp) return;
     const key = shimFamilyKey(codexPath);
     const existing = this.reads.get(key);
     if (existing && existing.detectedPath === codexPath && existing.stamp === stamp && !this.failedLongAgo(existing)) return;
-    const trustRead: TrustRead = { detectedPath: codexPath, stamp, pending: Promise.resolve(), stateOverride: undefined, failedAt: null };
-    trustRead.pending = this.read(codexPath, codexHookDefinitions())
+    const trustRead: TrustRead = {
+      detectedPath: codexPath, stamp, stampedByVersion: wsl !== null, pending: Promise.resolve(), stateOverride: undefined, failedAt: null,
+    };
+    trustRead.pending = this.read(codexPath, codexHookDefinitions(wsl ? 'wsl' : 'node'), wsl?.target ?? null)
       .then((entries) => (entries ? codexHookStateOverride(entries) : null))
       .catch(() => {
         trustRead.failedAt = this.now();
@@ -271,6 +301,8 @@ export class CodexHookTrustCheck {
   stateOverrideFor(codexPath: string): string | null {
     const trustRead = this.reads.get(shimFamilyKey(codexPath));
     if (!trustRead || !trustRead.stateOverride) return null;
+    // A version stamp was checked when detection started the read.
+    if (trustRead.stampedByVersion) return trustRead.stateOverride;
     return this.stampOf(trustRead.detectedPath) === trustRead.stamp ? trustRead.stateOverride : null;
   }
 }

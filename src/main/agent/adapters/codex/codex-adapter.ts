@@ -10,6 +10,7 @@ import { CodexStatusParser } from './status-parser';
 import { CodexHookTrustCheck } from './hook-trust';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
+import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type {
@@ -37,6 +38,10 @@ export class CodexAdapter implements AgentAdapter {
   readonly displayName = 'Codex CLI';
   readonly sessionType = 'codex_agent';
   readonly supportsCallerSessionId = false;
+  // A Codex installed in a WSL distro, configured by its \\wsl.localhost path:
+  // run in the distro's shell, its hooks through the WSL transport's script,
+  // its trust and rollouts in the distro's CODEX_HOME (cli-target.ts).
+  readonly supportsWslCli = true;
   // The startup banner in its own output names the session (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // `-c mcp_servers.kangentic.*` overrides, the token in the session's env.
@@ -93,8 +98,16 @@ export class CodexAdapter implements AgentAdapter {
   async detect(overridePath?: string | null): Promise<AgentInfo> {
     const info = await this.detector.detect(overridePath);
     // Read the hook trust as soon as the binary is known, so the first spawn
-    // (which awaits it in ensureTrust) rarely waits.
-    if (info.found && info.path) this.hookTrust.start(info.path);
+    // (which awaits it in ensureTrust) rarely waits. A Codex in a WSL distro
+    // is read there, for the hooks it runs, keyed by its version.
+    if (info.found && info.path) {
+      const target = info.cliTarget ? await resolveCliTarget(info.path, true).catch(() => null) : null;
+      if (target && info.version) {
+        this.hookTrust.start(info.path, { target, version: info.version });
+      } else {
+        this.hookTrust.start(info.path);
+      }
+    }
     return info;
   }
 
@@ -102,13 +115,14 @@ export class CodexAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  async ensureTrust(workingDirectory: string): Promise<void> {
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // Codex DOES have a directory-trust dialog (this was previously
     // documented here as a no-op because it was believed not to). Because
     // trust is keyed on the git repo root and every task gets its own
     // worktree, the user would otherwise be prompted on EVERY task with no
-    // answer that carries forward. See trust-manager.ts.
-    await ensureWorktreeTrust(workingDirectory);
+    // answer that carries forward. See trust-manager.ts. A Codex in a WSL
+    // distro keeps its trust in the distro's config.toml.
+    await ensureWorktreeTrust(workingDirectory, place ?? null);
     // Every spawn path awaits this before buildCommand, which reads the
     // result synchronously. A read still running after the bound leaves this
     // session without hooks rather than holding the spawn.
@@ -315,6 +329,8 @@ export class CodexAdapter implements AgentAdapter {
       args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(options?.model ? ['--model', options.model] : [])],
       prompt: buildSummarizePrompt(prompt),
       cwd,
+      // A Codex installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
@@ -351,6 +367,8 @@ export class CodexAdapter implements AgentAdapter {
       args: ['exec', '--skip-git-repo-check', '--sandbox', 'read-only', '--ephemeral', ...(model ? ['--model', model] : [])],
       prompt,
       cwd,
+      // A Codex installed in a WSL distro runs there.
+      cliTarget: await resolveCliTarget(cliPath, true),
     });
   }
 
