@@ -2892,6 +2892,10 @@ test.describe('Command Terminal', () => {
     });
 
     test('switching which terminal is expanded resizes nothing and holds no frame', async () => {
+      // Its own browser and two terminals: about 3.8 s locally, 13.1 s on one CI run and a
+      // timeout at 15 s on another. At an 8x CPU throttle it takes 14 to 16 s with every wait
+      // met (the page load is most of it), so the 15 s default is the cause, not a hang.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
@@ -3094,6 +3098,11 @@ test.describe('Command Terminal', () => {
     }
 
     test('dragging a header onto another tile previews the swap with the real terminals, and the release swaps them', async () => {
+      // Its own browser, three terminals and a drag: about 4.5 s locally, mostly the page load
+      // and the three spawns, which a slow runner stretches together. The 15 s default failed
+      // it on CI, run and retry. At an 8x CPU throttle it takes 15 to 18 s with every wait met,
+      // so the budget is the cause, not a hang.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openThree(page);
@@ -3101,9 +3110,6 @@ test.describe('Command Terminal', () => {
         await settleResizes(page);
         // Three tile as 1 tall on the left, 2 above 3 on the right.
         expect(await readingOrder(page)).toEqual(['slot-1', 'slot-2', 'slot-3']);
-        const tallBox = await frameOf(page, 'slot-1').boundingBox();
-        const sourceBox = await frameOf(page, 'slot-3').boundingBox();
-        if (!tallBox || !sourceBox) throw new Error('no frames');
         // What main's capture of the pressed terminal hands back: any picture will do.
         await page.evaluate(() => {
           const canvas = document.createElement('canvas');
@@ -3113,6 +3119,11 @@ test.describe('Command Terminal', () => {
         });
         await watchFrameHolds(page);
 
+        // The tiles are read live, right before the press: the drag aims at where the tall
+        // tile is now, not where it was before the setup above settled.
+        const tallBox = await frameOf(page, 'slot-1').boundingBox();
+        const sourceBox = await frameOf(page, 'slot-3').boundingBox();
+        if (!tallBox || !sourceBox) throw new Error('no frames');
         await pressOnHeader(page, 'slot-3');
         await page.mouse.move(tallBox.x + tallBox.width / 2, tallBox.y + tallBox.height / 2, { steps: 8 });
 
