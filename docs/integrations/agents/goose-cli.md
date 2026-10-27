@@ -59,6 +59,10 @@ Goose has four modes. `approve` (every action needs approval) is stricter than `
 
 `defaultPermission` is `default`. Model/provider selection is left to Goose's own `--model`/`--provider` flags and `~/.config/goose/config.yaml`; per `cli-features-over-custom-layers.md` the adapter keeps no model list and does not shadow the CLI's model control.
 
+## WSL
+
+A Goose installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`): the session starts in a `wsl -d <distro>` shell with Goose's Linux path, `GOOSE_MODE` crosses into the distro through `WSLENV` with the adapter's other variables, and a Knowledge Graph answer runs through `wsl.exe` too. Goose wires no hooks, no MCP server and no transcript reader, so there is nothing else to route. Built from Goose's published docs; not yet run against a Goose installed in a distro.
+
 ## Activity Detection
 
 Runtime activity is PTY-only. The silence timer drives the idle transition; `detectFirstOutput` returns true on any non-empty data (no alternate screen buffer). There is no hook or status pipeline.
