@@ -5,7 +5,7 @@ import type { StoredCliTarget } from '../../../shared/types';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
-import { resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
+import { peekWslDistroFacts, resolveWslDistroFacts, type WslDistroFacts, type WslEnvKey } from './wsl-distro';
 
 /**
  * Where an agent CLI runs and keeps its files, when that is not this machine
@@ -68,6 +68,23 @@ export async function resolveCliTarget(
   if (!parsed) return null;
   const facts = await (options.resolveFacts ?? resolveWslDistroFacts)(parsed.distro);
   return { kind: 'wsl', distro: parsed.distro, linuxCliPath: parsed.linuxCliPath, facts };
+}
+
+/**
+ * `resolveCliTarget` for a caller that must answer synchronously (an answer
+ * session opened on demand): the target from facts already read, or null when
+ * none have been. Detection of the same path reads them first.
+ */
+export function peekCliTarget(
+  cliPath: string | null | undefined,
+  adapterSupportsWsl: boolean,
+  platform: NodeJS.Platform = process.platform,
+): CliTarget | null {
+  if (!adapterSupportsWsl) return null;
+  const parsed = parseWslCliPath(cliPath, platform);
+  if (!parsed) return null;
+  const facts = peekWslDistroFacts(parsed.distro);
+  return facts ? { kind: 'wsl', distro: parsed.distro, linuxCliPath: parsed.linuxCliPath, facts } : null;
 }
 
 /** What a session record keeps of a target, enough to find its place again. */

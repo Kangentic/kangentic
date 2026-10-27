@@ -35,6 +35,16 @@ import { quoteBridgePath } from './hook-utils';
 /** The folder inside a session's directory that holds the script and its files. */
 export const WSL_HOOK_DIRECTORY_NAME = 'wsl-hooks';
 
+/**
+ * The variable every distro CLI session carries: its hook folder, as the
+ * distro sees it (`performSpawn` lists it in `WSLENV` with `/up`). A script
+ * run from anywhere but its own folder finds the folder through it: Codex's
+ * hooks run one workspace copy shared by every session in the folder, since
+ * Codex trusts a hook by a hash of its command, which must not change per
+ * session.
+ */
+export const WSL_HOOK_DIRECTORY_ENV = 'KANGENTIC_WSL_HOOK_DIR';
+
 /** The header line every published file starts with: the format's version. */
 export const WSL_HOOK_RECORD_VERSION = 'K1';
 
@@ -45,7 +55,8 @@ export type WslHookReplyKind = 'plan-approval' | 'background-shell-hint';
 const REPLY_WAIT_TRIES = 1000;
 
 /**
- * The script. `$0`'s folder is the hook folder, so no path is written into it.
+ * The script. The hook folder is `$KANGENTIC_WSL_HOOK_DIR`, else `$0`'s own
+ * folder, so no path is written into it.
  * A file is named `<epoch ns>-<pid>`, stamped once stdin is read, as the node
  * bridge times its event: names sort in the order the files appear, which is
  * the order Kangentic reads them, and Kangentic takes each event's time from
@@ -56,7 +67,7 @@ const REPLY_WAIT_TRIES = 1000;
 export const WSL_HOOK_SCRIPT = [
   '# Kangentic hook transport for an agent CLI in WSL. Written by Kangentic for',
   '# one session; Kangentic reads what it publishes. Do not edit.',
-  'dir=$(dirname "$0")',
+  `dir=\${${WSL_HOOK_DIRECTORY_ENV}:-$(dirname "$0")}`,
   'stamp() {',
   '  s=$(date +%s%N 2>/dev/null)',
   '  case "$s" in ""|*[!0-9]*) s="$(date +%s)000000000" ;; esac',
@@ -145,6 +156,37 @@ export function prepareWslHookTransport(sessionDirectory: string): WslHookPaths 
   // runs it, so one rewritten under a running hook would break that hook.
   fs.writeFileSync(paths.script, WSL_HOOK_SCRIPT);
   return paths;
+}
+
+/**
+ * Write the script into `<directory>/.kangentic/<copyName>` and return the
+ * copy's path, for a CLI whose hook command must be the same for every session
+ * (Codex, which trusts a hook by a hash of its command): the command names the
+ * copy relative to the hook's working directory, and the copy finds the
+ * session's folder through `WSL_HOOK_DIRECTORY_ENV`. Written only when its
+ * bytes differ, so a hook another session is running never reads a script
+ * rewritten under it. `copyName` must end in `wsl-hook.sh`, which is how
+ * `isKangenticHookCommand` recognizes a command naming it. Throws when the
+ * write fails.
+ */
+export function copyWslHookScriptInto(directory: string, copyName: string): string {
+  if (!copyName.endsWith('wsl-hook.sh')) {
+    throw new Error(`workspace copy ${copyName} must end in wsl-hook.sh, or hook cleanup cannot recognize it`);
+  }
+  const copyPath = path.join(directory, '.kangentic', copyName);
+  let existing: string | null = null;
+  try {
+    existing = fs.readFileSync(copyPath, 'utf-8');
+  } catch {
+    // Not written yet.
+  }
+  if (existing === WSL_HOOK_SCRIPT) return copyPath;
+  // sync-write-ok: the CLI's hook commands name this copy; a throw reaches the
+  // builder's caller, which spawns without hooks.
+  fs.mkdirSync(path.dirname(copyPath), { recursive: true });
+  // sync-write-ok: as above.
+  fs.writeFileSync(copyPath, WSL_HOOK_SCRIPT);
+  return copyPath;
 }
 
 /** `sh '<script>'` in the distro's view, quoted for the `sh -c` a Linux CLI runs hooks with. */

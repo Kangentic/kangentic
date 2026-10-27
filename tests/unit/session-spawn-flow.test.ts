@@ -486,7 +486,11 @@ describe('performSpawn - an agent CLI installed in a WSL distro', () => {
       'KANGENTIC_MCP_TOKEN/u',
       'GOOSE_MODE/u',
       'KANGENTIC_EVENTS_PATH/up',
+      'KANGENTIC_WSL_HOOK_DIR/up',
     ]));
+    // The hook folder beside the events file, which the distro sees under /mnt.
+    const env = (ptySpawnMock.mock.calls[0]?.[2] as { env: Record<string, string> }).env;
+    expect(env.KANGENTIC_WSL_HOOK_DIR).toBe(path.join(path.dirname(EVENTS_PATH), 'wsl-hooks'));
   });
 
   it('keeps a Windows CLI under a WSL shell exactly as it was: no adapter variable, no events path', async () => {

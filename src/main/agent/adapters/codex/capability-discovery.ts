@@ -14,6 +14,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { codexHomeDir } from './config-toml';
 import {
   listMostRecentDirs,
@@ -29,9 +30,14 @@ const HELP_TIMEOUT_MS = 5000;
 
 /**
  * Run `<cliPath> --help` and capture stdout.
- * On Windows, use shell invocation; on Unix, use direct execFile.
+ * On Windows, use shell invocation; on Unix, use direct execFile. A Codex
+ * installed in a WSL distro runs there.
  */
-async function readHelpText(cliPath: string): Promise<string> {
+async function readHelpText(cliPath: string, target: CliTarget | null): Promise<string> {
+  if (target) {
+    const { stdout } = await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    return stdout;
+  }
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
@@ -51,9 +57,9 @@ async function readHelpText(cliPath: string): Promise<string> {
  * Parse `codex --help` to detect if --model flag is supported.
  * Returns true if the help text mentions a --model flag.
  */
-async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
+async function detectModelFlagSupport(cliPath: string, target: CliTarget | null): Promise<boolean> {
   try {
-    const helpText = await readHelpText(cliPath);
+    const helpText = await readHelpText(cliPath, target);
     // Look for --model or -m flag pattern
     return /--model\s+<|--model\s+[A-Za-z]|-m\s+<|-m\s+[A-Za-z]/.test(helpText);
   } catch {
@@ -72,9 +78,9 @@ async function detectModelFlagSupport(cliPath: string): Promise<boolean> {
  * historically, the broader `payload.model` check below still picks it
  * up so the parser is forward-compatible.
  */
-async function scanCodexSessionHistory(): Promise<string[]> {
+async function scanCodexSessionHistory(target: CliTarget | null): Promise<string[]> {
   const modelSet = new Set<string>();
-  const sessionsDir = path.join(codexHomeDir(), 'sessions');
+  const sessionsDir = path.join(codexHomeDir(target), 'sessions');
 
   // Walk YYYY/MM/DD/. Cap each level so a long-running install doesn't pay an
   // unbounded scan cost. listMostRecentDirs returns [] for a missing dir, so
@@ -121,9 +127,12 @@ async function scanCodexSessionHistory(): Promise<string[]> {
  * Best-effort: always returns a capabilities object even if detection partially fails.
  */
 export async function discoverCodexCapabilities(cliPath: string): Promise<AgentCapabilities> {
+  // A Codex installed in a WSL distro: its --help runs there, and its session
+  // history is in the distro's CODEX_HOME.
+  const target = await resolveCliTarget(cliPath, true).catch(() => null);
   let supportsModelOverride = false;
   try {
-    supportsModelOverride = await detectModelFlagSupport(cliPath);
+    supportsModelOverride = await detectModelFlagSupport(cliPath, target);
   } catch {
     // Flag detection failure - continue with assumed no support
   }
@@ -132,7 +141,7 @@ export async function discoverCodexCapabilities(cliPath: string): Promise<AgentC
   let discoveredModels: string[] = [];
   if (supportsModelOverride) {
     try {
-      discoveredModels = await scanCodexSessionHistory();
+      discoveredModels = await scanCodexSessionHistory(target);
     } catch {
       // Session history scan failure - continue with empty list
     }

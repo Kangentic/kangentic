@@ -57,9 +57,17 @@ afterEach(() => {
 const shAvailable = spawnSync('sh', ['-c', 'exit 0']).status === 0;
 
 /** Run the session's script under sh with `stdin`, as a CLI runs a hook. */
-function runScript(sessionDirectory: string, args: string[], stdin: string): Promise<{ stdout: string; code: number | null }> {
+function runScript(
+  sessionDirectory: string,
+  args: string[],
+  stdin: string,
+  options: { scriptPath?: string; env?: Record<string, string> } = {},
+): Promise<{ stdout: string; code: number | null }> {
   return new Promise((resolve, reject) => {
-    const child = spawn('sh', [wslHookPaths(sessionDirectory).script, ...args], { stdio: ['pipe', 'pipe', 'pipe'] });
+    const child = spawn('sh', [options.scriptPath ?? wslHookPaths(sessionDirectory).script, ...args], {
+      stdio: ['pipe', 'pipe', 'pipe'],
+      env: { ...process.env, ...options.env },
+    });
     let stdout = '';
     child.stdout.on('data', (chunk: Buffer) => { stdout += chunk.toString('utf-8'); });
     child.on('error', reject);
@@ -251,6 +259,25 @@ describe.runIf(shAvailable)('the script and the inbox together (needs sh)', () =
     expect(result).toEqual({ stdout: '', code: 0 });
     expect(fs.readFileSync(statusPath, 'utf-8')).toBe('{"model":{"id":"m"}}');
     expect(fs.readdirSync(sessionDirectory).filter((name) => name.includes('.tmp'))).toEqual([]);
+  });
+
+  // Codex runs one workspace copy of the script for every session in a folder.
+  // Red-green: a script that only reads `$0`'s folder publishes beside the copy.
+  it('publishes into the folder KANGENTIC_WSL_HOOK_DIR names, from a copy anywhere', async () => {
+    const sessionDirectory = makeSessionDirectory();
+    const paths = prepareWslHookTransport(sessionDirectory);
+    const eventsPath = path.join(sessionDirectory, 'events.jsonl');
+    fs.writeFileSync(eventsPath, '');
+    startInbox(sessionDirectory, eventsPath);
+    const workspace = makeSessionDirectory();
+    const copy = path.join(workspace, 'codex-wsl-hook.sh');
+    fs.writeFileSync(copy, WSL_HOOK_SCRIPT);
+
+    await runScript(sessionDirectory, ['event', 'prompt'], '{}', { scriptPath: copy, env: { KANGENTIC_WSL_HOOK_DIR: paths.directory } });
+
+    const lines = await waitFor(() => { const read = readEventLines(eventsPath); return read.length > 0 ? read : null; });
+    expect((JSON.parse(lines[0]) as { type: string }).type).toBe('prompt');
+    expect(fs.readdirSync(workspace)).toEqual(['codex-wsl-hook.sh']);
   });
 
   it('drains what is still waiting synchronously, for the exit flush', async () => {

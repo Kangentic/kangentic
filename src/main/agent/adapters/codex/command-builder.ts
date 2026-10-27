@@ -1,8 +1,11 @@
-import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import path from 'node:path';
+import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { copyBridgeInto } from '../../shared/workspace-bridge-copy';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
-import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME } from './hook-manager';
+import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
+import { copyWslHookScriptInto, prepareWslHookTransport } from '../../shared/wsl-hook-transport';
+import { buildHooks, buildCodexHookOverrides, CODEX_EVENT_BRIDGE_COPY_NAME, CODEX_WSL_HOOK_COPY_NAME } from './hook-manager';
 import { TASK_PROCESS_TAG_ENV, isValidTaskTagValue } from '../../../pty/process-tag/task-process-tag';
 import type { PermissionMode } from '../../../../shared/types';
 
@@ -40,6 +43,12 @@ export interface CodexCommandOptions {
    * runs without Kangentic's hooks, on the PTY tracker.
    */
   codexHookStateOverride?: string | null;
+  /**
+   * A Codex installed in a WSL distro (`CommandOptions.cliTarget`): named by
+   * the path the distro sees, its working directory too, and its hooks run the
+   * WSL hook transport's script instead of the node bridge.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /**
@@ -209,16 +218,30 @@ function buildStartupUpdatePromptArgs(options: CodexCommandOptions): string[] {
 function buildHookArgs(options: CodexCommandOptions): string[] {
   const stateOverride = options.codexHookStateOverride;
   if (!options.eventsOutputPath || !stateOverride) return [];
+  const inDistro = Boolean(options.cliTarget);
   try {
     // Keep the copy out of `git status` and an agent's `git add -A` in a
     // worktree whose committed .gitignore does not list .kangentic/.
     ensureLocalGitExcludes(options.cwd, ['.kangentic/']);
-    copyBridgeInto(options.cwd, 'event-bridge', CODEX_EVENT_BRIDGE_COPY_NAME);
+    if (inDistro) {
+      // A Codex in a WSL distro publishes through the session's hook folder,
+      // which its env names (KANGENTIC_WSL_HOOK_DIR), by the workspace copy
+      // of the transport's script.
+      prepareWslHookTransport(path.dirname(options.eventsOutputPath));
+      copyWslHookScriptInto(options.cwd, CODEX_WSL_HOOK_COPY_NAME);
+    } else {
+      copyBridgeInto(options.cwd, 'event-bridge', CODEX_EVENT_BRIDGE_COPY_NAME);
+    }
   } catch (error) {
-    console.warn('[codex] Could not copy the event bridge into the workspace; the session runs without hooks:', error);
+    console.warn(
+      inDistro
+        ? '[codex] Could not prepare the WSL hook script; the session runs without hooks:'
+        : '[codex] Could not copy the event bridge into the workspace; the session runs without hooks:',
+      error,
+    );
     return [];
   }
-  return [...buildCodexHookOverrides(), stateOverride].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
+  return [...buildCodexHookOverrides(inDistro ? 'wsl' : 'node'), stateOverride].flatMap((value) => ['-c', quoteArg(value, options.shell)]);
 }
 
 export class CodexCommandBuilder {
@@ -240,7 +263,8 @@ export class CodexCommandBuilder {
     const parts: string[] = [];
     const isResume = Boolean(options.resume && options.sessionId);
 
-    parts.push(quoteArg(options.codexPath, shell));
+    const place = options.cliTarget ?? null;
+    parts.push(quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.codexPath, shell));
 
     if (isResume) {
       // Resume is a subcommand: codex resume <sessionId> ...
@@ -255,8 +279,8 @@ export class CodexCommandBuilder {
     // return early after `-C`, silently dropping the permission mode, the
     // model override, and the MCP wiring from every resumed session.
 
-    // Working directory
-    parts.push('-C', quoteArg(toForwardSlash(options.cwd), shell));
+    // Working directory, as the CLI sees it (forward slashes here, /mnt in a WSL distro)
+    parts.push('-C', quoteArg(cliPathForTarget(options.cwd, place), shell));
 
     // Approval mode
     parts.push(...mapPermissionMode(options.permissionMode));

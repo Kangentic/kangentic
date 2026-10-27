@@ -23,7 +23,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
-import type { CliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, peekCliTarget, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -186,9 +186,13 @@ function answerArgs(input: {
   streaming: boolean;
   model?: string | null;
   effort: string | null;
+  /** A Claude installed in a WSL distro, which reads its config files by the path the distro sees. */
+  place?: CliPlace | null;
 }): string[] {
-  const settingsPath = writeAnswerSettings(input.directory);
-  const mcpConfigPath = input.retrieval ? writeScopedMcpConfig(input.retrieval, input.directory) : null;
+  const cliFile = (windowsPath: string): string => (input.place ? cliPathForTarget(windowsPath, input.place) : windowsPath);
+  const settingsPath = cliFile(writeAnswerSettings(input.directory));
+  const writtenMcpConfig = input.retrieval ? writeScopedMcpConfig(input.retrieval, input.directory) : null;
+  const mcpConfigPath = writtenMcpConfig ? cliFile(writtenMcpConfig) : null;
   return [
     '--print',
     // An answer is not a conversation to resume. Without this every run saved
@@ -703,14 +707,17 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     const effort = options?.effort ?? null;
+    // A Claude installed in a WSL distro runs there.
+    const cliTarget = await resolveCliTarget(cliPath, true);
     return withConfigDirectory(options?.runDirectory, (directory) => runCliPrintSummarize({
       cliPath,
-      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort }),
+      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort, place: cliTarget }),
       prompt: buildSummarizePrompt(prompt),
       cwd,
       extractRaw: createJsonResultExtractor(options?.onUsage),
       outputBudget: SUMMARIZE_JSON_OUTPUT_BUDGET,
       ...answerEnv(effort),
+      cliTarget,
     }));
   }
 
@@ -772,10 +779,13 @@ export class ClaudeAdapter implements AgentAdapter {
     const streaming = options?.onEvent !== undefined;
     const effort = options?.effort ?? null;
     const onUsage = options?.onUsage;
+    // A Claude installed in a WSL distro runs there.
+    const cliTarget = await resolveCliTarget(cliPath, true);
 
     return withConfigDirectory(options?.runDirectory, (configDirectory) => runCliPrintAnswer({
       cliPath,
-      args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort }),
+      cliTarget,
+      args: answerArgs({ directory: configDirectory, retrieval, streaming, model, effort, place: cliTarget }),
       ...(streaming
         ? {
           // In stream mode stdout is a transcript of JSON lines, not the
@@ -824,10 +834,14 @@ export class ClaudeAdapter implements AgentAdapter {
    */
   openAnswerSession(input: AnswerSessionInput): AnswerSession {
     const effort = input.effort ?? null;
+    // A Claude installed in a WSL distro runs there. Opened synchronously, so
+    // from the distro facts its detection already read.
+    const cliTarget = peekCliTarget(input.cliPath, true);
     return openStdinJsonSession({
       cliPath: input.cliPath,
+      cliTarget,
       args: [
-        ...answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort }),
+        ...answerArgs({ directory: input.runDirectory, retrieval: input.retrieval, streaming: true, model: input.model, effort, place: cliTarget }),
         '--input-format', 'stream-json',
       ],
       cwd: input.cwd,

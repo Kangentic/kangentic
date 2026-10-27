@@ -1,6 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { atomicWriteFileWithBackup } from '../../shared/relocation-utils';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import {
   withCodexConfigLock,
   configTomlPath,
@@ -46,8 +47,8 @@ import {
  * deliberate `"untrusted"` stays), and a project root explicitly marked
  * `"untrusted"` suppresses approval for the worktrees under it.
  */
-export async function ensureWorktreeTrust(workingDirectory: string): Promise<void> {
-  return withCodexConfigLock(() => ensureWorktreeTrustSync(workingDirectory));
+export async function ensureWorktreeTrust(workingDirectory: string, place: CliPlace | null = null): Promise<void> {
+  return withCodexConfigLock(() => ensureWorktreeTrustSync(workingDirectory, place));
 }
 
 /**
@@ -134,10 +135,14 @@ function removeWorktreeTrustSync(worktreePath: string): void {
   atomicWriteFileWithBackup(tomlPath, kept.join('\n'), { logTag: '[CODEX_TRUST]' });
 }
 
-function ensureWorktreeTrustSync(workingDirectory: string): void {
-  const tomlPath = configTomlPath();
-  const resolvedPath = path.resolve(workingDirectory);
-  const projectRoot = projectRootForWorktree(resolvedPath);
+function ensureWorktreeTrustSync(workingDirectory: string, place: CliPlace | null): void {
+  // A Codex installed in a WSL distro reads the distro's config.toml, keyed by
+  // the directory as the distro sees it (case-sensitive, under /mnt).
+  const tomlPath = configTomlPath(place);
+  const windowsPath = path.resolve(workingDirectory);
+  const windowsProjectRoot = projectRootForWorktree(windowsPath);
+  const resolvedPath = place ? cliPathForTarget(windowsPath, place) : windowsPath;
+  const projectRoot = windowsProjectRoot && place ? cliPathForTarget(windowsProjectRoot, place) : windowsProjectRoot;
 
   let content: string;
   try {
