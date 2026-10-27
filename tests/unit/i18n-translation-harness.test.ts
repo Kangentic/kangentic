@@ -20,7 +20,7 @@ import { readReplies, requestItem } from '../../scripts/i18n/prompt.mjs';
 import { translateEntries } from '../../scripts/i18n/translate-catalog.mjs';
 import { claudeArgs, claudeEnv } from '../../scripts/i18n/engines/claude.mjs';
 import { translateGemmaPrompt } from '../../scripts/i18n/engines/openai-compatible.mjs';
-import { errorCategory, loadSample, scoreRecords, WINNER_RULE } from '../../scripts/i18n/bake-off/run.mjs';
+import { errorCategory, formatResults, loadSample, scoreRecords, WINNER_RULE } from '../../scripts/i18n/bake-off/run.mjs';
 
 // The translation harness (scripts/i18n/, docs/contributing/translations.md). Engines
 // are never called here: the pipeline runs against a fake one, and catalogs are
@@ -362,6 +362,11 @@ describe('the bake-off', () => {
     expect(failing.firstTryFailures).toEqual({ tags: 1 });
     expect(failing.finalFailures).toEqual({ reply: 1 });
     expect(failing.perString.de.s2).toEqual([0, 2, 5, 5, 0]);
+
+    // Written with each string's scores on one line, and still the same data.
+    const written = formatResults(results);
+    expect(written).toContain('"s2": [0, 2, 5, 5, 0]');
+    expect(JSON.parse(written)).toEqual(results);
   });
 });
 
