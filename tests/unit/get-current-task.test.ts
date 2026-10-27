@@ -146,6 +146,36 @@ describe('handleGetCurrentTask', () => {
     expect((result.data as { id: string }).id).toBe('task-c');
   });
 
+  it('matches a WSL agent, whose cwd names the worktree by its /mnt drive path', async () => {
+    // A CLI in a WSL distro reports the Windows worktree the way the distro
+    // mounts it, so full-path equality against the stored C:\ path never holds
+    // and the worktree folder is what matches.
+    taskFixtures.push(makeTask({
+      id: 'task-wsl',
+      worktree_path: 'C:\\Users\\dev\\repo\\.kangentic\\worktrees\\12',
+    }));
+
+    const result = await handleGetCurrentTask({ cwd: '/mnt/c/Users/dev/repo/.kangentic/worktrees/12' }, context);
+
+    expect((result.data as { id: string } | null)?.id).toBe('task-wsl');
+  });
+
+  it('takes the innermost worktree folder when the project itself sits in another checkout\'s worktrees', async () => {
+    // A preview project lives under its own worktree's .kangentic folder, so the
+    // first .kangentic/worktrees/ segment names the outer checkout, not the task.
+    taskFixtures.push(makeTask({
+      id: 'task-nested',
+      worktree_path: '/repo/.kangentic/worktrees/907/.kangentic/data/project-1/.kangentic/worktrees/1',
+    }));
+
+    const result = await handleGetCurrentTask(
+      { cwd: '/elsewhere/.kangentic/worktrees/907/.kangentic/data/project-1/.kangentic/worktrees/1/src' },
+      context,
+    );
+
+    expect((result.data as { id: string } | null)?.id).toBe('task-nested');
+  });
+
   it('matches by branch name (case-insensitive)', async () => {
     taskFixtures.push(makeTask({
       id: 'task-d',
