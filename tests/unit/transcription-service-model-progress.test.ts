@@ -242,9 +242,13 @@ describe('TranscriptionService model-progress: per-model byte counts beside the 
  * A failed download names the model that failed, so the Dictation tab marks only
  * that model's line. `ensureModels` tags the failure with the model it was on,
  * and both error paths (`downloadModel`, and `reportPrepareFailure` behind
- * `start` and `prewarm`) read the tag. A failure with no single model to blame
- * (the worker failing to load the engine) names the first model of the selection.
- * The message the user reads stays the cause's own.
+ * `start` and `prewarm`) read the tag. The message the user reads stays the
+ * cause's own.
+ *
+ * A failure that is not a download (the worker failing to load the engine) puts
+ * nothing on this stream. The tab reads every 'error' here as "Download failed"
+ * on a model's line, which would name a model that downloaded fine. A press
+ * reports that failure through the error `start` rejects with.
  */
 describe('TranscriptionService model-progress: an error event names the model that failed', () => {
   // The module-level afterEach restores a Date.now spy; these tests never drive
@@ -326,18 +330,34 @@ describe('TranscriptionService model-progress: an error event names the model th
     ]);
   });
 
-  it('prewarm: a worker load failure with both models downloaded names the first model, with the worker\'s message', async () => {
+  it('prewarm: a worker load failure with both models downloaded reports no model-progress error', async () => {
     vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
     vi.mocked(ensureModel).mockImplementation(async (model) => resolvedPathsOf(model));
     const client = makeFakeClient();
     (client.ensureWarm as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('worker did not respond'));
     const service = new TranscriptionService(client);
     const errorEvents = errorEventsOf(service);
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await service.prewarm(DOWNLOAD_CONFIG);
+    try {
+      await service.prewarm(DOWNLOAD_CONFIG);
+      expect(errorEvents).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
+  });
 
-    expect(errorEvents).toEqual([
-      { modelId: MODEL_ONE.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'worker did not respond' },
-    ]);
+  it('start: a worker load failure rejects with the worker\'s message and reports no model-progress error', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(TWO_MODEL_SELECTION);
+    vi.mocked(ensureModel).mockImplementation(async (model) => resolvedPathsOf(model));
+    const client = makeFakeClient();
+    (client.createSession as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('Dictation is unavailable (exited with code 1)'));
+    const service = new TranscriptionService(client);
+    const errorEvents = errorEventsOf(service);
+
+    await expect(service.start({ engineMode: 'auto', language: 'en' }))
+      .rejects.toThrow(/^Dictation is unavailable \(exited with code 1\)$/);
+
+    expect(errorEvents).toEqual([]);
   });
 });

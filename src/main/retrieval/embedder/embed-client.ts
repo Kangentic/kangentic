@@ -103,9 +103,6 @@ export class EmbedClient implements Embedder {
    *  has a batch pending and releases it once every dirty project is caught
    *  up; a query never holds, it just re-arms the idle timer. */
   private warmHold = false;
-  /** True while an intentional teardown (idle recycle or dispose) is in flight,
-   *  so the resulting 'exit' is not miscounted as a crash. */
-  private intentionalShutdown = false;
   /** Resolved (and cleared) whenever no interactive (non-background) request
    *  is in flight. See waitForInteractiveIdle(). */
   private interactiveIdleWaiters: Array<() => void> = [];
@@ -334,20 +331,16 @@ export class EmbedClient implements Embedder {
   }
 
   private onWorkerExit(child: UtilityProcess, exitCode?: number, stderrTail?: StderrTail): void {
-    const intentional = this.intentionalShutdown;
-    // Cleared BEFORE the staleness guard below, not after. The flag belongs to
-    // the teardown that set it, so a stale exit must still consume it -
-    // otherwise it stays latched and the NEXT worker's genuine crash reads as
-    // intentional and is never counted.
-    this.intentionalShutdown = false;
-    // A killed worker's 'exit' arrives asynchronously, after a replacement may
-    // already have been spawned and tracked. Ignore the stale exit so it never
-    // nulls the live child or resolves the replacement's in-flight requests.
-    // LineCountClient has had this guard; this client did not, so a recycle
-    // racing a respawn could tear down the new worker's state. `killChild`
-    // nulls `this.child` before killing, so an ordinary intentional exit
-    // arrives with `this.child === null` and correctly falls through.
-    if (this.child !== null && child !== this.child) return;
+    // Only the current child's exit is a crash. `killChild` nulls `this.child`
+    // before it kills, so every intentional exit (an idle recycle, dispose)
+    // arrives from a child that is no longer current, and so does a killed
+    // predecessor's exit landing after its replacement spawned. Both are
+    // dropped here, in any order, so neither nulls the live child nor resolves
+    // its requests. `killChild` resets the worker state itself, and its callers
+    // settle `pending` first or kill only with nothing pending. Do not add an
+    // "intentional" flag beside this guard. One flag marks one kill, so with
+    // two workers recycled in turn the second exit to land reads as a crash.
+    if (child !== this.child) return;
     this.child = null;
     // A crash must not leave the idle timer counting down against a child
     // that is already gone.
@@ -362,8 +355,7 @@ export class EmbedClient implements Embedder {
     }
     this.pending.clear();
     this.notifyInteractiveIdleIfClear();
-    // An idle recycle or dispose is not a crash; only an unexpected exit counts.
-    if (!this.disposed && !intentional) this.restartPolicy.recordCrash(exitCode, stderrTail);
+    if (!this.disposed) this.restartPolicy.recordCrash(exitCode, stderrTail);
   }
 
   /** Hold (or release) the worker against the idle recycle. Releasing re-arms
@@ -428,11 +420,14 @@ export class EmbedClient implements Embedder {
     const child = this.child;
     this.child = null;
     this.readyPromise = null;
+    // The killed worker's exit is dropped as a non-current child's
+    // (onWorkerExit), so its teardown happens here. Without it the Knowledge
+    // Graph status names a backend no worker is running, and a dispose during
+    // a cold init leaves its callers waiting out INIT_TIMEOUT_MS.
+    this.currentActiveDevice = null;
+    this.readyResolver?.(false);
+    this.readyResolver = null;
     if (child) {
-      // Set only when there is a child to classify. Latched with nothing to
-      // kill, the flag would be consumed by the NEXT worker's genuine crash
-      // and read it as intentional.
-      this.intentionalShutdown = true;
       try {
         child.postMessage({ type: 'shutdown' });
       } catch {

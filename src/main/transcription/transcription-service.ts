@@ -46,8 +46,8 @@ class ModelDownloadError extends Error {
   }
 }
 
-/** The model a failure names: the one whose download failed, else the first of
- *  the selection (a failed worker load has no single model to blame). */
+/** The model a `downloadModel` failure names: the one whose download failed,
+ *  else the first of the selection for a failure no download was tagged with. */
 function failedModelId(selected: EngineSelection, error: unknown): string {
   return error instanceof ModelDownloadError ? error.modelId : selected.models[0].id;
 }
@@ -136,7 +136,7 @@ export class TranscriptionService extends EventEmitter {
     try {
       prepared = await this.prepareModels(selected, engineKey);
     } catch (error) {
-      throw this.reportPrepareFailure(selected, error);
+      throw this.reportPrepareFailure(error);
     }
 
     const dictationSessionId = `dictation-${++this.counter}`;
@@ -162,7 +162,7 @@ export class TranscriptionService extends EventEmitter {
       // active.set), so send it unconditionally rather than only in the
       // timeout case.
       this.client.cancel(dictationSessionId);
-      throw this.reportPrepareFailure(selected, error);
+      throw this.reportPrepareFailure(error);
     }
 
     return {
@@ -177,9 +177,10 @@ export class TranscriptionService extends EventEmitter {
   /**
    * Pre-load the live engine for the given config so the next press streams
    * partials at once (the accurate model waits for the press itself). A
-   * best-effort background call (errors are swallowed; a download still
-   * surfaces via the popup's model-progress phase, unless `silent`). Passing
-   * `null` (dictation was disabled) releases the worker outright.
+   * best-effort background call that never rejects. A failed download names
+   * its model on the Dictation tab through model progress, unless `silent`, and
+   * any other failure is only logged. Passing `null` (dictation was disabled)
+   * releases the worker outright.
    */
   async prewarm(config: DictationConfig | null, options?: { silent?: boolean }): Promise<void> {
     const generation = ++this.prewarmGeneration;
@@ -192,10 +193,9 @@ export class TranscriptionService extends EventEmitter {
       return;
     }
     this.warmConfig = config;
-    let selected: EngineSelection | undefined;
     try {
       const profile = await detectHardware();
-      selected = selectEngine(profile, config);
+      const selected = selectEngine(profile, config);
       const engineKey = computeEngineKey(selected, config);
       const prepared = await this.prepareModels(selected, engineKey);
       // Superseded during the awaits: by a disable (the worker must stay
@@ -209,16 +209,14 @@ export class TranscriptionService extends EventEmitter {
         warmCap: this.warmCap(profile),
       });
     } catch (error) {
-      // Best-effort: a failed prewarm just means the first press pays the
-      // load, but still surface it via the popup's model-progress phase when
-      // we got far enough to know which model to blame (mirrors the
-      // pre-split buildAndLoad, whose failure reporting fired the same way
-      // whether the caller was start() or prewarm()). Not when this prewarm
-      // was superseded - a release() rejects the request it was waiting on,
-      // and that is the user turning dictation off, not a failure.
-      if (selected && generation === this.prewarmGeneration && !options?.silent) {
-        this.reportPrepareFailure(selected, error);
-      }
+      // Superseded: a release() rejects the request this warm was waiting on,
+      // and that is the user turning dictation off, not a failure. A newer
+      // config's own warm carries the load.
+      if (generation !== this.prewarmGeneration) return;
+      // Best-effort: a failed warm only means the next press pays the load,
+      // and the next warm or press retries. The log line is the trace.
+      console.warn('[transcription] dictation warm failed:', error instanceof Error ? error.message : error);
+      if (!options?.silent) this.reportPrepareFailure(error);
     }
   }
 
@@ -250,13 +248,16 @@ export class TranscriptionService extends EventEmitter {
     return { resolved, needsDownload };
   }
 
-  /** Emit a model-progress 'error' (if there is a model to name) and return
-   *  the Error to throw. Shared by a failed download and a failed worker
-   *  load - both dead-end the same way from the caller's perspective. */
-  private reportPrepareFailure(selected: EngineSelection, error: unknown): Error {
+  /** Return the Error to throw for a failed engine prep, and put a failed
+   *  DOWNLOAD on the model-progress stream as an 'error' naming that model.
+   *  Only a download goes there: the stream is the download's, and the
+   *  Dictation tab reads its 'error' as "Download failed" on the model's line.
+   *  A failed worker load would name a model that downloaded fine, so it is
+   *  reported only through the Error: a press shows it, and a warm logs it. */
+  private reportPrepareFailure(error: unknown): Error {
     const message = error instanceof Error ? error.message : 'Failed to prepare the dictation engine';
-    if (selected.models.length > 0) {
-      this.emitModelProgress({ modelId: failedModelId(selected, error), status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
+    if (error instanceof ModelDownloadError) {
+      this.emitModelProgress({ modelId: error.modelId, status: 'error', downloadedBytes: 0, totalBytes: 0, error: message });
     }
     return new Error(message);
   }

@@ -45,6 +45,7 @@ describe('config-store workspace persistence', () => {
       config: { ...DEFAULT_CONFIG },
       globalConfig: { ...DEFAULT_CONFIG },
       workspaceSeeded: false,
+      configLoaded: false,
     });
   });
 
@@ -111,5 +112,42 @@ describe('config-store workspace persistence', () => {
     await useConfigStore.getState().loadConfig();
     expect(useConfigStore.getState().config.workspaceByProject['proj-a']).toBe(layoutA);
     expect(useConfigStore.getState().globalConfig.workspaceByProject['proj-a']).toBe(layoutA);
+  });
+
+  it('marks the first config fetch as landed, and keeps the mark while a later re-sync is in flight', async () => {
+    // useDictation waits on this mark before it warms or releases the
+    // dictation worker, so a renderer reload never acts on DEFAULT_CONFIG.
+    // The HMR re-sync (Pattern B) flips `loading` back to true, so `loading`
+    // cannot be that gate.
+    expect(useConfigStore.getState().configLoaded).toBe(false);
+    await useConfigStore.getState().loadConfig();
+    expect(useConfigStore.getState().configLoaded).toBe(true);
+
+    let resolveGlobal: (config: typeof DEFAULT_CONFIG) => void = () => undefined;
+    configGetGlobal.mockReturnValue(new Promise((resolve) => {
+      resolveGlobal = resolve;
+    }));
+    const resync = useConfigStore.getState().loadConfig();
+    expect(useConfigStore.getState().loading).toBe(true);
+    expect(useConfigStore.getState().configLoaded).toBe(true);
+
+    resolveGlobal({ ...DEFAULT_CONFIG });
+    await resync;
+    expect(useConfigStore.getState().configLoaded).toBe(true);
+  });
+
+  it('marks a store that is already seeded but unmarked on its next fetch', async () => {
+    // A store pinned across HMR from before `configLoaded` existed is seeded
+    // with no mark. Marking only the seeding fetch would leave useDictation
+    // waiting until a full reload.
+    useConfigStore.setState({ workspaceSeeded: true, configLoaded: false });
+    await useConfigStore.getState().loadConfig();
+    expect(useConfigStore.getState().configLoaded).toBe(true);
+  });
+
+  it('leaves the mark off when the first fetch rejects', async () => {
+    configGet.mockRejectedValue(new Error('config unavailable'));
+    await expect(useConfigStore.getState().loadConfig()).rejects.toThrow('config unavailable');
+    expect(useConfigStore.getState().configLoaded).toBe(false);
   });
 });

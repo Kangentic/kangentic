@@ -300,10 +300,10 @@ describe('EmbedClient', () => {
   });
 
   it('recycles the worker after an idle timeout without counting it as a crash, and stays usable across repeated cycles', async () => {
-    // Guards the `intentionalShutdown` flag: killChild() (armed by the idle
-    // timer) must not be miscounted by onWorkerExit() as an unexpected crash.
-    // Reverting that guard makes crashCount latch to MAX_CRASHES after exactly
-    // 3 idle recycles, which is exactly what this test would then catch.
+    // killChild() (armed by the idle timer) nulls this.child before the
+    // worker exits, so onWorkerExit() must read that exit as a non-current
+    // child's and never as a crash. Counting it latches crashCount to
+    // MAX_CRASHES after exactly 3 idle recycles, which this test would catch.
     vi.useFakeTimers();
     try {
       const client = new EmbedClient(TEST_MODEL);
@@ -318,7 +318,7 @@ describe('EmbedClient', () => {
 
         // The idle timer arms once the request settles (armIdleShutdown in
         // embed()'s finally). Advancing past IDLE_SHUTDOWN_MS fires it, which
-        // calls killChild() and sets intentionalShutdown before the worker exits.
+        // calls killChild() and nulls this.child before the worker exits.
         await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
         // The real utilityProcess emits 'exit' asynchronously after kill();
         // the mock's kill() is a no-op, so simulate that exit explicitly.
@@ -346,18 +346,17 @@ describe('EmbedClient', () => {
     }
   });
 
-  it('ignores a stale exit from a recycled worker after a replacement is already live, but still consumes intentionalShutdown so the replacement\'s own later crash is counted', async () => {
+  it('ignores a stale exit from a recycled worker after a replacement is already live, and still counts the replacement\'s own later crash', async () => {
     // Regression this pins: a killed worker's 'exit' arrives asynchronously,
     // potentially after an idle recycle has already forked and tracked a
     // replacement. Without the staleness guard in onWorkerExit(), that stale
     // exit would null the live child and drain/resolve the replacement's
-    // in-flight request with null. The subtler half: intentionalShutdown is
-    // read and cleared ABOVE the guard, so the stale exit must still CONSUME
-    // the flag - otherwise it stays latched and the replacement's own later,
-    // genuine crash is misread as intentional and never counted.
+    // in-flight request with null. The other half: the stale exit must leave
+    // nothing behind that changes how the replacement's own exit is read, so
+    // the replacement's later, genuine crash is still counted.
     vi.useFakeTimers();
     try {
-      let currentTime = 1_000;
+      const currentTime = 1_000;
       const policy = new UtilityRestartPolicy({
         service: 'kangentic-embeddings',
         maxCrashes: 3,
@@ -375,8 +374,8 @@ describe('EmbedClient', () => {
       firstChild.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
       await firstPromise;
 
-      // Idle recycle fires: killChild() sets intentionalShutdown and nulls
-      // this.child synchronously, but does NOT emit 'exit' - the real
+      // Idle recycle fires: killChild() nulls this.child synchronously, but
+      // does NOT emit 'exit' - the real
       // utilityProcess emits it asynchronously after kill(), and the mock's
       // kill() is a no-op, so firstChild survives as an emitter to fire later.
       await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
@@ -409,15 +408,109 @@ describe('EmbedClient', () => {
       // arrived, so no crash is recorded for it either way.
       expect(recordCrashSpy).not.toHaveBeenCalled();
 
-      // Consequence 3 (the subtle half): the stale exit must still have
-      // consumed intentionalShutdown, so the replacement's own later,
-      // GENUINE crash is counted rather than silently read as intentional.
+      // Consequence 3: the replacement is the current child, so its own
+      // later, GENUINE crash is counted rather than read as intentional.
       secondChild.emit('exit', 1);
       expect(recordCrashSpy).toHaveBeenCalledTimes(1);
       expect(recordCrashSpy).toHaveBeenCalledWith(1, expect.anything());
       expect(client.crashed).toBe(false);
 
       client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it.each(['the first worker exits first', 'the second worker exits first'])(
+    'two workers idle-recycled in turn are neither counted as a crash when %s',
+    async (order) => {
+      // One shared "intentional" flag covered only one of the two kills, so
+      // whichever exit landed second was recorded as a crash.
+      vi.useFakeTimers();
+      try {
+        const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });
+        const recordCrashSpy = vi.spyOn(policy, 'recordCrash');
+        const client = new EmbedClient(TEST_MODEL, 'auto', policy);
+
+        const serveThenRecycle = async (requestId: number): Promise<FakeChild> => {
+          const promise = client.embed(['x']);
+          const child = lastChild();
+          child.emit('message', { type: 'ready' });
+          await vi.advanceTimersByTimeAsync(0);
+          child.emit('message', { type: 'result', id: requestId, vectors: [new Float32Array([0.1])] });
+          await promise;
+          await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+          expect(child.kill).toHaveBeenCalledTimes(1);
+          return child;
+        };
+        const firstChild = await serveThenRecycle(1);
+        const secondChild = await serveThenRecycle(2);
+        expect(secondChild).not.toBe(firstChild);
+
+        if (order === 'the first worker exits first') {
+          firstChild.emit('exit', 0);
+          secondChild.emit('exit', 0);
+        } else {
+          secondChild.emit('exit', 0);
+          firstChild.emit('exit', 0);
+        }
+
+        expect(recordCrashSpy).not.toHaveBeenCalled();
+        client.dispose();
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it('clears the active device as soon as the idle recycle kills the worker, before its exit lands', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL, 'cpu');
+      const promise = client.embed(['x']);
+      const child = lastChild();
+      child.emit('message', { type: 'ready', device: 'cpu' });
+      await vi.advanceTimersByTimeAsync(0);
+      child.emit('message', { type: 'result', id: 1, vectors: [new Float32Array([0.1])] });
+      await promise;
+      expect(client.activeDevice).toBe('cpu');
+
+      await vi.advanceTimersByTimeAsync(IDLE_SHUTDOWN_MS);
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      // The Knowledge Graph status reads this; no worker is behind it now.
+      expect(client.activeDevice).toBeNull();
+
+      child.emit('exit');
+      expect(client.activeDevice).toBeNull();
+      client.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('dispose() during a cold init settles every caller waiting on the init at once, not at the init timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      const client = new EmbedClient(TEST_MODEL);
+      let prewarmSettled = false;
+      const warming = client.prewarm().then(() => {
+        prewarmSettled = true;
+      });
+      const embedding = client.embed(['x'], { background: true });
+      const child = lastChild();
+      expect(mockFork).toHaveBeenCalledTimes(1);
+
+      client.dispose();
+      expect(child.kill).toHaveBeenCalledTimes(1);
+      // Well short of INIT_TIMEOUT_MS, and the killed worker's exit has not
+      // landed yet.
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(prewarmSettled).toBe(true);
+      await expect(embedding).resolves.toBeNull();
+      await warming;
+
+      child.emit('exit');
     } finally {
       vi.useRealTimers();
     }
@@ -497,9 +590,9 @@ describe('EmbedClient', () => {
 
   it('does not arm the idle timer with no child, so a later worker\'s genuine crash is still counted', async () => {
     // The latent latch: a hold released before any worker existed used to
-    // arm a timer whose killChild() set intentionalShutdown with nothing to
-    // kill, and the NEXT worker's genuine crash then consumed that flag and
-    // was never recorded.
+    // arm a timer whose killChild() marked a shutdown as intentional with
+    // nothing to kill, and the NEXT worker's genuine crash then read that
+    // mark and was never recorded.
     vi.useFakeTimers();
     try {
       const policy = new UtilityRestartPolicy({ service: 'kangentic-embeddings', maxCrashes: 3 });

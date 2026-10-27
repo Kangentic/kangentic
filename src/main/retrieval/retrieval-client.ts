@@ -102,9 +102,6 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   private forkedBefore = false;
   /** A worker said ready and has not gone since, so `down` fires once per up. */
   private workerUp = false;
-  /** The child an intentional teardown is killing, so its exit is not read as
-   *  a crash; per child, as in `dictation-client.ts`. */
-  private intentionalKill: UtilityProcess | null = null;
   /** Children whose exit has landed, so a close never waits for one again. */
   private readonly exitedChildren = new WeakSet<UtilityProcess>();
   private readonly restartPolicy: UtilityRestartPolicy;
@@ -262,11 +259,11 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
   }
 
   private onWorkerExit(child: UtilityProcess, exitCode: number, stderrTail: StderrTail): void {
-    const intentional = child === this.intentionalKill;
-    if (intentional) this.intentionalKill = null;
     // A worker already dropped (disposed, or killed for sticking) was dealt
-    // with then, and its exit can land after a replacement was forked.
-    if (intentional || child !== this.child) return;
+    // with then. `drop` nulls `this.child` before it kills, so that exit is
+    // never the current child's, whether it lands before or after a
+    // replacement was forked.
+    if (child !== this.child) return;
     this.child = null;
     this.ready = null;
     this.failReady = null;
@@ -293,7 +290,6 @@ export class RetrievalClient extends EventEmitter<RetrievalClientEvents> {
     for (const requestId of [...this.pending.keys()]) this.settle(requestId, error);
     this.markDown();
     if (!child) return;
-    this.intentionalKill = child;
     try {
       child.postMessage({ type: 'shutdown' });
     } catch {

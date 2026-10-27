@@ -7,6 +7,8 @@ sources:
   - resource: src/main/transcription/dictation-worker.ts
   - resource: src/main/transcription/dictation-client.ts
   - resource: src/main/transcription/transcription-service.ts
+  - resource: src/renderer/hooks/useDictation.ts
+  - resource: src/renderer/components/dictation/LiveDictationChip.tsx
   - resource: src/main/transcription/engines/engine-selection.ts
   - resource: src/main/transcription/models/model-registry.ts
   - resource: src/shared/dictation-presets.ts
@@ -40,6 +42,12 @@ so a worker that has warmed a second engine is recycled after the same half-hour
 platform, and on Windows, past 1.5 GB of commit, at the two-minute gap instead. Either recycle
 re-warms only the engine in use. Each recycle logs its reason (`ceiling`, `served-session` or
 `engine-switch`) and the commit it gave back. Turning dictation off releases the worker at once.
+A renderer reload does not release it. The renderer sends no warm or release until its first
+config load lands, so the warm worker survives and the reloaded renderer's warm finds it. Only the current
+worker's exit counts as a crash. A killed worker's exit, which lands after the kill, is never one.
+The status chip shows at idle only while a model downloads. A failed download shows on that
+model's line in the Dictation tab. A background warm that fails to load the engine is only logged,
+and the next warm or press retries it. A press that fails says so on the chip.
 
 The Mode choice is a preset for each language. Main resolves it to models each session
 (`resolveDictationSlots` in `src/shared/dictation-presets.ts`), so a preset follows the lineup

@@ -99,6 +99,13 @@ interface ConfigStore {
    *  config fetch the renderer owns the layout map, so later fetches preserve it instead of
    *  letting a stale disk read clobber an in-flight save. Survives HMR with the pinned store. */
   workspaceSeeded: boolean;
+  /** Whether a config fetch from main has landed. Until one does, `config` and
+   *  `globalConfig` are `DEFAULT_CONFIG`, which describes no real user, so a consumer that
+   *  acts on a setting in main (useDictation's warm or release) waits for this. A fetch that
+   *  rejects leaves it false, so that consumer sends nothing rather than act on the defaults.
+   *  Every fetch that lands sets it and nothing clears it. The HMR re-sync (Pattern B) flips
+   *  `loading` but not this, and it rides the pinned store across HMR. */
+  configLoaded: boolean;
 
   // -- App version --
   appVersion: string | null;
@@ -216,9 +223,9 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
    *  instance to inherit) starts unseeded and seeds from disk. */
   const withSeededWorkspace = (
     fetched: { config: AppConfig; globalConfig: AppConfig },
-  ): { config: AppConfig; globalConfig: AppConfig; workspaceSeeded?: boolean } => {
+  ): { config: AppConfig; globalConfig: AppConfig; workspaceSeeded?: boolean; configLoaded: boolean } => {
     if (!get().workspaceSeeded) {
-      return { ...fetched, workspaceSeeded: true };
+      return { ...fetched, workspaceSeeded: true, configLoaded: true };
     }
     // Renderer-authoritative blobs: once seeded from disk, the live store is always
     // at least as fresh as a later disk read, so preserve them across a refetch.
@@ -232,9 +239,12 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     // and make the pop-out's layout invisible here - which is the entire handoff. A
     // fresh disk read is exactly what the reader wants, and the writer's optimistic
     // apply keeps its own copy current in the meantime.
+    // `configLoaded` is set here too, not only on the seeding fetch: a store pinned across
+    // HMR from before the field existed is seeded but unmarked, and its next re-sync marks it.
     return {
       config: { ...fetched.config, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
       globalConfig: { ...fetched.globalConfig, workspaceByProject, commandTerminalWorkspace, commandTerminalPanel },
+      configLoaded: true,
     };
   };
 
@@ -289,6 +299,7 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     gitInfo: null,
     loading: true,
     workspaceSeeded: false,
+    configLoaded: false,
     settingsOpen: false,
     lastSettingsTab: lastSettingsTabHmr,
     themePreview: null,

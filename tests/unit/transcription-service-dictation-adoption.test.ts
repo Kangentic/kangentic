@@ -326,26 +326,34 @@ describe('TranscriptionService: DictationClient wiring', () => {
   });
 
   it('a recycled re-prewarm that fails reports no model-progress error', async () => {
-    // One selection (and one resolved model) per prewarm: the explicit one
-    // and the recycled one.
-    const resolvedModel = { modelId: STUB_MODEL.id, kind: STUB_MODEL.engineKind, dir: '/mock/dir', paths: {} };
+    // One selection per prewarm: the explicit one and the recycled one. Both
+    // downloads fail, since a download failure is the one a warm reports.
     vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL).mockReturnValueOnce(SELECTION_WITH_MODEL);
-    vi.mocked(ensureModel).mockResolvedValueOnce(resolvedModel).mockResolvedValueOnce(resolvedModel);
+    vi.mocked(ensureModel)
+      .mockRejectedValueOnce(new Error('network unreachable'))
+      .mockRejectedValueOnce(new Error('network unreachable'));
+    // This file never clears the mock's calls, so count from here.
+    const ensureModelCallsBefore = vi.mocked(ensureModel).mock.calls.length;
     const client = makeFakeClient();
-    (client.ensureWarm as ReturnType<typeof vi.fn>).mockRejectedValue(new Error('worker did not respond'));
     const service = new TranscriptionService(client);
     const progressEvents: DictationModelProgress[] = [];
     service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    // The explicit prewarm reports, as it always has.
-    await service.prewarm(PREWARM_CONFIG);
-    expect(progressEvents).toHaveLength(1);
+    try {
+      // The explicit prewarm reports, as it always has.
+      await service.prewarm(PREWARM_CONFIG);
+      expect(progressEvents).toHaveLength(1);
 
-    // The one the recycle triggers, half an hour after the last press, does not.
-    (client as unknown as EventEmitter).emit('recycled');
-    await vi.waitFor(() => expect(client.ensureWarm).toHaveBeenCalledTimes(2));
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(progressEvents).toHaveLength(1);
+      // The one the recycle triggers, half an hour after the last press, does not.
+      (client as unknown as EventEmitter).emit('recycled');
+      await vi.waitFor(() => expect(vi.mocked(ensureModel).mock.calls.length).toBe(ensureModelCallsBefore + 2));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(progressEvents).toHaveLength(1);
+      expect(client.ensureWarm).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('a prewarm(null) landing during an in-flight prewarm stops it before ensureWarm and reports no error for the request it lost', async () => {
@@ -366,6 +374,43 @@ describe('TranscriptionService: DictationClient wiring', () => {
     // The worker the user just turned off must not come back.
     expect(client.ensureWarm).not.toHaveBeenCalled();
     expect(progressEvents).toEqual([]);
+  });
+
+  it('a prewarm(null) landing while ensureWarm is in flight drops the rejection it causes: no warning and no model-progress event', async () => {
+    // The case the catch-block generation check exists for. The warm is past
+    // the post-prepare check and parked on the client request when the user
+    // turns dictation off; the real release() rejects that request with
+    // "Dictation was turned off". The fake's release() is a stub and rejects
+    // nothing, so this test rejects the parked ensureWarm itself.
+    const client = makeFakeClient();
+    let rejectEnsureWarm!: (error: Error) => void;
+    (client.ensureWarm as ReturnType<typeof vi.fn>).mockImplementationOnce(
+      () =>
+        new Promise<void>((_resolve, reject) => {
+          rejectEnsureWarm = reject;
+        }),
+    );
+    const service = new TranscriptionService(client);
+    const progressEvents: DictationModelProgress[] = [];
+    service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      const inFlight = service.prewarm(PREWARM_CONFIG);
+      await vi.waitFor(() => expect(client.ensureWarm).toHaveBeenCalledTimes(1));
+
+      await service.prewarm(null);
+      expect(client.release).toHaveBeenCalledTimes(1);
+
+      rejectEnsureWarm(new Error('Dictation was turned off'));
+      await inFlight;
+
+      const warmFailedWarnings = warn.mock.calls.filter(([message]) => message === '[transcription] dictation warm failed:');
+      expect(warmFailedWarnings).toEqual([]);
+      expect(progressEvents).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('a config change during an in-flight prewarm supersedes it: only the newest reaches ensureWarm', async () => {
@@ -437,13 +482,32 @@ describe('TranscriptionService.getInfo: worker crash health', () => {
   });
 });
 
-describe('TranscriptionService.prewarm: failure reporting is a behavior change, not a refactor', () => {
-  // A failed prewarm used to be swallowed entirely (`catch { /* best-effort */ }`).
-  // It now reports through the same model-progress 'error' channel a failed
-  // download/start already uses, but ONLY when selectEngine got far enough to
-  // name a model (`selected` assigned) before the failure - see the second
-  // test below for the guard that gates on that.
-  it('reports a model-progress error when the worker load fails after selectEngine already named a model', async () => {
+describe('TranscriptionService.prewarm: what a failed background warm reports', () => {
+  // The model-progress stream is the model download's, and the Dictation tab
+  // reads its 'error' as "Download failed" on that model's line. So only a
+  // failed download reaches it. A failed worker load is logged instead: the
+  // next warm or press retries, and a press reports its own failure.
+  it('reports a model-progress error naming the model when its download fails', async () => {
+    vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL);
+    vi.mocked(ensureModel).mockRejectedValueOnce(new Error('disk full'));
+    const client = makeFakeClient();
+    const service = new TranscriptionService(client);
+    const progressEvents: DictationModelProgress[] = [];
+    service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+
+    try {
+      await service.prewarm(INFO_CONFIG);
+      expect(progressEvents).toEqual([
+        { modelId: STUB_MODEL.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'disk full' },
+      ]);
+      expect(client.ensureWarm).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('reports no model-progress error and logs a warning when the worker load fails after the model resolved', async () => {
     vi.mocked(selectEngine).mockReturnValueOnce(SELECTION_WITH_MODEL);
     vi.mocked(ensureModel).mockResolvedValueOnce({
       modelId: STUB_MODEL.id,
@@ -456,12 +520,15 @@ describe('TranscriptionService.prewarm: failure reporting is a behavior change, 
     const service = new TranscriptionService(client);
     const progressEvents: DictationModelProgress[] = [];
     service.on('model-progress', (progress: DictationModelProgress) => progressEvents.push(progress));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
 
-    await service.prewarm(INFO_CONFIG);
-
-    expect(progressEvents).toEqual([
-      { modelId: STUB_MODEL.id, status: 'error', downloadedBytes: 0, totalBytes: 0, error: 'worker did not respond' },
-    ]);
+    try {
+      await service.prewarm(INFO_CONFIG);
+      expect(progressEvents).toEqual([]);
+      expect(warn).toHaveBeenCalledWith('[transcription] dictation warm failed:', 'worker did not respond');
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   it('reports nothing and still resolves when selectEngine itself throws (selected is never assigned)', async () => {
