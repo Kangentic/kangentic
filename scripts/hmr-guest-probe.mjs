@@ -22,25 +22,41 @@
  *      opens a task, mounts its Browser pane, and registers a guest webContents.
  *   3. Optionally HIDES the pane, which is the state #568 widened: the guest stays
  *      mounted behind the terminal, so a reload kills a pane the user cannot see.
- *   4. Stamps a sentinel on `window`, makes a COMMENT-ONLY edit to the target
- *      source file, waits for HMR to settle, and reports what survived.
+ *   4. Stamps a sentinel on `window`, makes an edit to the target source file
+ *      (COMMENT-ONLY unless `--edit-from` is given), waits for HMR to settle,
+ *      and reports what survived.
  *
  * The verdict is the sentinel plus the webContentsId, not a screenshot: a page
- * reload wipes the sentinel, and a remount changes the id.
+ * reload wipes the sentinel, and a remount changes the id. The result also says
+ * whether the root error boundary caught, and with what.
+ *
+ * With `--edit-from <ref>` the edit is a real one instead: the server boots with
+ * the target at `<ref>`'s content, and the edit writes the working tree's back.
+ * That replays a commit's change as the hot update a running `npm start` got
+ * when the commit landed (task #912's root-boundary crash came from one). The
+ * target is always restored under it, `--keep-edit` included, since the edit's
+ * end state is the working tree's content.
  *
  * Usage (from the repo root):
  *   node scripts/hmr-guest-probe.mjs
  *   node scripts/hmr-guest-probe.mjs --file src/renderer/stores/board-store/task-slice.ts
+ *   node scripts/hmr-guest-probe.mjs --file src/renderer/hooks/useDictation.ts --edit-from 016dbe593~1
  *   node scripts/hmr-guest-probe.mjs --show      (leave the pane visible instead of held)
  *   node scripts/hmr-guest-probe.mjs --keep-edit (skip the file restore, for bisecting)
+ *   node scripts/hmr-guest-probe.mjs --no-hook-signatures (drop scripts/vite-refresh-hook-signatures.mjs,
+ *     which the renderer dev configs register, to see an edit as it lands without it)
  *
- * Exit code 0 means the guest survived, 1 means it was destroyed, 2 means the
- * probe could not set up its fixture.
+ * There is no `--help`: an unknown flag is ignored and the probe runs.
+ *
+ * Exit code 0 means the guest survived, 1 means it was destroyed (a root
+ * boundary catch destroys it too), 2 means the probe could not set up its fixture.
  */
 import { createServer, createLogger } from 'vite';
 import tailwindcss from '@tailwindcss/vite';
 import react from '@vitejs/plugin-react';
 import { chromium } from '@playwright/test';
+import { refreshHookSignatures } from './vite-refresh-hook-signatures.mjs';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -61,11 +77,28 @@ const targetRelativePath = argValue(
 const holdPane = !args.includes('--show');
 const keepEdit = args.includes('--keep-edit');
 const settleMs = Number(argValue('--settle', '5000'));
+const editFromRef = argValue('--edit-from', null);
+const hookSignatures = !args.includes('--no-hook-signatures');
+
+// A ref git would read as an option, or the next flag taken as the ref
+// (`--edit-from --keep-edit`), fails here, before the target is touched.
+if (editFromRef?.startsWith('-')) {
+  console.error(`[probe] --edit-from needs a git ref, got: ${editFromRef}`);
+  process.exit(2);
+}
 
 const targetPath = path.join(projectRoot, targetRelativePath);
 if (!fs.existsSync(targetPath)) {
   console.error(`[probe] target file not found: ${targetRelativePath}`);
   process.exit(2);
+}
+
+/** The target's content at `ref`, which the server boots with under `--edit-from`. */
+function sourceAtRef(ref) {
+  return execFileSync('git', ['show', `${ref}:${targetRelativePath.replace(/\\/g, '/')}`], {
+    cwd: projectRoot,
+    encoding: 'utf-8',
+  });
 }
 
 const PROJECT_ID = 'proj-hmr-probe';
@@ -155,7 +188,9 @@ let browser;
 let restored = false;
 
 function restoreTarget() {
-  if (restored || keepEdit) return;
+  // Under --edit-from the target may still hold the ref's content (a failed
+  // fixture, a throw, Ctrl+C), and the working tree's exists only in memory.
+  if (restored || (keepEdit && !editFromRef)) return;
   fs.writeFileSync(targetPath, originalSource, 'utf-8');
   restored = true;
 }
@@ -164,6 +199,11 @@ process.on('SIGINT', () => { restoreTarget(); process.exit(130); });
 async function main() {
   console.log(`[probe] target        : ${targetRelativePath}`);
   console.log(`[probe] pane state    : ${holdPane ? 'HIDDEN (held)' : 'showing'}`);
+  if (editFromRef) {
+    // Booted at the ref; the edit below writes the working tree's content back.
+    fs.writeFileSync(targetPath, sourceAtRef(editFromRef), 'utf-8');
+    console.log(`[probe] booting at    : ${editFromRef}`);
+  }
 
   // Mirror the inline worktree config scripts/dev.js runs
   // (scripts/worktree-vite-config.js) rather than vite.config.mts.
@@ -184,7 +224,7 @@ async function main() {
     root: projectRoot,
     cacheDir: path.join(projectRoot, '.kangentic', 'vite-cache-probe'),
     customLogger: capturingLogger,
-    plugins: [tailwindcss(), react()],
+    plugins: [tailwindcss(), react(), ...(hookSignatures ? refreshHookSignatures() : [])],
     resolve: {
       alias: { '@shared': '/src/shared', '@kangentic/protocol': '/packages/protocol/src' },
       preserveSymlinks: true,
@@ -318,16 +358,27 @@ async function main() {
   clientConsole.length = 0;
   serverLogLines.length = 0;
 
-  // The trigger: a comment-only edit. Nothing about the module's behavior changes.
-  fs.writeFileSync(
-    targetPath,
-    `${originalSource}\n// hmr-guest-probe touch ${Date.now()}\n`,
-    'utf-8',
-  );
-  console.log('[probe] edit written  : comment-only append');
+  if (editFromRef) {
+    // The trigger: the commit's own change, as the hot update it caused.
+    fs.writeFileSync(targetPath, originalSource, 'utf-8');
+    console.log(`[probe] edit written  : ${editFromRef} -> working tree`);
+  } else {
+    // The trigger: a comment-only edit. Nothing about the module's behavior changes.
+    fs.writeFileSync(
+      targetPath,
+      `${originalSource}\n// hmr-guest-probe touch ${Date.now()}\n`,
+      'utf-8',
+    );
+    console.log('[probe] edit written  : comment-only append');
+  }
 
   await new Promise((resolve) => setTimeout(resolve, settleMs));
   const after = await readState();
+  // The root ErrorBoundary's fallback: the whole tree unmounted under it.
+  const rootBoundary = await page.evaluate(() => {
+    const heading = [...document.querySelectorAll('h1')].find((element) => element.textContent === 'Something went wrong');
+    return heading ? (heading.nextElementSibling?.textContent ?? '') : null;
+  });
 
   const reloaded = after.sentinel !== 'alive' || navigations > navigationsBefore;
   const guestSurvived = after.guestWebContentsId === before.guestWebContentsId;
@@ -339,6 +390,7 @@ async function main() {
   console.log('');
   console.log('=== RESULT ===============================================');
   console.log(`page reloaded         : ${reloaded ? 'YES' : 'no'}`);
+  console.log(`root boundary caught  : ${rootBoundary === null ? 'no' : `YES (${rootBoundary})`}`);
   console.log(`guest survived        : ${guestSurvived ? 'YES' : 'NO'}  (${before.guestWebContentsId} -> ${after.guestWebContentsId ?? 'gone'})`);
   console.log(`held flag survived    : ${before.held ? (after.held ? 'YES' : 'NO') : 'n/a'}`);
   console.log(`pane unregisters      : ${after.unregisters - before.unregisters}`);

@@ -8,6 +8,8 @@ sources:
   - resource: scripts/build.js
   - resource: scripts/worktree-preview.js
   - resource: scripts/worktree-vite-config.js
+  - resource: scripts/vite-refresh-hook-signatures.mjs
+  - resource: vite.config.mts
   - resource: scripts/dogfood-launcher.ps1
   - resource: demo/vite.config.mts
   - resource: vitest.config.mts
@@ -194,6 +196,13 @@ Three parallel processes:
 1. **Vite dev server** -- serves renderer with HMR on port 5173 (5174+ in worktrees)
 2. **esbuild watch** -- bundles `src/main/index.ts` → `.vite/build/index.js`, `src/preload/preload.ts` → `.vite/build/preload.js`, and the five `utilityProcess` worker entries as their own bundles next to the main bundle: `src/main/pty/host/pty-host-entry.ts` (the pty host: every PTY and its output pipeline, plus main's one-shot child processes - see `.claude/rules/pty-host-out-of-process.md`), `src/main/retrieval/embedder/embed-worker.ts`, `src/main/retrieval/worker/retrieval-worker.ts` (every read and write of the Knowledge Graph index and the agent transcript parses - see `.claude/rules/retrieval-out-of-process.md`), `src/main/git/line-count/line-count-worker.ts`, and `src/main/transcription/dictation-worker.ts` (the dictation engine - see `.claude/rules/dictation-out-of-process.md`)
 3. **Electron** -- launched with `MAIN_WINDOW_VITE_DEV_SERVER_URL` pointing to Vite
+
+Every renderer dev server (`vite.config.mts`, the worktree config, the HMR probe) registers
+`scripts/vite-refresh-hook-signatures.mjs` beside `react()`, which gives a custom hook outside a
+component module its Fast Refresh signature. With it, an edit that changes a hook's hook list
+remounts the caller instead of crashing it, and so does renaming a hook's result variable. For a
+hook AppLayout calls, that remounts the whole window. `.claude/rules/hmr-patterns.md` has the
+mechanism and the cost.
 
 `dev.js` owns the Electron child and closes Vite when it exits, so the app never calls
 `app.relaunch()` under it. A restart the app asks for (changing Graphics acceleration) writes the

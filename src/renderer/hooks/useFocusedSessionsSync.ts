@@ -280,6 +280,10 @@ export function useFocusedSessionsSync(panelShowsTerminal: boolean): void {
     // which is exactly what the replay's queue reset exists to discard.
     syncFocusedTerminals(new Set(focusedIds));
     window.electronAPI.sessions.setFocused(focusedIds);
+    // No cleanup, on purpose. Fast Refresh re-runs every effect, empty deps
+    // included, so a cleanup that published an empty set would drop and
+    // restore every focused session on each dev save. The tree only unmounts
+    // under the root `ErrorBoundary`, which releases this renderer's focus.
   }, [
     activeView,
     terminalPanelVisible,
