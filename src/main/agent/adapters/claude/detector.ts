@@ -22,6 +22,8 @@ export class ClaudeDetector extends AgentDetector {
         ...standardUnixFallbackPaths('claude'),
       ],
       parseVersion: (raw) => raw.replace(/\s*\(Claude Code\)\s*$/i, '').trim() || null,
+      // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+      supportsWslCli: true,
     });
   }
 }

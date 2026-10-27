@@ -102,7 +102,8 @@ describe('pty-teardown-grace: every ~/.claude.json writer takes Claude\'s lock',
 
   it('the lock module takes the CLI\'s own lock directory, not just the in-process chain', () => {
     const source = fs.readFileSync(path.join(CLAUDE_ADAPTER_ROOT, 'claude-json-lock.ts'), 'utf-8');
-    expect(source).toContain("`${claudeJsonPath()}.lock`");
+    // The lock beside the file the CLI reads: this machine's, or a WSL distro's.
+    expect(source).toContain("`${claudeJsonPath(place)}.lock`");
     expect(source).toContain('fs.mkdirSync(lockPath)');
   });
 });

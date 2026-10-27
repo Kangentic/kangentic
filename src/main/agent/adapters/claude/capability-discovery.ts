@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
+import { execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
 import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
 import { buildModelCapabilityFields } from './model-display-name';
 import {
@@ -19,9 +20,14 @@ const HELP_TIMEOUT_MS = 5000;
 /**
  * Run `<cliPath> --help` and capture stdout. Mirrors `execVersion`'s Windows
  * vs Unix split: Windows .cmd shims need a shell, Unix can call the binary
- * directly.
+ * directly. A Claude installed in a WSL distro runs there.
  */
 async function readHelpText(cliPath: string): Promise<string> {
+  const target = await resolveCliTarget(cliPath, true);
+  if (target) {
+    const { stdout } = await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
+    return stdout;
+  }
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,

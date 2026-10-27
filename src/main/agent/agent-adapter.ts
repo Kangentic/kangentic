@@ -1,5 +1,5 @@
 import type { AnswerStreamEvent } from './shared/cli-answer';
-import type { CliTarget } from './shared/cli-target';
+import type { CliPlace, CliTarget } from './shared/cli-target';
 import type { BackgroundCommandSupport } from '../../shared/background-command-spec';
 import type {
   AgentCallUsage,
@@ -493,8 +493,13 @@ export interface AgentAdapter {
    * including the Command Terminal. Pinned by `tests/unit/spawn-entry-point-parity.test.ts`
    * (line order, every path) and `tests/unit/transient-session-spawn-ensure-trust.test.ts`
    * (the Command Terminal's runtime ordering, which a static scan cannot see).
+   *
+   * `place` is the spawn's CLI target when its CLI runs in a WSL distro (`CommandOptions.cliTarget`):
+   * that CLI keeps its trust in the distro's home, keyed by the directory as the distro sees it.
+   * Null or absent: this machine, as before. Only an adapter that declares `supportsWslCli` is ever
+   * given one.
    */
-  ensureTrust(workingDirectory: string): Promise<void>;
+  ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void>;
 
   /**
    * Probe whether the agent is authenticated/logged in. Returns null

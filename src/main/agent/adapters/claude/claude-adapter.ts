@@ -23,6 +23,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
+import type { CliPlace } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
@@ -306,6 +307,10 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
+  // A Claude installed in a WSL distro, configured by its \\wsl.localhost path:
+  // run in the distro's shell, its hooks through the WSL transport, its trust,
+  // settings and transcripts in the distro's home (cli-target.ts).
+  readonly supportsWslCli = true;
   // `--mcp-config` pointing at the session's own `mcp.json`.
   readonly kangenticMcp = 'per-session' as const;
   // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,
@@ -402,11 +407,12 @@ export class ClaudeAdapter implements AgentAdapter {
       : staticCapabilities;
   }
 
-  async ensureTrust(workingDirectory: string): Promise<void> {
+  async ensureTrust(workingDirectory: string, place?: CliPlace | null): Promise<void> {
     // One pass over ~/.claude.json: the directory trusted, the kangentic MCP
     // server enabled, and 2.1.260's fullscreen diff panel kept closed at
-    // launch (per spawn on purpose - see diff-panel.ts for why).
-    await ensureClaudeSpawnConfig(workingDirectory);
+    // launch (per spawn on purpose - see diff-panel.ts for why). A Claude in a
+    // WSL distro reads the distro's own file.
+    await ensureClaudeSpawnConfig(workingDirectory, place ?? null);
   }
 
   buildCommand(options: SpawnCommandOptions): string {

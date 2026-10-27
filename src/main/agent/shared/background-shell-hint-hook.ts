@@ -1,4 +1,4 @@
-import { quoteBridgePath, type HookShell } from './hook-utils';
+import { encodeHookSpec, quoteBridgePath, type HookShell } from './hook-utils';
 import type { BackgroundHintReplyValue } from '../../../shared/background-command-spec';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
 import type { BackgroundLaunchDirective } from './directive-builders';
@@ -69,6 +69,5 @@ export function buildBackgroundShellHintCommand(
   bridgePath: string,
   spec: BackgroundShellHintSpec | BackgroundShellHintSpecV2,
 ): string {
-  const encodedSpec = Buffer.from(JSON.stringify(spec), 'utf8').toString('base64');
-  return `node ${quoteBridgePath(bridgePath, windowsShell)} ${encodedSpec}`;
+  return `node ${quoteBridgePath(bridgePath, windowsShell)} ${encodeHookSpec(spec)}`;
 }

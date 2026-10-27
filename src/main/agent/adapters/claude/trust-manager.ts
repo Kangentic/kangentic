@@ -1,6 +1,7 @@
 import { promises as fsPromises } from 'node:fs';
 import * as path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
 import { claudeJsonPath, isClaudeJsonLockError, withClaudeJsonLock } from './claude-json-lock';
 import { applyDiffPanelClosed } from './diff-panel';
 
@@ -14,11 +15,21 @@ export { withClaudeJsonLock };
 const LOG_TAG = '[CLAUDE_TRUST]';
 
 /**
+ * The key ~/.claude.json files a directory under: the path as the CLI sees its
+ * working directory. Forward slashes on this machine, and the distro's view
+ * (`/mnt/c/...`) for a Claude installed in a WSL distro.
+ */
+function trustKey(directory: string, place: CliPlace | null): string {
+  const resolved = path.resolve(directory);
+  return place ? cliPathForTarget(resolved, place) : toForwardSlash(resolved);
+}
+
+/**
  * Mark a worktree trusted in a parsed ~/.claude.json, copying MCP server
  * approvals from its parent project entry. True when it changed anything.
  */
-function applyWorktreeTrust(data: Record<string, unknown>, worktreePath: string): boolean {
-  const resolvedPath = toForwardSlash(path.resolve(worktreePath));
+function applyWorktreeTrust(data: Record<string, unknown>, worktreePath: string, place: CliPlace | null = null): boolean {
+  const resolvedPath = trustKey(worktreePath, place);
   if (!data.projects || typeof data.projects !== 'object') {
     data.projects = {};
   }
@@ -53,8 +64,8 @@ function applyWorktreeTrust(data: Record<string, unknown>, worktreePath: string)
 
 /** List the "kangentic" MCP server as enabled for a project in a parsed
  *  ~/.claude.json. True when it changed anything. */
-function applyMcpServerTrust(data: Record<string, unknown>, projectPath: string): boolean {
-  const resolvedPath = toForwardSlash(path.resolve(projectPath));
+function applyMcpServerTrust(data: Record<string, unknown>, projectPath: string, place: CliPlace | null = null): boolean {
+  const resolvedPath = trustKey(projectPath, place);
   if (!data.projects || typeof data.projects !== 'object') {
     data.projects = {};
   }
@@ -175,14 +186,18 @@ async function removeKeptCopies(targetPath: string): Promise<void> {
  * on a final ELOCKED): the session then shows one trust prompt, which costs
  * less than a write that could resurrect a withdrawn boot-canary record.
  */
-async function updateClaudeJson(purpose: string, apply: (data: Record<string, unknown>) => boolean): Promise<void> {
+async function updateClaudeJson(
+  purpose: string,
+  apply: (data: Record<string, unknown>) => boolean,
+  place: CliPlace | null = null,
+): Promise<void> {
   try {
     await withClaudeJsonLock(async () => {
-      const filePath = claudeJsonPath();
+      const filePath = claudeJsonPath(place);
       const data = await readClaudeJsonForWrite(filePath);
       if (!data || !apply(data)) return;
       await writeClaudeJson(filePath, data);
-    });
+    }, place);
   } catch (error) {
     if (!isClaudeJsonLockError(error)) throw error;
     console.warn(`${LOG_TAG} Skipping the ${purpose} write; ${error.message}`);
@@ -197,10 +212,11 @@ async function updateClaudeJson(purpose: string, apply: (data: Record<string, un
  * `projects[<resolved-path>].hasTrustDialogAccepted`.
  *
  * A spawn goes through `ensureClaudeSpawnConfig` instead, which does this and
- * the other per-spawn changes in one pass.
+ * the other per-spawn changes in one pass. `place` names a WSL distro's Claude,
+ * whose own ~/.claude.json holds its trust.
  */
-export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
-  await updateClaudeJson('worktree trust', (data) => applyWorktreeTrust(data, worktreePath));
+export async function ensureWorktreeTrust(worktreePath: string, place: CliPlace | null = null): Promise<void> {
+  await updateClaudeJson('worktree trust', (data) => applyWorktreeTrust(data, worktreePath, place), place);
 }
 
 /**
@@ -223,17 +239,20 @@ export async function ensureMcpServerTrust(projectPath: string): Promise<void> {
  *
  * A file that exists but does not parse as a JSON object is left untouched,
  * as it is by the two single-purpose writers above.
+ *
+ * For a Claude installed in a WSL distro (`place`), the distro's own file,
+ * keyed by the directory as the distro sees it.
  */
-export async function ensureClaudeSpawnConfig(workingDirectory: string): Promise<void> {
+export async function ensureClaudeSpawnConfig(workingDirectory: string, place: CliPlace | null = null): Promise<void> {
   await updateClaudeJson('spawn config', (data) => {
     // Every change applied, then one write if any changed.
     const changes = [
-      applyWorktreeTrust(data, workingDirectory),
-      applyMcpServerTrust(data, workingDirectory),
+      applyWorktreeTrust(data, workingDirectory, place),
+      applyMcpServerTrust(data, workingDirectory, place),
       applyDiffPanelClosed(data),
     ];
     return changes.some(Boolean);
-  });
+  }, place);
 }
 
 /** How Windows refuses to replace a file another process holds open: a

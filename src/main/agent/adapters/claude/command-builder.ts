@@ -8,11 +8,23 @@ import { toClaudeModelArgument } from './model-display-name';
 import { peekModelPickerAliasIds } from './model-picker-probe';
 import { buildHooks, CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, CLAUDE_PLAN_APPROVAL_SPEC } from './hook-manager';
 import type { ClaudeHookEntry } from './hook-manager';
-import { buildPlanApprovalCommand, planApprovalDecisionPath } from '../../shared/plan-approval-hook';
+import {
+  buildPlanApprovalCommand,
+  planApprovalDecisionPath,
+  type PlanApprovalHookSpec,
+  type PlanToolApprovalHookSpec,
+} from '../../shared/plan-approval-hook';
 import { claudePlanToolApprovalSpec, planToolApprovalRules } from './plan-tool-approval';
 import { buildBackgroundShellHintCommand } from '../../shared/background-shell-hint-hook';
 import { offersMarkBackgroundService, shippedHintBridgePath } from '../../shared/background-command-hooks';
-import { quoteBridgePath } from '../../shared/hook-utils';
+import { encodeHookSpec, quoteBridgePath } from '../../shared/hook-utils';
+import { cliPathForTarget, type CliPlace } from '../../shared/cli-target';
+import {
+  prepareWslHookTransport,
+  wslHookEventCommand,
+  wslHookReplyCommand,
+  wslStatusLineCommand,
+} from '../../shared/wsl-hook-transport';
 import type { CommandOptions } from '../../agent-adapter';
 
 /**
@@ -159,11 +171,14 @@ export class CommandBuilder {
   /**
    * The user's own `~/.claude/settings.json`, or an empty object when it is
    * missing, unreadable or not a JSON object. Read fresh each spawn (small
-   * file, infrequent), so a change to it is honored on the next session.
+   * file, infrequent), so a change to it is honored on the next session. For a
+   * Claude installed in a WSL distro (`place`), the distro home's file, which
+   * is the one that Claude reads.
    */
-  private readUserSettings(): ClaudeSettings {
+  private readUserSettings(place: CliPlace | null = null): ClaudeSettings {
+    const home = place ? place.facts.homeUnc : os.homedir();
     try {
-      const parsed: unknown = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.claude', 'settings.json'), 'utf-8'));
+      const parsed: unknown = JSON.parse(fs.readFileSync(path.join(home, '.claude', 'settings.json'), 'utf-8'));
       return isPlainSettingsObject(parsed) ? parsed : {};
     } catch {
       return {};
@@ -176,10 +191,10 @@ export class CommandBuilder {
    * setting), or null when they have not chosen, so a `/tui` change is honored
    * on the next session.
    */
-  private globalTuiChoice(): unknown {
+  private globalTuiChoice(place: CliPlace | null = null): unknown {
     // Treat `tui: null` (a reset sentinel, or a hand-edited file) the same as an
     // absent key: null is not a renderer choice.
-    return this.readUserSettings().tui ?? null;
+    return this.readUserSettings(place).tui ?? null;
   }
 
   /**
@@ -209,9 +224,11 @@ export class CommandBuilder {
    * The variable outranks the setting, a `tui: "default"` included (measured
    * on 2.1.303), which is why it is set only when no other renderer was chosen.
    */
-  fullscreenByDefault(options: Pick<CommandOptions, 'cwd' | 'projectRoot'>): boolean {
+  fullscreenByDefault(options: Pick<CommandOptions, 'cwd' | 'projectRoot' | 'cliTarget'>): boolean {
     const projectChoice = this.readBaseSettings(options.projectRoot || options.cwd).tui;
-    const choice = projectChoice === undefined || projectChoice === null ? this.globalTuiChoice() : projectChoice;
+    const choice = projectChoice === undefined || projectChoice === null
+      ? this.globalTuiChoice(options.cliTarget ?? null)
+      : projectChoice;
     return choice === null || choice === 'fullscreen';
   }
 
@@ -229,12 +246,17 @@ export class CommandBuilder {
    * (`CLAUDECODE` set, a dev build started from an agent's tool shell): those
    * values are the parent session's, and every Kangentic Claude session
    * carries `CLAUDE_CODE_NO_FLICKER=1`. Otherwise the default above applies.
+   *
+   * A Claude installed in a WSL distro takes neither variable from this
+   * machine's environment, which is not the one it runs in: a user who sets
+   * one in the distro's shell profile overrides what crosses here, since the
+   * profile runs after `WSLENV` sets it.
    */
   rendererEnvironment(
-    options: Pick<CommandOptions, 'cwd' | 'projectRoot'>,
+    options: Pick<CommandOptions, 'cwd' | 'projectRoot' | 'cliTarget'>,
     environment: NodeJS.ProcessEnv = process.env,
   ): Record<string, string> | null {
-    if (environment.CLAUDECODE === undefined) {
+    if (!options.cliTarget && environment.CLAUDECODE === undefined) {
       const usersOwn: Record<string, string> = {};
       for (const key of ['CLAUDE_CODE_NO_FLICKER', 'CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN']) {
         const value = environment[key];
@@ -247,7 +269,10 @@ export class CommandBuilder {
 
   buildClaudeCommand(options: CommandOptions): string {
     const { shell } = options;
-    const parts = [quoteArg(options.cliPath, shell)];
+    // A Claude installed in a WSL distro runs in that distro's shell, by the
+    // path the distro sees, and every file it is handed is named that way too.
+    const place = options.cliTarget ?? null;
+    const parts = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.cliPath, shell)];
 
     // Build the --settings path. When statusOutputPath is provided we always
     // create a merged settings file that includes the statusLine config so
@@ -285,7 +310,7 @@ export class CommandBuilder {
     // --settings flag: all sessions (main repo and worktree) use a merged
     // settings file in the session directory
     if (mergedSettingsPath) {
-      parts.push('--settings', quoteArg(toForwardSlash(mergedSettingsPath), shell));
+      parts.push('--settings', quoteArg(cliPathForTarget(mergedSettingsPath, place), shell));
     }
 
     // --mcp-config: deliver kangentic MCP server without modifying .mcp.json.
@@ -293,7 +318,7 @@ export class CommandBuilder {
     // We do NOT use --strict-mcp-config because that would block the user's own
     // servers (e.g. context7) configured in .mcp.json.
     if (this.lastMcpConfigPath) {
-      parts.push('--mcp-config', quoteArg(toForwardSlash(this.lastMcpConfigPath), shell));
+      parts.push('--mcp-config', quoteArg(cliPathForTarget(this.lastMcpConfigPath, place), shell));
       this.lastMcpConfigPath = null;
     }
 
@@ -315,7 +340,7 @@ export class CommandBuilder {
     // agent's other projects). One flag per directory: `--add-dir` takes a list,
     // and the prompt, which would otherwise join it, comes after `--` below.
     for (const directory of options.readableDirectories ?? []) {
-      parts.push('--add-dir', quoteArg(directory, shell));
+      parts.push('--add-dir', quoteArg(place ? cliPathForTarget(directory, place) : directory, shell));
     }
 
     // Session: --resume for existing conversations, --session-id for new ones
@@ -453,17 +478,43 @@ export class CommandBuilder {
       }
     }
 
-    // Resolve bridge scripts. In production, bridge scripts are copied next
-    // to the main bundle by scripts/build.js. In dev (esbuild watch),
-    // __dirname is .vite/build/ so we fall back to the source tree.
-    const statusBridge = toForwardSlash(resolveBridgeScript('status-bridge'));
-    const statusPath = toForwardSlash(options.statusOutputPath!);
+    // Session directory (used for the merged Claude settings file).
+    // Derived from statusOutputPath which is required by every spawn path
+    // (transition-engine, session-startup, transient-sessions), so the
+    // `!` is safe.
+    const sessionDir = path.dirname(options.statusOutputPath!);
+
+    try {
+      fs.mkdirSync(sessionDir, { recursive: true });
+    } catch (err) {
+      console.error(`[spawn_agent] Failed to create session directory: ${sessionDir}`, err);
+      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
+    }
+
+    // A Claude installed in a WSL distro runs its status line and hooks in the
+    // distro, which may have no node: they publish files through the session's
+    // hook transport instead, and Kangentic does the bridges' work on them
+    // (wsl-hook-transport.ts). The same events, directives and specs either way.
+    const place = options.cliTarget ?? null;
+    const wslHooks = place ? prepareWslHookTransport(sessionDir) : null;
+
+    let statusLineCommand: string;
+    if (wslHooks && place) {
+      statusLineCommand = wslStatusLineCommand(wslHooks, place, options.statusOutputPath!);
+    } else {
+      // Resolve bridge scripts. In production, bridge scripts are copied next
+      // to the main bundle by scripts/build.js. In dev (esbuild watch),
+      // __dirname is .vite/build/ so we fall back to the source tree.
+      const statusBridge = toForwardSlash(resolveBridgeScript('status-bridge'));
+      const statusPath = toForwardSlash(options.statusOutputPath!);
+      statusLineCommand = `node ${quoteBridgePath(statusBridge, CLAUDE_BRIDGE_SHELL)} ${quoteBridgePath(statusPath, CLAUDE_BRIDGE_SHELL)}`;
+    }
 
     const merged: ClaudeSettings = {
       ...baseSettings,
       statusLine: {
         type: 'command',
-        command: `node ${quoteBridgePath(statusBridge, CLAUDE_BRIDGE_SHELL)} ${quoteBridgePath(statusPath, CLAUDE_BRIDGE_SHELL)}`,
+        command: statusLineCommand,
         refreshInterval: STATUS_LINE_REFRESH_INTERVAL_SECONDS,
       },
     };
@@ -477,30 +528,35 @@ export class CommandBuilder {
       // to Automatic while this session plans is honored with no hook reload.
       // Without a decision file it answers nothing and the dialog shows.
       const planApprovalBridge = toForwardSlash(resolveBridgeScript('plan-approval-bridge'));
-      const decisionPath = toForwardSlash(planApprovalDecisionPath(path.dirname(options.statusOutputPath!)));
-      const planApprovalCommand = buildPlanApprovalCommand(
-        CLAUDE_BRIDGE_SHELL, planApprovalBridge, decisionPath, eventsPath, CLAUDE_PLAN_APPROVAL_SPEC,
-      );
+      const decisionPath = toForwardSlash(planApprovalDecisionPath(sessionDir));
+      const planApprovalHook = (spec: PlanApprovalHookSpec | PlanToolApprovalHookSpec): string => (wslHooks && place
+        ? wslHookReplyCommand(wslHooks, place, 'plan-approval', encodeHookSpec(spec))
+        : buildPlanApprovalCommand(CLAUDE_BRIDGE_SHELL, planApprovalBridge, decisionPath, eventsPath, spec));
+      const planApprovalCommand = planApprovalHook(CLAUDE_PLAN_APPROVAL_SPEC);
       // The same bridge, and the same decision file, on a prompt for an MCP
       // tool the user's allow rules name, which plan mode asks about anyway
       // (plan-tool-approval.ts). Registered only when a rule names one.
-      const toolApprovalRules = planToolApprovalRules([baseSettings.permissions, this.readUserSettings().permissions]);
+      const toolApprovalRules = planToolApprovalRules([baseSettings.permissions, this.readUserSettings(place).permissions]);
       const planToolApprovalCommand = toolApprovalRules
-        ? buildPlanApprovalCommand(
-          CLAUDE_BRIDGE_SHELL, planApprovalBridge, decisionPath, eventsPath, claudePlanToolApprovalSpec(toolApprovalRules),
-        )
+        ? planApprovalHook(claudePlanToolApprovalSpec(toolApprovalRules))
         : undefined;
       // The hint names kangentic_mark_background_service, which the MCP server
       // offers only to a connection that names a task session, so a session
       // without one (a Command Terminal, MCP turned off) gets no hint.
-      const backgroundShellHintCommand = offersMarkBackgroundService(options)
-        ? buildBackgroundShellHintCommand(CLAUDE_BRIDGE_SHELL, shippedHintBridgePath(), CLAUDE_BACKGROUND_SHELL_HINT_SPEC)
-        : undefined;
+      let backgroundShellHintCommand: string | undefined;
+      if (offersMarkBackgroundService(options)) {
+        backgroundShellHintCommand = wslHooks && place
+          ? wslHookReplyCommand(wslHooks, place, 'background-shell-hint', encodeHookSpec(CLAUDE_BACKGROUND_SHELL_HINT_SPEC))
+          : buildBackgroundShellHintCommand(CLAUDE_BRIDGE_SHELL, shippedHintBridgePath(), CLAUDE_BACKGROUND_SHELL_HINT_SPEC);
+      }
       merged.hooks = buildHooks(eventBridge, eventsPath, baseSettings.hooks || {}, {
         capturePromptText: options.capturePromptText === true,
         planApprovalCommand,
         planToolApprovalCommand,
         backgroundShellHintCommand,
+        ...(wslHooks && place
+          ? { eventCommand: (eventType: string, ...directives: string[]) => wslHookEventCommand(wslHooks, place, eventType, ...directives) }
+          : {}),
       });
     }
 
@@ -509,19 +565,6 @@ export class CommandBuilder {
     // Claude's boot health check, which counts every Kangentic session that dies
     // young against the renderer. A `tui` the project's own settings carry
     // passes through untouched, as before.
-
-    // Session directory (used for the merged Claude settings file).
-    // Derived from statusOutputPath which is required by every spawn path
-    // (transition-engine, session-startup, transient-sessions), so the
-    // `!` is safe.
-    const sessionDir = path.dirname(options.statusOutputPath!);
-
-    try {
-      fs.mkdirSync(sessionDir, { recursive: true });
-    } catch (err) {
-      console.error(`[spawn_agent] Failed to create session directory: ${sessionDir}`, err);
-      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
-    }
 
     // Write the per-session MCP config pointing at the in-process HTTP
     // MCP server hosted by Kangentic main. The URL contains the project

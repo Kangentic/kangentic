@@ -83,6 +83,12 @@ export interface BuildHooksOptions {
    * it as the caller, since the hint points at a tool only such a session has.
    */
   backgroundShellHintCommand?: string;
+  /**
+   * Builds each event hook's command in place of `node <event-bridge>`: for a
+   * Claude installed in a WSL distro, the transport's `wslHookEventCommand`,
+   * with the same event types and directives. Absent: the node bridge, as before.
+   */
+  eventCommand?: (eventType: string, ...directives: string[]) => string;
 }
 
 /**
@@ -157,8 +163,9 @@ export function buildHooks(
 ): Record<string, ClaudeHookEntry[]> {
   const H = ClaudeHookEvent;
   const E = EventType;
-  const bridge = (eventType: string, ...directives: string[]): string =>
-    buildBridgeCommand(CLAUDE_BRIDGE_SHELL, eventBridge, eventsPath, eventType, ...directives);
+  const bridge = options.eventCommand
+    ?? ((eventType: string, ...directives: string[]): string =>
+      buildBridgeCommand(CLAUDE_BRIDGE_SHELL, eventBridge, eventsPath, eventType, ...directives));
   // The session's mode at each prompt and turn end, so a turn-end automation
   // can tell a turn that began after the plan was left (SessionEvent.planMode).
   // Never a subagent's: a subagent can run in its own mode while the session

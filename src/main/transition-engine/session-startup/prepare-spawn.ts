@@ -208,7 +208,7 @@ export async function prepareAgentSpawn(input: {
   const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
   const shell = shellForTarget(cliTarget) ?? input.resolvedShell;
 
-  await adapter.ensureTrust(cwd);
+  await adapter.ensureTrust(cwd, cliTarget);
 
   // "Plan always wins, else task -> lane -> global" - the rule lives in
   // resolveEffectivePermissionMode (spawn-preamble.ts).

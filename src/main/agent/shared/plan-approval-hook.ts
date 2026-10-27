@@ -1,6 +1,6 @@
 import path from 'node:path';
 import type { PermissionMode } from '../../../shared/types';
-import { quoteBridgePath, type HookShell } from './hook-utils';
+import { encodeHookSpec, quoteBridgePath, type HookShell } from './hook-utils';
 
 /**
  * The contract between main, which decides whether a session's next plan is
@@ -96,9 +96,6 @@ export function buildPlanApprovalCommand(
   eventsPath: string,
   spec: PlanApprovalHookSpec | PlanToolApprovalHookSpec,
 ): string {
-  // Base64 keeps the spec one shell token whatever it holds, as the event
-  // bridge's directives do (directive-builders.ts).
-  const encodedSpec = Buffer.from(JSON.stringify(spec), 'utf8').toString('base64');
   const quote = (filePath: string): string => quoteBridgePath(filePath, windowsShell);
-  return `node ${quote(bridgePath)} ${quote(decisionPath)} ${quote(eventsPath)} ${encodedSpec}`;
+  return `node ${quote(bridgePath)} ${quote(decisionPath)} ${quote(eventsPath)} ${encodeHookSpec(spec)}`;
 }

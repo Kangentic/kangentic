@@ -643,7 +643,7 @@ async function startWorkflowAgent(
   // with the same limits: 32,767 characters for a process, 8,191 under a
   // cmd.exe shell (the shim resolver moves PowerShell and Git Bash off a
   // `.cmd` shim, which cmd.exe would otherwise run).
-  await adapter.ensureTrust(projectRoot);
+  await adapter.ensureTrust(projectRoot, cliTarget);
   const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
   // The chosen model and effort belong to the chosen agent (a model id means
   // nothing to another CLI), so a conversation kept on another agent runs at its

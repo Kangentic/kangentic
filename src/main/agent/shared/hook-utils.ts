@@ -195,6 +195,16 @@ export function quoteBridgePath(
 }
 
 /**
+ * A hook spec as one shell token: base64 of its JSON, whatever it holds, as
+ * the event bridge's directives are (`directive-builders.ts`). The plan
+ * approval and background shell hint commands carry it, on this machine and
+ * through the WSL transport alike.
+ */
+export function encodeHookSpec(spec: unknown): string {
+  return Buffer.from(JSON.stringify(spec), 'utf8').toString('base64');
+}
+
+/**
  * Build a `node <bridge> <events> <eventType> [directives...]` command string.
  * Used by all hook-managers when wiring bridge entries.
  */
