@@ -21,6 +21,11 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
+import { openCodeKangenticMcpEntry } from './command-builder';
+import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession } from './distro-sessions';
+import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
+import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
+import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
   AgentAdapter,
   AgentInfo,
@@ -144,6 +149,8 @@ export class OpenCodeAdapter implements AgentAdapter {
     { mode: 'acceptEdits', label: 'Build' },
   ];
   readonly defaultPermission: PermissionMode = 'acceptEdits';
+  /** An OpenCode installed in a WSL distro runs there (#286). */
+  readonly supportsWslCli = true;
   // OpenCode's TUI scans a bracketed paste for image paths and attaches a
   // match as an `[Image N]` chip, quoted or not, spaces in the path included.
   // Verified against 1.18.30 with png, jpg and gif; a bmp arrives as
@@ -208,7 +215,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     // ~/.local/share/opencode/auth.json.
   }
 
-  async probeAuth(_cliPath: string): Promise<boolean | null> {
+  async probeAuth(cliPath: string): Promise<boolean | null> {
     // `opencode auth login` writes provider credentials to
     // ~/.local/share/opencode/auth.json on every platform (the OpenCode
     // troubleshooting docs spell out the same `.local/share/opencode/`
@@ -222,8 +229,17 @@ export class OpenCodeAdapter implements AgentAdapter {
     // The human-facing read of the same file is `opencode auth list`
     // (alias `opencode auth ls`); see tests/fixtures/opencode-auth.json
     // for the documented shape used in the regression test.
+    //
+    // An OpenCode installed in a WSL distro signs in there: its file is under
+    // the distro's own `XDG_DATA_HOME`, else the distro's `~/.local/share`.
+    const place = await resolveCliTarget(cliPath, true).catch(() => undefined);
+    if (place === undefined) return null;
     try {
-      const authPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
+      const distroDataHome = place?.facts.env.XDG_DATA_HOME?.trim();
+      const dataHome = !place
+        ? path.join(os.homedir(), '.local', 'share')
+        : distroDataHome?.startsWith('/') ? hostPathForTarget(distroDataHome, place) : path.join(place.facts.homeUnc, '.local', 'share');
+      const authPath = path.join(dataHome, 'opencode', 'auth.json');
       const raw = fs.readFileSync(authPath, 'utf8');
       const parsed = JSON.parse(raw) as unknown;
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
@@ -354,14 +370,21 @@ export class OpenCodeAdapter implements AgentAdapter {
 
         return null;
       },
-      fromFilesystem: (options: { spawnedAt: Date; cwd: string }) => {
+      fromFilesystem: (options) => {
         // The local SQLite DB lives on the Kangentic host; a remote spawn's
         // session row lives on the server instead, so this poll would only
         // ever time out. Skip it - fromOutput (the PTY scan above) is the
         // sole capture path for remote sessions.
         if (this.remoteTargetsByCwd.has(options.cwd)) return Promise.resolve(null);
+        // A distro OpenCode's row is in the distro's database, which its own
+        // `session list` reads (distro-sessions.ts).
+        if (options.cliTarget) {
+          const target = targetOfPlace(placeFromStored(options.cliTarget));
+          return target ? captureDistroOpenCodeSessionId({ spawnedAt: options.spawnedAt, cwd: options.cwd, target }) : Promise.resolve(null);
+        }
         return OpenCodeSessionHistoryParser.captureSessionIdFromFilesystem({
-          ...options,
+          spawnedAt: options.spawnedAt,
+          cwd: options.cwd,
           getAgentVersion: () => this.detector.getCachedVersion(),
         });
       },
@@ -446,21 +469,34 @@ export class OpenCodeAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string): Promise<string | null> {
+  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
     // Cross-agent handoff degrades for a remote session: there is no local
     // history file to hand off. The PTY-scrollback cleanup path
-    // (handoff/transcript-cleanup.ts) is the fallback for these sessions.
-    if (this.remoteTargetsByCwd.has(cwd)) return null;
+    // (handoff/transcript-cleanup.ts) is the fallback for these sessions. A
+    // distro session's database is the distro's, read only by its own CLI.
+    if (this.remoteTargetsByCwd.has(cwd) || place) return null;
     return OpenCodeSessionHistoryParser.locate({ agentSessionId, cwd });
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string): Promise<ParsedTranscript> {
+  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
     const target = this.remoteTargetsByCwd.get(cwd);
     if (target) {
       const messages = await fetchOpenCodeSessionMessages(target, agentSessionId);
       return {
         entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),
         sourcePath: `${target.url}/session/${agentSessionId}/message`,
+      };
+    }
+    // A distro session is exported by the distro's own CLI, which gives the
+    // same entries the server's message API does. A row from before the CLI's
+    // path was kept has nothing to run, and reads as no transcript yet.
+    if (place) {
+      const distroTarget = targetOfPlace(place);
+      if (!distroTarget) return { entries: [], sourcePath: null };
+      const messages = await exportDistroOpenCodeSession(distroTarget, agentSessionId, cwd).catch(() => []);
+      return {
+        entries: capOpenCodeRemoteEntries(mapOpenCodeRemoteEntries(messages)),
+        sourcePath: `${distroTarget.linuxCliPath} export ${agentSessionId} (WSL: ${place.distro})`,
       };
     }
     const { entries, totalPosition } = await parseOpenCodeTranscript(agentSessionId);
@@ -472,8 +508,9 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   /** One page of a local session's history for the Conversation viewer; a remote one does not page. */
-  async readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest): Promise<TranscriptPageReadResult> {
-    if (this.remoteTargetsByCwd.has(cwd)) return { status: 'unavailable', reason: 'unsupported_agent' };
+  async readTranscriptPage(agentSessionId: string, cwd: string, request: TranscriptPageReadRequest, place?: CliPlace | null): Promise<TranscriptPageReadResult> {
+    // An export is the whole session, so a distro one does not page either.
+    if (this.remoteTargetsByCwd.has(cwd) || place) return { status: 'unavailable', reason: 'unsupported_agent' };
     return readOpenCodeTranscriptPage(openCodeTranscriptSourcePath(), agentSessionId, request);
   }
 
@@ -539,10 +576,24 @@ export class OpenCodeAdapter implements AgentAdapter {
   ): Promise<string> {
     const retrieval = options?.retrieval;
     const onEvent = options?.onEvent;
+    // An OpenCode installed in a WSL distro answers there, and its session is
+    // deleted there. Only a WSL path waits for its distro's facts: any other
+    // starts its run in this tick, as before.
+    const cliTarget = parseWslCliPath(cliPath) ? await resolveCliTarget(cliPath, true) : null;
+    // Its search bridge writes into the run's directory, which must be the
+    // run's own: in the shared answer home two runs would share one relay folder.
+    if (retrieval && cliTarget && !options?.runDirectory) {
+      return withAnswerRunDirectory((runDirectory) => this.answerFromContext(prompt, cliPath, cwd, model, { ...options, runDirectory }));
+    }
+    const server = retrieval
+      ? kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: options?.runDirectory ?? cwd })
+      : null;
+    const stopRelay = startRunMcpRelay(options?.runDirectory ?? cwd, server);
     let sessionId: string | null = null;
     try {
       return await runCliPrintAnswer({
         cliPath,
+        cliTarget,
         // The model flag is OMITTED when none is chosen: passing an
         // empty value is an error.
         args: ['run', '--agent', 'plan', '--format', 'json', '--pure', ...(model ? ['--model', model] : [])],
@@ -554,17 +605,12 @@ export class OpenCodeAdapter implements AgentAdapter {
           sessionId ??= openCodeSessionId(line);
           if (onEvent) for (const event of openCodeAnswerEvents(line)) onEvent(event);
         }),
-        ...(retrieval
-          ? {
-            env: {
-              OPENCODE_CONFIG_CONTENT: JSON.stringify({
-                mcp: { kangentic: { type: 'remote', url: retrieval.url, headers: { 'X-Kangentic-Token': retrieval.token }, enabled: true } },
-              }),
-            },
-          }
+        ...(server
+          ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { kangentic: openCodeKangenticMcpEntry(server) } }) } }
           : {}),
       });
     } finally {
+      stopRelay();
       // After the answer, not before it: the delete is its own process, and
       // the reader is not kept waiting on it. The id is read from the CLI's
       // output, so it goes on the command line only in the shape an id has.
@@ -572,7 +618,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       // chat's run, so the chat ending right after the answer cannot stop it.
       if (sessionId && /^[\w-]+$/.test(sessionId)) {
         const deleteArgs = ['session', 'delete', sessionId];
-        const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd));
+        const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd, undefined, cliTarget));
         deletion.on('error', () => undefined);
         // A delete that exits at once (the session already gone) can close the
         // pipe under the `end` below, as `runResolvedCliPrint` guards its own.

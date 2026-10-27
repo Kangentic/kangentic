@@ -11,6 +11,7 @@
  */
 
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
+import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import type { AgentCapabilities } from '../../../../shared/types';
 
@@ -19,9 +20,11 @@ const HELP_TIMEOUT_MS = 5000;
 
 /**
  * Run `<cliPath> --help` and capture stdout.
- * On Windows, use shell invocation; on Unix, use direct execFile.
+ * On Windows, use shell invocation; on Unix, use direct execFile. An OpenCode
+ * installed in a WSL distro (`target`) runs there, through `wsl.exe`.
  */
-async function readHelpText(cliPath: string): Promise<string> {
+async function readHelpText(cliPath: string, target: CliTarget | null): Promise<string> {
+  if (target) return (await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 })).stdout;
   if (process.platform === 'win32') {
     const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
       timeout: HELP_TIMEOUT_MS,
@@ -47,7 +50,7 @@ export async function discoverOpenCodeCapabilities(cliPath: string): Promise<Age
   // Best-effort: try to detect --model flag, but default to false
   let supportsModelOverride = false;
   try {
-    const helpText = await readHelpText(cliPath);
+    const helpText = await readHelpText(cliPath, await resolveCliTarget(cliPath, true));
     supportsModelOverride = /--model\s+<|--model\s+[A-Za-z]|-m\s+<|-m\s+[A-Za-z]/.test(helpText);
   } catch {
     // Help parsing failure - default to false

@@ -21,6 +21,7 @@ export class OpenCodeDetector extends AgentDetector {
         const trimmed = raw.replace(/^opencode\s+/i, '').trim();
         return trimmed.length > 0 ? trimmed : null;
       },
+      supportsWslCli: true,
     });
   }
 }
