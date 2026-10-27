@@ -118,6 +118,36 @@ describe('spawnCli with a pty host registered', () => {
     expect(calls[0].options.detached).toBe(false);
   });
 
+  // Red-green: spawning `cliPath` despite a target fails the command; passing
+  // the caller's env without the WSLENV listing fails the env assertions.
+  it('runs a CLI installed in a WSL distro through wsl.exe, its variables carried by WSLENV', () => {
+    const calls: Array<{ command: string; args: string[]; options: OffMainCliOptions }> = [];
+    setOffMainCliSpawner((command, args, options) => {
+      calls.push({ command, args, options });
+      return fakeRemoteChild();
+    });
+    const target = {
+      kind: 'wsl' as const,
+      distro: 'Ubuntu',
+      linuxCliPath: '/home/dev/.local/bin/claude',
+      facts: {
+        distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/home/dev/.local/bin:/usr/bin', env: {},
+        networkingMode: 'nat' as const,
+      },
+    };
+
+    spawnCli('\\\\wsl.localhost\\Ubuntu\\home\\dev\\.local\\bin\\claude', ['-p', '--json'], '/work/tree', { KANGENTIC_MCP_TOKEN: 'token' }, target);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0].command.toLowerCase().endsWith('wsl.exe')).toBe(true);
+    expect(calls[0].args).toEqual(['-d', 'Ubuntu', '-e', 'env', 'PATH=/home/dev/.local/bin:/usr/bin', '/home/dev/.local/bin/claude', '-p', '--json']);
+    expect(calls[0].options.shell).toBe(false);
+    expect(calls[0].options.cwd).toBe('/work/tree');
+    expect(calls[0].options.env.KANGENTIC_MCP_TOKEN).toBe('token');
+    expect(calls[0].options.env.WSLENV?.split(':')).toContain('KANGENTIC_MCP_TOKEN/u');
+  });
+
   it('stops a host run through the host, and the quit path reaches it', () => {
     const remote = fakeRemoteChild();
     setOffMainCliSpawner(() => remote);

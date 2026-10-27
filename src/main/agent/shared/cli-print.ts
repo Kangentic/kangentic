@@ -7,6 +7,7 @@ import { spawnOffMainCli, type CliChildProcess } from '../../utility-process/off
 import { childProcessEnv } from '../../shared/child-env';
 import { childHasExited, killChildTreeByPid, stopChildTree } from '../../shared/child-tree-stop';
 import { escapePercentForCmd, quoteCmdExecutable } from '../../../shared/shell-quote';
+import { cliInvocationForTarget, cliPathForTarget, type CliTarget } from './cli-target';
 
 /**
  * One headless run of an agent CLI: prompt in, output out, no PTY and no
@@ -70,6 +71,14 @@ export interface RunCliPrintOptions {
    * returned whole at the end so nothing structural is parsed off a partial.
    */
   onChunk?: (chunk: string) => void;
+  /**
+   * Where the CLI runs when it is not this machine (a WSL distro), resolved by
+   * the adapter (`resolveCliTarget`). The run goes through `wsl.exe`, and the
+   * prompt file's path is handed over in the distro's form. Every other path in
+   * `args` and value in `env` is the adapter's to convert. Null or absent: this
+   * machine, as before.
+   */
+  cliTarget?: CliTarget | null;
 }
 
 /** What a shape's wrapper must decide; the rest of `RunCliPrintOptions` is the adapter's. */
@@ -102,6 +111,7 @@ export async function runCliPrint(options: ShapedCliPrintOptions): Promise<strin
     outputBudget,
     shape,
     onChunk,
+    cliTarget = null,
   } = options;
 
   // Written before the spawn and removed when the call ends, whatever the
@@ -119,7 +129,7 @@ export async function runCliPrint(options: ShapedCliPrintOptions): Promise<strin
   try {
     return await runResolvedCliPrint({
       cliPath, args, prompt, cwd, timeoutMs, promptVia, promptFilePath, promptFileFlag,
-      extractRaw, env, outputBudget, shape, onChunk,
+      extractRaw, env, outputBudget, shape, onChunk, cliTarget,
     });
   } finally {
     // `force` covers a file already gone. A Windows handle the CLI still holds
@@ -151,6 +161,7 @@ interface ResolvedPrintOptions {
   outputBudget: number;
   shape: (candidate: string) => string;
   onChunk: ((chunk: string) => void) | undefined;
+  cliTarget: CliTarget | null;
 }
 
 function runResolvedCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
@@ -168,6 +179,7 @@ function runResolvedCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
     outputBudget,
     shape,
     onChunk,
+    cliTarget,
   } = resolved;
 
   return new Promise<string>((resolve, reject) => {
@@ -176,12 +188,14 @@ function runResolvedCliPrint(resolved: ResolvedPrintOptions): Promise<string> {
       reject(new Error('the chat ended'));
       return;
     }
+    // A CLI in a distro reads the file at the path the distro sees.
+    const promptFileArgument = promptFilePath && cliTarget ? cliPathForTarget(promptFilePath, cliTarget) : promptFilePath;
     const finalArgs = promptVia === 'arg'
       ? [...args, prompt]
-      : promptVia === 'file' && promptFilePath && promptFileFlag
-        ? [...args, promptFileFlag, promptFilePath]
+      : promptVia === 'file' && promptFileArgument && promptFileFlag
+        ? [...args, promptFileFlag, promptFileArgument]
         : args;
-    const child = spawnCli(cliPath, finalArgs, cwd, env);
+    const child = spawnCli(cliPath, finalArgs, cwd, env, cliTarget);
 
     let stdoutSize = 0;
     const stdoutChunks: Buffer[] = [];
@@ -417,20 +431,33 @@ export function stopCli(child: CliChildProcess): void {
  * reaches whatever it started. Never on Windows, where `detached` opens a
  * console of its own and `taskkill /T` already takes the tree.
  *
+ * A CLI installed in a WSL distro (`cliTarget`) runs through `wsl.exe`
+ * (`cliInvocationForTarget`), its variables carried by `WSLENV`; `cliPath` is
+ * then not run. Stopping `wsl.exe` ends what it started in the distro.
+ *
  * The run starts in the pty host when one is registered (`off-main-cli.ts`):
  * on Windows a spawn's CreateProcess blocks the calling thread, 13 to 67 ms a
  * run on main during the summary backfill. With no host it starts here.
  */
-export function spawnCli(cliPath: string, args: string[], cwd: string, env?: Record<string, string>): CliChildProcess {
-  const useShell = cliRunsThroughShell(cliPath);
-  const command = useShell
-    ? `${quoteCmdExecutable(cliPath)} ${args.map(quoteForCmdShell).join(' ')}`
-    : cliPath;
-  const commandArgs = useShell ? [] : args;
+export function spawnCli(
+  cliPath: string,
+  args: string[],
+  cwd: string,
+  env?: Record<string, string>,
+  cliTarget?: CliTarget | null,
+): CliChildProcess {
+  const invocation = cliTarget ? cliInvocationForTarget(cliTarget, args, env) : null;
+  const useShell = !invocation && cliRunsThroughShell(cliPath);
+  const command = invocation
+    ? invocation.file
+    : useShell
+      ? `${quoteCmdExecutable(cliPath)} ${args.map(quoteForCmdShell).join(' ')}`
+      : cliPath;
+  const commandArgs = invocation ? invocation.args : useShell ? [] : args;
   const leadsGroup = process.platform !== 'win32';
   // An agent runs hooks and tools, so its run never carries Crashpad's pipe
   // name (child-env.ts).
-  const childEnv = childProcessEnv(env);
+  const childEnv = childProcessEnv(invocation ? invocation.env : env);
   const child: CliChildProcess = spawnOffMainCli(command, commandArgs, {
     cwd,
     shell: useShell,
