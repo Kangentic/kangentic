@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import { replacePathPrefix } from '../../../../shared/paths';
 import {
   collectRelocationPairs,
@@ -42,7 +42,7 @@ export async function migrateGeminiProjectData(oldProjectPath: string, newProjec
   return withGeminiGlobalConfigLock(() => migrateGeminiProjectDataSync(oldProjectPath, newProjectPath));
 }
 
-const geminiDir = (): string => path.join(os.homedir(), '.gemini');
+const geminiDir = (): string => geminiHomeDir();
 const projectsJsonPath = (): string => path.join(geminiDir(), 'projects.json');
 const trustedFoldersPath = (): string => path.join(geminiDir(), 'trustedFolders.json');
 const SLUG_ROOTS = ['tmp', 'history'] as const;

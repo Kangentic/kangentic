@@ -44,10 +44,12 @@ process.env.KANGENTIC_DATA_DIR = path.join(dataDir, 'data');
 fs.mkdirSync(process.env.KANGENTIC_DATA_DIR);
 process.env.APPDATA = path.join(dataDir, 'platform-config');
 process.env.XDG_CONFIG_HOME = path.join(dataDir, 'platform-config');
-// Qwen suites sandbox Qwen's folder by spying on the home directory, and
-// `qwenHomeDir` prefers QWEN_HOME over it, so a developer's own QWEN_HOME
-// would point them at the real folder. A suite that wants it sets it itself.
+// Qwen and Gemini suites sandbox the CLI's folder by spying on the home
+// directory, and `qwenHomeDir` and `geminiHomeDir` prefer QWEN_HOME and
+// GEMINI_CLI_HOME over it, so a developer's own value would point them at the
+// real folder. A suite that wants one sets it itself.
 delete process.env.QWEN_HOME;
+delete process.env.GEMINI_CLI_HOME;
 
 afterAll(() => {
   try {

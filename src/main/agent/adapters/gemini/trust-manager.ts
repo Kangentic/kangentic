@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import { resolveForwardSlash } from '../../../../shared/paths';
 import { createSerialLock } from '../../shared/relocation-utils';
 
@@ -47,7 +47,7 @@ export async function ensureWorktreeTrust(worktreePath: string): Promise<void> {
 }
 
 function ensureWorktreeTrustSync(worktreePath: string): void {
-  const geminiDir = path.join(os.homedir(), '.gemini');
+  const geminiDir = geminiHomeDir();
   const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
 
   const resolvedPath = resolveForwardSlash(worktreePath);
@@ -102,7 +102,7 @@ export async function removeWorktreeTrust(worktreePath: string): Promise<void> {
 }
 
 function removeWorktreeTrustSync(worktreePath: string): void {
-  const geminiDir = path.join(os.homedir(), '.gemini');
+  const geminiDir = geminiHomeDir();
   const trustedFoldersPath = path.join(geminiDir, 'trustedFolders.json');
   const resolvedPath = resolveForwardSlash(worktreePath);
 

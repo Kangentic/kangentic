@@ -14,7 +14,7 @@
 import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import path from 'node:path';
-import os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import {
   listMostRecentDirs,
   listMostRecentFiles,
@@ -91,7 +91,7 @@ function harvestGeminiModels(record: unknown, modelSet: Set<string>): void {
 
 async function scanGeminiSessionHistory(): Promise<string[]> {
   const modelSet = new Set<string>();
-  const tmpDir = path.join(os.homedir(), '.gemini', 'tmp');
+  const tmpDir = path.join(geminiHomeDir(), 'tmp');
 
   // Walk the project directories, ranking by the `chats/` subdirectory's mtime
   // rather than the project root. This keeps test-artifact dirs (which never

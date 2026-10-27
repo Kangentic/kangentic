@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import { open } from 'node:fs/promises';
-import os from 'node:os';
+import { geminiHomeDir } from './gemini-home';
 import path from 'node:path';
 import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types';
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
@@ -283,7 +283,7 @@ function appendMessageEntries(uuid: string, message: Record<string, unknown>, en
  */
 export function locateGeminiTranscriptFile(agentSessionId: string, cwd: string): string | null {
   const projectDirName = computeGeminiProjectDirName(cwd);
-  const directory = path.join(os.homedir(), '.gemini', 'tmp', projectDirName, 'chats');
+  const directory = path.join(geminiHomeDir(), 'tmp', projectDirName, 'chats');
   const shortId = agentSessionId.slice(0, 8).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const pattern = new RegExp(`^session-.*${shortId}\\.jsonl?$`, 'i');
   let names: string[];
