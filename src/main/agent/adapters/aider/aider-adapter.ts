@@ -6,6 +6,8 @@ import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/pa
 import { isBareShellToken } from '../../../../shared/shell-quote';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
+import { cliPathForTarget, resolveCliTarget, type CliPlace } from '../../shared/cli-target';
+import { prepareWslHookTransport, wslHookEventCommand } from '../../shared/wsl-hook-transport';
 import { AiderSessionHistoryParser } from './session-history-parser';
 import { createAiderCommandInjectionVerifier } from './command-injection-verifier';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions } from '../../agent-adapter';
@@ -60,6 +62,24 @@ function buildNotificationsCommand(bridgePath: string, eventsPath: string, shell
 }
 
 /**
+ * The idle command for an Aider in a WSL distro: the WSL hook transport's
+ * `event idle`, which Kangentic hands the event bridge's logic as the node
+ * bridge's `idle` call. Aider runs it with `subprocess.run(command, shell=True,
+ * capture_output=True)` and passes no stdin, so the command inherits the
+ * terminal; the transport reads its stdin into the record, so stdin is closed
+ * here or that read would wait on the user's keyboard. Null when the
+ * transport cannot be written: the prompt regex stays the idle signal.
+ */
+function buildWslNotificationsCommand(eventsOutputPath: string, place: CliPlace): string | null {
+  try {
+    return `${wslHookEventCommand(prepareWslHookTransport(path.dirname(eventsOutputPath)), place, 'idle')} </dev/null`;
+  } catch (error) {
+    console.warn('[aider] Could not prepare the WSL hook transport; idle falls back to the prompt pattern:', error);
+    return null;
+  }
+}
+
+/**
  * Aider CLI adapter - integrates the Aider AI pair programming tool
  * (https://aider.chat) behind the generic AgentAdapter interface.
  *
@@ -79,6 +99,11 @@ export class AiderAdapter implements AgentAdapter {
     { mode: 'bypassPermissions', label: 'Auto Yes (Skip Confirmations)' },
   ];
   readonly defaultPermission: PermissionMode = 'bypassPermissions';
+  // An Aider installed in a WSL distro runs there: the session starts its
+  // Linux path, its idle notification publishes through the WSL hook transport,
+  // and an answer run takes its history files in the distro's form. Its chat
+  // history is a file in the project folder, which Windows reads as before.
+  readonly supportsWslCli = true;
 
   // Aider uses the shared AgentDetector via composition (keeps the
   // single-file layout while deduplicating detection logic across
@@ -91,6 +116,8 @@ export class AiderAdapter implements AgentAdapter {
     // covered there.
     fallbackPaths: standardUnixFallbackPaths('aider'),
     parseVersion: (raw) => raw.replace(/^aider\s+/i, '').trim() || null,
+    // A `\\wsl.localhost\<distro>\...` path is probed inside the distro.
+    supportsWslCli: true,
   });
 
   async detect(overridePath?: string | null): Promise<AgentInfo> {
@@ -106,7 +133,8 @@ export class AiderAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { shell } = options;
-    const parts: string[] = [quoteArg(options.agentPath, shell)];
+    const place = options.cliTarget ?? null;
+    const parts: string[] = [quoteArg(place ? place.linuxCliPath : options.agentPath, shell)];
 
     // --message with shell-safe quoting (only when prompt is provided)
     if (options.prompt) {
@@ -150,11 +178,13 @@ export class AiderAdapter implements AgentAdapter {
     // Inject --notifications-command to write idle events via event-bridge.
     // Aider fires this when the LLM finishes generating and is waiting for input.
     if (options.eventsOutputPath) {
-      const notificationsCommand = buildNotificationsCommand(
-        toForwardSlash(resolveBridgeScript('event-bridge')),
-        toForwardSlash(options.eventsOutputPath),
-        shell,
-      );
+      const notificationsCommand = place
+        ? buildWslNotificationsCommand(options.eventsOutputPath, place)
+        : buildNotificationsCommand(
+          toForwardSlash(resolveBridgeScript('event-bridge')),
+          toForwardSlash(options.eventsOutputPath),
+          shell,
+        );
       if (notificationsCommand) {
         parts.push('--notifications', '--notifications-command', quoteArg(notificationsCommand, shell));
       }
@@ -283,8 +313,16 @@ export class AiderAdapter implements AgentAdapter {
     options?: AnswerFromContextOptions,
   ): Promise<string> {
     const runDirectory = options?.runDirectory ?? cwd;
+    // An Aider installed in a WSL distro runs there, and opens its history
+    // files by the paths the distro sees.
+    const cliTarget = await resolveCliTarget(cliPath, true);
+    const historyFile = (fileName: string): string => {
+      const windowsPath = path.join(runDirectory, fileName);
+      return cliTarget ? cliPathForTarget(windowsPath, cliTarget) : windowsPath;
+    };
     return runCliPrintAnswer({
       cliPath,
+      cliTarget,
       // The model flag is OMITTED when none is chosen: passing an
       // empty value is an error.
       args: [
@@ -298,8 +336,8 @@ export class AiderAdapter implements AgentAdapter {
         '--no-show-model-warnings',
         '--no-suggest-shell-commands',
         '--no-restore-chat-history',
-        '--chat-history-file', path.join(runDirectory, '.aider.chat.history.md'),
-        '--input-history-file', path.join(runDirectory, '.aider.input.history'),
+        '--chat-history-file', historyFile('.aider.chat.history.md'),
+        '--input-history-file', historyFile('.aider.input.history'),
         ...(model ? ['--model', model] : []),
       ],
       prompt,
