@@ -13,17 +13,6 @@
  * this one.
  */
 export const I18N_UNCONVERTED_TOAST_FILES: Record<string, readonly string[]> = {
-  // ── #915: Settings ──
-
-  settings: [
-    'src/renderer/components/settings/AppSettingsPanel.tsx',
-    'src/renderer/components/settings/tabs/BrowserTab.tsx',
-    'src/renderer/components/settings/tabs/GitTab.tsx',
-    'src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx',
-    'src/renderer/components/settings/tabs/PerformanceTab.tsx',
-    'src/renderer/components/settings/tabs/ShortcutsTab.tsx',
-  ],
-
   // ── #916: dialogs, task detail, backlog and workflows ──
 
   dialogs: [
