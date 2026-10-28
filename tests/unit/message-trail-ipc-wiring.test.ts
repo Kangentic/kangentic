@@ -408,6 +408,23 @@ describe('IPC handler wiring: message trail tracker', () => {
       });
     });
 
+    it('carries the transcript path the agent reported, so a read follows a conversation outside the cwd\'s folder', () => {
+      const context = makeContext();
+      registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
+      const { resolveSessionFacts } = getConstructedDeps();
+
+      mockFindByAnyId.mockReturnValueOnce({
+        session_type: 'claude',
+        agent_session_id: 'claude-agent-session-1',
+        cwd: '/mock/project/worktree',
+        transcript_path: '/mock/home/.claude/projects/-mock-project/claude-agent-session-1.jsonl',
+      });
+
+      // Red: dropping the field leaves the tracker reading the cwd's folder only.
+      expect(resolveSessionFacts('sess-abc', 'proj-xyz')?.transcriptPath)
+        .toBe('/mock/home/.claude/projects/-mock-project/claude-agent-session-1.jsonl');
+    });
+
     it('returns null when no record is found for the id', () => {
       const context = makeContext();
       registerSessionHandlers(context as Parameters<typeof registerSessionHandlers>[0]);
