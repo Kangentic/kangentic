@@ -280,6 +280,29 @@ unapplied.
 6. Report what was fixed: list the changed doc files. A large doc pass folded into the
    version-bump commit is expected and desired - do not treat it as scope creep.
 
+## Step 1.6 - Refresh translated READMEs
+
+Runs after Step 1.5 has applied its edits, since the audit may change README.md. Each
+`README.<locale>.md` is a machine translation stamped with the README.md blob it came from, and
+feature commits edit README.md without touching them. This step brings every stale one up to date.
+It never skips.
+
+1. Run `Push-Location <main>; node scripts/i18n/translate-readme.mjs --stale`. On Windows, an npm
+   install of Claude Code puts only `claude.cmd` on PATH, so when the script says it cannot start
+   the Claude CLI, re-run with `--cli <path to the claude executable>`.
+2. **Exit 0:** it prints one line saying which translations it refreshed, restamped, or found
+   current. Keep that line for Step 7.
+3. **Any other exit:** stop the release and report the problems it printed per locale. The script
+   writes nothing unless every stale translation passes its checks, so the tree is as it was and a
+   retry's clean-tree check passes. Never release around it.
+4. Run `Push-Location <main>; npx vitest run tests/unit/readme-translations.test.ts`. A failure
+   stops the release the same way.
+5. Stage them: `git -C <main> add README.md README.*.md`. They ride into the release commit in
+   Step 4.
+
+`docs/contributing/translations.md` explains the stamp and why no gate fails on a stale
+translation between releases.
+
 ## Step 2 -- Version Bump
 
 **Skip this step entirely if this is a first release** (no previous tags, so Step 0's first-release check elected to tag the current version as-is).
@@ -400,6 +423,7 @@ Summarize the release:
 - Commits included: N, and the review-record commits Step 3 left out (its summary line and the
   list under it)
 - Changelog entry: show the generated entry
+- Translated READMEs: Step 1.6's outcome line
 - **Release notes:** Read `RELEASE_NOTES.md` and display the contents. Tell the user: "These release notes will be applied to the draft GitHub Release automatically by CI."
 - GitHub Actions: link to `https://github.com/Kangentic/kangentic/actions`. The tag push triggers the Release workflow, which creates ONE draft Release, builds all five targets into it (Windows x64, macOS arm64 and x64, Linux x64 and arm64), rebuilds the macOS update feed for both arches, verifies the asset manifest, and then publishes it automatically.
 

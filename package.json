@@ -34,6 +34,7 @@
     "i18n:check": "node scripts/i18n-catalogs.js check",
     "i18n:compile": "node scripts/i18n-catalogs.js compile",
     "i18n:translate": "node scripts/i18n/translate.mjs",
+    "i18n:translate-readme": "node scripts/i18n/translate-readme.mjs",
     "test:demo": "playwright test --project=demo",
     "demo:measure": "node demo/measure.mjs",
     "demo:serve": "node demo/measure.mjs --serve",

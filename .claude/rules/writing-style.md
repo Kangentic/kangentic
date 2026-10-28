@@ -103,6 +103,11 @@ curly quotes inside the sanitizer regex classes in `src/main/agent/shared/auto-n
 `src/main/agent/adapters/qwen-code/transcript-cleanup.ts`. `tests/` is excluded from the mechanical
 scan for that reason and stays review-only.
 
+Machine translations are exempt too. In the translated PO catalogs (`src/locales/<locale>/`) and the
+translated READMEs (`README.<locale>.md`), long dashes and curly quotes are correct punctuation for
+Chinese and Japanese. The scan reads only `README.md` and `CLAUDE.md` at the root and only the English
+catalog under `src/locales/`.
+
 Pre-existing prose is also exempt. This rule governs text you write or rewrite; it does not ask for
 a retro-fit of what is already committed. Restyling `CLAUDE.md`, the ` -- ` separators throughout
 `docs/` and `.claude/skills/`, and the established metaphor nouns already in the tree are each their
