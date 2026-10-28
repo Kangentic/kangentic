@@ -192,7 +192,11 @@ test.describe('Settings > Language', () => {
       await expect(dialog).toContainText('Switch to Français?');
       await expect(dialog).toContainText('Kangentic restarts to change the language.');
       await expect(dialog.locator('svg.lucide-rotate-cw')).toHaveCount(1);
-      await dialog.getByRole('button', { name: 'Cancel' }).click();
+      // ConfirmDialog derives both button ids from the dialog's own (the demo clicks the confirm
+      // one, since its label changes with the language); each id sits on the matching button.
+      await expect(dialog.getByTestId('language-restart-confirm-cancel')).toHaveText('Cancel');
+      await expect(dialog.getByTestId('language-restart-confirm-confirm')).toHaveText('Restart now');
+      await dialog.getByTestId('language-restart-confirm-cancel').click();
 
       await expect(dialog).toHaveCount(0);
       await expect(page.getByTestId('display-language')).toHaveValue('English');
