@@ -189,8 +189,8 @@ describe('runAutomationAgain: a Move to column row', () => {
   });
 
   // A row stored with a type this build does not know (written by a newer
-  // version, or hand-edited). The manifest has no entry to ask, so `movesTask`
-  // must answer no on the `isAutomationType` half rather than read `endsGroup`
+  // version, or hand-edited). The manifest has no entry to ask, so
+  // `automationMovesTask` must answer no on the `isAutomationType` half rather than read `endsGroup`
   // off an entry that is not there. Reverting that guard makes the re-run reject
   // with a TypeError before it reaches the lock, instead of running the row.
   it('hands no move to a row whose type is not a known automation type, and runs it inside the lock', async () => {

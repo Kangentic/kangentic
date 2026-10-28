@@ -1,6 +1,6 @@
 import type { I18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import { AUTOMATION_MANIFEST, automationFieldUnavailableReason } from './automation-manifest';
+import { AUTOMATION_MANIFEST, automationFieldUnavailableReason, automationMoveTargetName } from './automation-manifest';
 import { resolveText } from './i18n/text';
 import type { AutomationConfig, AutomationTrigger, AutomationType } from './types';
 
@@ -137,7 +137,7 @@ export function describeAutomationSentence(type: AutomationType, config: Automat
 
     case 'move_to_column': {
       // The Message is optional, so it is a mark, not part of the sentence.
-      const column = typeof config.targetColumn === 'string' ? config.targetColumn.trim() : '';
+      const column = automationMoveTargetName(type, config) ?? '';
       return prose(column
         ? resolveText(i18n, SENTENCES.movesTo, { column: wholeFirstLine(column) })
         : resolveText(i18n, SENTENCES.movesToNext));
