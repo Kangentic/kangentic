@@ -1,6 +1,5 @@
-import fs from 'node:fs';
 import type { SessionHistoryParseResult, SessionUsage, StoredCliTarget } from '../../../../shared/types';
-import { locateClaudeTranscriptFile } from './transcript-parser';
+import { findClaudeTranscriptFile } from './transcript-locator';
 import { placeFromStored } from '../../shared/cli-target';
 import { humanizeClaudeModelId } from './model-display-name';
 
@@ -40,15 +39,16 @@ import { humanizeClaudeModelId } from './model-display-name';
  * `message.model`, and `message.usage.{input_tokens,
  * cache_creation_input_tokens, cache_read_input_tokens, output_tokens}`.
  *
- * Cross-platform: os.homedir() + path.join via locateClaudeTranscriptFile;
+ * Cross-platform: os.homedir() + path.join via the transcript locator;
  * CRLF-tolerant line splitting; no shell-outs.
  */
 export class ClaudeSessionHistoryParser {
   /**
-   * Locate the transcript JSONL for a known Claude session UUID. The path is
-   * deterministic (locateClaudeTranscriptFile reproduces the shipped CLI's
-   * slug algorithm), so this only polls for the file to APPEAR rather than
-   * scanning a directory.
+   * Locate the transcript JSONL for a known Claude session UUID. A new
+   * conversation's path is deterministic (locateClaudeTranscriptFile reproduces
+   * the shipped CLI's slug algorithm), so this polls for the file to APPEAR; a
+   * resumed one may be under the folder it started in, which the locator finds
+   * (`transcript-locator.ts`).
    *
    * The budget is ~60s, far longer than Codex/Gemini's ~5s, because those
    * adapters locate AFTER capturing the session id from a running CLI,
@@ -65,11 +65,19 @@ export class ClaudeSessionHistoryParser {
     cwd: string;
     cliTarget?: StoredCliTarget | null;
   }): Promise<string | null> {
-    // A Claude in a WSL distro writes it under the distro's home.
-    const filePath = locateClaudeTranscriptFile(options.agentSessionId, options.cwd, placeFromStored(options.cliTarget));
+    // A resumed conversation stays in the file under the folder it started in,
+    // so each attempt asks the locator, which finds it on the first one. A
+    // fresh session's file appears at the cwd path; the locator checks that
+    // every time and scans at most once per 30 s while it waits.
+    const query = {
+      agentSessionId: options.agentSessionId,
+      cwd: options.cwd,
+      place: placeFromStored(options.cliTarget),
+    };
     const maxAttempts = 120; // 120 x 500ms = ~60s
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      if (fs.existsSync(filePath)) return filePath;
+      const filePath = await findClaudeTranscriptFile(query);
+      if (filePath) return filePath;
       await sleep(500);
     }
     return null;

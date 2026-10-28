@@ -8,8 +8,8 @@
  *
  *  - `claude-projects/` stands in for `~/.claude/projects`, the root derived
  *    from the reported path. It holds one folder per project.
- *  - `home/` is what `os.homedir()` returns, so the cwd locator
- *    (`locateClaudeTranscriptFile`) looks under `home/.claude/projects/`, a
+ *  - `home/` is what `os.homedir()` returns, so the readers' locator
+ *    (`resolveClaudeTranscriptFile`) looks under `home/.claude/projects/`, a
  *    root that is deliberately NOT the one the folder scan reads. That keeps
  *    each negative case honest: only the step under test can return false.
  *
@@ -23,6 +23,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { proveClaudeConversationGone } from '../../src/main/agent/adapters/claude/conversation-gone';
 import { locateClaudeTranscriptFile } from '../../src/main/agent/adapters/claude/transcript-parser';
+import {
+  clearClaudeTranscriptLocatorCacheForTests,
+  resolveClaudeTranscriptFile,
+} from '../../src/main/agent/adapters/claude/transcript-locator';
 import { isConfirmedMissing } from '../../src/main/agent/shared/confirmed-missing';
 
 const AGENT_SESSION_ID = '935a5611-0f79-4f34-a5ea-62f2a4bd7894';
@@ -52,6 +56,7 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.restoreAllMocks();
+  clearClaudeTranscriptLocatorCacheForTests();
   fs.rmSync(workDir, { recursive: true, force: true });
 });
 
@@ -103,6 +108,51 @@ describe('proveClaudeConversationGone - the cwd locator path', () => {
 
     // Control: with the locator's file removed the same call proves it gone.
     fs.rmSync(locatorPath);
+    await expect(prove()).resolves.toBe(true);
+  });
+});
+
+describe('proveClaudeConversationGone - the path every reader opens', () => {
+  // The readers find a conversation wherever Claude wrote it
+  // (transcript-locator.ts): a resume from another folder keeps appending to
+  // the file under the folder it started in. Each file below sits under the
+  // HOME root, which the folder scan never reads, so only that step can answer.
+
+  it('is false when the conversation is under a parent folder of the cwd', async () => {
+    const projectRoot = path.join(workDir, 'project');
+    const worktreeCwd = path.join(projectRoot, '.kangentic', 'worktrees', '918');
+    const rootFile = locateClaudeTranscriptFile(AGENT_SESSION_ID, projectRoot);
+    writeTranscript(rootFile);
+    const proveFromWorktree = (): Promise<boolean> => proveClaudeConversationGone({
+      agentSessionId: AGENT_SESSION_ID, reportedPaths: [reportedPath], cwd: worktreeCwd,
+    });
+
+    await expect(proveFromWorktree()).resolves.toBe(false);
+
+    // Control: with the root's file removed the conversation is gone.
+    fs.rmSync(rootFile);
+    await expect(proveFromWorktree()).resolves.toBe(true);
+  });
+
+  it('is false when the conversation is under an unrelated folder of the home projects root', async () => {
+    const elsewhere = locateClaudeTranscriptFile(AGENT_SESSION_ID, path.join(workDir, 'unrelated', 'folder'));
+    writeTranscript(elsewhere);
+
+    await expect(prove()).resolves.toBe(false);
+
+    fs.rmSync(elsewhere);
+    await expect(prove()).resolves.toBe(true);
+  });
+
+  it('is true for a file that is truly gone, though the readers found it there earlier', async () => {
+    // The readers' cache remembers where it found the file. A deleted file must
+    // not stay "found": a false gone would only resume, but a false present
+    // here would never let a gone conversation start over.
+    const elsewhere = locateClaudeTranscriptFile(AGENT_SESSION_ID, path.join(workDir, 'unrelated', 'folder'));
+    writeTranscript(elsewhere);
+    await expect(resolveClaudeTranscriptFile({ agentSessionId: AGENT_SESSION_ID, cwd })).resolves.toBe(elsewhere);
+
+    fs.rmSync(elsewhere);
     await expect(prove()).resolves.toBe(true);
   });
 });

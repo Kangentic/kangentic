@@ -147,12 +147,14 @@ type SubmissionContext =
       mode?: 'command-match' | 'submitted';
       /** Where the session's CLI runs when it is a WSL distro: its history is there. */
       cliTarget?: StoredCliTarget | null;
+      /** The transcript path the agent reported (the session row's `transcript_path`). May be stale or name another id. */
+      transcriptPath?: string | null;
     };
 
 type SubmissionVerifier = (context: SubmissionContext) => Promise<boolean>;
 ```
 
-For the `'command-injection'` context, the verifier receives the literal command text plus session metadata (the `agent_session_id`, the session `cwd`, and `sentAt` - the wall-clock timestamp of the most recent Enter the verifier should match against) and returns `true` once it confirms the command was processed. `sentAt` advances on each retry-Enter so stale transcript entries from previous attempts cannot satisfy the current verification. `mode` selects HOW strongly the command must be confirmed; see "Per-command verification modes" below.
+For the `'command-injection'` context, the verifier receives the literal command text plus session metadata (the `agent_session_id`, the session `cwd`, the transcript path the agent reported, and `sentAt` - the wall-clock timestamp of the most recent Enter the verifier should match against) and returns `true` once it confirms the command was processed. `sentAt` advances on each retry-Enter so stale transcript entries from previous attempts cannot satisfy the current verification. `mode` selects HOW strongly the command must be confirmed; see "Per-command verification modes" below.
 
 The `agent_session_id` is NOT captured once at plan-build time: `buildCommandInjectionVerifier`
 re-reads the session record by primary key (`findByAnyId(recordId)`) on every poll, and when the

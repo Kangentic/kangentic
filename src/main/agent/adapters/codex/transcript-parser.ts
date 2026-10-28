@@ -4,6 +4,7 @@ import type { TranscriptEntry, TranscriptBlock } from '../../../../shared/types'
 import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import { codexHomeDir } from './config-toml';
 import type { CliPlace } from '../../shared/cli-target';
+import { touchBounded } from '../../shared/bounded-lru';
 import { readJsonlWindow } from '../../shared/history-scan';
 import { jsonlEarlierHistory, readJsonlHistoryPage, splitJsonlLines, stampOrigin, type JsonlLine } from '../../shared/jsonl-history-page';
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
@@ -217,8 +218,7 @@ function parseCodexRecord(
  */
 export function locateCodexTranscriptFile(agentSessionId: string, place: CliPlace | null = null): string | null {
   const root = path.join(codexHomeDir(place), 'sessions');
-  const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  const pattern = new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
+  const pattern = rolloutFilePattern(agentSessionId);
 
   for (const year of listDescending(root)) {
     const yearDir = path.join(root, year);
@@ -240,12 +240,78 @@ export function locateCodexTranscriptFile(agentSessionId: string, place: CliPlac
   return null;
 }
 
+const FOUND_ROLLOUTS_LIMIT = 256;
+const FOUND_ROLLOUTS_BYTE_BUDGET = 64 * 1024;
+/** Where `findCodexTranscriptFile` found each rollout, by sessions folder and id. */
+const foundRollouts = new Map<string, string>();
+
+/**
+ * The same newest-first walk on `fs.promises`, for the adapter's on-demand
+ * `locateSessionHistoryFile`. Several of its callers run on main (the Command
+ * Terminal's Earlier conversations once per row, the handoff, session files,
+ * analytics), where a synchronous readdir per day folder would hold the loop.
+ * It replaced the telemetry locate there, which looked only in today's and
+ * yesterday's folders and polled 5 s for anything older, so every on-demand
+ * read of an older conversation found nothing and an Earlier conversations
+ * row for it was deleted.
+ */
+export async function findCodexTranscriptFile(agentSessionId: string, place: CliPlace | null = null): Promise<string | null> {
+  const root = path.join(codexHomeDir(place), 'sessions');
+  // An Earlier conversations list asks for the same rollouts each time it
+  // opens; a found one is re-checked instead of walked to again.
+  const key = `${root}\u0000${agentSessionId}`;
+  const known = foundRollouts.get(key);
+  if (known && await fs.promises.stat(known).then(() => true, () => false)) return known;
+  foundRollouts.delete(key);
+  const pattern = rolloutFilePattern(agentSessionId);
+
+  for (const year of await listDescendingAsync(root)) {
+    const yearDir = path.join(root, year);
+    for (const month of await listDescendingAsync(yearDir)) {
+      const monthDir = path.join(yearDir, month);
+      for (const day of await listDescendingAsync(monthDir)) {
+        const dayDir = path.join(monthDir, day);
+        const names = await fs.promises.readdir(dayDir).catch((): string[] => []);
+        const match = names.find((name) => pattern.test(name));
+        if (!match) continue;
+        const filePath = path.join(dayDir, match);
+        touchBounded(foundRollouts, key, filePath, {
+          limit: FOUND_ROLLOUTS_LIMIT,
+          byteBudget: FOUND_ROLLOUTS_BYTE_BUDGET,
+          sizeOf: (held) => held.length,
+          minRetained: 0,
+        });
+        return filePath;
+      }
+    }
+  }
+  return null;
+}
+
+/** Codex writes `rollout-<ISO timestamp>-<session id>.jsonl`; the timestamp is unknown, the id unique. */
+function rolloutFilePattern(agentSessionId: string): RegExp {
+  const escapedId = agentSessionId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`^rollout-.*-${escapedId}\\.jsonl$`);
+}
+
 function listDescending(directory: string): string[] {
   try {
-    return fs.readdirSync(directory).sort((a, b) => (a < b ? 1 : a > b ? -1 : 0));
+    return fs.readdirSync(directory).sort(descending);
   } catch {
     return [];
   }
+}
+
+async function listDescendingAsync(directory: string): Promise<string[]> {
+  try {
+    return (await fs.promises.readdir(directory)).sort(descending);
+  } catch {
+    return [];
+  }
+}
+
+function descending(left: string, right: string): number {
+  return left < right ? 1 : left > right ? -1 : 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

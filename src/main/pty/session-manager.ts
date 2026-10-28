@@ -810,13 +810,26 @@ export class SessionManager extends EventEmitter {
         const session = this.registry.get(sessionId);
         if (!session?.agentSessionId) return [];
         return session.agentParser?.runtime?.backgroundShells
-          ?.reportTerminatedShells?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, shellIds, cliTarget: session.cliTarget }) ?? [];
+          ?.reportTerminatedShells?.({
+            cwd: session.cwd,
+            agentSessionId: session.agentSessionId,
+            shellIds,
+            cliTarget: session.cliTarget,
+            transcriptPath: this.telemetry.getReportedTranscriptPath(sessionId),
+          }) ?? [];
       },
       reportRejectedPermissionTools: (sessionId, toolIds, sinceMs) => {
         const session = this.registry.get(sessionId);
         if (!session?.agentSessionId) return [];
         return session.agentParser?.runtime?.permissionPrompts
-          ?.reportRejectedPromptTools?.({ cwd: session.cwd, agentSessionId: session.agentSessionId, toolIds, sinceMs, cliTarget: session.cliTarget }) ?? [];
+          ?.reportRejectedPromptTools?.({
+            cwd: session.cwd,
+            agentSessionId: session.agentSessionId,
+            toolIds,
+            sinceMs,
+            cliTarget: session.cliTarget,
+            transcriptPath: this.telemetry.getReportedTranscriptPath(sessionId),
+          }) ?? [];
       },
       isAgentAbsenceCandidate: (sessionId) => this.isAgentAbsenceCandidate(sessionId),
       retireAgentlessSession: (sessionId) => this.retireAgentlessSession(sessionId),
@@ -3600,6 +3613,15 @@ export class SessionManager extends EventEmitter {
   /** Return cached usage data for all sessions (survives renderer reloads). */
   getUsageCache(): Record<string, SessionUsage> {
     return this.telemetry.getUsageCache();
+  }
+
+  /**
+   * The transcript path the session's agent last reported in its live usage,
+   * or null. A reader passes it as `reportedPath`: an agent can keep writing a
+   * resumed conversation outside the folder the cwd maps to.
+   */
+  getReportedTranscriptPath(sessionId: string): string | null {
+    return this.telemetry.getReportedTranscriptPath(sessionId);
   }
 
   /**

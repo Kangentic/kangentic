@@ -1,5 +1,5 @@
 import fs from 'node:fs';
-import { locateClaudeTranscriptFile } from './transcript-parser';
+import { peekClaudeTranscriptFile } from './transcript-locator';
 import type { StoredCliTarget } from '../../../../shared/types';
 import { placeFromStored } from '../../shared/cli-target';
 
@@ -226,13 +226,20 @@ export function reportTerminatedBackgroundShells(options: {
   agentSessionId: string;
   shellIds: string[];
   cliTarget?: StoredCliTarget | null;
+  transcriptPath?: string | null;
 }): string[] {
   const { cwd, agentSessionId, shellIds } = options;
   if (shellIds.length === 0) return [];
   if (!NOTIFICATION_ID_PATTERN.test(agentSessionId)) return [];
 
-  // A Claude in a WSL distro writes it under the distro's home.
-  const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, placeFromStored(options.cliTarget));
+  // Wherever Claude wrote it (a resumed conversation stays in the folder it
+  // started in); synchronous, so the locator's peek, which never scans.
+  const filePath = peekClaudeTranscriptFile({
+    agentSessionId,
+    cwd,
+    place: placeFromStored(options.cliTarget),
+    reportedPath: options.transcriptPath,
+  });
   const terminatedIds = tailTerminalNotificationIds(filePath);
   if (terminatedIds.length === 0) return [];
 

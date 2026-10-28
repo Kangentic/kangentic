@@ -100,6 +100,13 @@ export interface MessageTrailSessionFacts {
   cwd: string;
   /** Where the session's CLI ran when it was not this machine (a WSL distro): its transcript is there. */
   cliTarget?: StoredCliTarget | null;
+  /**
+   * The transcript path the agent reported (the session row's
+   * `transcript_path`). An adapter reads it before any path it derives from
+   * `cwd`: an agent can keep writing a resumed conversation outside the folder
+   * the cwd maps to.
+   */
+  transcriptPath?: string | null;
 }
 
 /** Session facts once the agent session id is known: what a read of its transcript needs. */
@@ -366,6 +373,13 @@ export class MessageTrailTracker extends EventEmitter implements TranscriptPosit
     // the row until it is there (one SQLite lookup per read until then).
     if (!state.facts?.agentSessionId) {
       state.facts = this.deps.resolveSessionFacts(sessionId, state.projectId);
+    } else if (!state.facts.transcriptPath) {
+      // The row's reported path lands on the session's first status tick,
+      // which can come after the id. Take it then, for the same conversation.
+      const refreshed = this.deps.resolveSessionFacts(sessionId, state.projectId);
+      if (refreshed?.transcriptPath && refreshed.agentSessionId === state.facts.agentSessionId) {
+        state.facts = { ...state.facts, transcriptPath: refreshed.transcriptPath };
+      }
     }
     const facts = state.facts;
     const agentSessionId = facts?.agentSessionId;

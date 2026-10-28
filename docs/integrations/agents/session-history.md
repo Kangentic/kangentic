@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Adapter session history
-description: "The native session history files Kangentic tails for telemetry: reader attach and parse flow, the SessionHistoryParseResult contract, Codex, Gemini and Claude file formats, the Claude status-file pipeline, the per-agent resume map, the /clear fork reconcile, known gaps, and how to add a parser."
+description: "The native session history files Kangentic tails for telemetry: reader attach and parse flow, the SessionHistoryParseResult contract, Codex, Gemini and Claude file formats, where a Claude transcript is found when its cwd changed, the Claude status-file pipeline, the per-agent resume map, the /clear fork reconcile, known gaps, and how to add a parser."
 tags: [session-history, telemetry, resume, parsers]
 sources:
   - resource: src/main/pty/readers/session-history-reader.ts
@@ -10,6 +10,11 @@ sources:
   - resource: src/main/agent/adapters/codex/session-history-parser.ts
   - resource: src/main/agent/adapters/gemini/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/session-history-parser.ts
+  - resource: src/main/agent/adapters/claude/transcript-locator.ts
+  - resource: src/main/agent/adapters/claude/transcript-parser.ts
+    title: claudeProjectSlug, locateClaudeTranscriptFile
+  - resource: src/main/agent/adapters/codex/transcript-parser.ts
+    title: findCodexTranscriptFile
   - resource: src/main/agent/adapters/qwen-code/session-history-parser.ts
   - resource: src/main/agent/adapters/kimi/session-history-parser.ts
   - resource: src/main/agent/adapters/grok/session-history-parser.ts
@@ -87,6 +92,8 @@ All three fields are optional in the sense that any combination is valid - parse
 **Format**: append-only JSONL. One JSON object per line. CRLF or LF line endings tolerated. `isFullRewrite: false` - parser receives newly-appended bytes on each file-change event.
 
 **Parser**: `src/main/agent/adapters/codex/session-history-parser.ts`
+
+**Locate**: the live attach (`CodexSessionHistoryParser.locate`, `runtime.sessionHistory`) polls today's and yesterday's UTC folders for up to 5 s, for a rollout the CLI is about to write. Every on-demand read (`locateSessionHistoryFile`: the index, the archive, the handoff, a Command Terminal's Earlier conversations row) walks the whole date tree newest day first with no wait (`findCodexTranscriptFile`, on `fs.promises` because several of those callers run on main). Before that split the on-demand reads used the live locate too, so a conversation older than yesterday read as missing after 5 s.
 
 ### Line entries we depend on
 
@@ -237,6 +244,22 @@ The two sources never race: on the **first** successful `status.json` parse, `St
 
 The same transcript JSONL is still read on demand by `transcript-parser.ts` for the renderer's Transcript tab and for lifetime-token refinement (`refineTranscriptTokens` on exit paths), but both read paths are now bounded, and they run in the retrieval worker (`transcript.task`, `transcript.usage`, plus `transcript.toolCounts` and `transcript.toolResultTokens` for the per-tool table, each scoped to one run's window because Claude appends every `--resume` to one file), so main parses no transcript. `parseTranscript` reads at most the most recent `MAX_PARSE_SOURCE_BYTES` (16MB) rather than the whole file, prepending a `truncated` system entry when it does; reading an unbounded transcript whole is what OOM'd the main process. `refineTranscriptTokens` / `refineTranscriptToolCounts` stream the file instead of materializing it, and are serialized through a shared `PQueue({concurrency: 1})` in `session-metrics.ts`, so several sessions ending together can no longer each launch a concurrent whole-file read. The live Tokens read behind the tool-call popover (`readTranscriptToolResultTokens`) is deliberately not queued, so it never waits behind a run-end backfill. Its fill of an earlier run's missing Tokens overtakes a fill the spawn queued that has not started yet, for the same reason. Both tool reads share a resumable per-path cursor in `claude/transcript-parser.ts` that reads only appended bytes: it keeps the offset of the last complete line and the 64 bytes before it, and starts over when the file shrinks, its mtime goes back, its inode changes or those 64 bytes differ. An unchanged file is answered from `stat` without opening it. Both are scoped by `sinceMs` and, for a run that has ended, `untilMs`, because Claude appends every `--resume` to the same transcript. The fallback tailing pipeline described above (`ClaudeSessionHistoryParser`) is unaffected.
 
+### Where a Claude transcript is
+
+Claude files a conversation under the slug of the folder it STARTED in, and a `--resume` from another folder keeps appending to that file. Measured on Claude Code 2.1.312: four task agents started in the project root (a race since fixed) were later resumed with their worktree as cwd, and every turn after that landed in the root-slug files, 472 lines of one of them carrying the worktree as their `cwd`. A path built from the session's current cwd then names a file that does not exist. Every read missed it: the turn end's reply, the auto_command check, the message trail, the viewer, `get_transcript`, the index, the archive, the hang check. The workflow those tasks ran stalled.
+
+So every Claude read resolves its path through `claude/transcript-locator.ts`, in this order:
+
+1. The path Claude reported for the conversation, when it is absolute, is named `<id>.jsonl` (a row from before a `/clear` fork names the other id), sits in a `projects/<slug>/` folder, and the file is there (a project relocation does not rewrite it). Generic readers pass it as the trailing `reportedPath` of the transcript methods, from the session row's `transcript_path` or the live usage's `transcriptPath`. A new row for a resumed conversation inherits the newest `transcript_path` of its `agent_session_id` at insert (`SessionRepository.insert`), so the report is there from the first turn end, before the new session's status line paints.
+2. The cwd-derived path (`locateClaudeTranscriptFile`, which stays the pure builder). A fresh session's file appears here, and this check is never cached.
+3. Where an earlier search found it, checked again on every use, so a deleted file never reads as present.
+4. The cwd's parent folders: `slug(parent)/<id>.jsonl` for each, up to the drive root. From `<root>/.kangentic/worktrees/<n>` this finds the root's file in three stats with no `readdir`. That is both the case above and the enable-worktree one, where a suspended row's cwd is rewritten to the new worktree.
+5. Every folder under the projects folder, from one listing of their transcripts (a `readdir` of each, 32 at a time) that answers every search for 30 s; the newest copy wins when a name sits in two folders. Session ids are UUIDs, so a hit is the conversation. One listing is what keeps a sweep cheap: the index and the archive ask for every conversation of a project, most of them deleted after 30 days, and a stat in every folder per conversation cost a full scan each. A conversation found nowhere is not searched for again for 30 s, steps 4 and 5 both, so the 500 ms locate poll of a fresh session and every turn end on a gone conversation cost one search per 30 s. A cached find whose file is gone drops the listing with it.
+
+The cache is per process: main and the retrieval worker each keep one. The sync readers on main (the background-shell and permission-rejection polls, the subagent folder's signature) take `peekClaudeTranscriptFile`, which checks steps 1 to 3 and never searches. On a miss it starts the async find, unless one is running or a miss is still remembered, so the next 2 s poll has the answer. A WSL place searches the distro's home only after the cwd check has already read through the distro's share, so the search starts nothing the read did not.
+
+`proveConversationGone` checks the path every reader would open before its own scan, so a conversation the locator finds is never proved gone. Where Kangentic can read a history and where Claude's `--resume` reads it are two questions: the migrate-on-resume below asks the narrower one (`findClaudeResumeTranscriptFile`, steps 2 and 4 only), so a history under a renamed worktree's old slug still moves, and one under a parent folder's slug stays.
+
 ### What the fallback parser reads
 
 `ClaudeSessionHistoryParser.parse(chunk, 'append')` (append mode; the transcript is append-only JSONL) keeps the **latest** qualifying assistant entry in the chunk - its per-message `usage` is the size of the prompt sent to the model on the most recent turn, i.e. the current context occupancy (distinct from `parseClaudeTranscriptUsage`, which sums a cumulative lifetime total and would over-report a live percentage).
@@ -323,7 +346,7 @@ behavior below is the resume contract.
 
 | Agent | Resume invocation | Where `--resume` reads | Keyed by | cwd-bound resume? | Same path as `locateSessionHistoryFile`? |
 |---|---|---|---|---|---|
-| Claude | `claude --resume <id>` | `~/.claude/projects/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes |
+| Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) |
 | Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes |
 | Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes |
 | Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes |
@@ -341,10 +364,17 @@ behavior below is the resume contract.
 
 Reading the table by class:
 
-- **cwd-keyed per-session file that `--resume` reads (Claude-like):** Gemini, Qwen, Kimi, Droid,
-  Grok (and Claude). The resume target is a file under a directory derived from the cwd
-  (basename, slug, `md5`, or Grok's `encodeURIComponent`), so moving the project to a path with
-  a different cwd-derived key, or deleting that file, makes the stored id unresolvable.
+- **cwd-keyed per-session file that `--resume` reads:** Gemini, Qwen, Kimi, Droid, Grok. The
+  resume target is a file under a directory derived from the cwd (basename, slug, `md5`, or
+  Grok's `encodeURIComponent`), so moving the project to a path with a different cwd-derived key,
+  or deleting that file, makes the stored id unresolvable. These rows come from each relocation
+  module's model of its CLI, not from a measured resume in another folder; Droid's and Grok's are
+  the least certain.
+- **keyed by the folder the conversation started in:** Claude. The file is named from the cwd of
+  the conversation's FIRST session, and a `--resume` from a worktree of that folder keeps
+  appending to it (measured on 2.1.312). Kangentic's reads find it by id wherever it is (see
+  [Where a Claude transcript is](#where-a-claude-transcript-is)); moving the project still needs
+  `onProjectRelocated`.
 - **id-keyed / global store (cwd-independent):** Codex, OpenCode, Copilot, Cursor, Antigravity,
   and Goose.
   Resume resolves by session id against a global location, so the working directory does not gate it.
@@ -371,7 +401,8 @@ Reading the table by class:
 > safe. It never derives a transcript path: the AGENT must have reported one (its status file, the
 > SessionStart hook payload, or the copy on the session row). A deleted conversation also
 > needs the adapter's own proof (`AgentAdapter.proveConversationGone`): for Claude, the reported
-> file and the locator's both ENOENT, the projects folder above readable, and no project folder
+> file and the one every reader would open (the locator's, which looks past the cwd) both ENOENT,
+> the projects folder above readable, and no project folder
 > holding the file. Absence of evidence is never evidence, so a missing report leaves today's
 > behavior untouched, which is exactly what keeps the mocked resumes below passing. A wrong
 > verdict costs a new conversation, never data: the old record is kept and the new one opens on a
@@ -435,8 +466,13 @@ This is **not** the reverted `canResumeSession` guard, and does not reintroduce 
    so the helper early-returns before touching `locateSessionHistoryFile` or `onProjectRelocated` -
    the 10 specs that killed the old guard cannot be reached.
 3. `locateSessionHistoryFile` is used as a positive "already reachable? then skip" check, not as a
-   gate that suppresses resume. id-keyed agents (Codex, OpenCode) locate the file regardless of cwd,
-   so the helper no-ops for them.
+   gate that suppresses resume. An adapter that reads histories from more places than its CLI
+   resumes from answers the check with `locateResumeHistoryFile` instead. Agents whose resume finds
+   the file regardless of cwd no-op: Codex and OpenCode by id. Claude no-ops for a history under a
+   parent folder's slug, which 2.1.312 resumed from a worktree, and still migrates one under a
+   renamed worktree's old slug, which its locator reads but its resume was never measured to reach.
+   Worktree folders no longer move (`WorktreeManager.createWorktree`), so the rename reaches the
+   helper only from an older install.
 4. A load-bearing guard restricts migration to an `oldCwd` under
    `<projectPath>/.kangentic/worktrees/`. The enable-worktree flow resumes a session whose oldCwd is
    the shared project root; relocating that would move the whole `~/.claude/projects/<root-slug>/`
@@ -444,7 +480,9 @@ This is **not** the reverted `canResumeSession` guard, and does not reintroduce 
 
 Pre-existing orphans (a task that already failed a resume and wrote an empty transcript under the
 new slug) are left to one-time manual recovery: copy the intact `<id>.jsonl` from the old slug
-directory into the current worktree's slug directory.
+directory into the current worktree's slug directory. For Claude, a reader that has the path
+Claude reported reads the reported file over such an orphan; one without it reads the orphan,
+which sits at the cwd's own path.
 
 ### Mid-session fork reconcile (/clear moves the conversation to a new id)
 

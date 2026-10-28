@@ -78,7 +78,9 @@ export async function reconcileResumeAgentSessionId(params: {
     // plausibly id-shaped value before pointing --resume at it.
     if (!/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(reportedId)) return storedId;
 
-    const locatedTranscript = await adapter.locateSessionHistoryFile(reportedId, cwd, params.place ?? null);
+    // The same status file names the transcript it is writing; a fork of a
+    // resumed conversation can sit outside the folder `cwd` maps to.
+    const locatedTranscript = await adapter.locateSessionHistoryFile(reportedId, cwd, params.place ?? null, usage?.transcriptPath ?? null);
     if (!locatedTranscript) return storedId;
 
     console.log(

@@ -453,7 +453,7 @@ describe('ConversationIndexer.indexSession', () => {
 
     running = true;
     expect(await indexer.indexSession('project-1', 'session-1')).toBe('indexed');
-    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', expect.objectContaining({ distro: 'Ubuntu' }));
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', expect.objectContaining({ distro: 'Ubuntu' }), undefined);
   });
 
   it("returns 'indexed', upserts chunks, and writes an 'ok' state when parse yields entries", async () => {
@@ -477,7 +477,7 @@ describe('ConversationIndexer.indexSession', () => {
 
     expect(outcome).toBe('indexed');
     // The record has no CLI target, so the read is of this machine's history.
-    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null, undefined);
     expect(chunker).toHaveBeenCalledWith(entries);
     // One chunk inserted into memory_chunks.
     expect(state.chunkInserts).toHaveLength(1);

@@ -20,8 +20,18 @@ export type SavedConversationReader = (
 
 /** The session a structured read is of, and how to shape it. */
 export interface StructuredTranscriptRequest {
-  /** `cliTarget` is the session row's `cli_target`: where its CLI ran when it was not this machine. */
-  record: { id: string; sessionType: string; agentSessionId: string; cwd: string; cliTarget?: string | null };
+  /**
+   * `cliTarget` is the session row's `cli_target`: where its CLI ran when it was not this machine.
+   * `transcriptPath` is the row's `transcript_path`, the file the agent reported writing.
+   */
+  record: {
+    id: string;
+    sessionType: string;
+    agentSessionId: string;
+    cwd: string;
+    cliTarget?: string | null;
+    transcriptPath?: string | null;
+  };
   view: TranscriptView;
   tail: number | undefined;
   charBudget: number;
@@ -56,7 +66,12 @@ export async function renderStructuredTranscript(
     };
   }
 
-  const parsed = await adapter.parseTranscript(record.agentSessionId, record.cwd, placeOfRecord({ cli_target: record.cliTarget }));
+  const parsed = await adapter.parseTranscript(
+    record.agentSessionId,
+    record.cwd,
+    placeOfRecord({ cli_target: record.cliTarget }),
+    record.transcriptPath ?? null,
+  );
   const { sourcePath } = parsed;
   // The same per-span clamp every other reader applies: one 30 MB tool result
   // would otherwise travel whole into the render and the reply.

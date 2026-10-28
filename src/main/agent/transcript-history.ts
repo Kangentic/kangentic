@@ -54,6 +54,8 @@ interface ResolvedConversation {
   cwd: string;
   /** Where the conversation's CLI ran when it was not this machine (a WSL distro). */
   place: CliPlace | null;
+  /** The transcript path the agent reported (the row's `transcript_path`). */
+  reportedPath: string | null;
 }
 
 /** The record behind a conversation id, by its agent session id (or any session id). */
@@ -69,6 +71,7 @@ function resolveConversation(db: Database.Database, conversationId: string): Res
     agentSessionId: record.agent_session_id,
     cwd: record.cwd,
     place: placeOfRecord(record),
+    reportedPath: record.transcript_path,
   };
 }
 
@@ -143,7 +146,7 @@ export async function readHistoryPage(db: Database.Database, request: HistoryPag
         maxBytes: request.maxBytes ?? HISTORY_PAGE_BYTES,
         // An archive token belongs to the archive, not the live file.
         sourceToken: request.sourceToken?.startsWith(ARCHIVE_TOKEN_PREFIX) ? undefined : request.sourceToken,
-      }, conversation.place);
+      }, conversation.place, conversation.reportedPath);
     } catch {
       result = { status: 'unavailable', reason: 'read_failed' };
     }
@@ -250,7 +253,7 @@ export async function readHistoryTimeline(
     // the worker's history queue until main killed the worker.
     const check = await adapter.readTranscriptPage(agentSessionId, conversation.cwd, {
       direction: 'around', position: 0, maxBytes: timelineProbeBytes(totalPosition), sourceToken: cached.sourceToken, probe: true,
-    }, conversation.place);
+    }, conversation.place, conversation.reportedPath);
     if (check.status !== 'reset') {
       touchBounded(timelineByConversation, conversation.conversationId, cached, timelineCacheOptions);
       return { status: 'ok', conversationId: conversation.conversationId, samples: cached.samples };
@@ -269,7 +272,7 @@ export async function readHistoryTimeline(
     const position = Math.floor((totalPosition * probe) / TIMELINE_PROBES);
     const result = await adapter.readTranscriptPage(agentSessionId, conversation.cwd, {
       direction: 'around', position, maxBytes: probeBytes, untilPosition: totalPosition, probe: true,
-    }, conversation.place);
+    }, conversation.place, conversation.reportedPath);
     if (result.status !== 'ok') continue;
     sourceToken ??= result.page.sourceToken;
     const dated = result.page.entries.find((entry) => entry.ts > 0);

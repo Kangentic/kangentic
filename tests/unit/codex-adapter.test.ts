@@ -1209,3 +1209,53 @@ describe('agent-display-name - codex entry', () => {
     expect(agentInstallUrl('codex')).toBe('https://github.com/openai/codex');
   });
 });
+
+describe('CodexAdapter.locateSessionHistoryFile - any day, no wait', () => {
+  // It used to be the live-telemetry locate, which looks only in today's and
+  // yesterday's UTC folders and polls 5 s for anything older. Every on-demand
+  // read of an older conversation (the index, the archive, the handoff, a
+  // Command Terminal's Earlier conversations row) then found nothing.
+  const ROLLOUT_ID = '019df02a-e744-7de2-8f30-63d9ae3ab36a';
+  let codexHome: string;
+  let originalCodexHome: string | undefined;
+
+  beforeEach(() => {
+    codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-codex-locate-'));
+    originalCodexHome = process.env.CODEX_HOME;
+    process.env.CODEX_HOME = codexHome;
+  });
+
+  afterEach(() => {
+    if (originalCodexHome === undefined) delete process.env.CODEX_HOME;
+    else process.env.CODEX_HOME = originalCodexHome;
+    fs.rmSync(codexHome, { recursive: true, force: true });
+  });
+
+  function writeRollout(year: string, month: string, day: string, sessionId: string): string {
+    const directory = path.join(codexHome, 'sessions', year, month, day);
+    fs.mkdirSync(directory, { recursive: true });
+    const filePath = path.join(directory, `rollout-${year}-${month}-${day}T10-00-00-${sessionId}.jsonl`);
+    fs.writeFileSync(filePath, '{}\n');
+    return filePath;
+  }
+
+  it('finds a rollout from a week back, past newer day folders, without polling', async () => {
+    const weekOld = writeRollout('2026', '10', '20', ROLLOUT_ID);
+    writeRollout('2026', '10', '26', 'aaaaaaaa-0000-4000-8000-000000000001');
+    writeRollout('2026', '10', '27', 'aaaaaaaa-0000-4000-8000-000000000002');
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+
+    await expect(new CodexAdapter().locateSessionHistoryFile(ROLLOUT_ID, '/mock/project')).resolves.toBe(weekOld);
+    // The old locate slept 500 ms on a timer before each retry.
+    expect(timers).not.toHaveBeenCalled();
+    timers.mockRestore();
+  });
+
+  it('returns null at once for a rollout that is nowhere', async () => {
+    writeRollout('2026', '10', '27', 'aaaaaaaa-0000-4000-8000-000000000002');
+    const timers = vi.spyOn(globalThis, 'setTimeout');
+    await expect(new CodexAdapter().locateSessionHistoryFile(ROLLOUT_ID, '/mock/project')).resolves.toBeNull();
+    expect(timers).not.toHaveBeenCalled();
+    timers.mockRestore();
+  });
+});

@@ -54,6 +54,8 @@ sources:
 | transcript_path | TEXT | | NULL |
 | cli_target | TEXT | | NULL |
 
+`transcript_path` is the transcript file the agent reported, written from its status line when it changes. A new row for a conversation that already has one inherits the newest reported path of the same `agent_session_id` at insert (`SessionRepository.insert`), because a resumed Claude conversation keeps writing the file it started in.
+
 Valid session_type values: `claude_agent`, `codex_agent`, `gemini_agent`, `qwen_agent`, `aider_agent`, `cursor_agent`, `copilot_agent`, `warp_agent`, `kimi_agent`, `opencode_agent`, `droid_agent`, `ollama_agent`, `grok_agent`, `antigravity_agent`, `goose_agent`, `run_script`.
 
 Valid status values: `running`, `queued`, `suspended`, `exited`, `orphaned`.

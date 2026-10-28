@@ -4,10 +4,11 @@
  *
  * When a task's branch is renamed, its worktree directory is recreated at a new
  * path and the re-spawned agent runs with the new cwd. cwd-keyed agents key their
- * conversation history to the cwd (Claude:
- * ~/.claude/projects/<slug(cwd)>/<id>.jsonl), so `--resume <id>` from the new cwd
- * finds nothing. This helper migrates the history to the new cwd's slug before the
- * resume command is built, reusing the adapter's onProjectRelocated hook.
+ * conversation history to the cwd, so `--resume <id>` from the new cwd finds
+ * nothing. This helper migrates the history to the new cwd's slug before the
+ * resume command is built, reusing the adapter's onProjectRelocated hook. Claude
+ * migrates only a history its own resume cannot reach: one under a sibling
+ * worktree's slug moves, one under a parent folder's slug stays.
  *
  * Real temp files with os.homedir() mocked to a temp directory (same pattern as
  * claude-project-relocation.test.ts). Generic fixture paths only, derived from the
@@ -31,6 +32,7 @@ vi.mock('node:os', async () => {
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { claudeProjectSlug } from '../../src/main/agent/adapters/claude/transcript-parser';
+import { clearClaudeTranscriptLocatorCacheForTests } from '../../src/main/agent/adapters/claude/transcript-locator';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 
 const AGENT_SESSION_ID = '5d522da8-2db0-401e-ac33-c8b9e08ad281';
@@ -83,12 +85,19 @@ afterEach(() => {
 });
 
 describe('migrateResumeCwdIfRenamed - real Claude adapter', () => {
-  it('migrates the transcript to the new worktree slug so resume becomes reachable', async () => {
+  afterEach(() => {
+    clearClaudeTranscriptLocatorCacheForTests();
+  });
+
+  it('migrates a history under the renamed worktree\'s old slug, which Claude\'s resume does not reach', async () => {
+    // The locator finds it by its scan, so readers follow it where it is. Claude's
+    // own `--resume` was measured to read only the cwd's slug and its parents'.
     const adapter = new ClaudeAdapter();
     seedTranscript(oldWorktree, '{"type":"user"}\n{"type":"assistant"}\n');
+    const original = path.join(transcriptDir(oldWorktree), `${AGENT_SESSION_ID}.jsonl`);
 
-    // Red: not reachable from the renamed worktree before migration.
-    expect(await adapter.locateSessionHistoryFile(AGENT_SESSION_ID, newWorktree)).toBeNull();
+    expect(await adapter.locateSessionHistoryFile(AGENT_SESSION_ID, newWorktree)).toBe(original);
+    expect(await adapter.locateResumeHistoryFile(AGENT_SESSION_ID, newWorktree)).toBeNull();
 
     await migrateResumeCwdIfRenamed({
       adapter,
@@ -99,11 +108,30 @@ describe('migrateResumeCwdIfRenamed - real Claude adapter', () => {
       projectPath,
     });
 
-    // Green: history moved under slug(newWorktree) and is now reachable.
-    const reachable = await adapter.locateSessionHistoryFile(AGENT_SESSION_ID, newWorktree);
-    expect(reachable).not.toBeNull();
-    expect(fs.readFileSync(reachable!, 'utf-8')).toContain('assistant');
+    const moved = path.join(transcriptDir(newWorktree), `${AGENT_SESSION_ID}.jsonl`);
+    expect(fs.readFileSync(moved, 'utf-8')).toContain('assistant');
     expect(fs.existsSync(transcriptDir(oldWorktree))).toBe(false);
+    expect(await adapter.locateResumeHistoryFile(AGENT_SESSION_ID, newWorktree)).toBe(moved);
+  });
+
+  it('leaves a history under the project root\'s slug where it is: Claude resumes it from a worktree', async () => {
+    // Claude Code 2.1.312 resumed a conversation started in the project root from
+    // its worktree and kept appending to the root-slug file.
+    const adapter = new ClaudeAdapter();
+    seedTranscript(projectPath, '{"type":"user"}\n{"type":"assistant"}\n');
+    const original = path.join(transcriptDir(projectPath), `${AGENT_SESSION_ID}.jsonl`);
+
+    await migrateResumeCwdIfRenamed({
+      adapter,
+      agentSessionId: AGENT_SESSION_ID,
+      canResume: true,
+      oldCwd: oldWorktree,
+      newCwd: newWorktree,
+      projectPath,
+    });
+
+    expect(fs.existsSync(original)).toBe(true);
+    expect(fs.existsSync(transcriptDir(newWorktree))).toBe(false);
   });
 });
 

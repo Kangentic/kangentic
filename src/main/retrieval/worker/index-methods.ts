@@ -79,6 +79,8 @@ export interface IndexMethods {
       sessionType: string;
       cwd: string;
       cliTarget?: StoredCliTarget | null;
+      /** The transcript path the agent reported (the live usage's `transcriptPath`). */
+      transcriptPath?: string | null;
       remoteTargets: RemoteTargets;
     };
     result: { outcome: IndexOutcome };
@@ -213,9 +215,9 @@ export const indexHandlers: IndexHandlers = {
     return { outcome, changesIndexed: changed?.indexed ?? 0 };
   },
 
-  'index.workflowAgentTurns': async ({ projectId, sessionId, agentSessionId, sessionType, cwd, cliTarget, remoteTargets }, context) => {
+  'index.workflowAgentTurns': async ({ projectId, sessionId, agentSessionId, sessionType, cwd, cliTarget, transcriptPath, remoteTargets }, context) => {
     adoptRemoteTargets(agentRegistry, remoteTargets);
-    const outcome = await indexerFor(context).recordWorkflowAgentTurns(projectId, { sessionId, agentSessionId, sessionType, cwd, cliTarget });
+    const outcome = await indexerFor(context).recordWorkflowAgentTurns(projectId, { sessionId, agentSessionId, sessionType, cwd, cliTarget, transcriptPath });
     return { outcome };
   },
 

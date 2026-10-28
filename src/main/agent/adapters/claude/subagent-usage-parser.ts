@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { streamJsonlRecords } from '../../shared/history-scan';
-import { locateClaudeTranscriptFile } from './transcript-parser';
+import { peekClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
 import type { SubagentSpawnLink, SubagentTranscriptSignature, SubagentUsageTurn } from '../../agent-adapter';
 import type { CliPlace } from '../../shared/cli-target';
 
@@ -46,12 +46,21 @@ export const CLAUDE_SUBAGENT_SPAWN_TOOL = 'Task';
  * Locate a session's subagent transcript directory.
  *
  * Derived from the RESOLVED main transcript path rather than by recomputing the
- * project slug, so a relocated project (see `claude-project-relocation.ts`)
- * keeps working: whatever directory the main JSONL was found in is the one whose
- * sibling we want.
+ * project slug, so a relocated project (see `project-relocation.ts`) or a
+ * conversation resumed from another folder keeps working: whatever directory the
+ * main JSONL was found in is the one whose sibling we want. Synchronous, so it
+ * takes the locator's peek (`transcript-locator.ts`).
  */
-export function locateClaudeSubagentDir(agentSessionId: string, cwd: string, place: CliPlace | null = null): string {
-  const transcriptPath = locateClaudeTranscriptFile(agentSessionId, cwd, place);
+export function locateClaudeSubagentDir(
+  agentSessionId: string,
+  cwd: string,
+  place: CliPlace | null = null,
+  reportedPath: string | null = null,
+): string {
+  return subagentDirOf(peekClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath }), agentSessionId);
+}
+
+function subagentDirOf(transcriptPath: string, agentSessionId: string): string {
   return path.join(path.dirname(transcriptPath), agentSessionId, SUBAGENTS_DIR);
 }
 
@@ -321,6 +330,7 @@ export async function parseClaudeSubagentUsage(
   agentSessionId: string,
   cwd: string,
   place: CliPlace | null = null,
+  reportedPath: string | null = null,
 ): Promise<{
   directoryPresent: boolean;
   complete: boolean;
@@ -328,7 +338,8 @@ export async function parseClaudeSubagentUsage(
   turns: SubagentUsageTurn[];
   spawnLinks: SubagentSpawnLink[];
 }> {
-  const directory = locateClaudeSubagentDir(agentSessionId, cwd, place);
+  const transcriptPath = await resolveClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
+  const directory = subagentDirOf(transcriptPath, agentSessionId);
   let entries: string[];
   try {
     entries = fs.readdirSync(directory);

@@ -79,7 +79,7 @@ sharing the reconciled `agent_session_id`, newest first), from three agent-writt
 
 | Source | Transcript path | Turns |
 |---|---|---|
-| the session row | `sessions.transcript_path`, written from the status line when it changes | token or cost totals above zero prove turns; zero proves nothing |
+| the session row | `sessions.transcript_path`, written from the status line when it changes, and inherited at insert from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
 | `status.json` | the status line's `transcript_path` | tokens or cost |
 | `events.jsonl` | `transcript_path` inside the SessionStart hook payload | any event beyond `session_start` / `session_end` |
 
@@ -94,8 +94,10 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
   (`SpawnOutcome.resumePromptUnsent`), since the task template took its place in the prompt.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
-  absolute reported path named `<id>.jsonl`; that path and the locator's both failing with ENOENT (a
-  permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
+  absolute reported path named `<id>.jsonl`; that path and the one every reader would open both
+  failing with ENOENT (the transcript locator's, which looks past the cwd to the folder the
+  conversation started in, see [Where a Claude transcript is](../../integrations/agents/session-history.md#where-a-claude-transcript-is);
+  a permission or lock error is not proof, `agent/shared/confirmed-missing.ts`); the projects folder
   two levels above the reported path readable (a WSL session's Linux path stops here); and no
   project folder under it, a symlinked or junctioned one included, holding `<id>.jsonl` (measured at
   16 to 22 ms over 617 folders), so a file Claude might find elsewhere always resumes.

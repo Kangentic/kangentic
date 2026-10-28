@@ -49,7 +49,15 @@ export async function tryReadSessionFinalReply(
     const reply = await retrievalClient.call(
       'transcript.finalReply',
       {
-        facts: { sessionType: record.session_type, agentSessionId, cwd: record.cwd, cliTarget: parseStoredCliTarget(record.cli_target) },
+        facts: {
+          sessionType: record.session_type,
+          agentSessionId,
+          cwd: record.cwd,
+          cliTarget: parseStoredCliTarget(record.cli_target),
+          // What the agent reported it is writing: a resumed conversation can
+          // stay outside the folder its cwd maps to.
+          transcriptPath: record.transcript_path,
+        },
         since: session.transcriptAnchor ?? null,
         remoteTargets: collectRemoteTargets(agentRegistry),
       },

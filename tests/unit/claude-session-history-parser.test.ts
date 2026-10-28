@@ -343,7 +343,12 @@ describe('ClaudeSessionHistoryParser.locate', () => {
         agentSessionId: 'never-appears',
         cwd: '/mock/project',
       });
-      await vi.runAllTimersAsync();
+      // Each attempt asks the locator, whose stats are real I/O, so the next
+      // sleep is scheduled only once they land: step the clock until the poll
+      // gives up, rather than running the timers once.
+      let settled = false;
+      promise.then(() => { settled = true; }, () => { settled = true; });
+      while (!settled) await vi.advanceTimersByTimeAsync(500);
       expect(await promise).toBeNull();
     } finally {
       fs.rmSync(tempHome, { recursive: true, force: true });

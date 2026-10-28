@@ -107,6 +107,7 @@ describe('a running workflow task whose turn hangs', () => {
         getActivityReason: () => reason,
         getSessionAgentName: () => agentName,
         getSessionCliTarget: () => null,
+        getReportedTranscriptPath: () => null,
         getPendingDraft: () => draft,
         write: (_sessionId: string, data: string) => { written.push(data); },
         signalUserInterrupt: (sessionId: string) => { signalledInterrupts.push(sessionId); },

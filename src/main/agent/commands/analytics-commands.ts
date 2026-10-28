@@ -559,7 +559,7 @@ export async function handleGetSessionHistory(
 
   // Find the latest session with an agent_session_id
   const record = db.prepare(
-    `SELECT id, session_type, agent_session_id, cwd, cli_target FROM sessions
+    `SELECT id, session_type, agent_session_id, cwd, cli_target, transcript_path FROM sessions
      WHERE task_id = ? AND agent_session_id IS NOT NULL
      ORDER BY started_at DESC LIMIT 1`
   ).get(task.id) as {
@@ -568,6 +568,7 @@ export async function handleGetSessionHistory(
     agent_session_id: string;
     cwd: string;
     cli_target: string | null;
+    transcript_path: string | null;
   } | undefined;
 
   if (!record) {
@@ -579,7 +580,9 @@ export async function handleGetSessionHistory(
     return { success: false, error: `No adapter registered for session type "${record.session_type}"` };
   }
 
-  const filePath = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd, placeOfRecord(record));
+  const filePath = await adapter.locateSessionHistoryFile(
+    record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path,
+  );
   if (!filePath) {
     return {
       success: true,

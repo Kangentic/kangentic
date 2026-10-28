@@ -64,10 +64,16 @@ let capturedCallbacks: {
   reportRejectedPermissionTools?: (sessionId: string, toolIds: string[], sinceMs: number) => string[];
 } | null = null;
 
+// The live usage the closure reads the agent's reported transcript path from.
+const usageCache: Record<string, { transcriptPath?: string | null }> = {};
+
 vi.mock('../../src/main/activity-engine/session-telemetry', () => {
   class MockSessionTelemetry {
     constructor(callbacks: typeof capturedCallbacks) {
       capturedCallbacks = callbacks;
+    }
+    getReportedTranscriptPath(sessionId: string) {
+      return usageCache[sessionId]?.transcriptPath ?? null;
     }
   }
   return { SessionTelemetry: MockSessionTelemetry };
@@ -81,6 +87,7 @@ describe('SessionManager reportRejectedPermissionTools wiring (task #640)', () =
 
   beforeEach(() => {
     capturedCallbacks = null;
+    for (const key of Object.keys(usageCache)) delete usageCache[key];
     manager = new SessionManager();
   });
 
@@ -136,8 +143,28 @@ describe('SessionManager reportRejectedPermissionTools wiring (task #640)', () =
       agentSessionId: 'agent-session-id-xyz',
       toolIds: ['toolu_rejected', 'toolu_pending'],
       sinceMs: 1_694_000_000_000,
+      transcriptPath: null,
     });
     expect(result).toEqual(['toolu_rejected']);
+  });
+
+  it('passes the transcript path the agent reported in its live usage', () => {
+    const reportRejectedPromptTools = vi.fn(() => []);
+    seedSession({
+      agentSessionId: 'agent-session-id-xyz',
+      agentParser: {
+        runtime: {
+          permissionPrompts: { reportRejectedPromptTools },
+        },
+      } as unknown as ManagedSession['agentParser'],
+    });
+    usageCache['session-1'] = { transcriptPath: '/mock/home/.claude/projects/-mock-root/agent-session-id-xyz.jsonl' };
+
+    getCallback()('session-1', ['toolu_rejected'], 0);
+
+    expect(reportRejectedPromptTools).toHaveBeenCalledWith(expect.objectContaining({
+      transcriptPath: '/mock/home/.claude/projects/-mock-root/agent-session-id-xyz.jsonl',
+    }));
   });
 
   it('returns [] and never calls the adapter when agentSessionId has not been captured yet', () => {

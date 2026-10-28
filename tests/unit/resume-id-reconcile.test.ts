@@ -93,7 +93,7 @@ describe('reconcileResumeAgentSessionId', () => {
     const resolved = await reconcile(adapter);
 
     expect(resolved).toBe(FORKED_ID);
-    expect(adapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'), null);
+    expect(adapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'), null, null);
     expect(updateAgentSessionId).toHaveBeenCalledTimes(1);
     expect(updateAgentSessionId).toHaveBeenCalledWith(RECORD_ID, FORKED_ID);
   });
