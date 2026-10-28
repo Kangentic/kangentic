@@ -12,32 +12,4 @@
  * separate file from that one, so the tasks still emptying that list never edit
  * this one.
  */
-export const I18N_UNCONVERTED_TOAST_FILES: Record<string, readonly string[]> = {
-  // ── #916: dialogs, task detail, backlog and workflows ──
-
-  dialogs: [
-    'src/renderer/components/dialogs/BoardManagerDialog.tsx',
-    'src/renderer/components/dialogs/NewTaskDialog.tsx',
-    'src/renderer/components/dialogs/ProjectPathMissingDialog.tsx',
-    'src/renderer/components/dialogs/attachment-utils.ts',
-    'src/renderer/components/dialogs/image-compress.ts',
-    'src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx',
-    'src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx',
-    'src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx',
-    'src/renderer/components/dialogs/task-detail/open-task-conversation.ts',
-    'src/renderer/components/dialogs/task-detail/useAttachments.ts',
-    'src/renderer/components/dialogs/task-detail/useCopyDisplayId.ts',
-    'src/renderer/components/dialogs/task-detail/useTaskActions.ts',
-  ],
-
-  backlog: [
-    'src/renderer/components/backlog/ImportDialog.tsx',
-    'src/renderer/components/backlog/NewBacklogTaskDialog.tsx',
-  ],
-
-  workflows: [
-    'src/renderer/components/workflows/TaskWorkflowPanel.tsx',
-    'src/renderer/components/workflows/WorkflowCardMenu.tsx',
-    'src/renderer/components/workflows/WorkflowsView.tsx',
-  ],
-};
+export const I18N_UNCONVERTED_TOAST_FILES: Record<string, readonly string[]> = {};

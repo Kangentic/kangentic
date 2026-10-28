@@ -473,8 +473,8 @@ type CallsSortKey = 'column' | 'call' | 'started' | 'model' | 'effort' | 'outcom
 
 const CALLS_COLUMNS: Array<SortColumn<TaskReportBackgroundCall, CallsSortKey>> = [
   { key: 'column', label: msg({ message: 'Column', context: 'column header' }), align: 'left', sortValue: (call) => call.column?.name ?? null },
-  // Sorted by the job's key, not its translated label, so the order is the same in every language.
-  { key: 'call', label: msg({ message: 'Call', context: 'column header' }), align: 'left', sortValue: (call) => call.automationName ?? call.job },
+  // Sorted by what the cell shows: the automation's name, else the job's label in the session's language.
+  { key: 'call', label: msg({ message: 'Call', context: 'column header' }), align: 'left', sortValue: (call) => call.automationName ?? translateText(JOB_CALLS[call.job].label) },
   { key: 'started', label: msg({ message: 'Started', context: 'column header' }), align: 'left', sortValue: (call) => Date.parse(call.startedAt) },
   { key: 'model', label: msg({ message: 'Model', context: 'column header' }), align: 'left', sortValue: (call) => call.model },
   { key: 'effort', label: msg({ message: 'Effort', context: 'column header' }), align: 'left', sortValue: (call) => call.effort },
@@ -567,12 +567,14 @@ const OUTCOME_PILLS: Record<TaskReportCallOutcome, { label: LocalizedText; class
 
 /** A call's outcome pill, the same size as the Model and Effort pills; a dash for a call with no automation. */
 function OutcomePill({ call }: { call: TaskReportBackgroundCall }) {
+  const { t } = useLingui();
   if (call.outcome === null) return <Dash />;
   const pill = OUTCOME_PILLS[call.outcome];
   const pillLabel = translateText(pill.label);
+  // call.reason is the stored automation-run reason, shown as written.
+  const reason = call.reason;
   return (
-    // call.reason is the stored automation-run reason, shown as written.
-    <Tooltip label={call.reason ? `${pillLabel}: ${call.reason}` : pillLabel}>
+    <Tooltip label={reason ? t`${pillLabel}: ${reason}` : pillLabel}>
       <span
         className={`inline-flex h-[22px] items-center rounded border px-2 text-xs font-medium ${pill.className}`}
         data-testid="completed-call-outcome"

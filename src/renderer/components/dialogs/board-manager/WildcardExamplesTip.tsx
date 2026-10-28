@@ -18,19 +18,22 @@ import { TEXT_MATCH_WILDCARD_EXAMPLES } from '../../../../shared/final-line-matc
  * The trigger is a real button, so a keyboard user opens the tip by focus, as
  * `Tooltip` does for a pointer, and a screen reader reads the plain-text
  * version below as the button's description.
+ *
+ * Each row is one message, the rule as written: a translated rule is never
+ * re-cased, and no sentence is spliced from fragments.
  */
 export function WildcardExamplesTip(): ReactElement {
   const { t } = useLingui();
-  // The tip as plain text, for a screen reader.
+  // The tip as plain text, for a screen reader: one sentence per row.
   const rows = TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => {
     const pattern = example.pattern;
-    const rule = translateText(example.rule).toLowerCase();
+    const rule = translateText(example.rule);
     const sample = example.sample;
-    return sample !== null ? t`${pattern}: ${rule}, as in ${sample}` : t`${pattern}: ${rule}`;
-  }).join('. ');
+    return sample !== null ? t`${pattern}: ${rule}, as in ${sample}.` : t`${pattern}: ${rule}.`;
+  }).join(' ');
   return (
     <Tooltip
-      label={t`Wildcard examples. ${rows}.`}
+      label={t`Wildcard examples. ${rows}`}
       header={{ icon: <Info />, title: t`Wildcard examples` }}
       content={<WildcardExamplesGrid />}
       testId="edit-automation-wildcard-tip"
@@ -52,6 +55,7 @@ function WildcardExamplesGrid(): ReactElement {
   return (
     <div className="grid grid-cols-[max-content_1fr] items-center gap-x-3 gap-y-2">
       {TEXT_MATCH_WILDCARD_EXAMPLES.map((example) => {
+        const rule = translateText(example.rule);
         const sample = example.sample;
         return (
           <Fragment key={example.pattern}>
@@ -59,8 +63,9 @@ function WildcardExamplesGrid(): ReactElement {
               {example.pattern}
             </code>
             <span className="text-xs text-fg-tertiary">
-              {translateText(example.rule)}
-              {sample !== null && <span className="text-tooltip-rich-muted"><Trans>, as in {sample}</Trans></span>}
+              {sample !== null
+                ? <Trans>{rule}<span className="text-tooltip-rich-muted">, as in {sample}</span></Trans>
+                : rule}
             </span>
           </Fragment>
         );

@@ -142,7 +142,8 @@ test.describe('BoardManagerDialog - out-of-union column role', () => {
     // 'todo' resolves, so the role icon renders and the dot fallback must NOT appear.
     // This is what stops the crash being "fixed" by dropping the role branch entirely.
     await expect(iconButton.locator('div.rounded-full')).toHaveCount(0);
-    await expect(iconButton).toContainText('Default (todo)');
+    // The role reads by its name, not its stored id.
+    await expect(iconButton).toContainText('Default (To Do)');
 
     expect(getPageErrors()).toHaveLength(0);
   });

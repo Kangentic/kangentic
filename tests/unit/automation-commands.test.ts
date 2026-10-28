@@ -14,6 +14,8 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
+import { i18n } from '@lingui/core';
+import { compileMessage } from '@lingui/message-utils/compileMessage';
 import { openTestDatabase } from './helpers/test-database';
 
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
@@ -29,8 +31,30 @@ import {
 } from '../../src/main/agent/commands/automation-commands';
 import { handleUpdateColumn, handleCreateColumn, handleDeleteColumn } from '../../src/main/agent/commands/column-commands';
 import { resolveColumnMessage } from '../../src/main/transition-engine/column-strategy';
+import { TEXT_MATCH_UNAVAILABLE_REASON } from '../../src/shared/final-line-match';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { AutomationRunAgainResult, BoardProfile } from '../../src/shared/types';
+
+/** What an agent reads over MCP, written out here rather than derived from the code under test. */
+const TEXT_MATCH_UNAVAILABLE_ENGLISH = 'Text match reads the agent\'s last message, so it runs on agent turn end only.';
+
+/** A fake French rendering of the same message. No apostrophes: ICU can read one as quoting. */
+const TEXT_MATCH_UNAVAILABLE_FRENCH = 'La correspondance de texte lit le dernier message, donc elle ne tourne qu en fin de tour.';
+
+/**
+ * Makes the session language French on the global i18n, the instance the renderer's
+ * translator reads. The entry is keyed by the exported descriptor's own id, so it is
+ * the id the shared list resolves. Mirrors priority-labels.test.ts.
+ */
+function activateFrench(): void {
+  if (typeof TEXT_MATCH_UNAVAILABLE_REASON === 'string' || !TEXT_MATCH_UNAVAILABLE_REASON.id) {
+    throw new Error('TEXT_MATCH_UNAVAILABLE_REASON is expected to be a message descriptor with an id');
+  }
+  i18n.loadAndActivate({
+    locale: 'fr',
+    messages: { [TEXT_MATCH_UNAVAILABLE_REASON.id]: compileMessage(TEXT_MATCH_UNAVAILABLE_FRENCH) },
+  });
+}
 
 describe('automation MCP commands', () => {
   let db: DatabaseType.Database;
@@ -348,6 +372,60 @@ describe('automation MCP commands', () => {
         expect(response.error).toContain('finalLine works only with on: "turn_end", not enter.');
         expect(response.error).toContain('Nothing was saved.');
         expect(automations.listForColumn(executingId())).toHaveLength(0);
+      });
+
+      // The reason is English because an agent reads it over MCP, whatever language the
+      // UI runs in. The French session proves it: the sentence must not follow the
+      // global i18n the renderer translates with, and must not print a raw descriptor.
+      describe('with the session language set to French', () => {
+        beforeEach(() => {
+          activateFrench();
+          // Precondition: a swap to the UI translator would read this instead.
+          expect(i18n._(TEXT_MATCH_UNAVAILABLE_REASON)).toBe(TEXT_MATCH_UNAVAILABLE_FRENCH);
+        });
+
+        afterEach(() => {
+          i18n.activate('en');
+        });
+
+        // set_automations is the one write path: a "create" is a row with no id, an
+        // "update" is a row carrying an existing id through the whole-column rewrite.
+        it('tells an agent the Text match reason in English when a created row sets finalLine off a turn end', () => {
+          const response = handleSetAutomations({
+            column: 'Executing',
+            automations: [{ name: 'Review', type: 'send_message', on: 'enter', message: '/code-review', finalLine: 'Ready for review' }],
+          }, context);
+
+          expect(response.success).toBe(false);
+          expect(response.error).toBe(
+            `automations[0]: finalLine works only with on: "turn_end", not enter. ${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
+          );
+          expect(response.error).not.toContain(TEXT_MATCH_UNAVAILABLE_FRENCH);
+          expect(automations.listForColumn(executingId())).toHaveLength(0);
+        });
+
+        it('tells an agent the Text match reason in English when an updated row sets finalLine off a turn end', () => {
+          handleSetAutomations({
+            column: 'Executing',
+            automations: [{ name: 'Review', type: 'send_message', message: '/code-review' }],
+          }, context);
+          const [original] = automations.listForColumn(executingId());
+
+          const response = handleSetAutomations({
+            column: 'Executing',
+            automations: [{ id: original.id, name: 'Review', type: 'send_message', on: 'enter', message: '/code-review', finalLine: 'Ready for review' }],
+          }, context);
+
+          expect(response.success).toBe(false);
+          expect(response.error).toBe(
+            `automations[0]: finalLine works only with on: "turn_end", not enter. ${TEXT_MATCH_UNAVAILABLE_ENGLISH} Nothing was saved.`,
+          );
+          expect(response.error).not.toContain(TEXT_MATCH_UNAVAILABLE_FRENCH);
+          const rows = automations.listForColumn(executingId());
+          expect(rows).toHaveLength(1);
+          expect(rows[0]).toMatchObject({ id: original.id, final_line: null });
+          expect(rows[0].config.message).toBe('/code-review');
+        });
       });
 
       it('refuses a finalLine with no letter, number or *, which no last line can match, and saves nothing', () => {

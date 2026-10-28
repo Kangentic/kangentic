@@ -93,6 +93,7 @@ import { TemplateVariablePicker } from '../TemplateVariablePicker';
 import { pruneProfileReferencesForColumn } from '../../../shared/board-profile-references';
 import { snapSpawnStrategyToTarget } from '../../../shared/session-track';
 import { asSentence, describeIpcError } from '../../lib/ipc-error';
+import { cachePerCatalog } from '../../i18n/catalog-cache';
 import type { LocalizedText } from '../../../shared/i18n/text';
 
 /** Sentinel entity id keying this dialog's maximize flag in the session store. */
@@ -128,6 +129,12 @@ const SECTIONS: { id: SectionId; label: LocalizedText; icon: typeof Sliders }[] 
   { id: 'auto', label: msg`Conversation`, icon: MessageSquare },
 ];
 
+/** To Do and Done by role, as the overview, the disabled-section reasons and the Icon field name them. */
+const COLUMN_ROLE_NAMES: Record<SwimlaneRole, LocalizedText> = {
+  todo: msg({ message: 'To Do', context: 'column role' }),
+  done: msg({ message: 'Done', context: 'column role' }),
+};
+
 /** The Main and Isolated session names, shared by the Session control and the overview's Session cell. */
 const SESSION_TARGET_LABELS = {
   main: msg({ message: 'Main', context: 'session target' }),
@@ -140,56 +147,41 @@ const SESSION_TARGET_LABELS = {
  * "the task's session". These are the channels, in the app's own words, the same
  * ones `session_target`, the docs and the MCP column tools use.
  *
- * Cached per language because `SegmentedControl` keys its measuring effect on the
- * `options` array and this dialog re-renders on every keystroke in Name. A fresh
- * array per render would rebuild its ResizeObserver, and force a synchronous
- * layout read, once per character. Built at render, after the catalog loads.
+ * Cached until the catalog changes (`cachePerCatalog`), because this dialog
+ * re-renders on every keystroke in Name and `SegmentedControl` keys its measuring
+ * effect on the `options` array. Built at render, after the catalog loads.
  */
-const sessionTargetOptionsByLocale = new Map<string, readonly SegmentedControlOption<SessionTarget>[]>();
-function sessionTargetOptions(): readonly SegmentedControlOption<SessionTarget>[] {
-  const cached = sessionTargetOptionsByLocale.get(i18n.locale);
-  if (cached) return cached;
-  const built: readonly SegmentedControlOption<SessionTarget>[] = [
-    {
-      value: 'main',
-      label: translateText(SESSION_TARGET_LABELS.main),
-      tip: translateText(msg`Share the task's conversation with the other columns.`),
-      testId: 'column-session-target-main',
-    },
-    {
-      value: 'isolated',
-      label: translateText(SESSION_TARGET_LABELS.isolated),
-      icon: <IsolatedIcon size={12} />,
-      tip: translateText(msg`Start a clean conversation on every entry.`),
-      testId: 'column-session-target-isolated',
-    },
-  ];
-  sessionTargetOptionsByLocale.set(i18n.locale, built);
-  return built;
-}
+const sessionTargetOptions = cachePerCatalog((): readonly SegmentedControlOption<SessionTarget>[] => [
+  {
+    value: 'main',
+    label: translateText(SESSION_TARGET_LABELS.main),
+    tip: translateText(msg`Share the task's conversation with the other columns.`),
+    testId: 'column-session-target-main',
+  },
+  {
+    value: 'isolated',
+    label: translateText(SESSION_TARGET_LABELS.isolated),
+    icon: <IsolatedIcon size={12} />,
+    tip: translateText(msg`Start a clean conversation on every entry.`),
+    testId: 'column-session-target-isolated',
+  },
+]);
 
-/** Automatic first, the order the design settled on; Manual stays the default. Cached per language for the reason above. */
-const planApprovalOptionsByLocale = new Map<string, readonly SegmentedControlOption<PlanApproval>[]>();
-function planApprovalBaseOptions(): readonly SegmentedControlOption<PlanApproval>[] {
-  const cached = planApprovalOptionsByLocale.get(i18n.locale);
-  if (cached) return cached;
-  const built: readonly SegmentedControlOption<PlanApproval>[] = [
-    {
-      value: 'automatic',
-      label: translateText(msg({ message: 'Automatic', context: 'plan approval' })),
-      tip: translateText(msg`Approve each plan for you. Questions the agent asks still wait.`),
-      testId: 'column-plan-approval-automatic',
-    },
-    {
-      value: 'manual',
-      label: translateText(msg({ message: 'Manual', context: 'plan approval' })),
-      tip: translateText(msg`You approve each plan in the agent's terminal.`),
-      testId: 'column-plan-approval-manual',
-    },
-  ];
-  planApprovalOptionsByLocale.set(i18n.locale, built);
-  return built;
-}
+/** Automatic first, the order the design settled on; Manual stays the default. Cached for the reason above. */
+const planApprovalBaseOptions = cachePerCatalog((): readonly SegmentedControlOption<PlanApproval>[] => [
+  {
+    value: 'automatic',
+    label: translateText(msg({ message: 'Automatic', context: 'plan approval' })),
+    tip: translateText(msg`Approve each plan for you. Questions the agent asks still wait.`),
+    testId: 'column-plan-approval-automatic',
+  },
+  {
+    value: 'manual',
+    label: translateText(msg({ message: 'Manual', context: 'plan approval' })),
+    tip: translateText(msg`You approve each plan in the agent's terminal.`),
+    testId: 'column-plan-approval-manual',
+  },
+]);
 
 /**
  * The Plan approval options for the column's agent. Automatic is offered only
@@ -1127,10 +1119,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       // here" is off has no agent or session settings to inherit. Both dash, and
       // the `title` says which.
       const isTerminal = laneDraft.role === 'todo' || laneDraft.role === 'done';
-      const terminalName = laneDraft.role === 'todo'
-        ? t({ message: 'To Do', context: 'column role' })
-        : t({ message: 'Done', context: 'column role' });
-      // The same message the Automations pane and the Edit automation dialog show.
+      const terminalName = translateText(COLUMN_ROLE_NAMES[laneDraft.role === 'todo' ? 'todo' : 'done']);
+      // Named `columnName` so the On enter reason below is the same message, one
+      // ID, as the Automations pane's and the Edit automation dialog's.
       const columnName = terminalName;
       const defaultLabel = t({ message: 'Default', context: 'board overview value' });
       const startAgentLabel = t`Start an agent here`;
@@ -1650,11 +1641,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       }
     }
 
-    // Parts joined into one clause: "a, b and c". The leading parts join with a
-    // comma and the last is one message, so a language can order them as it needs.
+    // Parts joined into one clause: "a, b and c". The leading parts join with the
+    // language's own list separator, and the last is one message, so a language
+    // can order them and pick its conjunction.
     const joinParts = (parts: string[]): string => {
       if (parts.length < 2) return parts[0] ?? '';
-      const leadingParts = parts.slice(0, -1).join(', ');
+      const leadingParts = new Intl.ListFormat(i18n.locale, { type: 'unit', style: 'short' }).format(parts.slice(0, -1));
       const lastPart = parts[parts.length - 1];
       return t`${leadingParts} and ${lastPart}`;
     };
@@ -1688,9 +1680,12 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     if (savedAutomationColumns > 0) parts.push(t`saved automations`);
     // One sentence: "Saved 2 columns, created 1 column and updated the column order."
     const summary = parts.length > 1 ? joinParts(parts) : (parts[0] ?? t`no changes to save`);
+    // The clause opens the sentence, so its first letter is capitalized in the
+    // session's language; the closing punctuation is the translator's.
+    const sentence = `${summary.charAt(0).toLocaleUpperCase(i18n.locale)}${summary.slice(1)}`;
     useToastStore.getState().addToast({
       title: t`Board saved`,
-      message: `${summary.charAt(0).toUpperCase()}${summary.slice(1)}.`,
+      message: t({ message: `${sentence}.`, comment: 'The Board saved toast: the saved changes as one clause, ended as a sentence.' }),
       variant: 'info',
     });
     // Defensive, not a fix for a reachable path: every failure above returns
@@ -1937,9 +1932,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // native tooltips used, now shown inline).
   const disabledReasonFor = (label: string): string => {
     if (!isTodoOrDone) return t`Turn on "Start an agent here" in the Agent section to enable ${label}.`;
-    const roleName = draftRole === 'todo'
-      ? t({ message: 'To Do', context: 'column role' })
-      : t({ message: 'Done', context: 'column role' });
+    const roleName = translateText(COLUMN_ROLE_NAMES[draftRole === 'todo' ? 'todo' : 'done']);
     return t`Sessions don't run in ${roleName} columns, so ${label} doesn't apply.`;
   };
   // Named once, for the footer's Remove column button.
@@ -1948,8 +1941,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   const chosenIconName = draft?.icon ?? '';
   const chooseIconLabel = chosenIconName ? t`Choose icon: ${chosenIconName}` : t`Choose icon`;
   // What the Icon field shows: the chosen icon, else the role's default, else None.
+  // A legacy role this build does not know shows as stored.
   const iconRole = draft?.role ?? null;
-  const iconText = chosenIconName || (iconRole ? t`Default (${iconRole})` : t`None`);
+  const iconRoleName = iconRole === null ? null : Object.hasOwn(COLUMN_ROLE_NAMES, iconRole) ? translateText(COLUMN_ROLE_NAMES[iconRole]) : iconRole;
+  const iconText = chosenIconName || (iconRoleName ? t`Default (${iconRoleName})` : t`None`);
 
   // The automation row being edited, resolved in plain render code rather than
   // an inline IIFE in the JSX: the compiler rules cannot see through an IIFE

@@ -7,10 +7,6 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: pl\n"
 
-#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid ", as in {sample}"
-msgstr ""
-
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr ""
@@ -68,7 +64,7 @@ msgid "{columnName}, {triggerPhrase}"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
-msgid "{columnName}: added {addedCount, plural, one {# automation(s)} other {# automation(s)}}"
+msgid "{columnName}: added {addedCount, plural, one {# automation} other {# automations}}"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
@@ -76,7 +72,7 @@ msgid "{columnName}: edited automations"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
-msgid "{columnName}: removed {removedCount, plural, one {# automation(s)} other {# automation(s)}}"
+msgid "{columnName}: removed {removedCount, plural, one {# automation} other {# automations}}"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
@@ -152,15 +148,19 @@ msgid "{oldPath} to {newPath}"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}"
+msgid "{pattern}: {rule}, as in {sample}."
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "{pattern}: {rule}, as in {sample}"
+msgid "{pattern}: {rule}."
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "{percent}% of pixels changed"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+msgid "{pillLabel}: {reason}"
 msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
@@ -169,6 +169,10 @@ msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{reason} Saved {savedBeforeFailing} before failing."
+msgstr ""
+
+#: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+msgid "{rule}<0>, as in {sample}</0>"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
@@ -195,12 +199,21 @@ msgstr ""
 msgid "{selectedCount} selected"
 msgstr ""
 
+#. The Board saved toast: the saved changes as one clause, ended as a sentence.
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "{sentence}."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "{shownCount} of {totalCount}"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 msgid "{startedText} to {endedText}"
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+msgid "{statusLabel}: {filePath}"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
@@ -902,7 +915,7 @@ msgid "Default"
 msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Default ({iconRole})"
+msgid "Default ({iconRoleName})"
 msgstr ""
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
@@ -1663,7 +1676,7 @@ msgid "On exit"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-msgid "On exit, this column's automations share {exitBudgetSeconds} seconds in total. Put longer work on enter."
+msgid "On exit, this column's automations share {exitBudgetSeconds, plural, one {# second} other {# seconds}} in total. Put longer work on enter."
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
@@ -2714,7 +2727,7 @@ msgid "Wildcard examples"
 msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-msgid "Wildcard examples. {rows}."
+msgid "Wildcard examples. {rows}"
 msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx

@@ -153,7 +153,7 @@ export const WALKTHROUGH_STEPS: readonly WalkthroughStepDefinition[] = [
       if (!lane) return i18n._(msg`Drag a task into a column that starts an agent`);
       // A column's name is data the user chose; it is a placeholder in the sentence.
       const laneName = lane.name;
-      return i18n._(msg`Drag a task into ${laneName}`);
+      return i18n._(msg`Drag a task into ${{ laneName }}`);
     },
     // Says WHY, not just what: the point is that starting an agent is a per-column
     // setting the seeded board turns on for you, not something this column does by
@@ -163,7 +163,7 @@ export const WALKTHROUGH_STEPS: readonly WalkthroughStepDefinition[] = [
       const lane = resolveAutoSpawnLane(swimlanes);
       if (!lane) return i18n._(msg`No column starts an agent yet. Turn that on for a column in Board manager.`);
       const laneName = lane.name;
-      return i18n._(msg`${laneName} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager.`);
+      return i18n._(msg`${{ laneName }} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager.`);
     },
   },
   {
@@ -217,5 +217,5 @@ export function resolveStepLabel(step: WalkthroughStepDefinition, swimlanes: Swi
   const lane = resolveAutoSpawnLane(swimlanes);
   if (!lane) return translateText(step.label);
   const laneName = lane.name;
-  return i18n._(msg`Drag it to ${laneName}`);
+  return i18n._(msg`Drag it to ${{ laneName }}`);
 }

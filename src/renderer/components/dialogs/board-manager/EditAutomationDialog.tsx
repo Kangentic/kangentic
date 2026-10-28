@@ -1,9 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Bot, Funnel, Info, Repeat, Settings, TextSearch, Zap } from 'lucide-react';
 import { i18n } from '@lingui/core';
+import { plural } from '@lingui/core/macro';
 import { msg } from '@lingui/core/runtime-macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../../i18n/translate';
+import { cachePerCatalog, cachePerCatalogBy } from '../../../i18n/catalog-cache';
 import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGER_LABELS,
@@ -73,8 +75,8 @@ type ConditionKind = 'agent' | 'text';
 /**
  * Agent evaluation first: it runs on every trigger and is what a Condition has
  * always meant, so the one option that can be unavailable (Text match, off a
- * turn end) sits last. Built once per language and cached, for the same
- * ResizeObserver reason as `triggerOptionsForLocale` below, one array per state.
+ * turn end) sits last. Cached until the catalog changes, for the same
+ * ResizeObserver reason as `allTriggerOptions` below, one array per state.
  * The labels are descriptors resolved when the arrays are built, at render and
  * after the catalog has loaded, never at module load.
  */
@@ -85,10 +87,7 @@ interface ConditionKindOptionSets {
   /** Off a turn end there is no final message, so Text match is shown and disabled, with the reason as its tip. */
   withoutText: SegmentedControlOption<ConditionKind>[];
 }
-const conditionKindOptionsByLocale = new Map<string, ConditionKindOptionSets>();
-function conditionKindOptions(): ConditionKindOptionSets {
-  const cached = conditionKindOptionsByLocale.get(i18n.locale);
-  if (cached) return cached;
+const conditionKindOptions = cachePerCatalog((): ConditionKindOptionSets => {
   const agentOption: SegmentedControlOption<ConditionKind> = {
     value: 'agent',
     label: translateText(AGENT_KIND_LABEL),
@@ -101,13 +100,11 @@ function conditionKindOptions(): ConditionKindOptionSets {
     icon: <TextSearch size={14} />,
     testId: 'edit-automation-condition-kind-text',
   };
-  const built: ConditionKindOptionSets = {
+  return {
     withText: [agentOption, textOption],
     withoutText: [agentOption, { ...textOption, disabled: true, disabledReason: translateText(TEXT_MATCH_UNAVAILABLE_REASON) }],
   };
-  conditionKindOptionsByLocale.set(i18n.locale, built);
-  return built;
-}
+});
 
 /**
  * The kind a Condition opens on. A saved one keeps its own; a new one starts
@@ -124,56 +121,46 @@ function initialConditionKind(draft: AutomationDraft, automationAgentReady: bool
 const PROSE_MAX_ROWS = 8;
 
 /**
- * Cached per language, not an inline literal: `SegmentedControl` keys its
- * measuring effect on `options`, and this dialog re-renders on every keystroke
- * in Name or any text field, so a fresh array per render would tear down and
- * rebuild the control's ResizeObserver (and force a synchronous layout read)
- * per character.
+ * Cached until the catalog changes, not an inline literal: `SegmentedControl`
+ * keys its measuring effect on `options`, and this dialog re-renders on every
+ * keystroke in Name or any text field, so a fresh array per render would tear
+ * down and rebuild the control's ResizeObserver (and force a synchronous layout
+ * read) per character.
  *
  * Built at render rather than at module load: the trigger labels are read from
  * the shared manifest, which holds them as text to translate, and a read at
- * module load would freeze them in English. This line is intentionally
- * translated at render with `translateText`.
+ * module load would freeze them in English.
  */
-const triggerOptionsByLocale = new Map<string, SegmentedControlOption<AutomationTrigger>[]>();
-function triggerOptionsForLocale(): SegmentedControlOption<AutomationTrigger>[] {
-  const cached = triggerOptionsByLocale.get(i18n.locale);
-  if (cached) return cached;
-  const built = AUTOMATION_TRIGGERS.map((trigger) => ({
-    value: trigger,
-    label: translateText(AUTOMATION_TRIGGER_LABELS[trigger]),
-    testId: `edit-automation-trigger-${trigger}`,
-  }));
-  triggerOptionsByLocale.set(i18n.locale, built);
-  return built;
-}
+const allTriggerOptions = cachePerCatalog((): SegmentedControlOption<AutomationTrigger>[] => AUTOMATION_TRIGGERS.map((trigger) => ({
+  value: trigger,
+  label: translateText(AUTOMATION_TRIGGER_LABELS[trigger]),
+  testId: `edit-automation-trigger-${trigger}`,
+})));
 
 /**
- * The triggers this type can take in this column, each disabled one carrying
- * its reason as the hover tip. Cached by the reasons, so the same array comes
- * back while nothing that decides them changes. Mirrors
- * `WorktreePlacementControl`'s `blockedOptionsFor`, and for the same reason:
- * a fresh array would defeat the memo on the control.
+ * The trigger options with each blocked one disabled, keyed by the reasons (a
+ * JSON array, one entry per trigger, null where it is fine), so the same array
+ * comes back while nothing that decides them changes. Mirrors
+ * `WorktreePlacementControl`'s blocked options, and for the same reason: a fresh
+ * array would defeat the memo on the control.
  */
-const blockedTriggerOptions = new Map<string, SegmentedControlOption<AutomationTrigger>[]>();
+const blockedTriggerOptions = cachePerCatalogBy((reasonsKey: string): SegmentedControlOption<AutomationTrigger>[] => {
+  const reasons = JSON.parse(reasonsKey) as Array<string | null>;
+  return allTriggerOptions().map((option, index) => {
+    const reason = reasons[index];
+    return reason === null || reason === undefined ? option : { ...option, disabled: true, disabledReason: reason };
+  });
+});
+
+/** The triggers this type can take in this column, each disabled one carrying its reason as the hover tip. */
 function triggerOptionsFor(
   type: AutomationType,
   column: Swimlane,
   reportsTurnEnd: boolean | undefined,
 ): SegmentedControlOption<AutomationTrigger>[] {
   const reasons = triggerReasons(type, column, reportsTurnEnd);
-  const triggerOptions = triggerOptionsForLocale();
-  if (reasons.every((reason) => reason === null)) return triggerOptions;
-  // The language is part of the key: the reasons and the labels read in it.
-  const cacheKey = `${i18n.locale}\n${reasons.map((reason) => reason ?? '').join('\n')}`;
-  const cached = blockedTriggerOptions.get(cacheKey);
-  if (cached) return cached;
-  const built = triggerOptions.map((option, index) => {
-    const reason = reasons[index];
-    return reason === null ? option : { ...option, disabled: true, disabledReason: reason };
-  });
-  blockedTriggerOptions.set(cacheKey, built);
-  return built;
+  if (reasons.every((reason) => reason === null)) return allTriggerOptions();
+  return blockedTriggerOptions(JSON.stringify(reasons));
 }
 
 /** Why each trigger is unavailable for this type in this column, or null where it is fine. */
@@ -200,7 +187,7 @@ function triggerReasons(type: AutomationType, column: Swimlane, reportsTurnEnd: 
  * where it applies keeps what was chosen.
  *
  * Cached per field and reason, so the same array comes back while neither
- * changes: the ResizeObserver reason `TRIGGER_OPTIONS` is module scope for.
+ * changes: the ResizeObserver reason `allTriggerOptions` is cached for.
  * Manifest fields are module constants, so the field object is a stable key.
  */
 const segmentedOptionsCache = new WeakMap<AutomationField, Map<string, SegmentedControlOption<string>[]>>();
@@ -433,7 +420,7 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
               too late. */}
           {local.trigger === 'exit' && SLOW_TYPES.has(local.type) && (
             <p data-testid="edit-automation-exit-budget" className={SETTING_DESCRIPTION_CLASS}>
-              {t`On exit, this column's automations share ${exitBudgetSeconds} seconds in total. Put longer work on enter.`}
+              {t`On exit, this column's automations share ${plural(exitBudgetSeconds, { one: '# second', other: '# seconds' })} in total. Put longer work on enter.`}
             </p>
           )}
         </RuleCard>

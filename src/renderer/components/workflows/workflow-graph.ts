@@ -167,6 +167,8 @@ export function reachedStepCount(task: WorkflowViewTask): number {
 export function stepRefusal(task: WorkflowViewTask, stepIndex: number): string | null {
   if (task.place === 'done') return translateText(WORKFLOW_REFUSAL_MESSAGES.doneStays(taskLabel(task)));
   if (stepIndex >= reachedStepCount(task)) return null;
+  // A locked step lies at or before the current one (`reachedStepCount`), so a
+  // current step exists here; its name is data.
   const current = task.steps.find((step) => step.state === 'current');
   // The column's own name is data. With no current step, a stand-in phrase names it.
   const columnName = current?.name ?? i18n._(msg({ message: 'its column', comment: 'Stands in for a column name inside "has reached ..."' }));

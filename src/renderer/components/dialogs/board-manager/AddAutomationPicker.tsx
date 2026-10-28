@@ -177,6 +177,8 @@ export function AddAutomationPicker(props: AddAutomationPickerProps) {
             // and the Type field. This group was the last place the type was
             // identified by its sentence alone.
             const columnName = column.name;
+            // The trigger's name mid-sentence is its own phrase message, so no
+            // translated label is re-cased in code.
             const triggerPhrase = translateText(AUTOMATION_TRIGGER_PHRASES[draft.trigger]);
             return (
             <button
