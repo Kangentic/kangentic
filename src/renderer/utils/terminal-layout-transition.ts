@@ -67,15 +67,55 @@ interface Landing {
 // refits as usual, so a reset costs one change its frame hold.
 const landings = new Map<HTMLElement, Landing>();
 
-/** The next frame, or 50 ms in a window that draws none (a hidden one stops its frames). */
-export function nextFrame(): Promise<void> {
+/**
+ * The next frame, or 50 ms in a window that draws none (a hidden one stops its frames). Resolves
+ * with that frame's start time, which every animation frame callback in the frame shares, or with
+ * null when the 50 ms passed first and the caller resumed between frames.
+ */
+export function nextFrame(): Promise<number | null> {
   return new Promise((resolve) => {
-    const fallback = setTimeout(resolve, 50);
-    requestAnimationFrame(() => {
+    const fallback = setTimeout(() => resolve(null), 50);
+    requestAnimationFrame((frameTime) => {
       clearTimeout(fallback);
-      resolve();
+      resolve(frameTime);
     });
   });
+}
+
+export interface HiddenFrameCount {
+  /** Stop counting, with what `nextFrame` resolved with for the frame that shows the screen again. */
+  finish(shownAt: number | null): number;
+}
+
+/**
+ * Counts the frames that paint while a caller keeps something hidden, for the dev trace's
+ * `framesHidden`. Start it as the thing is hidden and `finish` it as it is shown again.
+ *
+ * Each frame is counted from an animation frame callback, which runs before that frame paints, so
+ * a counted frame painted hidden unless the caller showed the screen in the same frame. The frame
+ * time tells the two apart: the show frame and the counter's callback share it when the counter
+ * ran first. A show that came from `nextFrame`'s 50 ms fallback ran between frames and shares it
+ * with none, so every frame counted painted hidden. An earlier count started at -1 and let the
+ * show frame add the missing one, which left it a frame short on the fallback, the path a starved
+ * runner takes.
+ */
+export function countHiddenFrames(): HiddenFrameCount {
+  let frames = 0;
+  let lastFrameTime: number | null = null;
+  let counting = true;
+  const onFrame = (frameTime: number): void => {
+    if (!counting) return;
+    frames += 1;
+    lastFrameTime = frameTime;
+    requestAnimationFrame(onFrame);
+  };
+  requestAnimationFrame(onFrame);
+  return {
+    finish(shownAt) {
+      counting = false;
+      return frames - (shownAt !== null && shownAt === lastFrameTime ? 1 : 0);
+    },
+  };
 }
 
 /**

@@ -7,10 +7,12 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
+  countHiddenFrames,
   isTerminalLayoutLandingFor,
   LAYOUT_LANDING_CAP_MS,
   LAYOUT_LANDING_IDLE_MS,
   LAYOUT_LANDING_MIN_MS,
+  nextFrame,
   noteTerminalFitInLanding,
   runTerminalLayoutChange,
 } from '../../src/renderer/utils/terminal-layout-transition';
@@ -213,5 +215,127 @@ describe('runTerminalLayoutChange', () => {
   it('a terminal outside any landing finds none', () => {
     expect(isTerminalLayoutLandingFor({} as Element)).toBe(false);
     expect(isTerminalLayoutLandingFor(null)).toBe(false);
+  });
+});
+
+/**
+ * The swap's dev trace counts the frames that painted with the screen hidden
+ * (`framesHidden`), and the maximize spec bounds the blank frames it sees on screen by it. The
+ * count came out a frame short when the screen was shown by nextFrame's 50 ms fallback, which a
+ * starved runner takes, so one blank frame read as an unaccounted flash.
+ */
+describe('nextFrame and countHiddenFrames', () => {
+  let queued: Array<(frameTime: number) => void> = [];
+
+  /**
+   * One frame: the callbacks queued before it began run in order with the frame's time, and any
+   * queued meanwhile wait for the next one, as the browser does.
+   */
+  function runFrame(frameTime: number): void {
+    const due = queued;
+    queued = [];
+    for (const callback of due) callback(frameTime);
+  }
+
+  /** Start a nextFrame wait and read what it resolved with once it has. */
+  function waitForNextFrame(): { result: () => number | null | undefined } {
+    let shownAt: number | null | undefined;
+    void nextFrame().then((value) => { shownAt = value; });
+    return { result: () => shownAt };
+  }
+
+  beforeEach(() => {
+    queued = [];
+    vi.useFakeTimers();
+    vi.stubGlobal('requestAnimationFrame', (callback: (frameTime: number) => void) => queued.push(callback));
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it('nextFrame resolves with the frame time, or with null when 50 ms pass first', async () => {
+    const onFrame = waitForNextFrame();
+    runFrame(16);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onFrame.result()).toBe(16);
+
+    const onFallback = waitForNextFrame();
+    await vi.advanceTimersByTimeAsync(49);
+    expect(onFallback.result()).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(onFallback.result()).toBeNull();
+    // The frame that comes late changes nothing.
+    runFrame(90);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onFallback.result()).toBeNull();
+  });
+
+  it('counts a frame painted hidden when the screen is shown by the 50 ms fallback', async () => {
+    // The frame after the hide paints hidden, and no later frame comes within 50 ms, so the screen
+    // is shown from a timer between frames. One frame painted blank.
+    const count = countHiddenFrames();
+    runFrame(16);
+    const shown = waitForNextFrame();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(shown.result()).toBeNull();
+    expect(count.finish(shown.result() ?? null)).toBe(1);
+  });
+
+  it('counts every frame painted hidden on the fallback, and none when there was none', async () => {
+    const count = countHiddenFrames();
+    runFrame(16);
+    runFrame(33);
+    runFrame(50);
+    const shown = waitForNextFrame();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(count.finish(shown.result() ?? null)).toBe(3);
+
+    const idle = countHiddenFrames();
+    const shownWithNoFrame = waitForNextFrame();
+    await vi.advanceTimersByTimeAsync(50);
+    expect(idle.finish(shownWithNoFrame.result() ?? null)).toBe(0);
+  });
+
+  it('does not count the frame the screen is shown in, when the counter ran first in it', async () => {
+    // Frame 1 paints hidden. The show waits for frame 2, where the counter's callback runs before
+    // the show's: the screen is visible when frame 2 paints, so one frame painted hidden.
+    const count = countHiddenFrames();
+    runFrame(16);
+    const shown = waitForNextFrame();
+    runFrame(33);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown.result()).toBe(33);
+    expect(count.finish(shown.result() ?? null)).toBe(1);
+  });
+
+  it('counts none when the screen is shown in the first frame after the hide', async () => {
+    // The swap working: hidden and shown before the first paint.
+    const count = countHiddenFrames();
+    const shown = waitForNextFrame();
+    runFrame(16);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown.result()).toBe(16);
+    expect(count.finish(shown.result() ?? null)).toBe(0);
+  });
+
+  it('does not count the frame the screen is shown in, when the show ran first in it', async () => {
+    // The show's callback is ahead of the counter's, so the screen is visible when this frame
+    // paints whether or not the counter's callback ran before the show stopped it.
+    const shown = waitForNextFrame();
+    const count = countHiddenFrames();
+    runFrame(16);
+    await vi.advanceTimersByTimeAsync(0);
+    expect(shown.result()).toBe(16);
+    expect(count.finish(shown.result() ?? null)).toBe(0);
+  });
+
+  it('stops counting once finished', async () => {
+    const count = countHiddenFrames();
+    runFrame(16);
+    expect(count.finish(null)).toBe(1);
+    runFrame(33);
+    runFrame(50);
+    expect(queued).toHaveLength(0);
   });
 });

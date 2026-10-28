@@ -420,8 +420,9 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   `command-terminal.spec.ts` and `task-detail-maximize.spec.ts`: a change shows at most one
   picture per terminal between before and after, never ConPTY's early redraw; a box that grows
   shows no old text, and its frame fades in with Animations on; a box that shrinks keeps its
-  input box on screen in every frame, with no frame painted while its screen is hidden (the
-  dev trace's `framesHidden`); a swap preview holds and sends one resize per step; plus the
+  input box on screen in every frame, except the one unbroken run of blank frames painted while
+  its screen is hidden, which is never longer than the dev trace's `framesHidden` (exact when the
+  screen shows from the 50 ms frame fallback too) and ends before the agent's frame; a swap preview holds and sends one resize per step; plus the
   one-resize, held-output, cap and recovery cases beside them.
 - **A window drag holds every window terminal's refit, and closes itself (the manager-resize
   gate).** The window manager's resizers (a window edge, a tile seam, a tiled group's outer edge,

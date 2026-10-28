@@ -415,9 +415,12 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       ).toBe(true);
       // And it ends before the agent's frame is on screen, never after it.
       expect(lastBlank < firstFilled, `a blank frame at or after the agent's frame, ${blankAt}`).toBe(true);
-      // Every blank frame is one the app counted, and the screen was never hidden past the repaint
-      // wait's draw cap and its frame fallback (useTerminal's FRAME_HOLD_DRAW_MAX_MS and the 50 ms
-      // nextFrame fallback), with room for a starved runner.
+      // Every blank frame is one the app counted. framesHidden is exact on both ways the swap shows
+      // the screen: in the next frame, or from nextFrame's 50 ms fallback on a runner too starved to
+      // paint one (countHiddenFrames). It was a frame short on the fallback, so one blank frame
+      // read as a flash the app had not counted. And the screen was never hidden past the repaint
+      // wait's draw cap and that fallback (useTerminal's FRAME_HOLD_DRAW_MAX_MS), with room for a
+      // starved runner.
       expect(blankIndexes.length, summary).toBeLessThanOrEqual(swap.framesHidden ?? 0);
       expect(swapFinishedAt - swapStartedAt, summary).toBeLessThanOrEqual(1000);
     } finally {
