@@ -34,6 +34,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { TurnEndedPayload } from '../../src/main/pty/session-manager';
+import type { ColumnAutomation } from '../../src/shared/types';
 
 const hoisted = vi.hoisted(() => ({
   checkAutomationConditions: vi.fn(),
@@ -43,6 +44,10 @@ const hoisted = vi.hoisted(() => ({
   task: {} as Record<string, unknown>,
   /** The state the workflow row reads, which a test moves to pause it. */
   workflowState: 'running',
+  /** The column's enabled turn-end rows, which the step reads for its exit rows. */
+  turnEndRows: [] as ColumnAutomation[],
+  /** The row read the step makes, kept so a test can say which column and trigger it asked for. */
+  getForTrigger: vi.fn(),
 }));
 
 interface MoveInput {
@@ -56,10 +61,10 @@ function moveTaskTo(swimlaneId: string): void {
 }
 
 const COLUMNS = [
-  { id: 'lane-todo', name: 'To Do', position: 0, role: 'todo', is_archived: false, is_ghost: false, description: null },
-  { id: 'lane-executing', name: 'Executing', position: 1, role: null, is_archived: false, is_ghost: false, description: null },
-  { id: 'lane-review', name: 'Code Review', position: 2, role: null, is_archived: false, is_ghost: false, description: null },
-  { id: 'lane-done', name: 'Done', position: 3, role: 'done', is_archived: false, is_ghost: false, description: null },
+  { id: 'lane-todo', name: 'To Do', position: 0, role: 'todo', is_archived: false, is_ghost: false, description: null, auto_spawn: false },
+  { id: 'lane-executing', name: 'Executing', position: 1, role: null, is_archived: false, is_ghost: false, description: null, auto_spawn: true },
+  { id: 'lane-review', name: 'Code Review', position: 2, role: null, is_archived: false, is_ghost: false, description: null, auto_spawn: true },
+  { id: 'lane-done', name: 'Done', position: 3, role: 'done', is_archived: false, is_ghost: false, description: null, auto_spawn: false },
 ];
 
 vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})), getExistingProjectDb: vi.fn(() => ({})) }));
@@ -76,6 +81,7 @@ vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
       list: () => COLUMNS,
     },
     automationRuns: { recordWorkflowStep: hoisted.recordWorkflowStep, hasWorkflowStepDetailSince: hoisted.hasWorkflowStepDetailSince },
+    automations: { getForTrigger: hoisted.getForTrigger },
     taskMoves: { visitStartedAt: () => '2026-10-25T06:00:00.000Z' },
   })),
 }));
@@ -114,6 +120,10 @@ describe('the workflow step and the turn it judged', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.workflowState = 'running';
+    hoisted.turnEndRows = [];
+    // Set here, not in `vi.hoisted`, so it reads the rows a test assigns and a
+    // reset or clear of the mocks never leaves it answering nothing.
+    hoisted.getForTrigger.mockImplementation(() => hoisted.turnEndRows);
     hoisted.task = {
       id: 'task-1',
       title: 'Add the export button',
@@ -133,6 +143,9 @@ describe('the workflow step and the turn it judged', () => {
     };
     activity = { [SESSION_ID]: 'idle' };
     currentWorkSerial = TURN_WORK_SERIAL;
+    // Reset, not only cleared: an answer a test queued and never used must not
+    // answer the next test's check.
+    hoisted.checkAutomationConditions.mockReset();
     hoisted.checkAutomationConditions.mockImplementation(async () => ({
       ok: true,
       answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'The work is done.' }]]),
@@ -604,6 +617,268 @@ describe('the workflow step and the turn it judged', () => {
 
       await expect(runWithReply('Still going.')).resolves.toMatchObject({ verdict: 'check-failed' });
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: false }));
+    });
+  });
+
+  // Task 916: Code Review's two rows route on "Verdict: Blocked" (back to Executing)
+  // and "Verdict: Ready" (on). The review ended "No changes to review.", which
+  // neither matched, and the check answered met and moved the task on. The
+  // column's own exit rows now outrank the check's yes. Every test here has the
+  // check answer met, so a stay is the rows' doing.
+  describe('a column\'s own exit rows outrank the check\'s yes', () => {
+    const NO_CHANGES_REPLY = 'The branch is identical to main.\n\nNo changes to review.';
+
+    function exitRow(name: string, finalLine: string, targetColumn: string, maxRuns: number | null): ColumnAutomation {
+      return {
+        id: `row-${name.toLowerCase().replace(/\s+/g, '-')}`,
+        swimlane_id: 'lane-review',
+        name,
+        type: 'move_to_column',
+        trigger: 'turn_end',
+        position: 0,
+        enabled: true,
+        config: { targetColumn },
+        condition: null,
+        final_line: finalLine,
+        max_runs: maxRuns,
+        created_at: '2026-01-01T00:00:00.000Z',
+        updated_at: '2026-01-01T00:00:00.000Z',
+      };
+    }
+
+    const BACK_FOR_REVISIONS = exitRow('Back for revisions', 'Verdict: Blocked', 'Executing', 3);
+    const ON_TO_DONE = exitRow('On to Done', 'Verdict: Ready', 'Done', 1);
+
+    /** The first ask answers met. Queued alone: a test that moves the task makes no second ask. */
+    function checkSaysDone(): void {
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: true,
+        answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: true, reason: 'Code Review step finished: the agent reported no diff against main.' }]]),
+        agentName: 'Mock agent',
+        callId: 'call-first',
+      }));
+    }
+
+    /** The second ask, of why the agent stopped: `needsUser`, and nothing running. */
+    function whyStopped(needsUser: boolean): void {
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: true,
+        answers: new Map([
+          ['workflow-step-needs-user', { met: needsUser, reason: needsUser ? 'It asks whether to review another branch.' : 'It asks the user for nothing.' }],
+          ['workflow-step-running', { met: false, reason: 'Nothing is running.' }],
+        ]),
+        agentName: 'Mock agent',
+        callId: 'call-second',
+      }));
+    }
+
+    function reviewWithReply(reply: string | null): ReturnType<typeof runWorkflowStep> {
+      hoisted.task = { ...hoisted.task, swimlane_id: 'lane-review' };
+      return runWorkflowStep(context, {
+        payload: PAYLOAD,
+        columnId: 'lane-review',
+        signal: new AbortController().signal,
+        readAgentReply: async () => reply,
+      });
+    }
+
+    it('does not move on a reply no row matches, and nudges it as a stall (the incident)', async () => {
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+      checkSaysDone();
+      whyStopped(false);
+
+      const result = await reviewWithReply(NO_CHANGES_REPLY);
+
+      const reason = 'the final line, "No changes to review.", is not one Code Review moves the task on from';
+      expect(result).toEqual({ verdict: 'stopped', reason, workSerial: TURN_WORK_SERIAL });
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: false,
+        reason,
+        detail: `Not done yet: ${reason}`,
+        backgroundCallId: 'call-first',
+      }));
+      // The reason states the fact. It never hands the agent a line to type.
+      expect(reason).not.toContain('Verdict');
+    });
+
+    it('still moves on when the column has no move rows (the control)', async () => {
+      checkSaysDone();
+
+      await expect(reviewWithReply(NO_CHANGES_REPLY)).resolves.toMatchObject({ verdict: 'done' });
+
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: 'task-1', targetSwimlaneId: 'lane-done' }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.anything(),
+      );
+    });
+
+    it('does not move on a verdict only a send-back row matches, as when that row has spent its runs', async () => {
+      // A fourth "Verdict: Blocked": the row's Frequency is spent, so it ran
+      // nothing, and the step must not send the task forward in its place.
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+      checkSaysDone();
+      whyStopped(false);
+
+      const result = await reviewWithReply('1. src/main/a.ts:4: commit the extraction\nVerdict: Blocked');
+
+      expect(result).toMatchObject({ verdict: 'stopped', reason: 'the final line, "Verdict: Blocked", sends the task back to Executing' });
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('moves on a verdict a forward row matches, as when that row has spent its one run', async () => {
+      // A second pass through Code Review: "On to Done" is maxRuns 1, so the
+      // step is what moves the task on.
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+      checkSaysDone();
+
+      await expect(reviewWithReply('### Summary\n\nVerdict: Ready')).resolves.toMatchObject({ verdict: 'done' });
+
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ targetSwimlaneId: 'lane-done' }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.anything(),
+      );
+    });
+
+    it('accepts a forward row whose target is Next column', async () => {
+      hoisted.turnEndRows = [exitRow('On', 'Verdict: Ready', '', null)];
+      checkSaysDone();
+
+      await expect(reviewWithReply('Verdict: Ready')).resolves.toMatchObject({ verdict: 'done' });
+      expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
+    });
+
+    it('stops for the user when the reply no row matches asks a real question', async () => {
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+      checkSaysDone();
+      whyStopped(true);
+
+      await expect(reviewWithReply('The branch matches main. Should I review the release branch instead?'))
+        .resolves.toMatchObject({ verdict: 'waiting', reason: 'It asks whether to review another branch.' });
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    /** Where the step must have moved the task: Done, the column after Code Review. */
+    function expectMovedToDone(): void {
+      expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
+      expect(hoisted.handleTaskMove).toHaveBeenCalledWith(
+        context,
+        expect.objectContaining({ taskId: 'task-1', targetSwimlaneId: 'lane-done' }),
+        'workflow',
+        PROJECT_ID,
+        '/mock/project',
+        expect.anything(),
+      );
+    }
+
+    // Which rows count as exits. The step reads only a column's turn-end rows
+    // that move the task, behind a Text match, in a column that can run them,
+    // whose target names a column. A row outside that is no exit, and a column
+    // left with no forward exit lets the check alone judge.
+    describe('which rows count as exits', () => {
+      // Send message has no target, so a row of it read as an exit would resolve
+      // to Next column (Done) and count as forward.
+      const WAIT_FOR_CI: ColumnAutomation = {
+        ...exitRow('Wait for CI', 'Checks pending', '', null),
+        type: 'send_message',
+        config: { message: 'Wait for CI.' },
+      };
+
+      it('does not count a row that moves nothing, so its Text match cannot send the task on', async () => {
+        hoisted.turnEndRows = [WAIT_FOR_CI, ON_TO_DONE];
+        checkSaysDone();
+        whyStopped(false);
+
+        // The line the Send message row matches is not one a row that moves the
+        // task matches, so the one real exit (On to Done) refuses it.
+        const result = await reviewWithReply('Checks pending');
+
+        expect(result).toMatchObject({
+          verdict: 'stopped',
+          reason: 'the final line, "Checks pending", is not one Code Review moves the task on from',
+        });
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+
+      it('leaves the check alone when the only row with a Text match moves nothing', async () => {
+        hoisted.turnEndRows = [WAIT_FOR_CI];
+        checkSaysDone();
+
+        await expect(reviewWithReply('No changes to review.')).resolves.toMatchObject({ verdict: 'done' });
+
+        expectMovedToDone();
+      });
+
+      it('has no exits in a column that cannot run the rows, so the check alone judges', async () => {
+        // Start an agent here is off, so no agent ends a turn in this column and
+        // neither row would ever run. The COLUMNS objects are what the repository
+        // mock returns, so the column is put back whatever the test does.
+        const reviewColumn = COLUMNS.find((column) => column.id === 'lane-review');
+        if (!reviewColumn) throw new Error('The test board has no Code Review column.');
+        const autoSpawnBefore = reviewColumn.auto_spawn;
+        reviewColumn.auto_spawn = false;
+        try {
+          hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+          checkSaysDone();
+
+          await expect(reviewWithReply('No changes to review.')).resolves.toMatchObject({ verdict: 'done' });
+
+          expectMovedToDone();
+        } finally {
+          reviewColumn.auto_spawn = autoSpawnBefore;
+        }
+      });
+
+      it('does not count a move row with no Text match, as a Condition-only row has none', async () => {
+        const conditionOnly: ColumnAutomation = {
+          ...exitRow('Condition only', '', 'Done', null),
+          final_line: null,
+          condition: 'All the tests pass',
+        };
+        hoisted.turnEndRows = [conditionOnly];
+        checkSaysDone();
+
+        await expect(reviewWithReply('No changes to review.')).resolves.toMatchObject({ verdict: 'done' });
+
+        expectMovedToDone();
+      });
+
+      it('does not count a row whose target names no column, so it neither moves the task on nor sends it back', async () => {
+        // The row matches the reply, but its target resolves to no column, and the
+        // forward row beside it does not match: nothing moves the task on from here.
+        hoisted.turnEndRows = [exitRow('Nowhere', 'No changes to review.', 'No such column', null), ON_TO_DONE];
+        checkSaysDone();
+        whyStopped(false);
+
+        const result = await reviewWithReply('No changes to review.');
+
+        expect(result).toMatchObject({
+          verdict: 'stopped',
+          reason: 'the final line, "No changes to review.", is not one Code Review moves the task on from',
+        });
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+    });
+
+    it('reads the rows of the column\'s turn end, once the check says done', async () => {
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+      checkSaysDone();
+
+      await expect(reviewWithReply('Verdict: Ready')).resolves.toMatchObject({ verdict: 'done' });
+
+      // The rows of this column, for this trigger: not another column's, and not
+      // the enter or exit rows, which say nothing about where a turn end sends the task.
+      expect(hoisted.getForTrigger).toHaveBeenCalledTimes(1);
+      expect(hoisted.getForTrigger).toHaveBeenCalledWith('lane-review', 'turn_end');
     });
   });
 

@@ -10,7 +10,7 @@ import { needsAgentReply } from '../../automations/row-guards';
 import { showDesktopNotification } from '../handlers/system';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
-import { AUTOMATION_MANIFEST, isAutomationType } from '../../../shared/automation-manifest';
+import { automationMovesTask } from '../../../shared/automation-manifest';
 import type { IpcContext } from '../ipc-context';
 import type { AutomationContext } from '../../automations/shared/automation-adapter';
 import type { AutomationRunAgainResult, ColumnAutomation, Swimlane, Task } from '../../../shared/types';
@@ -74,7 +74,7 @@ export async function runAutomationAgain(
     ? await readLatestReply(projectId, repos.tasks.getById(taskId)?.session_id ?? null)
     : null;
 
-  if (movesTask(automation)) {
+  if (automationMovesTask(automation.type)) {
     // A row that moves the task (Move to column) runs outside the task lock,
     // as it does at a turn end: its move takes that lock (`handleTaskMove`),
     // and `withTaskLock` is not reentrant. The lock is taken only to let a move
@@ -96,11 +96,6 @@ export async function runAutomationAgain(
     if (!task) return { ok: false, error: 'That task no longer exists.' };
     return runRowAgain(context, projectId, task, column, automation, replyRead);
   });
-}
-
-/** Does a row of this type move the task when it runs? Asked of the manifest, never of the type's name. */
-function movesTask(automation: ColumnAutomation): boolean {
-  return isAutomationType(automation.type) && AUTOMATION_MANIFEST[automation.type].endsGroup === true;
 }
 
 /** The session's latest final message, with the session it came from (`readLatestReply`). */
@@ -133,7 +128,7 @@ async function runRowAgain(
   const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
   if (!projectPath) return { ok: false, error: 'That project is not open.' };
 
-  const moveTask: AutomationContext['moveTask'] = movesTask(automation)
+  const moveTask: AutomationContext['moveTask'] = automationMovesTask(automation.type)
     ? (move) => moveTaskFromRow(context, { projectId, projectPath, task, fromColumn: column, move, fromTurnEndGroup: false })
     : undefined;
 

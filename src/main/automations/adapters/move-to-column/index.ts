@@ -1,4 +1,4 @@
-import { AUTOMATION_MANIFEST } from '../../../../shared/automation-manifest';
+import { AUTOMATION_MANIFEST, automationMoveTargetName } from '../../../../shared/automation-manifest';
 import type { AutomationConfig } from '../../../../shared/types';
 import { describeAutomation } from '../../../../shared/automation-describe';
 import { englishI18n } from '../../../../shared/i18n/english';
@@ -34,7 +34,8 @@ export const moveToColumnAdapter: AutomationAdapter = {
       // An enter or exit group passes none, since it runs inside a move.
       throw new Error('Move to column can move a task only at a turn end or from Run again.');
     }
-    const column = typeof config.targetColumn === 'string' && config.targetColumn.trim() ? config.targetColumn.trim() : null;
+    // Read where the workflow step check reads it too, so the two resolve one target.
+    const column = automationMoveTargetName(moveToColumnAdapter.id, config);
     const message = typeof config.message === 'string' && config.message.trim() ? config.message : null;
     const { columnName } = await context.moveTask({ column, message, reason: context.automationName ?? 'Move to column' });
     return { detail: message ? `Moved to ${columnName}, with a message.` : `Moved to ${columnName}.` };

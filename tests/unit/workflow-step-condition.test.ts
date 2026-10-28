@@ -9,9 +9,11 @@ import { describe, it, expect } from 'vitest';
 import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   describeStepRoute,
+  stepExitVerdict,
   workflowStepCondition,
   workflowStepNeedsUserCondition,
   workflowStepRunningCondition,
+  type StepExitRow,
 } from '../../src/main/workflows/workflow-step-condition';
 import type { Swimlane, Task } from '../../src/shared/types';
 
@@ -207,5 +209,95 @@ describe('why a step that is not done stopped', () => {
       + 'The task\'s route: Planning, then Executing (this step), then Code Review, then Testing, then Merge, then Done. '
       + 'Judge only the Executing step: anything the task\'s description asks of a later step, or of a column the route skips, does not apply here.',
     );
+  });
+});
+
+/**
+ * The column's own exit rows against a reply the check judged done. The rows
+ * are this repo's Code Review pair (kangentic.json): "Verdict: Blocked" back to
+ * Executing and "Verdict: Ready" on to Testing.
+ */
+describe('stepExitVerdict', () => {
+  const codeReview = columnNamed('Code Review');
+  const exitTo = (finalLine: string, targetName: string | null): StepExitRow => ({
+    finalLine,
+    target: targetName === null ? null : columnNamed(targetName),
+  });
+  const BACK_FOR_REVISIONS = exitTo('Verdict: Blocked', 'Executing');
+  const ON_TO_TESTING = exitTo('Verdict: Ready', 'Testing');
+  const REVIEW_ROWS = [BACK_FOR_REVISIONS, ON_TO_TESTING];
+
+  it('refuses a reply neither row matches (task 916)', () => {
+    expect(stepExitVerdict(codeReview, REVIEW_ROWS, 'The branch is identical to main.\n\nNo changes to review.')).toEqual({
+      accepted: false,
+      reason: 'the final line, "No changes to review.", is not one Code Review moves the task on from',
+    });
+  });
+
+  it('accepts a reply the forward row matches, through markdown and case', () => {
+    expect(stepExitVerdict(codeReview, REVIEW_ROWS, '### Summary\n\n**verdict: ready**')).toEqual({ accepted: true });
+  });
+
+  it('refuses a reply only the send-back row matches, and names where it sends the task', () => {
+    expect(stepExitVerdict(codeReview, REVIEW_ROWS, '1. src/a.ts:4: commit the fix\nVerdict: Blocked')).toEqual({
+      accepted: false,
+      reason: 'the final line, "Verdict: Blocked", sends the task back to Executing',
+    });
+  });
+
+  it('accepts a line that a forward row and a send-back row both match', () => {
+    // Two rows match the one line, one back to Executing and one on to Testing.
+    // A forward match is enough, so the check's yes stands.
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS, exitTo('Verdict: Blocked', 'Testing')], 'Verdict: Blocked')).toEqual({ accepted: true });
+  });
+
+  it('does not read a matched row with no target as a send-back, and refuses with the not-an-exit reason', () => {
+    expect(stepExitVerdict(codeReview, [exitTo('Verdict: Blocked', null), ON_TO_TESTING], 'Verdict: Blocked')).toEqual({
+      accepted: false,
+      reason: 'the final line, "Verdict: Blocked", is not one Code Review moves the task on from',
+    });
+  });
+
+  it('refuses an empty reply in a column with a forward row', () => {
+    expect(stepExitVerdict(codeReview, REVIEW_ROWS, null)).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+    expect(stepExitVerdict(codeReview, REVIEW_ROWS, '   \n')).toEqual({ accepted: false, reason: 'the turn ended without a final message' });
+  });
+
+  it('leaves the check alone when the column has no exit rows', () => {
+    expect(stepExitVerdict(codeReview, [], 'No changes to review.')).toBeNull();
+  });
+
+  it('leaves the check alone in a column whose only row sends the task back, when the reply does not match it', () => {
+    // The step itself is that column's forward exit.
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], 'Reviewed and fixed everything.')).toBeNull();
+  });
+
+  it('still refuses a send-back match in a column with no forward row', () => {
+    expect(stepExitVerdict(codeReview, [BACK_FOR_REVISIONS], 'Verdict: Blocked')).toMatchObject({ accepted: false });
+  });
+
+  it('counts a row into Done as forward, and a wildcard pattern as a match', () => {
+    expect(stepExitVerdict(codeReview, [exitTo('Ready for *', 'Done')], 'Ready for testing')).toEqual({ accepted: true });
+  });
+
+  it('counts a later column as forward even when the route skips it', () => {
+    // A route that skips Testing: the row still names Testing, and the step
+    // then moves the task to the route's own next column.
+    expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', 'Merge')], 'Verdict: Ready')).toEqual({ accepted: true });
+  });
+
+  it('treats a row whose target names no column as no forward exit', () => {
+    expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'Verdict: Ready')).toBeNull();
+    expect(stepExitVerdict(codeReview, [exitTo('Verdict: Ready', null)], 'No changes to review.')).toBeNull();
+  });
+
+  it('ignores a row whose Text match can match no line, since it never runs', () => {
+    expect(stepExitVerdict(codeReview, [exitTo('---', 'Testing')], 'No changes to review.')).toBeNull();
+  });
+
+  it('quotes a long final line cut short', () => {
+    const verdict = stepExitVerdict(codeReview, REVIEW_ROWS, 'x'.repeat(300));
+    expect(verdict).toMatchObject({ accepted: false });
+    expect(verdict && !verdict.accepted ? verdict.reason : '').toContain(`"${'x'.repeat(120)}...",`);
   });
 });

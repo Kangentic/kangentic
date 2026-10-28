@@ -35,6 +35,9 @@ a branch carrying a `*(review)` commit no local agent authored. That is expected
 
 The pass ends with a verdict computed by `scripts/review-verdict.mjs`: **Ready** (move to Testing) or
 **Blocked** (move back to Executing and do the named steps). There is no "skipped" status, and the
-commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A finished pass normally
+commit body carries a `Refuted:`/`Decisions:` ledger the next pass reads. A branch with nothing to
+review ends Blocked too (`--no-changes`), since on the board it means Executing committed nothing.
+Task 916's review ended on a bare "No changes to review." that neither Code Review row matched, and
+the workflow moved the task on to Testing unreviewed. A finished pass normally
 leaves the tree clean; a fix on an already-dirty path stays uncommitted by design, so a dirty tree
 means the pass is either in flight or left those paths deliberately mixed.

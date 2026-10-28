@@ -1,5 +1,5 @@
 import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
+import { automationMovesTask, automationMoveTargetName, canColumnRun, canTaskRunAutomations } from '../../shared/automation-manifest';
 import { nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
@@ -8,11 +8,15 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { TurnEndedPayload } from '../pty/session-manager';
 import { checkAutomationConditions, type ConditionCheckCall } from '../automations/condition-check/condition-check';
 import type { ConditionPromptInput, ConditionPromptRow } from '../automations/condition-check/condition-prompt';
+import { resolveMoveTarget, routeOf } from '../automations/move-target';
+import { hasFinalLine } from '../automations/row-guards';
 import {
   describeStepRoute,
+  stepExitVerdict,
   workflowStepCondition,
   workflowStepNeedsUserCondition,
   workflowStepRunningCondition,
+  type StepExitRow,
 } from './workflow-step-condition';
 import { workflowOfTask } from './workflow-home';
 
@@ -46,6 +50,12 @@ import { workflowOfTask } from './workflow-home';
  *   move on (`workflow-recovery.ts`).
  * - The check is told the route, and at the route's last column it asks only
  *   whether the agent still needs the user (`workflow-step-condition.ts`).
+ * - A column's own exit rows (turn-end Move to column rows behind a Text match)
+ *   outrank the check's yes (`stepExitVerdict`). A reply whose final line no
+ *   forward row matches, or that only a send-back row matches, is not done, and
+ *   goes on to the second ask like any other. Task 916 left Code Review on "No
+ *   changes to review.", which neither row matched, and the check moved it on.
+ *   This holds where no row ran: a resume's catch-up, recovery, a spent row.
  * - It judges the turn its payload names, and acts only while that turn is
  *   still the session's latest (`isLatestTurn`), checked before the check and
  *   again after it. A turn the user began meanwhile can fail or be interrupted
@@ -94,6 +104,26 @@ export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_p
   } catch {
     return false;
   }
+}
+
+/**
+ * The column's exit rows: its enabled turn-end rows that move the task behind a
+ * Text match, each with the column it sends the task to, resolved as the row's
+ * own move resolves it (`move-from-row.ts`). The filter is the turn-end
+ * runner's own (`automation-runner.ts`: a Text match, `canColumnRun`), less
+ * Frequency and Condition, which decide whether a row runs, not where it sends
+ * the task. A spent forward row still says what finishes the step, and the step
+ * is what moves the task on once the row no longer can.
+ */
+function columnExitRows(repos: ReturnType<typeof getProjectRepos>, columns: readonly Swimlane[], column: Swimlane, task: Task): StepExitRow[] {
+  const facts = { autoSpawn: column.auto_spawn, role: column.role };
+  const exitRows: StepExitRow[] = [];
+  for (const row of repos.automations.getForTrigger(column.id, 'turn_end')) {
+    if (!hasFinalLine(row) || !automationMovesTask(row.type) || !canColumnRun(row.type, facts, 'turn_end').ok) continue;
+    const target = resolveMoveTarget(columns, column.id, automationMoveTargetName(row.type, row.config), routeOf(task));
+    exitRows.push({ finalLine: row.final_line, target: target.ok ? target.column : null });
+  }
+  return exitRows;
 }
 
 export async function runWorkflowStep(
@@ -208,12 +238,19 @@ export async function runWorkflowStep(
     return result('check-failed', outcome.reason);
   }
 
-  const answer = outcome.answers.get(WORKFLOW_STEP_CHECK_ID) ?? { met: false, reason: 'No answer.' };
+  const checked = outcome.answers.get(WORKFLOW_STEP_CHECK_ID) ?? { met: false, reason: 'No answer.' };
+  // Read after the check, so a column added or renamed during it counts, and
+  // only on a yes: a no never moves the task. The exit rows and the move share it.
+  const columns = checked.met ? repos.swimlanes.list() : [];
+  // The column's own exit rows outrank the check's yes: a reply none of them
+  // moves forward is not done, whatever the check made of it.
+  const exits = checked.met ? stepExitVerdict(column, columnExitRows(repos, columns, column, after.task), agentReply) : null;
+  const answer = exits && !exits.accepted ? { ...checked, met: false, reason: exits.reason } : checked;
   // The call that gave this answer: a retry's, when the first reply skipped it.
   const answerCallId = answer.callId ?? outcome.callId;
   if (!answer.met) return judgeWhyNotDone();
 
-  const next = nextOnRoute(repos.swimlanes.list(), after.task, column.id);
+  const next = nextOnRoute(columns, after.task, column.id);
   if (!next) {
     record({ met: true, reason: answer.reason, detail: 'Done, with nowhere left to go on this board.', backgroundCallId: answerCallId });
     return result('done', answer.reason);

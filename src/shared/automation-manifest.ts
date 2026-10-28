@@ -16,7 +16,7 @@
 import type { MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { NEVER_AUTO_SPAWN_ROLES } from './types';
-import type { AutoCommandMode, AutomationTrigger, AutomationType, SwimlaneRole, Task } from './types';
+import type { AutoCommandMode, AutomationConfig, AutomationTrigger, AutomationType, SwimlaneRole, Task } from './types';
 import type { LocalizedText } from './i18n/text';
 
 /** A capability an automation needs from its column before it can run. */
@@ -562,6 +562,30 @@ export function stableAutomationTypes(): AutomationType[] {
 
 export function isAutomationType(value: string): value is AutomationType {
   return Object.prototype.hasOwnProperty.call(AUTOMATION_MANIFEST, value);
+}
+
+/**
+ * Does a row of this type move the task when it runs (`endsGroup`)? Asked of
+ * the manifest, never of the type's name: Run again runs such a row outside the
+ * task lock, and a workflow's step check reads its Text match as the column's
+ * own exit (`src/main/workflows/workflow-step.ts`).
+ */
+export function automationMovesTask(type: string): boolean {
+  return isAutomationType(type) && AUTOMATION_MANIFEST[type].endsGroup === true;
+}
+
+/**
+ * The column a row of a type that moves the task sends it to, by name, as its
+ * `column` field holds it. Null for Next column (empty or absent), and for a
+ * type that moves nothing. The row's own move, its sentence and the workflow
+ * step check all read it here, so they never resolve one row's target two ways.
+ */
+export function automationMoveTargetName(type: string, config: AutomationConfig): string | null {
+  if (!automationMovesTask(type) || !isAutomationType(type)) return null;
+  const field = AUTOMATION_MANIFEST[type].fields.find((candidate) => candidate.kind === 'column');
+  if (!field) return null;
+  const value = (config as Record<string, unknown>)[field.key];
+  return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
 export function isRetiredActionType(value: string): boolean {
