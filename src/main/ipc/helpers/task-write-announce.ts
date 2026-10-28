@@ -24,7 +24,7 @@ export interface TaskBoardChange {
  *    window made it. Its listeners are a paired phone's read-board subscription,
  *    the Agent Monitor, the workflow engine and the retrieval record sweep, and
  *    none of them is the window that wrote. Before this, no desktop IPC task write
- *    reached the bus, so a card's Disable automations, a rename, a restore from
+ *    reached the bus, so a card's Pause automations, a rename, a restore from
  *    the archive or a delete left a phone's board stale until something unrelated
  *    fired.
  * 2. The main window, for a write made from ANOTHER window. The pop-out Agent
