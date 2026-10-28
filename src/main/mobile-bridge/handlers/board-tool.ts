@@ -48,7 +48,7 @@ export async function handleBoardTool(
   }
 
   const handler = commandHandlers[payload.tool];
-  const response = await handler(payload.params, commandContext);
+  const response = await handler(payload.params, { ...commandContext, via: 'phone' });
 
   if (!response.success) {
     return { type: 'capability-response', requestId: request.requestId, ok: false, error: response.error ?? response.message ?? 'Tool call failed' };

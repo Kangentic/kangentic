@@ -36,6 +36,8 @@ const hoisted = vi.hoisted(() => ({
   taskRow: null as null | Record<string, unknown>,
   /** The session history the pass reads (`getLatestForTask`). */
   latestRecord: undefined as undefined | { id: string; status: string },
+  /** Whether the task's workflow is paused, as the move's Phase 3 and the pass ask. */
+  workflowPaused: false,
 }));
 
 vi.mock('electron', () => ({
@@ -140,6 +142,13 @@ vi.mock('../../src/main/workflows/workflow-lock-check', () => ({
   readTaskForWorkflowPrecheck: vi.fn(() => null),
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowOfTask: vi.fn() }));
+vi.mock('../../src/main/workflows/workflow-home', () => ({
+  taskWorkflowState: vi.fn(() => (hoisted.workflowPaused ? 'paused' : 'running')),
+  isTaskWorkflowPaused: vi.fn(() => hoisted.workflowPaused),
+  isInWorkflow: vi.fn(() => false),
+  isRunningWorkflowStepTask: vi.fn(() => false),
+  workflowOfTask: vi.fn(() => null),
+}));
 
 vi.mock('../../src/main/transition-engine/session-startup/timing', () => ({
   startStartupTimer: vi.fn(() => vi.fn()),
@@ -255,6 +264,68 @@ function armWorktreeHold(): { worktreeEntered: Promise<void>; release: () => voi
   return { worktreeEntered, release };
 }
 
+/** A fresh task row in To Do with no session, and no session history. */
+function resetTaskRow(): void {
+  hoisted.taskRow = {
+    id: TASK_ID,
+    title: 'Extract the settings strings',
+    description: '',
+    swimlane_id: 'lane-todo',
+    position: 0,
+    worktree_path: null,
+    session_id: null,
+    branch_name: null,
+    base_branch: null,
+    agent: null,
+    profile_id: null,
+    archived_at: null,
+  };
+  hoisted.latestRecord = undefined;
+  hoisted.workflowPaused = false;
+}
+
+/** The move's reads and writes of the same row. */
+function stubMoveRepos(): void {
+  mockGetProjectRepos.mockReturnValue({
+    tasks: {
+      getById: vi.fn(() => (hoisted.taskRow ? { ...hoisted.taskRow } : undefined)),
+      move: vi.fn((input: { targetSwimlaneId: string; targetPosition: number }) => {
+        if (hoisted.taskRow) hoisted.taskRow = { ...hoisted.taskRow, swimlane_id: input.targetSwimlaneId, position: input.targetPosition };
+      }),
+      update: vi.fn((patch: Record<string, unknown>) => {
+        if (hoisted.taskRow) hoisted.taskRow = { ...hoisted.taskRow, ...patch };
+      }),
+      archive: vi.fn(),
+      clearArchived: vi.fn(),
+    },
+    swimlanes: {
+      getById: vi.fn((id: string) => ({
+        'lane-todo': { id: 'lane-todo', name: 'To Do', role: 'todo', auto_spawn: false, auto_command: null, permission_mode: null, agent_override: null },
+        'lane-planning': { id: 'lane-planning', name: 'Planning', role: null, auto_spawn: true, auto_command: null, permission_mode: null, agent_override: null },
+      }[id] ?? null)),
+    },
+    actions: { getTransitionsFor: vi.fn(() => []) },
+    automations: {},
+    automationRuns: {},
+    attachments: { add: vi.fn(), deleteByTaskId: vi.fn(), listForTask: vi.fn(() => []) },
+  });
+}
+
+function runPassWith(context: ReturnType<typeof createContext>, startFirstAgent: FirstAgentStarter): Promise<void> {
+  return autoSpawnTasks(
+    PROJECT_ID,
+    PROJECT_PATH,
+    context.sessionManager as never,
+    context.configManager as never,
+    'claude',
+    null,
+    null,
+    null,
+    [],
+    { startFirstAgent },
+  );
+}
+
 describe('a workflow move and the startup auto-spawn pass, together', () => {
   let registry: RegistryRow[];
   let started: StartedAgent[];
@@ -265,21 +336,7 @@ describe('a workflow move and the startup auto-spawn pass, together', () => {
     vi.clearAllMocks();
     registry = [];
     started = [];
-    hoisted.taskRow = {
-      id: TASK_ID,
-      title: 'Extract the settings strings',
-      description: '',
-      swimlane_id: 'lane-todo',
-      position: 0,
-      worktree_path: null,
-      session_id: null,
-      branch_name: null,
-      base_branch: null,
-      agent: null,
-      profile_id: null,
-      archived_at: null,
-    };
-    hoisted.latestRecord = undefined;
+    resetTaskRow();
 
     context = createContext(registry);
     // The pass's spawn: an agent in whatever cwd it prepared, with no prompt.
@@ -297,47 +354,12 @@ describe('a workflow move and the startup auto-spawn pass, together', () => {
       started.push({ by: 'move', cwd: options.task.worktree_path, skipPromptTemplate: options.skipPromptTemplate });
     });
 
-    // The move's reads and writes of the same row.
-    mockGetProjectRepos.mockReturnValue({
-      tasks: {
-        getById: vi.fn(() => (hoisted.taskRow ? { ...hoisted.taskRow } : undefined)),
-        move: vi.fn((input: { targetSwimlaneId: string; targetPosition: number }) => {
-          if (hoisted.taskRow) hoisted.taskRow = { ...hoisted.taskRow, swimlane_id: input.targetSwimlaneId, position: input.targetPosition };
-        }),
-        update: vi.fn((patch: Record<string, unknown>) => {
-          if (hoisted.taskRow) hoisted.taskRow = { ...hoisted.taskRow, ...patch };
-        }),
-        archive: vi.fn(),
-        clearArchived: vi.fn(),
-      },
-      swimlanes: {
-        getById: vi.fn((id: string) => ({
-          'lane-todo': { id: 'lane-todo', name: 'To Do', role: 'todo', auto_spawn: false, auto_command: null, permission_mode: null, agent_override: null },
-          'lane-planning': { id: 'lane-planning', name: 'Planning', role: null, auto_spawn: true, auto_command: null, permission_mode: null, agent_override: null },
-        }[id] ?? null)),
-      },
-      actions: { getTransitionsFor: vi.fn(() => []) },
-      automations: {},
-      automationRuns: {},
-      attachments: { add: vi.fn(), deleteByTaskId: vi.fn(), listForTask: vi.fn(() => []) },
-    });
-
+    stubMoveRepos();
     startFirstAgent = vi.fn<FirstAgentStarter>(async () => {});
   });
 
   function runPass(): Promise<void> {
-    return autoSpawnTasks(
-      PROJECT_ID,
-      PROJECT_PATH,
-      context.sessionManager as never,
-      context.configManager as never,
-      'claude',
-      null,
-      null,
-      null,
-      [],
-      { startFirstAgent },
-    );
+    return runPassWith(context, startFirstAgent);
   }
 
   function startWorkflowMove(): Promise<void> {
@@ -447,5 +469,96 @@ describe('a workflow move and the startup auto-spawn pass, together', () => {
     await runPass();
 
     expect(started).toEqual([{ by: 'pass', cwd: PROJECT_PATH, skipPromptTemplate: undefined }]);
+  });
+});
+
+/**
+ * A paused workflow starts nothing by itself (#925). The workflow's own start
+ * move passes the lock while the workflow runs, then makes the worktree with
+ * the lock released; a Pause in that gap must not end in a running agent. And
+ * the startup pass, which no person asked for, leaves a paused workflow's
+ * tasks for its Resume. A person's own move still starts the column's agent.
+ */
+describe('a paused workflow starts nothing by itself', () => {
+  let context: ReturnType<typeof createContext>;
+  let startFirstAgent: ReturnType<typeof vi.fn<FirstAgentStarter>>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resetTaskRow();
+    context = createContext([]);
+    stubMoveRepos();
+    startFirstAgent = vi.fn<FirstAgentStarter>(async () => {});
+  });
+
+  function move(origin: 'workflow' | 'automation' | 'renderer'): Promise<void> {
+    return handleTaskMove(context as never, { taskId: TASK_ID, targetSwimlaneId: 'lane-planning', targetPosition: 0 }, origin, PROJECT_ID, PROJECT_PATH);
+  }
+
+  // The workflow's own start, and a Move to column row a running agent's last
+  // turn set off: neither is a person's, and both began under a running workflow.
+  for (const origin of ['workflow', 'automation'] as const) {
+    it(`the workflow pauses while a ${origin} move makes the worktree: the card lands and no agent starts`, async () => {
+      const { worktreeEntered, release } = armWorktreeHold();
+
+      const moving = move(origin);
+      await worktreeEntered;
+      hoisted.workflowPaused = true;
+      release();
+      await moving;
+
+      expect(hoisted.taskRow?.swimlane_id).toBe('lane-planning');
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+    });
+  }
+
+  it('a person\'s own move into the column still starts its agent while the workflow is paused', async () => {
+    hoisted.workflowPaused = true;
+    armWorktreeHold().release();
+
+    await move('renderer');
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('a card a person works during the pause runs on: its automation move starts the next column\'s agent', async () => {
+    // Decided 2026-10-27 (#925): the move began under a paused workflow, so it
+    // is the card's own work, not the workflow's.
+    hoisted.workflowPaused = true;
+    armWorktreeHold().release();
+
+    await move('automation');
+
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('the startup pass starts nothing for a paused workflow\'s task, with or without session history', async () => {
+    hoisted.workflowPaused = true;
+    hoisted.taskRow = { ...hoisted.taskRow, swimlane_id: 'lane-planning' };
+
+    await runPassWith(context, startFirstAgent);
+    hoisted.latestRecord = { id: 'session-earlier', status: 'exited' };
+    await runPassWith(context, startFirstAgent);
+
+    expect(startFirstAgent).not.toHaveBeenCalled();
+    expect(mockPrepareAgentSpawn).not.toHaveBeenCalled();
+    expect(context.sessionManager.spawn).not.toHaveBeenCalled();
+  });
+
+  it('a pty host loss still brings back the agent a person resumed in a paused workflow', async () => {
+    // The lost agent was running, and in a paused workflow only a person's own
+    // resume runs one, so the host-loss pass is not the workflow starting it.
+    hoisted.workflowPaused = true;
+    hoisted.latestRecord = { id: 'session-lost', status: 'exited' };
+    hoisted.taskRow = { ...hoisted.taskRow, swimlane_id: 'lane-planning' };
+    const lostContext = createContext([{ id: 'session-lost', taskId: TASK_ID, status: 'exited' }]);
+
+    await autoSpawnTasks(
+      PROJECT_ID, PROJECT_PATH, lostContext.sessionManager as never, lostContext.configManager as never,
+      'claude', null, null, null, [],
+      { startFirstAgent, lostScope: { taskIds: new Set([TASK_ID]), lostSessionIds: new Set(['session-lost']) } },
+    );
+
+    expect(mockPrepareAgentSpawn).toHaveBeenCalledTimes(1);
   });
 });

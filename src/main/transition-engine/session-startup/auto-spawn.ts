@@ -16,6 +16,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { isMoveInFlight } from '../../ipc/handlers/task-move-controllers';
 import { isResumeInFlight } from '../../ipc/handlers/session-resume-controllers';
+import { isTaskWorkflowPaused } from '../../workflows/workflow-home';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
 import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
@@ -145,10 +146,15 @@ async function handOffFirstAgents(
  * or the task was placed there manually). Unlike resumeSuspendedSessions,
  * it never resumes: what it starts is a fresh agent.
  *
- * Two kinds of task are not started here:
+ * Three kinds of task are not started here:
  *
  * - A task a board path is working on (`boardSpawnInFlight`). Its own spawn
  *   follows, in its worktree and with its prompt.
+ * - A task in a paused workflow (`isTaskWorkflowPaused`). A paused workflow
+ *   starts nothing by itself; its Resume starts the agent. A session a person
+ *   resumed during the pause, running at quit, is restored by the resume pass,
+ *   and one a pty host crash took is brought back by the `lostScope` pass,
+ *   which does not skip it.
  * - A task that never had an agent (no session record at all: a new task, or
  *   one a move to To Do reset). A fresh spawn here would start it in whatever
  *   directory the row names, with no prompt, and its worktree may not exist
@@ -252,6 +258,12 @@ export async function autoSpawnTasks(
       if (!laneForTask.auto_spawn) continue;
       if (boardSpawnInFlight(task.id)) {
         console.log(`[AUTO_SPAWN] Skipped task ${task.id}: a move or a resume is working on it, and starts its agent`);
+        continue;
+      }
+      // Not in a pty-host-loss pass: that one brings back agents that were
+      // running, and in a paused workflow those are agents a person resumed.
+      if (!lostScope && isTaskWorkflowPaused(task, projectId)) {
+        console.log(`[AUTO_SPAWN] Skipped task ${task.id}: its workflow is paused, and the workflow's Resume starts its agent`);
         continue;
       }
       // A failed read skips this task, not the pass: the preparation pass

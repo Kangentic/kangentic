@@ -42,7 +42,6 @@ const PRE_CHANGE_KEYS = [
   'locked',
   'toDoNeedsRemove',
   'pausedForAgents',
-  'pausedStart',
   'removeFirst',
   'notFound',
 ];
@@ -93,11 +92,6 @@ const ROWS: RefusalRow[] = [
     key: 'pausedForAgents',
     args: ['#414', 'Usage budgets'],
     expected: '#414 is in Usage budgets, which is paused. Resume it to move its tasks.',
-  },
-  {
-    key: 'pausedStart',
-    args: ['#414', 'Usage budgets'],
-    expected: '#414 is in Usage budgets, which is paused. Resume the workflow to start its tasks again.',
   },
   { key: 'removeFirst', args: ['#414', 'Usage budgets'], expected: 'Remove #414 from Usage budgets first.' },
   { key: 'notFound', args: ['release-train'], expected: 'No workflow "release-train" in this project.' },

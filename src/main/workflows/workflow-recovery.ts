@@ -638,6 +638,19 @@ async function judgeCurrentTurn(
   if (!read.ok) {
     return { verdict: 'check-failed', reason: 'the agent\'s reply could not be read.', workSerial: turn.workSerial };
   }
+  // A reply written before the task entered this column was the last column's,
+  // as the resume catch-up reads it. Judged as this column's, a reply that said
+  // its work was done would move the card past work it never did: a card a
+  // person dragged on, then resumed. Nothing has been done here yet, so it is a
+  // stall to nudge, with no check to pay for.
+  const visitStartedAt = getProjectRepos(context, entry.projectId).taskMoves.visitStartedAt(entry.taskId, subject.column.id);
+  if (read.reply && visitStartedAt && read.reply.ts < Date.parse(visitStartedAt)) {
+    return {
+      verdict: 'stopped',
+      reason: `your last reply was written before this task moved to ${subject.column.name}`,
+      workSerial: turn.workSerial,
+    };
+  }
   const step = await runWorkflowStep(context, {
     payload,
     columnId: subject.column.id,

@@ -5837,6 +5837,39 @@ export interface Workflow {
   plan_approval: PlanApproval | null;
 }
 
+/** A workflow task whose agent its workflow's Pause or Resume could not stop or bring back. */
+export interface WorkflowAgentFailure {
+  projectId: string;
+  taskId: string;
+  displayId: number;
+}
+
+/** What a workflow's Pause did to its tasks' agents. */
+export interface WorkflowPauseReport {
+  /** Agents that were live and are now paused. */
+  paused: number;
+  /** Tasks that had no live agent, so there was nothing to pause. */
+  notLive: number;
+  /** Tasks whose pause threw: their agents may still be running. */
+  failed: WorkflowAgentFailure[];
+}
+
+/** What a workflow's Resume did to its tasks' agents. */
+export interface WorkflowResumeReport {
+  /** Paused agents brought back on their conversations. */
+  resumed: number;
+  /**
+   * Starts accepted for tasks in an agent column that had none. Counted before
+   * the start runs: one its own gates then skip, or that fails, shows the
+   * spawn-blocked notice instead.
+   */
+  started: number;
+  /** Tasks whose agent was already live, left alone. */
+  alreadyRunning: number;
+  /** Tasks whose resume or start failed. Each also shows its own spawn-blocked notice. */
+  failed: WorkflowAgentFailure[];
+}
+
 /**
  * One column between To Do and Done on a workflow task's board, as the
  * Workflows view's route rail draws it. Every such column has a step, on the
@@ -8352,8 +8385,10 @@ export interface ElectronAPI {
     setTaskPlanApproval: (projectId: string, workflowId: string, key: string, planApproval: PlanApproval | null) => Promise<void>;
     delete: (projectId: string, workflowId: string) => Promise<void>;
     start: (projectId: string, workflowId: string) => Promise<void>;
-    pause: (projectId: string, workflowId: string) => Promise<void>;
-    resume: (projectId: string, workflowId: string) => Promise<void>;
+    /** Pause every agent of the workflow, held tasks' included. */
+    pause: (projectId: string, workflowId: string) => Promise<WorkflowPauseReport>;
+    /** Bring back every paused agent and start one for each agent-column task that has none. */
+    resume: (projectId: string, workflowId: string) => Promise<WorkflowResumeReport>;
     /** Add task: a planned task before Start, a task in To Do after. Returns its key. */
     addTask: (projectId: string, workflowId: string, input: WorkflowTaskInput) => Promise<string>;
     /** Edit a planned task (before Start). A created task is edited like any task. */

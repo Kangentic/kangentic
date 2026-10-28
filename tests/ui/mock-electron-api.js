@@ -6141,6 +6141,8 @@
           entry.workflow.paused_at = now();
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, false);
+          // The mock runs no agents, so main's report reads nothing paused.
+          return { paused: 0, notLive: 0, failed: [] };
         },
         resume: async function (projectId, workflowId) {
           var entry = requireEntry(projectId, workflowId);
@@ -6149,6 +6151,7 @@
           entry.workflow.paused_at = null;
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, false);
+          return { resumed: 0, started: 0, alreadyRunning: 0, failed: [] };
         },
         addTask: async function (projectId, workflowId, input) {
           var entry = requireEntry(projectId, workflowId);

@@ -148,8 +148,8 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 | `workflow:setTaskPlanApproval` | invoke | A task's own Plan approval, from the inspector or task detail's Workflow panel, by task key: `automatic`, `manual`, or null to follow the plan columns on its route (`setViewPlanApproval`). The columns' own value is stored as null, except while the workflow still holds a legacy whole-workflow value, when the pick is stored as given. Before Start it edits the draft task; after, it writes the task row (`TaskRepository.setPlanApproval`), bumps the revision and announces the task's board. Refused for a task past its plan column or in Done, and any other value is refused |
 | `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
 | `workflow:start` | invoke | Create the planned tasks in To Do and their links |
-| `workflow:pause` | invoke | Pause every task's agent |
-| `workflow:resume` | invoke | Resume every task's agent |
+| `workflow:pause` | invoke | Pause every task's agent, a held task's included. Answers a `WorkflowPauseReport` (`paused`, `notLive`, `failed`); the renderer toasts the tasks it could not pause |
+| `workflow:resume` | invoke | Resume every paused agent in its task's current column, and start one for an agent-column task with none (not a held task). Answers a `WorkflowResumeReport` (`resumed`, `started`, `alreadyRunning`, `failed`) |
 | `workflow:addTask` | invoke | Add task: a planned task before Start, a task in To Do after |
 | `workflow:updateTask` | invoke | Edit a planned task before Start |
 | `workflow:removeTask` | invoke | Remove a task from the workflow (a planned one is gone; a created one stays on its board) |

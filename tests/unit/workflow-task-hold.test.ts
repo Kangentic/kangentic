@@ -15,10 +15,11 @@
  *   and the recovery it armed), and tells the workflow's views.
  * - Resuming in a working column starts the task's recovery over, so a task held
  *   while it was stalled comes back with a fresh schedule and notice rather than
- *   a spent one, and then, with a live agent, asks the turn-end runner to judge
- *   the reply the visit's last turn left (the resume catch-up), at the session's
- *   own work serial. A suspended or missing agent is not caught up: its own
- *   resume does that. To Do, Done, an archived task and a missing column get
+ *   a spent one, and then, with a live idle agent, asks the turn-end runner to
+ *   judge the reply the visit's last turn left (the resume catch-up, shared with
+ *   the workflow's own Resume), at the session's own work serial. A working,
+ *   suspended or missing agent is not caught up: its own turn end or resume
+ *   does that. To Do, Done, an archived task and a missing column get
  *   neither.
  * - A write that left the flag as it was, or a task in no workflow, does nothing
  *   at all.
@@ -45,16 +46,19 @@ vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowOfTa
 
 const {
   applyAutomationsHoldChange,
-  setHoldReleaseCatchUp,
   setHoldReleaseRecoveryStart,
   HOLD_RELEASE_RECOVERY_DETAIL,
 } = await import('../../src/main/workflows/workflow-task-hold');
+// The catch-up hook a hold's release shares with the workflow's own Resume.
+const { setWorkflowCatchUp } = await import('../../src/main/workflows/workflow-catch-up');
 
 const PROJECT_ID = 'project-1';
 const WORKING_COLUMN: Pick<Swimlane, 'id' | 'role'> = { id: 'column-executing', role: null };
 
 interface FakeSession {
   id: string;
+  taskId?: string;
+  projectId?: string;
   status: string;
   agentSessionId?: string;
   isolatedSwimlaneId?: string;
@@ -77,6 +81,7 @@ function taskRow(overrides: Partial<Task> = {}): Task {
 describe('applyAutomationsHoldChange', () => {
   let session: FakeSession | undefined;
   let currentWorkSerial: number | undefined;
+  let activity: string;
   let column: Pick<Swimlane, 'id' | 'role'> | null;
   let context: IpcContext;
   let catchUp: ReturnType<typeof vi.fn>;
@@ -84,25 +89,27 @@ describe('applyAutomationsHoldChange', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     hoisted.getProjectRepos.mockReset();
-    session = { id: 'session-1', status: 'running', agentSessionId: 'agent-session-1', isolatedSwimlaneId: 'column-isolated' };
+    session = { id: 'session-1', taskId: 'task-1', projectId: PROJECT_ID, status: 'running', agentSessionId: 'agent-session-1', isolatedSwimlaneId: 'column-isolated' };
     currentWorkSerial = 41;
+    activity = 'idle';
     column = WORKING_COLUMN;
     hoisted.getProjectRepos.mockImplementation(() => ({ swimlanes: { getById: () => column } }));
     context = {
       sessionManager: {
         getSession: vi.fn((sessionId: string) => (session && session.id === sessionId ? session : undefined)),
         currentWorkSerial: vi.fn(() => currentWorkSerial),
+        getActivityCache: vi.fn(() => ({ 'session-1': activity })),
       },
     } as unknown as IpcContext;
     catchUp = vi.fn();
-    setHoldReleaseCatchUp(catchUp as unknown as (resumed: SessionResumedPayload) => void);
+    setWorkflowCatchUp(catchUp as unknown as (resumed: SessionResumedPayload) => void);
     // The turn-end runner registers the real one; the module imports neither.
     setHoldReleaseRecoveryStart(hoisted.startWorkflowRecoveryOver);
   });
 
   afterEach(() => {
     // Module state: a registered hook outlives the test that set it.
-    setHoldReleaseCatchUp(null);
+    setWorkflowCatchUp(null);
     setHoldReleaseRecoveryStart(null);
   });
 
@@ -247,7 +254,7 @@ describe('applyAutomationsHoldChange', () => {
     });
 
     it('carries null for an agent session id and an isolated column the session does not have', () => {
-      session = { id: 'session-1', status: 'running' };
+      session = { id: 'session-1', taskId: 'task-1', projectId: PROJECT_ID, status: 'running' };
 
       resume();
 
@@ -302,8 +309,21 @@ describe('applyAutomationsHoldChange', () => {
       expect(catchUp).not.toHaveBeenCalled();
     });
 
+    it('catches up no agent that is working, since its own turn end judges that turn', () => {
+      // The control: the same fixture with the agent idle catches up.
+      resume();
+      expect(catchUp).toHaveBeenCalledTimes(1);
+      vi.clearAllMocks();
+
+      activity = 'thinking';
+      resume();
+
+      expect(hoisted.startWorkflowRecoveryOver).toHaveBeenCalledTimes(1);
+      expect(catchUp).not.toHaveBeenCalled();
+    });
+
     it('starts the recovery over and does not throw when the turn-end runner never registered its hook', () => {
-      setHoldReleaseCatchUp(null);
+      setWorkflowCatchUp(null);
 
       expect(() => resume()).not.toThrow();
 

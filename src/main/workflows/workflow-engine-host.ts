@@ -595,14 +595,27 @@ export class WorkflowEngineHost {
     const projectPath = this.context.projectRepo.getById(intent.projectId)?.path ?? null;
     // Cut from the blocker's merged code, not from a base fetched before it.
     if (projectPath) forgetRecentFetches(projectPath);
-    await handleTaskMove(
-      this.context,
-      { taskId: task.id, targetSwimlaneId: intent.toSwimlaneId, targetPosition: tasks.list(intent.toSwimlaneId).length },
-      'workflow',
-      intent.projectId,
-      projectPath,
-      { moveReason: `Started by ${workflowTitle}` },
-    );
+    try {
+      await handleTaskMove(
+        this.context,
+        { taskId: task.id, targetSwimlaneId: intent.toSwimlaneId, targetPosition: tasks.list(intent.toSwimlaneId).length },
+        'workflow',
+        intent.projectId,
+        projectPath,
+        { moveReason: `Started by ${workflowTitle}` },
+      );
+    } catch (error) {
+      // Paused while this start ran. Usually the task lock refused the
+      // workflow's own move, which is the Pause working, not a failed start.
+      // Any other failure while paused is left to Resume too: a failed move
+      // puts the task back in To Do, Resume's wake runs this start again, and
+      // a failure that recurs then gets its retry, toast and stall notice.
+      if (new WorkflowRepository(getProjectDb(intent.homeProjectId)).getById(intent.workflowId)?.state === 'paused') {
+        console.log(`[WORKFLOW] Start of task ${task.id.slice(0, 8)} stopped: its workflow was paused`);
+        return;
+      }
+      throw error;
+    }
   }
 }
 

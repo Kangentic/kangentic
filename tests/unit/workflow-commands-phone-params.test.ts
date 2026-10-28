@@ -4,11 +4,14 @@
  * hands `params` straight from the wire. So each must check its own params'
  * types and answer a bad one with a refusal, never throw or reach a lookup.
  */
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import type Database from 'better-sqlite3';
 
 const resolveWorkflow = vi.fn();
 const savePlan = vi.fn();
 const createWorkflowWithPlan = vi.fn();
+const pauseWorkflow = vi.fn();
+const resumeWorkflow = vi.fn();
 vi.mock('../../src/main/workflows/workflow-service', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/workflows/workflow-service')>();
   return {
@@ -16,6 +19,8 @@ vi.mock('../../src/main/workflows/workflow-service', async (importOriginal) => {
     resolveWorkflow: (...args: unknown[]) => resolveWorkflow(...args),
     savePlan: (...args: unknown[]) => savePlan(...args),
     createWorkflowWithPlan: (...args: unknown[]) => createWorkflowWithPlan(...args),
+    pauseWorkflow: (...args: unknown[]) => pauseWorkflow(...args),
+    resumeWorkflow: (...args: unknown[]) => resumeWorkflow(...args),
   };
 });
 // kangentic_save_workflow asks for the runtime before it reads its params.
@@ -26,6 +31,10 @@ vi.mock('../../src/main/workflows/workflow-runtime', async (importOriginal) => {
 
 import { commandHandlers } from '../../src/main/agent/commands';
 import { isBoardToolAllowedForVerb } from '../../src/main/mobile-bridge/handlers/board-tool-allowlist';
+import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
+import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { TaskRepository } from '../../src/main/db/repositories/task-repository';
+import { openTestDatabase } from './helpers/test-database';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 
 const context = { projectId: 'proj-1' } as unknown as CommandContext;
@@ -54,6 +63,131 @@ describe('workflow commands on the phone path', () => {
       expect(response).toEqual({ success: false, error: 'workflow is required.' });
     });
   }
+});
+
+/**
+ * Pause and Resume report what they did to each agent. The phone's board-tool
+ * path answers with the handler's `data` alone, so the report rides there, and
+ * the log line names who asked, which the record of a pause used to lack.
+ */
+describe('pause and resume report their agents', () => {
+  const workflow = { id: 'wf-1', title: 'Usage budgets' };
+  const failed = [{ projectId: 'proj-1', taskId: 't-917', displayId: 917 }, { projectId: 'proj-1', taskId: 't-918', displayId: 918 }];
+
+  it('pause answers with its report as data, names the failed tasks, and tells the service it was the phone', async () => {
+    resolveWorkflow.mockReturnValue(workflow);
+    pauseWorkflow.mockResolvedValue({ workflow, paused: 2, notLive: 1, failed });
+
+    const response = await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, { ...context, via: 'phone' });
+
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone');
+    expect(response).toEqual({
+      success: true,
+      message: 'Paused "Usage budgets" (2 agents paused). #917 and #918 could not be paused. The workflow starts and moves nothing until it is resumed.',
+      data: { paused: 2, notLive: 1, failed },
+    });
+  });
+
+  it('resume answers with its report as data, and names an MCP client with no task as the caller', async () => {
+    resolveWorkflow.mockReturnValue(workflow);
+    resumeWorkflow.mockResolvedValue({ workflow, resumed: 1, started: 2, alreadyRunning: 1, failed: [] });
+
+    const response = await commandHandlers.resume_workflow({ workflow: 'Usage budgets' }, context);
+
+    expect(resumeWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'an MCP client');
+    expect(response).toEqual({
+      success: true,
+      message: 'Resumed "Usage budgets" (1 agent resumed, 2 started, 1 already running).',
+      data: { resumed: 1, started: 2, alreadyRunning: 1, failed: [] },
+    });
+  });
+});
+
+/**
+ * The log line of a pause or resume names who asked. An agent that calls the MCP
+ * tool is named by its task: `#<display id>` when the task is on the board the
+ * call reads, and a short form of its id when that board cannot say (the
+ * caller's task may live on another project's board, or the board may be
+ * unreadable), so the line still points at it.
+ */
+describe('pause and resume name the agent that asked', () => {
+  const workflow = { id: 'wf-1', title: 'Usage budgets' };
+  const pauseReport = { workflow, paused: 0, notLive: 0, failed: [] };
+  const resumeReport = { workflow, resumed: 0, started: 0, alreadyRunning: 0, failed: [] };
+  // Not a task on any board here: only its first eight characters may be named.
+  const unknownCallerTaskId = 'abcdef12-3456-4789-8abc-def012345678';
+  const controls = [
+    { tool: 'pause_workflow', service: pauseWorkflow, report: pauseReport },
+    { tool: 'resume_workflow', service: resumeWorkflow, report: resumeReport },
+  ] as const;
+
+  let database: Database.Database;
+  let callerTask: { id: string; display_id: number };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    resolveWorkflow.mockReturnValue(workflow);
+    database = openTestDatabase();
+    runProjectMigrations(database);
+    const lane = new SwimlaneRepository(database).list().find((candidate) => candidate.role === 'todo');
+    if (!lane) throw new Error('Seeded To Do swimlane not found');
+    const tasks = new TaskRepository(database);
+    // A second task, so the caller's display id is not the first one a board hands out.
+    tasks.create({ title: 'Another task', description: '', swimlane_id: lane.id });
+    callerTask = tasks.create({ title: 'Caller task', description: '', swimlane_id: lane.id });
+  });
+
+  afterEach(() => {
+    database.close();
+  });
+
+  for (const { tool, service, report } of controls) {
+    it(`${tool} names the agent of its task by display id when the board holds the task`, async () => {
+      service.mockResolvedValue(report);
+      const asked = { ...context, callerTaskId: callerTask.id, getProjectDb: () => database } as unknown as CommandContext;
+
+      const response = await commandHandlers[tool]({ workflow: 'Usage budgets' }, asked);
+
+      expect(response.success).toBe(true);
+      expect(service).toHaveBeenCalledTimes(1);
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', `the agent of #${callerTask.display_id}`);
+    });
+
+    it(`${tool} names the agent by the start of its task id when the board does not hold the task`, async () => {
+      service.mockResolvedValue(report);
+      const asked = { ...context, callerTaskId: unknownCallerTaskId, getProjectDb: () => database } as unknown as CommandContext;
+
+      const response = await commandHandlers[tool]({ workflow: 'Usage budgets' }, asked);
+
+      expect(response.success).toBe(true);
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12');
+    });
+
+    it(`${tool} names the agent by the start of its task id when the board cannot be read, and still pauses or resumes`, async () => {
+      service.mockResolvedValue(report);
+      const asked = {
+        ...context,
+        callerTaskId: unknownCallerTaskId,
+        getProjectDb: () => { throw new Error('No database for proj-1'); },
+      } as unknown as CommandContext;
+
+      const response = await commandHandlers[tool]({ workflow: 'Usage budgets' }, asked);
+
+      expect(response.success).toBe(true);
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12');
+    });
+  }
+
+  it('an MCP client with no task is named as such, and the phone outranks a task id', async () => {
+    pauseWorkflow.mockResolvedValue(pauseReport);
+
+    await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, context);
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'an MCP client');
+
+    const fromPhone = { ...context, via: 'phone', callerTaskId: callerTask.id, getProjectDb: () => database } as unknown as CommandContext;
+    await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, fromPhone);
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone');
+  });
 });
 
 /**

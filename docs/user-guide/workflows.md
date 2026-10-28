@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Workflows
-description: "How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, working one task by hand, card strips and links, and why running workflow cards are locked."
+description: "How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, working one task by hand, card strips and links, why running workflow cards are locked, and what Pause and Resume do."
 tags: [workflows, canvas, planning, blockers]
 sources:
   - resource: src/renderer/components/workflows/
@@ -166,8 +166,8 @@ Choose **Resume automations** (or Resume in the inspector) to hand it back. Noth
 skipped is replayed: an enter automation a hand move skipped stays skipped (Run again runs it).
 If the agent finished its work in this column and sits idle, its last reply is judged at once and
 the task moves on; a reply from before a hand move is left for the next turn. Its recovery starts
-over, with its own nudges and notice. The workflow's own Pause, on the Workflows header, leaves a
-held task's agent running, and Resume leaves it held. An agent can do the same with
+over, with its own nudges and notice. Pausing the whole workflow, on the Workflows header, does stop
+a held task's agent too, and Resume brings it back still held. An agent can do the same with
 `kangentic_update_task`'s `automationsDisabled`.
 
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step
@@ -201,3 +201,26 @@ to, Backlog and Archive, disabled with the same reason. Pause the workflow (the 
 runs, pause that task's automations instead (see Working one task by hand); Backlog and Archive stay
 off for it, since both take the task out of its workflow.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).
+
+**Pausing.** The Running button pauses the workflow, and so do the phone and
+`kangentic_pause_workflow`. Pause stops every one of its agents at once, a task with paused
+automations included, and frees what they hold. If an agent cannot be stopped, a toast names its
+task. While paused, the workflow does nothing by itself: it starts no task, judges no turn, nudges
+nothing and moves no card. You still can. Resume one card's agent to look into it, drag cards, or
+approve a plan. A card you work this way is an ordinary card. Its column's automations run, and its
+agent's own `kangentic_move_task` moves it, so it can run on through its board. A card whose agent
+the Pause stopped stays paused when you drag it, until you resume it.
+
+Resume brings back every agent the Pause stopped, each in the column its task is in now, and starts
+one, with the column's message, for a task in an agent column that has none. An agent already
+running is left running, and its last reply is judged, so a card you worked to the end of its
+column moves on. A task with paused automations gets its stopped agent back, still held, and never
+a new one. The workflow then carries on from the board as it is: a task you finished while it was
+paused lets what waits for it start. A paused agent you dragged to a new column comes back idle
+there, without that column's message. Its last reply belongs to the column it left, so the workflow
+does not judge it there: about five minutes later it tells the agent to carry on with the new
+column's step.
+
+The idle timeout can pause an agent while its workflow runs, and the card then reads Paused. Resume
+on its card brings it back. Pausing and resuming the whole workflow does too, but that interrupts
+every agent in the middle of its turn.

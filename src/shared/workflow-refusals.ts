@@ -59,12 +59,13 @@ export const WORKFLOW_REFUSAL_MESSAGES = {
   /** A move into To Do, which would delete the task's worktree and branch. */
   toDoNeedsRemove: (label: string, workflowTitle: string) =>
     withValues(msg({ message: '{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do.' }), { label, workflowTitle }),
-  /** An agent's move of a paused workflow's task (a person may still move it by hand). */
+  /**
+   * A paused workflow's task moved by another task's agent, or by the workflow
+   * itself (a step move or a start that raced the Pause). A person may still
+   * move it by hand.
+   */
   pausedForAgents: (label: string, workflowTitle: string) =>
     withValues(msg({ message: '{label} is in {workflowTitle}, which is paused. Resume it to move its tasks.' }), { label, workflowTitle }),
-  /** Starting a paused workflow's task on its own (the phone's Start), which Resume does for all of them. */
-  pausedStart: (label: string, workflowTitle: string) =>
-    withValues(msg({ message: '{label} is in {workflowTitle}, which is paused. Resume the workflow to start its tasks again.' }), { label, workflowTitle }),
   /** Sending a workflow task to the backlog or the archive. */
   removeFirst: (label: string, workflowTitle: string) =>
     withValues(msg({ message: 'Remove {label} from {workflowTitle} first.' }), { label, workflowTitle }),

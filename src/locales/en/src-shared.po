@@ -52,10 +52,6 @@ msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tas
 msgstr "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
 
 #: src/shared/workflow-refusals.ts
-msgid "{label} is in {workflowTitle}, which is paused. Resume the workflow to start its tasks again."
-msgstr "{label} is in {workflowTitle}, which is paused. Resume the workflow to start its tasks again."
-
-#: src/shared/workflow-refusals.ts
 msgid "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
 msgstr "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
 

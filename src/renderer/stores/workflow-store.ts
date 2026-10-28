@@ -1,9 +1,10 @@
 import { create } from 'zustand';
 import { i18n, type MessageDescriptor } from '@lingui/core';
-import { msg } from '@lingui/core/runtime-macro';
+import { msg, plural } from '@lingui/core/runtime-macro';
 import type {
   PlanApproval,
   Workflow,
+  WorkflowAgentFailure,
   WorkflowAgentStatus,
   WorkflowCanvasPosition,
   WorkflowChangedEvent,
@@ -209,6 +210,21 @@ function currentProjectId(): string | null {
  */
 function reportFailure(title: MessageDescriptor, error: unknown): void {
   useToastStore.getState().addToast({ title: i18n._(title), message: asSentence(describeIpcError(error)), variant: 'error' });
+}
+
+/**
+ * A Pause that could not stop some of its agents names their tasks: those
+ * cards keep working under a header that reads Paused. A failed Resume needs
+ * no toast of its own, since each task shows the spawn-blocked notice.
+ */
+function reportStillRunning(failed: readonly WorkflowAgentFailure[]): void {
+  const count = failed.length;
+  const tasks = failed.map((failure) => `#${failure.displayId}`).join(', ');
+  useToastStore.getState().addToast({
+    title: i18n._(plural({ count }, { one: "Couldn't pause # agent", other: "Couldn't pause # agents" })),
+    message: i18n._(msg`Still running: ${{ tasks }}.`),
+    variant: 'error',
+  });
 }
 
 /**
@@ -678,9 +694,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       (await onSelected(msg`Couldn't start the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.start(projectId, workflowId))).ok,
 
-    pauseWorkflow: async () =>
-      (await onSelected(msg`Couldn't pause the workflow`, (projectId, workflowId) =>
-        window.electronAPI.workflows.pause(projectId, workflowId))).ok,
+    pauseWorkflow: async () => {
+      const result = await onSelected(msg`Couldn't pause the workflow`, (projectId, workflowId) =>
+        window.electronAPI.workflows.pause(projectId, workflowId));
+      if (result.ok && result.value.failed.length > 0) reportStillRunning(result.value.failed);
+      return result.ok;
+    },
 
     resumeWorkflow: async () =>
       (await onSelected(msg`Couldn't resume the workflow`, (projectId, workflowId) =>

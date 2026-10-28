@@ -1,6 +1,6 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import type { WorkflowCanvasPosition, WorkflowTaskInput } from '../../../shared/types';
+import type { WorkflowCanvasPosition, WorkflowPauseReport, WorkflowResumeReport, WorkflowTaskInput } from '../../../shared/types';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import type { IpcContext } from '../ipc-context';
@@ -69,12 +69,14 @@ export function registerWorkflowHandlers(context: IpcContext): void {
     await startWorkflow(context, projectId, workflowId);
   });
 
-  ipcMain.handle(IPC.WORKFLOW_PAUSE, async (_, projectId: string, workflowId: string) => {
-    await pauseWorkflow(context, projectId, workflowId);
+  ipcMain.handle(IPC.WORKFLOW_PAUSE, async (_, projectId: string, workflowId: string): Promise<WorkflowPauseReport> => {
+    const { paused, notLive, failed } = await pauseWorkflow(context, projectId, workflowId, 'the Workflows view');
+    return { paused, notLive, failed };
   });
 
-  ipcMain.handle(IPC.WORKFLOW_RESUME, async (_, projectId: string, workflowId: string) => {
-    await resumeWorkflow(context, projectId, workflowId);
+  ipcMain.handle(IPC.WORKFLOW_RESUME, async (_, projectId: string, workflowId: string): Promise<WorkflowResumeReport> => {
+    const { resumed, started, alreadyRunning, failed } = await resumeWorkflow(context, projectId, workflowId, 'the Workflows view');
+    return { resumed, started, alreadyRunning, failed };
   });
 
   ipcMain.handle(IPC.WORKFLOW_ADD_TASK, (_, projectId: string, workflowId: string, input: WorkflowTaskInput) => {

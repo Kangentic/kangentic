@@ -1,4 +1,4 @@
-import type { Task, Workflow } from '../../shared/types';
+import type { Task, Workflow, WorkflowState } from '../../shared/types';
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getExistingProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -40,6 +40,29 @@ export function isInWorkflow(task: Pick<Task, 'workflow_id' | 'workflow_project_
   } catch {
     return true;
   }
+}
+
+/**
+ * The state of the workflow a task is in, or null: no workflow, one that is
+ * gone, or a home that cannot be read. Null on a failed read, so a home that
+ * cannot be read never strands a start.
+ */
+export function taskWorkflowState(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): WorkflowState | null {
+  if (!task.workflow_id) return null;
+  try {
+    return workflowOfTask(task, projectId)?.state ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Is the task in a paused workflow? For the paths where the workflow, not a
+ * person, would start the task's agent (a move the workflow ran, the startup
+ * pass): a paused workflow starts nothing.
+ */
+export function isTaskWorkflowPaused(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): boolean {
+  return taskWorkflowState(task, projectId) === 'paused';
 }
 
 /**

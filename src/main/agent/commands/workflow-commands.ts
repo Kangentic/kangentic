@@ -1,9 +1,10 @@
-import type { PermissionMode, PlanApproval, TaskRunMode, Workflow } from '../../../shared/types';
+import type { PermissionMode, PlanApproval, TaskRunMode, Workflow, WorkflowAgentFailure } from '../../../shared/types';
 import { resolveEffortSelector, resolveSpacedModelName } from '../../../shared/model-id';
 import { PERMISSION_MODES, RUN_MODES, isPermissionMode, isRunMode } from '../../../shared/workflow-run-settings';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
+import { TaskRepository } from '../../db/repositories/task-repository';
 import { requireWorkflowRuntimeContext } from '../../workflows/workflow-runtime';
 import { requestWorkflowAgentProjectAccess } from '../../workflows/workflow-agent';
 import { describeState, formatWorkflow } from '../../workflows/workflow-format';
@@ -293,11 +294,38 @@ export const handleStartWorkflow: CommandHandler = async (params, context) => {
   }
 };
 
+/** Who paused or resumed, for the workflow's log line: the phone, the agent of a task, or an MCP client. */
+function controlSource(context: CommandContext): string {
+  if (context.via === 'phone') return 'the phone';
+  if (context.callerTaskId) {
+    try {
+      const caller = new TaskRepository(context.getProjectDb()).getById(context.callerTaskId);
+      if (caller) return `the agent of #${caller.display_id}`;
+    } catch {
+      // The caller's board may be another project's: the id still names it.
+    }
+    return `the agent of task ${context.callerTaskId.slice(0, 8)}`;
+  }
+  return 'an MCP client';
+}
+
+/** " #917 and #918 could not be paused." for the reply, or nothing. */
+function failedClause(failed: WorkflowAgentFailure[], verb: string): string {
+  if (failed.length === 0) return '';
+  const labels = failed.map((failure) => `#${failure.displayId}`);
+  const list = labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+  return ` ${list} could not be ${verb}.`;
+}
+
 export const handlePauseWorkflow: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
-    const result = await pauseWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
-    return { success: true, message: `Paused "${result.workflow.title}" (${agentCount(result.paused)} paused). Nothing starts or moves until it is resumed.` };
+    const { workflow: paused, ...report } = await pauseWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id, controlSource(context));
+    return {
+      success: true,
+      message: `Paused "${paused.title}" (${agentCount(report.paused)} paused).${failedClause(report.failed, 'paused')} The workflow starts and moves nothing until it is resumed.`,
+      data: report,
+    };
   } catch (error) {
     return fail(error);
   }
@@ -306,8 +334,12 @@ export const handlePauseWorkflow: CommandHandler = async (params, context) => {
 export const handleResumeWorkflow: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
-    const result = await resumeWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
-    return { success: true, message: `Resumed "${result.workflow.title}" (${agentCount(result.resumed)} resumed).` };
+    const { workflow: resumed, ...report } = await resumeWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id, controlSource(context));
+    return {
+      success: true,
+      message: `Resumed "${resumed.title}" (${agentCount(report.resumed)} resumed, ${report.started} started, ${report.alreadyRunning} already running).${failedClause(report.failed, 'brought back')}`,
+      data: report,
+    };
   } catch (error) {
     return fail(error);
   }
