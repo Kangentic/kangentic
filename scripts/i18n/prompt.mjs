@@ -4,7 +4,8 @@
  * instructions gets the same prompt; only TranslateGemma, which takes no
  * instructions, has its own (engines/openai-compatible.mjs).
  */
-import { categoryExamples, referenceForm } from './messages.mjs';
+import { categoryExamples, isPluralChoice, pluralType, referenceForm } from './messages.mjs';
+import { firstOriginFile } from './context.mjs';
 
 /** Language names a model reads best, for the locales whose Intl name is ambiguous. */
 const LANGUAGE_NAMES = {
@@ -74,15 +75,15 @@ export function requestItem({ key, prepared, keys, locale, message, neighbours, 
   } else {
     item.forms = prepared.forms;
     item.write = keys;
-    const examples = categoryExamples(locale, prepared.choiceType === 'selectordinal' ? 'ordinal' : 'cardinal');
-    if (prepared.choiceType !== 'select') item.examples = Object.fromEntries(keys.filter((formKey) => !formKey.startsWith('=')).map((formKey) => [formKey, examples[formKey] ?? []]));
+    const examples = categoryExamples(locale, pluralType(prepared));
+    if (isPluralChoice(prepared)) item.examples = Object.fromEntries(keys.filter((formKey) => !formKey.startsWith('=')).map((formKey) => [formKey, examples[formKey] ?? []]));
     const borrowed = keys.filter((formKey) => !(formKey in prepared.forms));
     if (borrowed.length > 0) item.englishFor = Object.fromEntries(borrowed.map((formKey) => [formKey, referenceForm(prepared, formKey)]));
   }
   if (prepared.tokens.length > 0) item.legend = Object.fromEntries(prepared.tokens.map((token) => [`{${token.id}}`, token.meaning]));
   if (message.context) item.context = message.context;
   if (message.comments?.length) item.comment = message.comments.join(' ');
-  const file = message.origin?.[0]?.[0];
+  const file = firstOriginFile(message);
   if (file) item.file = file;
   if (neighbours?.length) item.nearby = neighbours;
   if (hint) item.previous = hint;

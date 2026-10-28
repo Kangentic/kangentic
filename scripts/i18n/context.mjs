@@ -21,27 +21,44 @@ export function firstOriginFile(message) {
 }
 
 /**
- * Up to `count` messages before and after `id` in its source file, each with the
+ * A neighbour lookup over one locale's catalog: `(id) => neighbours`, up to
+ * `count` messages before and after `id` in its source file, each with the
  * translation it already has in this locale (or none). A message whose text is
- * not found sorts after the ones that are.
+ * not found sorts after the ones that are. Each file's order is worked out once,
+ * on its first lookup, so make one finder per catalog and locale.
  *
  * - `messages`: the catalog, `{ id: message }`.
  * - `readSource(file)`: the file's text, or null when it cannot be read.
  */
+export function createNeighbourFinder(messages, readSource, count = 4) {
+  const orderByFile = new Map();
+  const fileOrder = (file) => {
+    if (!orderByFile.has(file)) {
+      const source = readSource(file) ?? '';
+      const sameFile = Object.entries(messages).filter(([, message]) => message.origin?.some(([origin]) => origin === file));
+      const positioned = sameFile.map(([messageId, message]) => {
+        const fragment = longestPlainFragment(message.message ?? '');
+        const position = fragment ? source.indexOf(fragment) : -1;
+        return { messageId, message, position: position === -1 ? Number.MAX_SAFE_INTEGER : position };
+      });
+      positioned.sort((left, right) => left.position - right.position || (left.message.message ?? '').localeCompare(right.message.message ?? ''));
+      orderByFile.set(file, positioned);
+    }
+    return orderByFile.get(file);
+  };
+  return (id) => {
+    const file = firstOriginFile(messages[id]);
+    if (!file) return [];
+    const positioned = fileOrder(file);
+    const index = positioned.findIndex((entry) => entry.messageId === id);
+    return [...positioned.slice(Math.max(0, index - count), index), ...positioned.slice(index + 1, index + 1 + count)]
+      .map(({ message }) => ({ english: message.message, translation: message.translation || null }));
+  };
+}
+
+/** The neighbours of one message; `createNeighbourFinder` for many in the same catalog. */
 export function neighbourMessages(id, messages, readSource, count = 4) {
-  const file = firstOriginFile(messages[id]);
-  if (!file) return [];
-  const source = readSource(file) ?? '';
-  const sameFile = Object.entries(messages).filter(([, message]) => message.origin?.some(([origin]) => origin === file));
-  const positioned = sameFile.map(([messageId, message]) => {
-    const fragment = longestPlainFragment(message.message ?? '');
-    const position = fragment ? source.indexOf(fragment) : -1;
-    return { messageId, message, position: position === -1 ? Number.MAX_SAFE_INTEGER : position };
-  });
-  positioned.sort((left, right) => left.position - right.position || (left.message.message ?? '').localeCompare(right.message.message ?? ''));
-  const index = positioned.findIndex((entry) => entry.messageId === id);
-  return [...positioned.slice(Math.max(0, index - count), index), ...positioned.slice(index + 1, index + 1 + count)]
-    .map(({ message }) => ({ english: message.message, translation: message.translation || null }));
+  return createNeighbourFinder(messages, readSource, count)(id);
 }
 
 /** Levenshtein distance, two rows at a time. */
@@ -77,10 +94,15 @@ export const HINT_SIMILARITY = 0.5;
  */
 export function findHint(message, removed) {
   const files = new Set((message.origin ?? []).map(([file]) => file));
+  const english = message.message ?? '';
   let best = null;
   for (const candidate of removed) {
     if (!candidate.origin.some(([file]) => files.has(file))) continue;
-    const score = similarity(message.message ?? '', candidate.english);
+    // The edit distance is at least the length difference, so this bound skips
+    // a candidate that cannot reach the threshold without computing it.
+    const longest = Math.max(english.length, candidate.english.length);
+    if (longest > 0 && 1 - Math.abs(english.length - candidate.english.length) / longest < HINT_SIMILARITY) continue;
+    const score = similarity(english, candidate.english);
     if (score >= HINT_SIMILARITY && (!best || score > best.score)) best = { ...candidate, score };
   }
   return best ? { english: best.english, translation: best.translation } : null;

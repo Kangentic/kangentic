@@ -159,6 +159,16 @@ export function prepareMessage(message) {
   };
 }
 
+/** Whether `prepared` is a plural or selectordinal, whose forms follow the language's number categories. */
+export function isPluralChoice(prepared) {
+  return prepared.kind === 'choice' && prepared.choiceType !== 'select';
+}
+
+/** The `Intl.PluralRules` type a choice's categories come from. */
+export function pluralType(prepared) {
+  return prepared.kind === 'choice' && prepared.choiceType === 'selectordinal' ? 'ordinal' : 'cardinal';
+}
+
 /**
  * The case keys a translation of `prepared` must fill in `locale`: the source's
  * exact keys (`=0`) plus every category the language uses for a plural, or the
@@ -167,10 +177,9 @@ export function prepareMessage(message) {
 export function targetKeys(prepared, locale) {
   if (prepared.kind !== 'choice') return [];
   const sourceKeys = Object.keys(prepared.forms);
-  if (prepared.choiceType === 'select') return sourceKeys;
+  if (!isPluralChoice(prepared)) return sourceKeys;
   const exactKeys = sourceKeys.filter((key) => key.startsWith('='));
-  const type = prepared.choiceType === 'selectordinal' ? 'ordinal' : 'cardinal';
-  return [...exactKeys, ...pluralCategories(locale, type)];
+  return [...exactKeys, ...pluralCategories(locale, pluralType(prepared))];
 }
 
 /** The English sentence a target case is translated from: the same key, else `other`. */
@@ -196,7 +205,9 @@ export function splitMasked(masked) {
  * Escape a run of translated text for ICU. A brace is never allowed in it (the
  * validator rejects one first). An apostrophe is doubled where ICU would read it
  * as the start of a quote: before a brace, another apostrophe, or `#` in a plural,
- * including the first character of whatever follows the run.
+ * including the first character of whatever follows the run. One at the very end
+ * of a form is doubled too: `buildIcu` closes every plural or select case with
+ * `}`, and at the end of a whole message `''` still renders as one apostrophe.
  */
 function escapeText(text, nextRaw, inPlural) {
   const quoteOpeners = inPlural ? "{}'#" : "{}'";
@@ -239,7 +250,7 @@ export function restoreForm(masked, tokens, inPlural) {
  */
 export function buildIcu(prepared, translation, keys) {
   if (prepared.kind === 'text') return restoreForm(translation, prepared.tokens, false);
-  const inPlural = prepared.choiceType !== 'select';
+  const inPlural = isPluralChoice(prepared);
   const offset = prepared.offset ? `offset:${prepared.offset} ` : '';
   const cases = keys.map((key) => `${key} {${restoreForm(translation[key], prepared.tokens, inPlural)}}`);
   return `{${prepared.argument}, ${prepared.choiceType}, ${offset}${cases.join(' ')}}`;

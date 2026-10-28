@@ -5,6 +5,7 @@ description: "How Kangentic's UI translations are drafted and reviewed: the tran
 tags: [i18n, translation, lingui, glossary, local-model]
 sources:
   - resource: scripts/i18n/translate.mjs
+  - resource: scripts/i18n/cli.mjs
   - resource: scripts/i18n/translate-catalog.mjs
   - resource: scripts/i18n/messages.mjs
   - resource: scripts/i18n/validate.mjs

@@ -12,10 +12,12 @@ import PQueue from 'p-queue';
 import { prepareMessage, targetKeys } from './messages.mjs';
 import { validateReply } from './validate.mjs';
 import { relevantTerms } from './glossary.mjs';
-import { findHint, firstOriginFile, neighbourMessages } from './context.mjs';
+import { createNeighbourFinder, findHint, firstOriginFile } from './context.mjs';
 import { requestItem } from './prompt.mjs';
 
 export const DEFAULT_MAX_RETRIES = 2;
+/** Strings per engine call: a local model's context and speed hold fewer than Claude's. */
+export const DEFAULT_BATCH_SIZE = { claude: 30, local: 10 };
 
 function chunk(items, size) {
   const chunks = [];
@@ -50,12 +52,12 @@ export async function translateEntries({
   readSource,
   removed = null,
   maxRetries = DEFAULT_MAX_RETRIES,
-  batchSize = 30,
+  batchSize = DEFAULT_BATCH_SIZE.claude,
   concurrency = 1,
-  onBatchDone = () => {},
 }) {
   const outcomes = new Map();
   const usage = { calls: 0, failedCalls: 0, inputTokens: 0, outputTokens: 0, costUsd: 0, durationMs: 0 };
+  const neighboursOf = createNeighbourFinder(allMessages, readSource);
   const work = [];
   for (const { id, message } of entries) {
     let prepared;
@@ -77,7 +79,7 @@ export async function translateEntries({
       keys: targetKeys(prepared, locale),
       budget: budgetFor(message),
       glossaryTerms: relevantTerms(visibleEnglish, locale, glossary),
-      neighbours: neighbourMessages(id, allMessages, readSource),
+      neighbours: neighboursOf(id),
       hint: removed ? findHint(message, removed) : null,
     });
   }
@@ -139,7 +141,6 @@ export async function translateEntries({
     for (const entry of pending) {
       outcomes.set(entry.item.id, { status: 'flagged', attempts: entry.attempts, errors: entry.problems, firstErrors: entry.firstErrors, lastReply: entry.lastReply });
     }
-    onBatchDone({ done: batch.length });
   };
 
   const queue = new PQueue({ concurrency });

@@ -21,9 +21,18 @@ function escapeRegExp(text) {
   return text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** One compiled pattern per term and case rule, reused for every string in a run. */
+const wordPatterns = new Map();
+
 /** Whether `english` uses the whole word or phrase `term` (a plural `s` counts). */
 function usesWord(english, term, flags) {
-  return new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}s?(?![\\p{L}\\p{N}])`, `u${flags}`).test(english);
+  const cacheKey = `${flags}:${term}`;
+  let pattern = wordPatterns.get(cacheKey);
+  if (!pattern) {
+    pattern = new RegExp(`(^|[^\\p{L}\\p{N}])${escapeRegExp(term)}s?(?![\\p{L}\\p{N}])`, `u${flags}`);
+    wordPatterns.set(cacheKey, pattern);
+  }
+  return pattern.test(english);
 }
 
 /** The kept names and fixed terms one English text uses, with what `locale` must say for each. */

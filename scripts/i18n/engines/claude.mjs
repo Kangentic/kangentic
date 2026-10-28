@@ -11,13 +11,14 @@
  * tools (src/main/agent/adapters/claude/claude-adapter.ts), the same set
  * scripts/eval-condition-check.mjs runs. `--system-prompt` replaces Claude
  * Code's coding-agent prompt with the translator's. Each call runs from an empty
- * temp folder, so no project CLAUDE.md loads, with the `CLAUDE*` variables of a
- * surrounding Claude Code session removed.
+ * temp folder, so no project CLAUDE.md loads, with the markers of a surrounding
+ * Claude Code session removed.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { removeDirectory, runOnce } from '../../lib/headless-cli.mjs';
 import { readReplies, REPLY_SCHEMA, systemPrompt, userPrompt } from '../prompt.mjs';
 
 export const DEFAULT_CLAUDE_MODEL = 'claude-opus-5-5';
@@ -42,10 +43,15 @@ export function claudeArgs({ settingsPath, model, effort, system, schema }) {
   ];
 }
 
-/** This shell's env minus Claude session markers, with thinking off at low as the adapter's `answerEnv` does. */
+/**
+ * This shell's env minus the markers a Claude Code session sets for itself
+ * (`CLAUDECODE`, `CLAUDE_CODE_*`, which the app's spawn env drops too), with
+ * thinking off at low as the adapter's `answerEnv` does. `CLAUDE_CONFIG_DIR`
+ * stays, since it says where the developer's login lives.
+ */
 export function claudeEnv(baseEnv, effort) {
   const env = { ...baseEnv };
-  for (const name of Object.keys(env)) if (name.startsWith('CLAUDE')) delete env[name];
+  for (const name of Object.keys(env)) if (name === 'CLAUDECODE' || name.startsWith('CLAUDE_CODE_')) delete env[name];
   delete env.MAX_THINKING_TOKENS;
   if (effort === 'low') env.MAX_THINKING_TOKENS = '0';
   return env;
@@ -62,64 +68,6 @@ export function assertCliStarts(cli) {
   } catch (error) {
     throw new Error(`Cannot start the Claude CLI "${cli}" (${error instanceof Error ? error.message : String(error)}). Pass --cli <path to the claude executable>.`);
   }
-}
-
-/** A temp folder removal that never throws: on Windows a CLI's leftover child can still hold it. */
-function removeDirectory(directory) {
-  try {
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch {
-    // Left in the temp folder; the OS clears it.
-  }
-}
-
-/** Stop the CLI and anything it started. On Windows `child.kill()` ends only the CLI. */
-function stopTree(child) {
-  if (process.platform !== 'win32') {
-    child.kill();
-    return;
-  }
-  try {
-    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-  } catch {
-    // Already gone.
-  }
-}
-
-/** One call from an empty temp folder. Never rejects: a CLI that cannot start resolves with code -1. */
-function runOnce(cli, argv, stdinText, env) {
-  return new Promise((resolve) => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-claude-'));
-    const started = performance.now();
-    let child;
-    try {
-      child = spawn(cli, argv, { cwd, env, shell: false, windowsHide: true });
-    } catch (error) {
-      removeDirectory(cwd);
-      resolve({ code: -1, stdout: '', stderr: error instanceof Error ? error.message : String(error), wallMs: 0 });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const settle = (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      removeDirectory(cwd);
-      resolve({ code, stdout, stderr: stderr.slice(-2000), wallMs: performance.now() - started });
-    };
-    const timer = setTimeout(() => stopTree(child), RUN_TIMEOUT_MS);
-    child.on('error', (error) => {
-      stderr += `${error.message}\n`;
-      settle(-1);
-    });
-    child.stdin.on('error', () => {});
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
-    child.on('close', (code) => settle(code));
-    child.stdin.end(stdinText);
-  });
 }
 
 /** What one `--output-format json` call returned: the structured reply when a schema was given. */
@@ -161,7 +109,10 @@ export function createClaudeCaller({ cli = 'claude', model = DEFAULT_CLAUDE_MODE
   return {
     model,
     async ask({ system, user, schema }) {
-      const outcome = await runOnce(cli, claudeArgs({ settingsPath, model, effort, system, schema }), user, claudeEnv(process.env, effort));
+      const outcome = await runOnce(cli, claudeArgs({ settingsPath, model, effort, system, schema }), user, claudeEnv(process.env, effort), {
+        tempPrefix: 'kangentic-i18n-claude-',
+        timeoutMs: RUN_TIMEOUT_MS,
+      });
       const result = readJsonResult(outcome.stdout);
       if (outcome.code !== 0 || result.isError) {
         throw new Error(`claude exited ${outcome.code}: ${(result.answer ?? outcome.stderr).slice(-400)}`);

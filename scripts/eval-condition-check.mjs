@@ -35,13 +35,13 @@
  * shipped matcher and the strict `lastLineIs` read a design's line differently. The `endsWithLine`
  * truth is `lastLineIs`, so those cases are the ones to read by hand before trusting that truth.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { performance } from 'node:perf_hooks';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
+import { removeDirectory, runOnce } from './lib/headless-cli.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
@@ -304,64 +304,6 @@ async function loadAppModules() {
   }
 }
 
-/** A temp folder removal that never throws: on Windows a CLI's leftover child can still hold it. */
-function removeDirectory(directory) {
-  try {
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch {
-    // Left in the temp folder; the OS clears it.
-  }
-}
-
-/** Stop the CLI and anything it started. On Windows `child.kill()` ends only the CLI. */
-function stopTree(child) {
-  if (process.platform !== 'win32') {
-    child.kill();
-    return;
-  }
-  try {
-    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-  } catch {
-    // Already gone.
-  }
-}
-
-/** One call from an empty temp folder. Never rejects: a CLI that cannot start resolves with code -1. */
-function runOnce(cli, argv, stdinText, env) {
-  return new Promise((resolve) => {
-    const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-condition-check-cwd-'));
-    const started = performance.now();
-    let child;
-    try {
-      child = spawn(cli, argv, { cwd, env, shell: false, windowsHide: true });
-    } catch (error) {
-      removeDirectory(cwd);
-      resolve({ code: -1, stdout: '', stderr: error instanceof Error ? error.message : String(error), wallMs: 0 });
-      return;
-    }
-    let stdout = '';
-    let stderr = '';
-    let settled = false;
-    const settle = (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      removeDirectory(cwd);
-      resolve({ code, stdout, stderr: stderr.slice(-2000), wallMs: performance.now() - started });
-    };
-    const timer = setTimeout(() => stopTree(child), RUN_TIMEOUT_MS);
-    child.on('error', (error) => {
-      stderr += `${error.message}\n`;
-      settle(-1);
-    });
-    child.stdin.on('error', () => {});
-    child.stdout.on('data', (chunk) => { stdout += chunk.toString('utf8'); });
-    child.stderr.on('data', (chunk) => { stderr += chunk.toString('utf8'); });
-    child.on('close', (code) => settle(code));
-    child.stdin.end(stdinText);
-  });
-}
-
 /** What one `--output-format json` call returned. */
 export function readJsonResult(stdout) {
   const lines = String(stdout).trim().split(/\r?\n/);
@@ -614,7 +556,10 @@ async function run(options) {
       agentReply: job.testCase.reply,
       rows: job.judged.map((row) => ({ automationId: row.key, name: row.name, condition: row.condition })),
     });
-    const outcome = await runOnce(options.cli, conditionCheckArgs({ settingsPath, model: MODEL_IDS[job.arm.model], effort: job.arm.effort }), prompt, conditionCheckEnv(process.env, job.arm.effort));
+    const outcome = await runOnce(options.cli, conditionCheckArgs({ settingsPath, model: MODEL_IDS[job.arm.model], effort: job.arm.effort }), prompt, conditionCheckEnv(process.env, job.arm.effort), {
+      tempPrefix: 'eval-condition-check-cwd-',
+      timeoutMs: RUN_TIMEOUT_MS,
+    });
     const result = readJsonResult(outcome.stdout);
     const parsed = result.answer ? app.parseConditionReply(result.answer, job.judged.length) : new Map();
     const answers = {};
