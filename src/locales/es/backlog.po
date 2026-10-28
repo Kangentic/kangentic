@@ -8,179 +8,220 @@ msgstr ""
 "Language: es\n"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "\"{fileName}\" supera el límite de 10 MB."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{duplicateCount} already in the backlog"
-msgstr ""
+msgstr "{duplicateCount} ya en el backlog"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{importedCount} imported"
-msgstr ""
+msgstr "{importedCount} importados"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
-msgstr ""
+msgstr "{loadedCount, plural, one {# elemento cargado} many {# de elementos cargados} other {# elementos cargados}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
-msgstr ""
+msgstr "{pendingDeletePriorityCount, plural, one {# elemento con esta prioridad se restablecerá a \"{fallbackPriorityLabel}\".} many {# de elementos con esta prioridad se restablecerán a \"{fallbackPriorityLabel}\".} other {# elementos con esta prioridad se restablecerán a \"{fallbackPriorityLabel}\".}}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source"
 msgid "{provider} {sourceType}"
-msgstr ""
+msgstr "{sourceType} de {provider}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # backlog task.} other {This will permanently delete # backlog tasks.}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Se eliminará permanentemente # tarea del backlog.} many {Se eliminarán permanentemente # tareas del backlog.} other {Se eliminarán permanentemente # tareas del backlog.}}"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{selectedCount} selected"
-msgstr ""
+msgstr "{selectedCount} seleccionadas"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{loadedCount, plural, one {{shownCount} de # elemento} many {{shownCount} de # de elementos} other {{shownCount} de # elementos}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
-msgstr ""
+msgstr "{skippedAttachmentCount, plural, one {# archivo adjunto omitido} many {# de archivos adjuntos omitidos} other {# archivos adjuntos omitidos}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{summary}."
-msgstr ""
+msgstr "{summary}."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Add Label"
-msgstr ""
+msgstr "Añadir etiqueta"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Add labels when creating tasks"
-msgstr ""
+msgstr "Añade etiquetas al crear tareas"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Add Priority"
-msgstr ""
+msgstr "Agregar prioridad"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Add Source"
-msgstr ""
+msgstr "Agregar origen"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "All"
-msgstr ""
+msgstr "Todos"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "All items have been imported"
-msgstr ""
+msgstr "Se importaron todos los elementos"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Assignee"
-msgstr ""
+msgstr "Asignado"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Back"
-msgstr ""
+msgstr "Atrás"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Backlog is empty"
-msgstr ""
+msgstr "El backlog está vacío"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Cancel"
-msgstr ""
+msgstr "Cancelar"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Change color"
-msgstr ""
+msgstr "Cambiar color"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Clear filters"
-msgstr ""
+msgstr "Borrar filtros"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "CLI check failed"
-msgstr ""
+msgstr "Error al comprobar la CLI"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "CLI not available"
-msgstr ""
+msgstr "CLI no disponible"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "CLI not available or not authenticated"
-msgstr ""
+msgstr "La CLI no está disponible o no está autenticada"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "Closed"
-msgstr ""
+msgstr "Cerrado"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard this new backlog task and its unsaved changes."
-msgstr ""
+msgstr "Si cierra ahora, se descartarán esta nueva tarea del backlog y sus cambios sin guardar."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard your unsaved edits to this backlog task."
-msgstr ""
+msgstr "Si cierra ahora, se descartarán las ediciones sin guardar de esta tarea del backlog."
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Coming soon"
-msgstr ""
+msgstr "Próximamente"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{detailUnavailableCount, plural, one {comentarios no disponibles para # elemento} many {comentarios no disponibles para # de elementos} other {comentarios no disponibles para # elementos}}"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Connect"
-msgstr ""
+msgstr "Conectar"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't delete backlog task"
-msgstr ""
+msgstr "No se pudo eliminar la tarea del backlog"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't remove attachment"
-msgstr ""
+msgstr "No se pudo quitar el archivo adjunto"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't save backlog task"
-msgstr ""
+msgstr "No se pudo guardar la tarea del backlog"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Create"
-msgstr ""
+msgstr "Crear"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Create or import items to stage work before promoting to the board"
-msgstr ""
+msgstr "Crea o importa elementos para preparar el trabajo antes de pasarlo al tablero"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Create your first task"
-msgstr ""
+msgstr "Crea tu primera tarea"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Created"
-msgstr ""
+msgstr "Creado"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Created {createdAgo}, updated {updatedAgo}"
-msgstr ""
+msgstr "Creada {createdAgo}, actualizada {updatedAgo}"
 
 #: src/renderer/components/backlog/manage-labels/ColorPickerPopover.tsx
+#, fuzzy
 msgid "Custom color"
-msgstr ""
+msgstr "Color personalizado"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
@@ -188,363 +229,443 @@ msgstr ""
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Delete"
-msgstr ""
+msgstr "Eliminar"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "Delete {selectedCount, plural, one {# backlog task} other {# backlog tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Eliminar # tarea del backlog} many {Eliminar # tareas del backlog} other {Eliminar # tareas del backlog}}"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "Delete {selectedCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Eliminar # elemento} many {Eliminar # de elementos} other {Eliminar # elementos}}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Delete backlog task"
-msgstr ""
+msgstr "Eliminar tarea del backlog"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Delete item"
-msgstr ""
+msgstr "Eliminar elemento"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Delete label"
-msgstr ""
+msgstr "Eliminar etiqueta"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Delete label \"{pendingDeleteLabelName}\""
-msgstr ""
+msgstr "Eliminar etiqueta \"{pendingDeleteLabelName}\""
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Delete priority"
-msgstr ""
+msgstr "Eliminar prioridad"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Delete priority \"{pendingDeletePriorityLabel}\""
-msgstr ""
+msgstr "Eliminar prioridad \"{pendingDeletePriorityLabel}\""
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Descartar"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "¿Descartar los cambios no guardados?"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Drop files here"
-msgstr ""
+msgstr "Suelta los archivos aquí"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Edit"
-msgstr ""
+msgstr "Editar"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Edit Backlog Task"
-msgstr ""
+msgstr "Editar tarea del backlog"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Edit item"
-msgstr ""
+msgstr "Editar elemento"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Failed to add source"
-msgstr ""
+msgstr "No se pudo agregar el origen"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Failed to sync issues"
-msgstr ""
+msgstr "No se pudieron sincronizar las incidencias"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "File too large"
-msgstr ""
+msgstr "Archivo demasiado grande"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Filter by ID, title, label, or assignee..."
-msgstr ""
+msgstr "Filtrar por ID, título, etiqueta o asignado..."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Hide imported items"
-msgstr ""
+msgstr "Ocultar elementos importados"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "High"
-msgstr ""
+msgstr "Alta"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Import"
-msgstr ""
+msgstr "Importar"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Import ({selectedCount})"
-msgstr ""
+msgstr "Importar ({selectedCount})"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Import failed"
-msgstr ""
+msgstr "Error al importar"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
-msgstr ""
+msgstr "Importar desde un tablero de GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a repository issue tracker"
-msgstr ""
+msgstr "Importar desde el gestor de incidencias de un repositorio"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from Azure DevOps boards"
-msgstr ""
+msgstr "Importar desde tableros de Azure DevOps"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Import Sources"
-msgstr ""
+msgstr "Orígenes de importación"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Import Tasks"
-msgstr ""
+msgstr "Importar tareas"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import tasks from an Asana project"
-msgstr ""
+msgstr "Importar tareas desde un proyecto de Asana"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import row badge"
 msgid "imported"
-msgstr ""
+msgstr "importado"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Imported"
-msgstr ""
+msgstr "Importados"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Importing..."
-msgstr ""
+msgstr "Importando..."
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Issues"
-msgstr ""
+msgstr "Incidencias"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Issues imported"
-msgstr ""
+msgstr "Incidencias importadas"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Seguir editando"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Label"
-msgstr ""
+msgstr "Etiqueta"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Label name"
-msgstr ""
+msgstr "Nombre de la etiqueta"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Labels"
-msgstr ""
+msgstr "Etiquetas"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgctxt "toolbar button"
 msgid "Labels"
-msgstr ""
+msgstr "Etiquetas"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Low"
-msgstr ""
+msgstr "Baja"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Medium"
-msgstr ""
+msgstr "Media"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgid "Move {selectedCount} to Board"
-msgstr ""
+msgstr "Mover {selectedCount} al tablero"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Mover a"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Move to board"
-msgstr ""
+msgstr "Mover al tablero"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgid "Move to Board"
-msgstr ""
+msgstr "Mover al tablero"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "New Backlog Task"
-msgstr ""
+msgstr "Nueva tarea del backlog"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "No items found"
-msgstr ""
+msgstr "No se encontraron elementos"
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "No items match your filters"
-msgstr ""
+msgstr "Ningún elemento coincide con los filtros"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "No labels yet"
-msgstr ""
+msgstr "Aún no hay etiquetas"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "No sources configured. Add one to start."
-msgstr ""
+msgstr "No hay orígenes configurados. Agregue uno para empezar."
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "None"
-msgstr ""
+msgstr "Ninguna"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "Open"
-msgstr ""
+msgstr "Abierto"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open in {sourceName}"
-msgstr ""
+msgstr "Abrir en {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
-msgstr ""
+msgstr "Pega cualquier URL de proyecto de Asana (vista de lista, tablero o calendario)."
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
-msgstr ""
+msgstr "Pega cualquier URL de proyecto de Azure DevOps (tableros, sprints, backlogs, etc.)"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub Project"
-msgstr ""
+msgstr "Pega la URL completa de tu GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
-msgstr ""
+msgstr "Pega la URL completa de tu repositorio de GitHub"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgctxt "toolbar button"
 msgid "Priorities"
-msgstr ""
+msgstr "Prioridades"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Priority"
-msgstr ""
+msgstr "Prioridad"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Priority {number}"
-msgstr ""
+msgstr "Prioridad {number}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Project"
-msgstr ""
+msgstr "Proyecto"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Projects"
-msgstr ""
+msgstr "Proyectos"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Refresh to check for new items"
-msgstr ""
+msgstr "Actualice para buscar elementos nuevos"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Rename"
-msgstr ""
+msgstr "Cambiar nombre"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Retry"
-msgstr ""
+msgstr "Reintentar"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Save"
-msgstr ""
+msgstr "Guardar"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Select all"
-msgstr ""
+msgstr "Seleccionar todo"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Show imported items"
-msgstr ""
+msgstr "Mostrar elementos importados"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Status"
-msgstr ""
+msgstr "Estado"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Syncing..."
-msgstr ""
+msgstr "Sincronizando..."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Task title"
-msgstr ""
+msgstr "Título de la tarea"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "Esta acción no se puede deshacer."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "This label is not assigned to any items."
-msgstr ""
+msgstr "Esta etiqueta no está asignada a ningún elemento."
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "This will permanently delete the backlog task."
-msgstr ""
+msgstr "Se eliminará permanentemente la tarea del backlog."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "This will remove the label from {pendingDeleteLabelCount, plural, one {# item} other {# items}}."
-msgstr ""
+msgstr "{pendingDeleteLabelCount, plural, one {Se quitará la etiqueta de # elemento.} many {Se quitará la etiqueta de # de elementos.} other {Se quitará la etiqueta de # elementos.}}"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Title"
-msgstr ""
+msgstr "Título"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Type"
-msgstr ""
+msgstr "Tipo"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Urgent"
-msgstr ""
+msgstr "Urgente"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Work Items"
-msgstr ""
+msgstr "Elementos de trabajo"

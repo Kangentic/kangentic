@@ -8,190 +8,236 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{name}\""
-msgstr ""
+msgstr "\"{name}\""
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{search}\""
-msgstr ""
+msgstr "\"{search}\""
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
-msgstr ""
+msgstr "{count, plural, other {명령 터미널 #개 실행 중(확인 필요)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
-msgstr ""
+msgstr "{count, plural, other {명령 터미널 #개 실행 중(대기 중)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
-msgstr ""
+msgstr "{count, plural, other {명령 터미널 #개 실행 중(작업 중)}}"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
-msgstr ""
+msgstr "{groupProjectCount, plural, other {이 그룹의 프로젝트 #개는 그룹에서 해제됩니다.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle"
-msgstr ""
+msgstr "유휴 {idleCount}개"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle, {thinkingCount} thinking"
-msgstr ""
+msgstr "유휴 {idleCount}개, 생각 중 {thinkingCount}개"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (needs you)"
-msgstr ""
+msgstr "{projectName}, 명령 터미널 실행 중(입력 필요)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (resting)"
-msgstr ""
+msgstr "{projectName}, 명령 터미널 실행 중(대기 중)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (working)"
-msgstr ""
+msgstr "{projectName}, 명령 터미널 실행 중(작업 중)"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{projectName}: {label}"
-msgstr ""
+msgstr "{projectName}: {label}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{thinkingCount} thinking"
-msgstr ""
+msgstr "생각 중 {thinkingCount}개"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Add project"
-msgstr ""
+msgstr "프로젝트 추가"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
-msgstr ""
+msgstr "<0>\"{projectName}\"</0>을(를) 삭제하시겠습니까?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "검색 지우기"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "Click to open"
-msgstr ""
+msgstr "클릭하여 열기"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Group"
-msgstr ""
+msgstr "그룹 삭제"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete group <0>\"{groupName}\"</0>?"
-msgstr ""
+msgstr "<0>\"{groupName}\"</0> 그룹을 삭제하시겠습니까?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Project"
-msgstr ""
+msgstr "프로젝트 삭제"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Group name"
-msgstr ""
+msgstr "그룹 이름"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Group options (or right-click)"
-msgstr ""
+msgstr "그룹 옵션(또는 마우스 오른쪽 클릭)"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Hide sidebar"
-msgstr ""
+msgstr "사이드바 숨기기"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "More options"
-msgstr ""
+msgstr "추가 옵션"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "More project actions"
-msgstr ""
+msgstr "추가 프로젝트 작업"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move down"
-msgstr ""
+msgstr "아래로 이동"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "이동"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move up"
-msgstr ""
+msgstr "위로 이동"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "New group"
-msgstr ""
+msgstr "새 그룹"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "New project"
-msgstr ""
+msgstr "새 프로젝트"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects match"
-msgstr ""
+msgstr "일치하는 프로젝트 없음"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects yet"
-msgstr ""
+msgstr "아직 프로젝트 없음"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Open folder as project"
-msgstr ""
+msgstr "폴더를 프로젝트로 열기"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Open in Explorer"
-msgstr ""
+msgstr "탐색기에서 열기"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "Open menu for {projectName}"
-msgstr ""
+msgstr "{projectName} 메뉴 열기"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Open menu for group {groupName}"
-msgstr ""
+msgstr "{groupName} 그룹 메뉴 열기"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Project deleted"
-msgstr ""
+msgstr "프로젝트가 삭제됨"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Project Settings"
-msgstr ""
+msgstr "프로젝트 설정"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Remove from group"
-msgstr ""
+msgstr "그룹에서 제거"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "이름 바꾸기"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Search projects..."
-msgstr ""
+msgstr "프로젝트 검색..."
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "Show sidebar"
-msgstr ""
+msgstr "사이드바 표시"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
-msgstr ""
+msgstr "Kangentic에서 프로젝트가 제거되지만 디스크의 파일은 삭제되지 않습니다."
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Use Add project below to open a folder"
-msgstr ""
+msgstr "아래의 프로젝트 추가를 사용하여 폴더를 여세요"

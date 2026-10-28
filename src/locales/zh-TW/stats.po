@@ -8,689 +8,855 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(default)"
-msgstr ""
+msgstr "(預設)"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(unknown)"
-msgstr ""
+msgstr "(未知)"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agentName} default"
-msgstr ""
+msgstr "{agentName} 預設"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agents} reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "{agents} 未回報這些呼叫的用量，因此無法得知其 token 數與費用。"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {{blindLabel} does not report subagent usage, so fan-outs in this range cannot be counted.} other {{blindLabel} do not report subagent usage, so fan-outs in this range cannot be counted.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, other {{blindLabel} 不回報子代理程式用量，因此無法計算此範圍內的分派數。}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {Excludes {blindLabel}, which does not report subagent usage.} other {Excludes {blindLabel}, which do not report subagent usage.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, other {不含 {blindLabel}，因其不回報子代理程式用量。}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{cacheReadText} read"
-msgstr ""
+msgstr "讀取 {cacheReadText}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call, {failedCount} failed or timed out (still paid for).} other {{callCount} calls, {failedCount} failed or timed out (still paid for).}}"
-msgstr ""
+msgstr "{calls, plural, other {{callCount} 次呼叫，{failedCount} 次失敗或逾時 (仍需付費)。}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call.} other {{callCount} calls.}}"
-msgstr ""
+msgstr "{calls, plural, other {{callCount} 次呼叫。}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call} other {{callCount} calls}}"
-msgstr ""
+msgstr "{calls, plural, other {{callCount} 次呼叫}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {Cost per hour by model} day {Cost per day by model} week {Cost per week by model} other {Cost per {costBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {各模型每小時成本} day {各模型每日成本} week {各模型每週成本} other {各模型每 {costBucketMinutes} 分鐘成本}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {cost per hour, stacked by model} day {cost per day, stacked by model} week {cost per week, stacked by model} other {cost per {costBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {每小時成本，依模型堆疊} day {每日成本，依模型堆疊} week {每週成本，依模型堆疊} other {每 {costBucketMinutes} 分鐘成本，依模型堆疊}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{freshInput} fresh input, {output} output, {cacheWrite} cache write, {cacheRead} cache read."
-msgstr ""
+msgstr "新輸入 {freshInput}、輸出 {output}、快取寫入 {cacheWrite}、快取讀取 {cacheRead}。"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{freshInputText} in / {outputText} out"
-msgstr ""
+msgstr "輸入 {freshInputText} / 輸出 {outputText}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{liveSessionCount} active now"
-msgstr ""
+msgstr "{liveSessionCount} 個目前作用中"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
-msgstr ""
+msgstr "{nestedCount, plural, other {{subagentTotalText} 個中有 {nestedCountText} 個由其他子代理程式產生。}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{skippedCount, plural, one {Skipped # project with an unreadable database: {skippedNames}} other {Skipped # projects with unreadable databases: {skippedNames}}}"
-msgstr ""
+msgstr "{skippedCount, plural, other {已略過 # 個資料庫無法讀取的專案：{skippedNames}}}"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {cost}, {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}：{cost}，{tokenCount} 個 token"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}：{tokenCount} 個 token"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens, {cost}"
-msgstr ""
+msgstr "{sliceLabel}：{tokenCount} 個 token，{cost}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCacheReadText} cache read."
-msgstr ""
+msgstr "快取讀取 {subagentCacheReadText}。"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCount, plural, one {{subagentCountText} subagent} other {{subagentCountText} subagents}}"
-msgstr ""
+msgstr "{subagentCount, plural, other {{subagentCountText} 個子代理程式}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour over the selected range} day {Cache hit rate per day over the selected range} week {Cache hit rate per week over the selected range} other {Cache hit rate per {tokenBucketMinutes} minutes over the selected range}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {所選範圍內每小時快取命中率} day {所選範圍內每日快取命中率} week {所選範圍內每週快取命中率} other {所選範圍內每 {tokenBucketMinutes} 分鐘快取命中率}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour} day {Cache hit rate per day} week {Cache hit rate per week} other {Cache hit rate per {tokenBucketMinutes} minutes}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {每小時快取命中率} day {每日快取命中率} week {每週快取命中率} other {每 {tokenBucketMinutes} 分鐘快取命中率}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Tokens per hour by model} day {Tokens per day by model} week {Tokens per week by model} other {Tokens per {tokenBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {各模型每小時權杖數} day {各模型每日權杖數} week {各模型每週權杖數} other {各模型每 {tokenBucketMinutes} 分鐘權杖數}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {tokens per hour, stacked by model} day {tokens per day, stacked by model} week {tokens per week, stacked by model} other {tokens per {tokenBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {每小時權杖數，依模型堆疊} day {每日權杖數，依模型堆疊} week {每週權杖數，依模型堆疊} other {每 {tokenBucketMinutes} 分鐘權杖數，依模型堆疊}}"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "{tokenCount} tokens"
-msgstr ""
+msgstr "{tokenCount} 個 token"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{tokensPerHourText} tokens/hr"
-msgstr ""
+msgstr "{tokensPerHourText} 權杖/小時"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "About these numbers"
-msgstr ""
+msgstr "關於這些數據"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Agent with the most tokens in this project over the range"
-msgstr ""
+msgstr "此專案在此範圍內使用最多 Token 的代理程式"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "All Projects"
-msgstr ""
+msgstr "所有專案"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "All Time"
-msgstr ""
+msgstr "全部時間"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "API-equivalent"
-msgstr ""
+msgstr "API 等值"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "API-equivalent cost as each agent reported it"
-msgstr ""
+msgstr "各代理程式回報的 API 等值費用"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "API-equivalent cost as reported by agents (subscription sessions may report $0)"
-msgstr ""
+msgstr "代理程式回報的等值 API 費用 (訂閱工作階段可能回報 $0)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Apply"
-msgstr ""
+msgstr "套用"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Average {averageTime} per call."
-msgstr ""
+msgstr "每次呼叫平均 {averageTime}。"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts."
-msgstr ""
+msgstr "每個工作階段中代理程式實際工作的平均時間，不含閒置時間。僅涵蓋有活動追蹤的工作階段，因此數量少於「工作階段」欄。"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Average wall time per call"
-msgstr ""
+msgstr "每次呼叫的平均實際耗時"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Avg Active"
-msgstr ""
+msgstr "平均作用時間"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count."
-msgstr ""
+msgstr "平均活躍時間是代理程式實際工作的時間，僅計入有活動追蹤的工作階段，其數量少於工作階段總數。"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Avg time"
-msgstr ""
+msgstr "平均時間"
 
 #: src/renderer/components/stats/StatsFilterRow.tsx
+#, fuzzy
 msgid "Back to the full range"
-msgstr ""
+msgstr "返回完整範圍"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "背景"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background calls"
-msgstr ""
+msgstr "背景呼叫"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures."
-msgstr ""
+msgstr "背景呼叫是 Kangentic 代您發出的無介面代理程式呼叫，例如條件檢查與任務標題。這些都不是工作階段，因此不計入工作階段數據。"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Background calls by day"
-msgstr ""
+msgstr "每日背景呼叫"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Burn Rate"
-msgstr ""
+msgstr "消耗速率"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (cost/hr)"
-msgstr ""
+msgstr "消耗速率 (成本/小時)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (tokens/hr)"
-msgstr ""
+msgstr "消耗速率 (權杖/小時)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in cost per hour"
-msgstr ""
+msgstr "隨時間變化的消耗速率 (每小時成本)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in tokens per hour"
-msgstr ""
+msgstr "隨時間變化的消耗速率 (每小時權杖數)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By agent"
-msgstr ""
+msgstr "依代理程式"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By effort"
-msgstr ""
+msgstr "依投入程度"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By model"
-msgstr ""
+msgstr "依模型"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By subagent"
-msgstr ""
+msgstr "依子代理程式"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cache hit rate"
-msgstr ""
+msgstr "快取命中率"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache read"
-msgstr ""
+msgstr "快取讀取"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cache Read"
-msgstr ""
+msgstr "快取讀取"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache read as a share of all input: {cacheReadText} read against {cacheWriteText} written and {freshInputText} fresh."
-msgstr ""
+msgstr "快取讀取占所有輸入的比例：讀取 {cacheReadText}，寫入 {cacheWriteText}，新輸入 {freshInputText}。"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cache read over all input"
-msgstr ""
+msgstr "快取讀取佔所有輸入的比例"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache Reads"
-msgstr ""
+msgstr "快取讀取"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache write"
-msgstr ""
+msgstr "快取寫入"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "呼叫"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls that errored or timed out. They still cost what the agent reported."
-msgstr ""
+msgstr "發生錯誤或逾時的呼叫。仍會計入代理程式回報的費用。"
 
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Chart metric"
-msgstr ""
+msgstr "圖表指標"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Choose which project's usage to view"
-msgstr ""
+msgstr "選擇要檢視哪個專案的使用量"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Clear custom range"
-msgstr ""
+msgstr "清除自訂範圍"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "CLI invocations, counting each resume of a conversation separately"
-msgstr ""
+msgstr "CLI 呼叫次數，每次繼續對話皆分開計算"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Close usage stats"
-msgstr ""
+msgstr "關閉使用量統計"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Compactions"
-msgstr ""
+msgstr "壓縮次數"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Context compactions across the range"
-msgstr ""
+msgstr "此範圍內的內容壓縮次數"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "cost"
-msgstr ""
+msgstr "費用"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "費用"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
-msgstr ""
+msgstr "成本與主執行緒權杖以整個所選範圍平均計算，包含閒置時間。兩行使用相同的時數，因此各自乘以範圍即可得出上方圖塊的數值。"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost covers finalized sessions plus any currently running, refreshed live as they progress."
-msgstr ""
+msgstr "成本涵蓋已完成的工作階段及目前執行中的工作階段，並隨進度即時更新。"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0."
-msgstr ""
+msgstr "成本是依各代理程式回報的權杖數，以 API 等價牌價計算，並非訂閱實際計費金額；訂閱工作階段可能回報 $0。"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cost Share"
-msgstr ""
+msgstr "費用占比"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cost/hr"
-msgstr ""
+msgstr "成本/小時"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cumulative cost"
-msgstr ""
+msgstr "累計成本"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative cost over the selected range"
-msgstr ""
+msgstr "所選範圍內的累計成本"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative spend"
-msgstr ""
+msgstr "累計支出"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgctxt "Date range"
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Day"
-msgstr ""
+msgstr "日期"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Edit the custom range"
-msgstr ""
+msgstr "編輯自訂範圍"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "失敗"
 
 #: src/renderer/components/stats/LazyStatsDashboard.tsx
+#, fuzzy
 msgid "Failed to load the usage dashboard"
-msgstr ""
+msgstr "無法載入使用量儀表板"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Failed to load usage stats: {error}"
-msgstr ""
+msgstr "無法載入使用量統計：{error}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files"
-msgstr ""
+msgstr "檔案"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files changed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "代理程式工作階段變更的檔案 (與基礎分支的 git diff)"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Finalized sessions in the range"
-msgstr ""
+msgstr "此範圍內已完成的工作階段"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Fresh in"
-msgstr ""
+msgstr "新輸入"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output from {subagentTurnCountText} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them."
-msgstr ""
+msgstr "來自 {subagentTurnCountText} 個子代理程式回合的新輸入與輸出。權杖圖塊僅計算主執行緒，因此這些數值另計於其上；工作階段回報的成本已包含這些數值。"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output on the main thread. {cacheWriteText} cache write and {cacheReadText} cache read are counted separately and priced differently."
-msgstr ""
+msgstr "主執行緒上的新輸入與輸出。快取寫入 {cacheWriteText} 與快取讀取 {cacheReadText} 分開計算，且計價不同。"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Fresh input tokens across the turns in this range (cache reads counted separately)"
-msgstr ""
+msgstr "此範圍內各輪次的新輸入 Token (快取讀取另計)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "From"
-msgstr ""
+msgstr "從"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Headless agent calls Kangentic makes for you, kept out of the totals above"
-msgstr ""
+msgstr "Kangentic 代您執行的無介面代理程式呼叫，不計入上方總計"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Input"
-msgstr ""
+msgstr "輸入"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Job"
-msgstr ""
+msgstr "工作"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Last Active"
-msgstr ""
+msgstr "上次活動"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines"
-msgstr ""
+msgstr "行數"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines added / removed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "代理程式工作階段新增 / 移除的行數 (與基礎分支的 git diff)"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Live"
-msgstr ""
+msgstr "即時"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "模型"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Most recent session start in the range"
-msgstr ""
+msgstr "此範圍內最近一次工作階段的開始時間"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No activity tracking recorded in this range"
-msgstr ""
+msgstr "此範圍內沒有活動追蹤記錄"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in the last 2 hours"
-msgstr ""
+msgstr "過去 2 小時內沒有代理程式回合紀錄"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in this range"
-msgstr ""
+msgstr "此範圍內沒有代理程式回合紀錄"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "No background calls in this range"
-msgstr ""
+msgstr "此範圍內沒有背景呼叫"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "No calls in this range"
-msgstr ""
+msgstr "此範圍內沒有呼叫"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No cost reported by agents in this range"
-msgstr ""
+msgstr "此範圍內代理程式未回報成本"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in the last 2 hours"
-msgstr ""
+msgstr "過去 2 小時內沒有輸入紀錄"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in this range"
-msgstr ""
+msgstr "此範圍內沒有輸入記錄"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No per-turn token data recorded in this range"
-msgstr ""
+msgstr "此範圍內沒有每回合權杖資料"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "No project usage recorded yet"
-msgstr ""
+msgstr "尚未記錄任何專案使用量"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No spend recorded in the last 2 hours"
-msgstr ""
+msgstr "過去 2 小時內沒有花費記錄"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No subagent turns recorded in this range"
-msgstr ""
+msgstr "此範圍內沒有子代理程式回合記錄"
 
 #: src/renderer/components/stats/ChartCard.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No usage recorded yet"
-msgstr ""
+msgstr "尚無使用量紀錄"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "None reported by these agents in this range"
-msgstr ""
+msgstr "此範圍內這些代理程式未回報任何項目"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Not reported by these agents in this range"
-msgstr ""
+msgstr "此範圍內這些代理程式未回報"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Other"
-msgstr ""
+msgstr "其他"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Other ({foldedCount})"
-msgstr ""
+msgstr "其他 ({foldedCount})"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Output"
-msgstr ""
+msgstr "輸出"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Output tokens across the turns in this range"
-msgstr ""
+msgstr "此範圍內各輪次的輸出 Token"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
-msgstr ""
+msgstr "共 {coveredSessionsCompact} 個工作階段"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Per-turn capture starts {captureStart}, so this covers less of the range than Cost does."
-msgstr ""
+msgstr "每回合擷取從 {captureStart} 開始，因此涵蓋的範圍比成本少。"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Pick a custom month range"
-msgstr ""
+msgstr "選擇自訂月份範圍"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Priced at API list rates from the tokens each agent reported. Not what a subscription was billed."
-msgstr ""
+msgstr "依各代理程式回報的權杖數，以 API 牌價計算。並非訂閱實際收取的費用。"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "專案"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project scope"
-msgstr ""
+msgstr "專案範圍"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Registered project - click a row to view that project in the dashboard"
-msgstr ""
+msgstr "已註冊的專案 - 按一下資料列即可在儀表板中檢視該專案"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "重試"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "工作階段"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Share of fresh input plus output across all projects in the range"
-msgstr ""
+msgstr "此範圍內新輸入加輸出在所有專案中的占比"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Subagents"
-msgstr ""
+msgstr "子代理程式"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "The agent reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "代理程式未回報這些呼叫的用量，因此無法得知其 token 數與費用。"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "The Knowledge Graph index is restarting. The figures refresh when it is back."
-msgstr ""
+msgstr "Knowledge Graph 索引正在重新啟動。恢復後數據將會重新整理。"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Month"
-msgstr ""
+msgstr "本月"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "This project's share of the total cost across all projects in the range"
-msgstr ""
+msgstr "此專案在此範圍內占所有專案總費用的比例"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Week"
-msgstr ""
+msgstr "本週"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Time the agent was working, per session, excluding idle. Covers the {coveredSessionsText} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts."
-msgstr ""
+msgstr "代理程式每個工作階段的工作時間，不含閒置。涵蓋此範圍內有活動追蹤的 {coveredSessionsText} 個工作階段，少於「工作階段」圖塊的計數。"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "To"
-msgstr ""
+msgstr "至"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "Today"
-msgstr ""
+msgstr "今天"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Token Share"
-msgstr ""
+msgstr "Token 占比"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
 #: src/renderer/components/stats/charts/KngDonut.tsx
+#, fuzzy
 msgid "tokens"
-msgstr ""
+msgstr "token"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "權杖"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Tokens and cost as each agent reported them"
-msgstr ""
+msgstr "各代理程式回報的權杖與費用"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it."
-msgstr ""
+msgstr "權杖依每回合計算，並依類型分開統計，因為快取讀取的數量遠大於全新輸入，費用也低得多。每回合計算比費用統計更晚開始，因此較長的範圍涵蓋的資料較少。"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens by type"
-msgstr ""
+msgstr "依類型區分的權杖"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens In"
-msgstr ""
+msgstr "輸入 Token"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens Out"
-msgstr ""
+msgstr "輸出 Token"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens per 5 minutes, stacked by token type"
-msgstr ""
+msgstr "每 5 分鐘的權杖數，依權杖類型堆疊"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens served from the prompt cache, counted apart from Tokens In"
-msgstr ""
+msgstr "由提示快取提供的 Token，與「輸入 Token」分開計算"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens/hr"
-msgstr ""
+msgstr "權杖/小時"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tool Calls"
-msgstr ""
+msgstr "工具呼叫"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Top Agent"
-msgstr ""
+msgstr "主要代理程式"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Total"
-msgstr ""
+msgstr "總計"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Total tool calls across sessions in the range"
-msgstr ""
+msgstr "此範圍內所有工作階段的工具呼叫總數"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Usage"
-msgstr ""
+msgstr "使用量"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Usage reported for {reportedCount} of them."
-msgstr ""
+msgstr "其中 {reportedCount} 次有回報用量。"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last month"
-msgstr ""
+msgstr "與上個月相比"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last week"
-msgstr ""
+msgstr "與上週相比"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs preceding window"
-msgstr ""
+msgstr "與前一區間相比"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs prior 2h"
-msgstr ""
+msgstr "與前 2 小時相比"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs yesterday"
-msgstr ""
+msgstr "與昨天相比"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default"
-msgstr ""
+msgstr "CLI 回報實際回應所用的模型；若未回報，則為 Kangentic 要求的模型或代理程式預設值"

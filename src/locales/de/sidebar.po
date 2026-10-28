@@ -8,190 +8,236 @@ msgstr ""
 "Language: de\n"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{name}\""
-msgstr ""
+msgstr "„{name}“"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{search}\""
-msgstr ""
+msgstr "„{search}“"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
-msgstr ""
+msgstr "{count, plural, one {# Befehlsterminal läuft (benötigt Aufmerksamkeit)} other {# Befehlsterminals laufen (benötigen Aufmerksamkeit)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
-msgstr ""
+msgstr "{count, plural, one {# Befehlsterminal läuft (im Leerlauf)} other {# Befehlsterminals laufen (im Leerlauf)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
-msgstr ""
+msgstr "{count, plural, one {# Befehlsterminal läuft (aktiv)} other {# Befehlsterminals laufen (aktiv)}}"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
-msgstr ""
+msgstr "{groupProjectCount, plural, one {Das zugehörige Projekt (#) wird aus der Gruppe entfernt.} other {Die zugehörigen # Projekte werden aus der Gruppe entfernt.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle"
-msgstr ""
+msgstr "{idleCount} inaktiv"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle, {thinkingCount} thinking"
-msgstr ""
+msgstr "{idleCount} inaktiv, {thinkingCount} denken nach"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (needs you)"
-msgstr ""
+msgstr "{projectName}, Befehlsterminals laufen (Eingabe erforderlich)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (resting)"
-msgstr ""
+msgstr "{projectName}, Befehlsterminals laufen (im Leerlauf)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (working)"
-msgstr ""
+msgstr "{projectName}, Befehlsterminals laufen (arbeitet)"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{projectName}: {label}"
-msgstr ""
+msgstr "{projectName}: {label}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{thinkingCount} thinking"
-msgstr ""
+msgstr "{thinkingCount} denken nach"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Add project"
-msgstr ""
+msgstr "Projekt hinzufügen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
-msgstr ""
+msgstr "Möchten Sie <0>„{projectName}“</0> wirklich löschen?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "Suche löschen"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "Click to open"
-msgstr ""
+msgstr "Zum Öffnen klicken"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Löschen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Group"
-msgstr ""
+msgstr "Gruppe löschen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete group <0>\"{groupName}\"</0>?"
-msgstr ""
+msgstr "Gruppe <0>„{groupName}“</0> löschen?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Project"
-msgstr ""
+msgstr "Projekt löschen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Group name"
-msgstr ""
+msgstr "Gruppenname"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Group options (or right-click)"
-msgstr ""
+msgstr "Gruppenoptionen (oder Rechtsklick)"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Hide sidebar"
-msgstr ""
+msgstr "Seitenleiste ausblenden"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "More options"
-msgstr ""
+msgstr "Weitere Optionen"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "More project actions"
-msgstr ""
+msgstr "Weitere Projektaktionen"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move down"
-msgstr ""
+msgstr "Nach unten verschieben"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Verschieben nach"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move up"
-msgstr ""
+msgstr "Nach oben verschieben"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "New group"
-msgstr ""
+msgstr "Neue Gruppe"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "New project"
-msgstr ""
+msgstr "Neues Projekt"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects match"
-msgstr ""
+msgstr "Keine passenden Projekte"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects yet"
-msgstr ""
+msgstr "Noch keine Projekte"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Open folder as project"
-msgstr ""
+msgstr "Ordner als Projekt öffnen"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Open in Explorer"
-msgstr ""
+msgstr "Im Explorer öffnen"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "Open menu for {projectName}"
-msgstr ""
+msgstr "Menü für {projectName} öffnen"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Open menu for group {groupName}"
-msgstr ""
+msgstr "Menü für Gruppe {groupName} öffnen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Project deleted"
-msgstr ""
+msgstr "Projekt gelöscht"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Project Settings"
-msgstr ""
+msgstr "Projekteinstellungen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Projekte"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Remove from group"
-msgstr ""
+msgstr "Aus Gruppe entfernen"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Umbenennen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Search projects..."
-msgstr ""
+msgstr "Projekte durchsuchen..."
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "Show sidebar"
-msgstr ""
+msgstr "Seitenleiste anzeigen"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
-msgstr ""
+msgstr "Das Projekt wird aus Kangentic entfernt, Dateien auf dem Datenträger werden jedoch nicht gelöscht."
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Use Add project below to open a folder"
-msgstr ""
+msgstr "Ordner unten über „Projekt hinzufügen“ öffnen"

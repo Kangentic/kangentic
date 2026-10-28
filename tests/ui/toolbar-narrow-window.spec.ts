@@ -38,6 +38,13 @@
  * in its target state BEFORE the wide baseline measurement, so the only variable
  * between the two measurements is the viewport.
  *
+ * The row picks its collapse step by measuring its own labels
+ * (toolbar-collapse.ts), so the cases run in English and again in Russian, whose
+ * labels ran longest when the layout pass measured de, ru and hu. The Russian
+ * cases find everything by test id and never by its English name, and prove the
+ * catalog loaded without naming a Russian string, so a reviewer's later
+ * correction of a translation cannot break them.
+ *
  * Each test launches and tears down its own browser, so the file fans out across
  * the UI workers safely.
  */
@@ -52,6 +59,8 @@ const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
 const PROJECT_ID = 'narrow-proj';
+/** The shipped language whose toolbar labels ran longest. */
+const LONG_LOCALE = 'ru';
 
 /** The app's own floor, from `minWidth` / `minHeight` in src/main/index.ts. */
 const FLOOR = { width: 900, height: 600 };
@@ -66,11 +75,15 @@ const WIDE = { width: 1600, height: 900 };
  * the 16px working mark in that pill's place instead, which is the narrower of
  * the two, so the row is measured at its widest.
  */
-function seedScript(backlogCount: number): string {
+function seedScript(backlogCount: number, locale: string): string {
   return `
     window.__mockWorkflows = [{ workflow: { id: 'narrow-workflow', title: 'Narrow', state: 'draft', draft: null } }];
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
+
+      // The session's language, which the mock boots in.
+      state.config.displayLanguage = ${JSON.stringify(locale)};
+      state.config.hasAnsweredLanguageSuggestion = true;
 
       // The sidebar hook re-syncs this on load, but only inside its [200, 400]
       // clamp. 400 is its own DEFAULT_WIDTH and the worst case for the toolbar.
@@ -157,26 +170,27 @@ function seedScript(backlogCount: number): string {
   `;
 }
 
-async function launch(backlogCount = 3): Promise<{ browser: Browser; page: Page }> {
+async function launch(backlogCount = 3, locale = 'en'): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: WIDE });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(seedScript(backlogCount));
+  await page.addInitScript(seedScript(backlogCount, locale));
 
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
   await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+  await expect.poll(() => page.evaluate(() => document.documentElement.lang)).toBe(locale);
 
   return { browser, page };
 }
 
 /** Collapse the sidebar to its 36px strip through the control that owns the state. */
 async function collapseSidebar(page: Page): Promise<void> {
-  await page.locator('button[aria-label="Hide sidebar"]').click();
+  await page.locator('[data-testid="sidebar-collapse-button"]').click();
   await page.locator('[data-testid="sidebar-expand-button"]').waitFor({ state: 'attached', timeout: 5000 });
 }
 
@@ -316,30 +330,60 @@ const BACKLOG_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities',
 const WORKFLOWS_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter'];
 
 /**
- * The shared body of all four toolbar cases: measure the row wide, narrow the
+ * Every control in `controlTestIds` that carries a label (the inputs do not),
+ * paired with its visible text, digits removed so a count pill alone does not
+ * read as a label. The switcher stands for its three options.
+ */
+async function readControlLabels(page: Page, controlTestIds: string[]): Promise<Array<{ testId: string; text: string }>> {
+  return page.evaluate((testIds) => {
+    const expanded = testIds.flatMap((testId) => (
+      testId === 'view-toggle-group' ? ['view-toggle-board', 'view-toggle-backlog', 'view-toggle-workflows'] : [testId]
+    ));
+    return expanded
+      .map((testId) => document.querySelector<HTMLElement>(`[data-testid="${testId}"]`))
+      .filter((element): element is HTMLElement => element !== null && element.tagName !== 'INPUT')
+      .map((element) => ({ testId: element.getAttribute('data-testid') ?? '', text: element.innerText.replace(/\d+/g, '').trim() }));
+  }, controlTestIds);
+}
+
+/**
+ * The shared body of the toolbar cases: measure the row wide, narrow the
  * viewport to the app's floor with the sidebar untouched, and assert the row
- * neither grew nor pushed a control past its own content edge.
+ * neither grew nor pushed a control past its own content edge. `wideLabels` is
+ * the English each control shows at full width, or `'translated'` for a session
+ * in another language, where every control must show some label and none of
+ * them the English.
  */
 async function expectRowSurvivesTheFloor(
   page: Page,
   controlTestIds: string[],
-  wideLabels: string[],
+  wideLabels: string[] | 'translated',
 ): Promise<void> {
-  // Anti-vacuity, and the reason this is not optional. Every collapse class is a
-  // MIN-width container query, so the BASE state is the collapsed one. A variant
-  // that fails to compile (a renamed container, a breakpoint Tailwind never
-  // generated) leaves every control icon-only at every width, and an icon-only row
-  // trivially passes both assertions below. Assert the labels are actually there
-  // when the row is wide, or this whole spec can go green against a toolbar that
-  // has permanently lost its text.
+  // Anti-vacuity, and the reason this is not optional. An icon-only row trivially
+  // passes both assertions below, so a collapse step that never lets go (a
+  // measurement that overshoots, a variant Tailwind never generated) would turn
+  // this whole spec green against a toolbar that has permanently lost its text.
+  // Assert the labels are actually there when the row is wide.
   const wideText = await page.locator('[data-testid="view-toggle"]').innerText();
-  for (const label of wideLabels) {
-    expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
+  if (wideLabels === 'translated') {
+    // The catalog loaded: a missing one falls back to English silently.
+    expect(wideText, 'the toolbar still reads its English action, so the catalog did not load').not.toContain('Add column');
+    for (const control of await readControlLabels(page, controlTestIds)) {
+      expect(control.text, `${control.testId} shows no label at ${WIDE.width}px wide`).not.toBe('');
+    }
+  } else {
+    for (const label of wideLabels) {
+      expect(wideText, `"${label}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(label);
+    }
   }
   // The two count pills are what make this the widest switcher; without them the
   // floor case below is not the one the ladder was sized for.
-  await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
-  await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
+  await expect(page.locator('[data-testid="view-toggle-workflows-count"]')).toHaveText('1');
+  await expect(page.locator('[data-testid="view-toggle-backlog-count"]')).toHaveText('3');
+  if (wideLabels !== 'translated') {
+    await expect(page.locator('[data-testid="view-toggle-workflows"]')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
+    await expect(page.locator('[data-testid="view-toggle-backlog"]')).toHaveAttribute('aria-label', 'Backlog, 3 items');
+  }
 
   const wideHeight = await settledHeight(page);
   expect(wideHeight).toBeGreaterThan(0);
@@ -416,6 +460,24 @@ test.describe('Chrome rows at the 900x600 floor', () => {
     }
   });
 
+  // The same four floor cases in the longest language. A ladder fixed at English
+  // widths passed every English case here while Russian squeezed the search to
+  // 44px between two steps.
+  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS]] as const) {
+    for (const sidebar of ['400px default', 'collapsed'] as const) {
+      test(`${view} toolbar survives the floor in ${LONG_LOCALE} with the sidebar ${sidebar === 'collapsed' ? 'collapsed' : 'at its 400px default'}`, async () => {
+        const { browser, page } = await launch(3, LONG_LOCALE);
+        try {
+          if (sidebar === 'collapsed') await collapseSidebar(page);
+          if (view === 'backlog') await switchToBacklog(page);
+          await expectRowSurvivesTheFloor(page, [...controls], 'translated');
+        } finally {
+          await browser.close();
+        }
+      });
+    }
+  }
+
   /**
    * A 1000+ item backlog keeps every digit at the floor rather than shortening to
    * "1.2k", which would hide the exact count the pill exists to show. That was a
@@ -470,20 +532,26 @@ test.describe('Chrome rows at the 900x600 floor', () => {
   });
 
   /**
-   * The two-width checks above would both pass with a threshold set so badly that
+   * The two-width checks above would both pass with a step chosen so badly that
    * the row breaks somewhere in between. With a 400px sidebar the toolbar's own
-   * width is the viewport minus 405, so this range walks the container from 495 to
-   * 1045 and crosses every step in all three ladders.
+   * width is the viewport minus 405, so the English range walks the container
+   * from 495 to 1045 and crosses every step in all three ladders.
    *
-   * The ceiling is set by the widest threshold any branch has, the backlog's
-   * filter controls at 1000 (a content box of 1000 is a 1032px row, a 1437px
-   * viewport). Stopping short of it leaves the widest and last-crossed step in
-   * the whole ladder covered only by the two fixed-width tests on either side of
-   * it.
+   * The ceiling is set by the widest step any branch has. In English that is the
+   * backlog's filter controls, which keep their labels from a content box of
+   * about 1000 (a 1032px row, a 1437px viewport). Russian labels are wider, so its
+   * board sweep runs to 1650 to cross its own widest step. Stopping short leaves
+   * the widest and last-crossed step covered only by the two fixed-width tests on
+   * either side of it.
    */
-  for (const [view, controls] of [['board', BOARD_CONTROLS], ['backlog', BACKLOG_CONTROLS], ['workflows', WORKFLOWS_CONTROLS]] as const) {
-    test(`the ${view} toolbar holds at every width across the ladder`, async () => {
-      const { browser, page } = await launch();
+  for (const [view, controls, locale, ceiling] of [
+    ['board', BOARD_CONTROLS, 'en', 1450],
+    ['backlog', BACKLOG_CONTROLS, 'en', 1450],
+    ['workflows', WORKFLOWS_CONTROLS, 'en', 1450],
+    ['board', BOARD_CONTROLS, LONG_LOCALE, 1650],
+  ] as const) {
+    test(`the ${view} toolbar holds at every width across the ladder${locale === 'en' ? '' : ` in ${locale}`}`, async () => {
+      const { browser, page } = await launch(3, locale);
       try {
         if (view === 'backlog') await switchToBacklog(page);
         if (view === 'workflows') await switchToWorkflows(page);
@@ -491,7 +559,7 @@ test.describe('Chrome rows at the 900x600 floor', () => {
         const baseline = await settledHeight(page);
         const broken: string[] = [];
 
-        for (let width = 900; width <= 1450; width += 25) {
+        for (let width = 900; width <= ceiling; width += 25) {
           await page.setViewportSize({ width, height: FLOOR.height });
           const height = await settledHeight(page);
           if (Math.abs(height - baseline) > 1) {

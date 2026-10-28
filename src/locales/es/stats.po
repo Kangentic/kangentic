@@ -8,689 +8,855 @@ msgstr ""
 "Language: es\n"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(default)"
-msgstr ""
+msgstr "(predeterminado)"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(unknown)"
-msgstr ""
+msgstr "(desconocido)"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agentName} default"
-msgstr ""
+msgstr "Predeterminado de {agentName}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agents} reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "{agents} no informó del uso de estas llamadas, por lo que se desconocen sus tokens y su costo."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {{blindLabel} does not report subagent usage, so fan-outs in this range cannot be counted.} other {{blindLabel} do not report subagent usage, so fan-outs in this range cannot be counted.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, one {{blindLabel} no informa del uso de subagentes, por lo que no se pueden contar las ramificaciones en este intervalo.} many {{blindLabel} no informan del uso de subagentes, por lo que no se pueden contar las ramificaciones en este intervalo.} other {{blindLabel} no informan del uso de subagentes, por lo que no se pueden contar las ramificaciones en este intervalo.}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {Excludes {blindLabel}, which does not report subagent usage.} other {Excludes {blindLabel}, which do not report subagent usage.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, one {Excluye {blindLabel}, que no informa del uso de subagentes.} many {Excluye {blindLabel}, que no informan del uso de subagentes.} other {Excluye {blindLabel}, que no informan del uso de subagentes.}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{cacheReadText} read"
-msgstr ""
+msgstr "{cacheReadText} leídos"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call, {failedCount} failed or timed out (still paid for).} other {{callCount} calls, {failedCount} failed or timed out (still paid for).}}"
-msgstr ""
+msgstr "{calls, plural, one {{callCount} llamada, {failedCount} con error o tiempo de espera agotado (se cobran igualmente).} many {{callCount} de llamadas, {failedCount} con error o tiempo de espera agotado (se cobran igualmente).} other {{callCount} llamadas, {failedCount} con error o tiempo de espera agotado (se cobran igualmente).}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call.} other {{callCount} calls.}}"
-msgstr ""
+msgstr "{calls, plural, one {{callCount} llamada.} many {{callCount} de llamadas.} other {{callCount} llamadas.}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call} other {{callCount} calls}}"
-msgstr ""
+msgstr "{calls, plural, one {{callCount} llamada} many {{callCount} de llamadas} other {{callCount} llamadas}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {Cost per hour by model} day {Cost per day by model} week {Cost per week by model} other {Cost per {costBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {Costo por hora por modelo} day {Costo por día por modelo} week {Costo por semana por modelo} other {Costo cada {costBucketMinutes} minutos por modelo}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {cost per hour, stacked by model} day {cost per day, stacked by model} week {cost per week, stacked by model} other {cost per {costBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {costo por hora, apilado por modelo} day {costo por día, apilado por modelo} week {costo por semana, apilado por modelo} other {costo cada {costBucketMinutes} minutos, apilado por modelo}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{freshInput} fresh input, {output} output, {cacheWrite} cache write, {cacheRead} cache read."
-msgstr ""
+msgstr "{freshInput} de entrada nueva, {output} de salida, {cacheWrite} de escritura en caché, {cacheRead} de lectura de caché."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{freshInputText} in / {outputText} out"
-msgstr ""
+msgstr "{freshInputText} entrada / {outputText} salida"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{liveSessionCount} active now"
-msgstr ""
+msgstr "{liveSessionCount} activas ahora"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
-msgstr ""
+msgstr "{nestedCount, plural, one {{nestedCountText} de {subagentTotalText} fue generado por otro subagente.} many {{nestedCountText} de {subagentTotalText} fueron generados por otro subagente.} other {{nestedCountText} de {subagentTotalText} fueron generados por otro subagente.}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{skippedCount, plural, one {Skipped # project with an unreadable database: {skippedNames}} other {Skipped # projects with unreadable databases: {skippedNames}}}"
-msgstr ""
+msgstr "{skippedCount, plural, one {Se omitió # proyecto con una base de datos ilegible: {skippedNames}} many {Se omitieron # proyectos con bases de datos ilegibles: {skippedNames}} other {Se omitieron # proyectos con bases de datos ilegibles: {skippedNames}}}"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {cost}, {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}: {cost}, {tokenCount} tokens"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}: {tokenCount} tokens"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens, {cost}"
-msgstr ""
+msgstr "{sliceLabel}: {tokenCount} tokens, {cost}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCacheReadText} cache read."
-msgstr ""
+msgstr "{subagentCacheReadText} de lectura de caché."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCount, plural, one {{subagentCountText} subagent} other {{subagentCountText} subagents}}"
-msgstr ""
+msgstr "{subagentCount, plural, one {{subagentCountText} subagente} many {{subagentCountText} subagentes} other {{subagentCountText} subagentes}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour over the selected range} day {Cache hit rate per day over the selected range} week {Cache hit rate per week over the selected range} other {Cache hit rate per {tokenBucketMinutes} minutes over the selected range}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {Tasa de aciertos de caché por hora en el rango seleccionado} day {Tasa de aciertos de caché por día en el rango seleccionado} week {Tasa de aciertos de caché por semana en el rango seleccionado} other {Tasa de aciertos de caché cada {tokenBucketMinutes} minutos en el rango seleccionado}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour} day {Cache hit rate per day} week {Cache hit rate per week} other {Cache hit rate per {tokenBucketMinutes} minutes}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {Tasa de aciertos de caché por hora} day {Tasa de aciertos de caché por día} week {Tasa de aciertos de caché por semana} other {Tasa de aciertos de caché cada {tokenBucketMinutes} minutos}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Tokens per hour by model} day {Tokens per day by model} week {Tokens per week by model} other {Tokens per {tokenBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {Tokens por hora por modelo} day {Tokens por día por modelo} week {Tokens por semana por modelo} other {Tokens cada {tokenBucketMinutes} minutos por modelo}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {tokens per hour, stacked by model} day {tokens per day, stacked by model} week {tokens per week, stacked by model} other {tokens per {tokenBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {tokens por hora, apilados por modelo} day {tokens por día, apilados por modelo} week {tokens por semana, apilados por modelo} other {tokens cada {tokenBucketMinutes} minutos, apilados por modelo}}"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "{tokenCount} tokens"
-msgstr ""
+msgstr "{tokenCount} tokens"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{tokensPerHourText} tokens/hr"
-msgstr ""
+msgstr "{tokensPerHourText} tokens/h"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "About these numbers"
-msgstr ""
+msgstr "Acerca de estas cifras"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Agent with the most tokens in this project over the range"
-msgstr ""
+msgstr "Agente con más tokens en este proyecto durante el intervalo"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "All Projects"
-msgstr ""
+msgstr "Todos los proyectos"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "All Time"
-msgstr ""
+msgstr "Todo el tiempo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "API-equivalent"
-msgstr ""
+msgstr "Equivalente en API"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "API-equivalent cost as each agent reported it"
-msgstr ""
+msgstr "Coste equivalente en API según lo informó cada agente"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "API-equivalent cost as reported by agents (subscription sessions may report $0)"
-msgstr ""
+msgstr "Costo equivalente de API según lo informado por los agentes (las sesiones con suscripción pueden informar $0)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Apply"
-msgstr ""
+msgstr "Aplicar"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Average {averageTime} per call."
-msgstr ""
+msgstr "Promedio de {averageTime} por llamada."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts."
-msgstr ""
+msgstr "Tiempo medio que el agente trabajó por sesión, sin contar la inactividad. Solo incluye las sesiones con seguimiento de actividad, que son menos de las que cuenta la columna Sesiones."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Average wall time per call"
-msgstr ""
+msgstr "Tiempo real medio por llamada"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Avg Active"
-msgstr ""
+msgstr "Tiempo activo medio"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count."
-msgstr ""
+msgstr "Activo promedio es el tiempo que el agente estuvo trabajando, en las sesiones con seguimiento de actividad, que son menos que el recuento de Sesiones."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Avg time"
-msgstr ""
+msgstr "Tiempo medio"
 
 #: src/renderer/components/stats/StatsFilterRow.tsx
+#, fuzzy
 msgid "Back to the full range"
-msgstr ""
+msgstr "Volver al rango completo"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "Segundo plano"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background calls"
-msgstr ""
+msgstr "Llamadas en segundo plano"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures."
-msgstr ""
+msgstr "Las llamadas en segundo plano son llamadas de agente sin interfaz que Kangentic hace por usted, como las comprobaciones de Condición y los títulos de tareas. Ninguna es una sesión, así que ninguna figura en las cifras de sesiones."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Background calls by day"
-msgstr ""
+msgstr "Llamadas en segundo plano por día"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Burn Rate"
-msgstr ""
+msgstr "Tasa de consumo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (cost/hr)"
-msgstr ""
+msgstr "Ritmo de consumo (costo/h)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (tokens/hr)"
-msgstr ""
+msgstr "Ritmo de consumo (tokens/h)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in cost per hour"
-msgstr ""
+msgstr "Ritmo de consumo a lo largo del tiempo en costo por hora"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in tokens per hour"
-msgstr ""
+msgstr "Ritmo de consumo a lo largo del tiempo en tokens por hora"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By agent"
-msgstr ""
+msgstr "Por agente"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By effort"
-msgstr ""
+msgstr "Por esfuerzo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By model"
-msgstr ""
+msgstr "Por modelo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By subagent"
-msgstr ""
+msgstr "Por subagente"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cache hit rate"
-msgstr ""
+msgstr "tasa de aciertos de caché"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache read"
-msgstr ""
+msgstr "Lectura de caché"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cache Read"
-msgstr ""
+msgstr "Lectura de caché"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache read as a share of all input: {cacheReadText} read against {cacheWriteText} written and {freshInputText} fresh."
-msgstr ""
+msgstr "Lectura de caché como proporción de toda la entrada: {cacheReadText} leídos frente a {cacheWriteText} escritos y {freshInputText} nuevos."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cache read over all input"
-msgstr ""
+msgstr "Lectura de caché sobre toda la entrada"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache Reads"
-msgstr ""
+msgstr "Lecturas de caché"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache write"
-msgstr ""
+msgstr "Escritura de caché"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "Llamadas"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls that errored or timed out. They still cost what the agent reported."
-msgstr ""
+msgstr "Llamadas que fallaron o agotaron el tiempo de espera. Aun así cuestan lo que informó el agente."
 
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Chart metric"
-msgstr ""
+msgstr "Métrica del gráfico"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Choose which project's usage to view"
-msgstr ""
+msgstr "Elija de qué proyecto ver el uso"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Clear custom range"
-msgstr ""
+msgstr "Borrar rango personalizado"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "CLI invocations, counting each resume of a conversation separately"
-msgstr ""
+msgstr "Invocaciones de la CLI, contando cada reanudación de una conversación por separado"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Close usage stats"
-msgstr ""
+msgstr "Cerrar estadísticas de uso"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Compactions"
-msgstr ""
+msgstr "Compactaciones"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Context compactions across the range"
-msgstr ""
+msgstr "Compactaciones de contexto en el intervalo"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "cost"
-msgstr ""
+msgstr "costo"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Coste"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
-msgstr ""
+msgstr "Costo y tokens del hilo principal promediados en todo el intervalo seleccionado, incluido el tiempo inactivo. Ambas líneas usan las mismas horas, así que cada una multiplicada por el intervalo reproduce la ficha superior."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost covers finalized sessions plus any currently running, refreshed live as they progress."
-msgstr ""
+msgstr "El costo abarca las sesiones finalizadas más las que están en ejecución, actualizado en vivo a medida que avanzan."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0."
-msgstr ""
+msgstr "El costo es el precio de lista equivalente de la API para los tokens que informó cada agente, no lo que se facturó en una suscripción; las sesiones con suscripción pueden informar $0."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cost Share"
-msgstr ""
+msgstr "Parte del costo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cost/hr"
-msgstr ""
+msgstr "costo/h"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cumulative cost"
-msgstr ""
+msgstr "costo acumulado"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative cost over the selected range"
-msgstr ""
+msgstr "Costo acumulado en el rango seleccionado"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative spend"
-msgstr ""
+msgstr "Gasto acumulado"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgctxt "Date range"
 msgid "Custom"
-msgstr ""
+msgstr "Personalizado"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Day"
-msgstr ""
+msgstr "Día"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Edit the custom range"
-msgstr ""
+msgstr "Editar el rango personalizado"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "Fallidas"
 
 #: src/renderer/components/stats/LazyStatsDashboard.tsx
+#, fuzzy
 msgid "Failed to load the usage dashboard"
-msgstr ""
+msgstr "No se pudo cargar el panel de uso"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Failed to load usage stats: {error}"
-msgstr ""
+msgstr "No se pudieron cargar las estadísticas de uso: {error}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files"
-msgstr ""
+msgstr "Archivos"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files changed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "Archivos modificados por las sesiones del agente (git diff respecto a la rama base)"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Finalized sessions in the range"
-msgstr ""
+msgstr "Sesiones finalizadas en el intervalo"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Fresh in"
-msgstr ""
+msgstr "Entrada nueva"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output from {subagentTurnCountText} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them."
-msgstr ""
+msgstr "Entrada y salida nuevas de {subagentTurnCountText} turno(s) de subagente. La ficha Tokens solo incluye el hilo principal, así que se suman a ella; el Costo informado de la sesión ya los incluye."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output on the main thread. {cacheWriteText} cache write and {cacheReadText} cache read are counted separately and priced differently."
-msgstr ""
+msgstr "Entrada y salida nuevas en el hilo principal. Los {cacheWriteText} de escritura en caché y los {cacheReadText} de lectura de caché se cuentan por separado y tienen precios distintos."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Fresh input tokens across the turns in this range (cache reads counted separately)"
-msgstr ""
+msgstr "Tokens de entrada nuevos en los turnos de este intervalo (las lecturas de caché se cuentan aparte)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "From"
-msgstr ""
+msgstr "Desde"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Headless agent calls Kangentic makes for you, kept out of the totals above"
-msgstr ""
+msgstr "Llamadas a agentes sin interfaz que Kangentic hace por ti, excluidas de los totales anteriores"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Input"
-msgstr ""
+msgstr "Entrada"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Job"
-msgstr ""
+msgstr "Trabajo"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Last Active"
-msgstr ""
+msgstr "Última actividad"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines"
-msgstr ""
+msgstr "Líneas"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines added / removed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "Líneas agregadas / eliminadas por las sesiones del agente (git diff respecto a la rama base)"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Live"
-msgstr ""
+msgstr "En vivo"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modelo"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Most recent session start in the range"
-msgstr ""
+msgstr "Inicio de sesión más reciente en el intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No activity tracking recorded in this range"
-msgstr ""
+msgstr "No hay seguimiento de actividad registrado en este intervalo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in the last 2 hours"
-msgstr ""
+msgstr "No hay turnos de agente registrados en las últimas 2 horas"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in this range"
-msgstr ""
+msgstr "No hay turnos de agente registrados en este rango"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "No background calls in this range"
-msgstr ""
+msgstr "No hay llamadas en segundo plano en este intervalo"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "No calls in this range"
-msgstr ""
+msgstr "No hay llamadas en este intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No cost reported by agents in this range"
-msgstr ""
+msgstr "Los agentes no informaron de costos en este intervalo"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in the last 2 hours"
-msgstr ""
+msgstr "No hay entrada registrada en las últimas 2 horas"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in this range"
-msgstr ""
+msgstr "No se registró entrada en este intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No per-turn token data recorded in this range"
-msgstr ""
+msgstr "No hay datos de tokens por turno registrados en este intervalo"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "No project usage recorded yet"
-msgstr ""
+msgstr "Aún no se ha registrado uso de proyectos"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No spend recorded in the last 2 hours"
-msgstr ""
+msgstr "No se registró gasto en las últimas 2 horas"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No subagent turns recorded in this range"
-msgstr ""
+msgstr "No hay turnos de subagente registrados en este intervalo"
 
 #: src/renderer/components/stats/ChartCard.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No usage recorded yet"
-msgstr ""
+msgstr "Aún no se ha registrado ningún uso"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "None reported by these agents in this range"
-msgstr ""
+msgstr "Ninguna informada por estos agentes en este intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Not reported by these agents in this range"
-msgstr ""
+msgstr "Sin datos de estos agentes en este intervalo"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Other"
-msgstr ""
+msgstr "Otros"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Other ({foldedCount})"
-msgstr ""
+msgstr "Otros ({foldedCount})"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Output"
-msgstr ""
+msgstr "Salida"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Output tokens across the turns in this range"
-msgstr ""
+msgstr "Tokens de salida en los turnos de este intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
-msgstr ""
+msgstr "en {coveredSessionsCompact} sesiones"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Per-turn capture starts {captureStart}, so this covers less of the range than Cost does."
-msgstr ""
+msgstr "La captura por turno comienza {captureStart}, por lo que abarca menos del intervalo que Costo."
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Pick a custom month range"
-msgstr ""
+msgstr "Elegir un rango de meses personalizado"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Priced at API list rates from the tokens each agent reported. Not what a subscription was billed."
-msgstr ""
+msgstr "Calculado con las tarifas de lista de la API a partir de los tokens que informó cada agente. No es lo que se facturó en una suscripción."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Proyecto"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project scope"
-msgstr ""
+msgstr "Ámbito del proyecto"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Registered project - click a row to view that project in the dashboard"
-msgstr ""
+msgstr "Proyecto registrado: haga clic en una fila para ver ese proyecto en el panel"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "Reintentar"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "Sesiones"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Share of fresh input plus output across all projects in the range"
-msgstr ""
+msgstr "Parte de la entrada nueva más la salida entre todos los proyectos del intervalo"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Subagents"
-msgstr ""
+msgstr "Subagentes"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "The agent reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "El agente no informó del uso de estas llamadas, por lo que se desconocen sus tokens y su costo."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "The Knowledge Graph index is restarting. The figures refresh when it is back."
-msgstr ""
+msgstr "El índice de Knowledge Graph se está reiniciando. Las cifras se actualizarán cuando vuelva a estar disponible."
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Month"
-msgstr ""
+msgstr "Este mes"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "This project's share of the total cost across all projects in the range"
-msgstr ""
+msgstr "Parte de este proyecto en el costo total de todos los proyectos del intervalo"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Week"
-msgstr ""
+msgstr "Esta semana"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Time the agent was working, per session, excluding idle. Covers the {coveredSessionsText} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts."
-msgstr ""
+msgstr "Tiempo que el agente estuvo trabajando, por sesión, sin contar la inactividad. Abarca las {coveredSessionsText} sesiones con seguimiento de actividad en este rango, que son menos de las que cuenta el mosaico Sesiones."
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "To"
-msgstr ""
+msgstr "Hasta"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "Today"
-msgstr ""
+msgstr "Hoy"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Token Share"
-msgstr ""
+msgstr "Parte de tokens"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
 #: src/renderer/components/stats/charts/KngDonut.tsx
+#, fuzzy
 msgid "tokens"
-msgstr ""
+msgstr "tokens"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "Tokens"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Tokens and cost as each agent reported them"
-msgstr ""
+msgstr "Tokens y coste según los informó cada agente"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it."
-msgstr ""
+msgstr "Los tokens se cuentan por turno y se separan por tipo, porque las lecturas de caché son mucho mayores y mucho más baratas que la entrada nueva. El recuento por turno empezó después que el del costo, por lo que un intervalo largo abarca menos de él."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens by type"
-msgstr ""
+msgstr "Tokens por tipo"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens In"
-msgstr ""
+msgstr "Tokens de entrada"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens Out"
-msgstr ""
+msgstr "Tokens de salida"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens per 5 minutes, stacked by token type"
-msgstr ""
+msgstr "tokens cada 5 minutos, apilados por tipo de token"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens served from the prompt cache, counted apart from Tokens In"
-msgstr ""
+msgstr "Tokens servidos desde la caché de prompts, contados aparte de Tokens de entrada"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens/hr"
-msgstr ""
+msgstr "tokens/h"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tool Calls"
-msgstr ""
+msgstr "Llamadas a herramientas"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Top Agent"
-msgstr ""
+msgstr "Agente principal"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Total"
-msgstr ""
+msgstr "Total"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Total tool calls across sessions in the range"
-msgstr ""
+msgstr "Total de llamadas a herramientas en las sesiones del intervalo"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Usage"
-msgstr ""
+msgstr "Uso"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Usage reported for {reportedCount} of them."
-msgstr ""
+msgstr "Uso informado para {reportedCount} de ellas."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last month"
-msgstr ""
+msgstr "vs. el mes pasado"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last week"
-msgstr ""
+msgstr "vs. la semana pasada"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs preceding window"
-msgstr ""
+msgstr "vs. el período anterior"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs prior 2h"
-msgstr ""
+msgstr "vs. las 2 h anteriores"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs yesterday"
-msgstr ""
+msgstr "vs. ayer"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default"
-msgstr ""
+msgstr "Lo que la CLI informó haber usado para responder; si no hay informe, el modelo que solicitó Kangentic o el predeterminado del agente"

@@ -8,167 +8,208 @@ msgstr ""
 "Language: pl\n"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "[command] {commandText}"
-msgstr ""
+msgstr "[polecenie] {commandText}"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "{archivedAgentName} deleted the original file. Showing Kangentic's saved copy."
-msgstr ""
+msgstr "Oryginalny plik został usunięty przez {archivedAgentName}. Wyświetlanie kopii zapisanej przez Kangentic."
 
 #: src/renderer/components/conversation/ConversationScrollbar.tsx
 #: src/renderer/components/conversation/ConversationSearchBar.tsx
+#, fuzzy
 msgid "{position} of {total}"
-msgstr ""
+msgstr "{position} z {total}"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "{resultLength, plural, one {Show all (# char)} other {Show all (# chars)}}"
-msgstr ""
+msgstr "{resultLength, plural, one {Pokaż wszystko (# znak)} few {Pokaż wszystko (# znaki)} many {Pokaż wszystko (# znaków)} other {Pokaż wszystko (# znaku)}}"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agent"
 
 #: src/renderer/components/conversation/ConversationBody.tsx
+#, fuzzy
 msgid "All"
-msgstr ""
+msgstr "Wszystkie"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Command output"
-msgstr ""
+msgstr "Dane wyjściowe polecenia"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Conversation compacted"
-msgstr ""
+msgstr "Rozmowa została skompaktowana"
 
 #: src/renderer/components/conversation/ConversationBody.tsx
+#, fuzzy
 msgid "Conversation sections"
-msgstr ""
+msgstr "Sekcje rozmowy"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Copy message"
-msgstr ""
+msgstr "Kopiuj wiadomość"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Couldn't load earlier messages"
-msgstr ""
+msgstr "Nie udało się załadować wcześniejszych wiadomości"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Couldn't load later messages"
-msgstr ""
+msgstr "Nie udało się załadować późniejszych wiadomości"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "error"
-msgstr ""
+msgstr "błąd"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Error"
-msgstr ""
+msgstr "Błąd"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Input"
-msgstr ""
+msgstr "Dane wejściowe"
 
 #: src/renderer/components/conversation/ConversationScrollbar.tsx
+#, fuzzy
 msgid "Jump to latest"
-msgstr ""
+msgstr "Przejdź do najnowszych"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Jump to start"
-msgstr ""
+msgstr "Przejdź na początek"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Loading earlier messages"
-msgstr ""
+msgstr "Ładowanie wcześniejszych wiadomości"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Loading later messages"
-msgstr ""
+msgstr "Ładowanie późniejszych wiadomości"
 
 #: src/renderer/components/conversation/ConversationSearchBar.tsx
+#, fuzzy
 msgid "Next match"
-msgstr ""
+msgstr "Następne dopasowanie"
 
 #: src/renderer/components/conversation/ConversationBody.tsx
+#, fuzzy
 msgid "No conversation in {columnName}"
-msgstr ""
+msgstr "Brak rozmowy w kolumnie {columnName}"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "No conversation is available for this session."
-msgstr ""
+msgstr "Brak dostępnej rozmowy dla tej sesji."
 
 #: src/renderer/components/conversation/ConversationSearchBar.tsx
+#, fuzzy
 msgid "No results"
-msgstr ""
+msgstr "Brak wyników"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Original transcript file is gone - showing indexed text."
-msgstr ""
+msgstr "Oryginalny plik transkrypcji nie istnieje – wyświetlanie zindeksowanego tekstu."
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Plan"
-msgstr ""
+msgstr "Plan"
 
 #: src/renderer/components/conversation/ConversationSearchBar.tsx
+#, fuzzy
 msgid "Previous match"
-msgstr ""
+msgstr "Poprzednie dopasowanie"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Result"
-msgstr ""
+msgstr "Wynik"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "Ponów"
 
 #: src/renderer/components/conversation/use-conversation-state.ts
+#, fuzzy
 msgid "Search {columnName}"
-msgstr ""
+msgstr "Przeszukaj: {columnName}"
 
 #: src/renderer/components/conversation/use-conversation-state.ts
+#, fuzzy
 msgid "Search loaded {columnName} messages"
-msgstr ""
+msgstr "Przeszukaj załadowane wiadomości: {columnName}"
 
 #: src/renderer/components/conversation/use-conversation-state.ts
+#, fuzzy
 msgid "Search loaded messages"
-msgstr ""
+msgstr "Przeszukaj załadowane wiadomości"
 
 #: src/renderer/components/conversation/ConversationSearchBar.tsx
+#, fuzzy
 msgid "Search this conversation"
-msgstr ""
+msgstr "Szukaj w tej rozmowie"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Show less"
-msgstr ""
+msgstr "Pokaż mniej"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Structured transcripts aren't available for this agent."
-msgstr ""
+msgstr "Ustrukturyzowane transkrypcje nie są dostępne dla tego agenta."
 
 #: src/renderer/components/conversation/ConversationBody.tsx
+#, fuzzy
 msgid "The agent did not run while the task was in {columnName}."
-msgstr ""
+msgstr "Agent nie działał, gdy zadanie było w kolumnie {columnName}."
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "The transcript file no longer exists."
-msgstr ""
+msgstr "Plik transkrypcji już nie istnieje."
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Thinking"
-msgstr ""
+msgstr "Myślenie"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "This conversation has no messages yet."
-msgstr ""
+msgstr "Ta rozmowa nie zawiera jeszcze wiadomości."
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "This session's history hasn't been written yet."
-msgstr ""
+msgstr "Historia tej sesji nie została jeszcze zapisana."
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "Tool result"
-msgstr ""
+msgstr "Wynik narzędzia"
 
 #: src/renderer/components/conversation/ConversationView.tsx
+#, fuzzy
 msgid "You"
-msgstr ""
+msgstr "Ty"

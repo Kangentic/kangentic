@@ -8,190 +8,236 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{name}\""
-msgstr ""
+msgstr "„{name}”"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{search}\""
-msgstr ""
+msgstr "„{search}”"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
-msgstr ""
+msgstr "{count, plural, one {# parancsterminál fut (beavatkozást igényel)} other {# parancsterminál fut (beavatkozást igényel)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
-msgstr ""
+msgstr "{count, plural, one {# parancsterminál fut (pihen)} other {# parancsterminál fut (pihen)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
-msgstr ""
+msgstr "{count, plural, one {# parancsterminál fut (dolgozik)} other {# parancsterminál fut (dolgozik)}}"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
-msgstr ""
+msgstr "{groupProjectCount, plural, one {A csoport # projektje csoporton kívülre kerül.} other {A csoport # projektje csoporton kívülre kerül.}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle"
-msgstr ""
+msgstr "{idleCount} tétlen"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle, {thinkingCount} thinking"
-msgstr ""
+msgstr "{idleCount} tétlen, {thinkingCount} gondolkodik"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (needs you)"
-msgstr ""
+msgstr "{projectName}, parancsterminálok futnak (beavatkozás szükséges)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (resting)"
-msgstr ""
+msgstr "{projectName}, parancsterminálok futnak (pihen)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (working)"
-msgstr ""
+msgstr "{projectName}, parancsterminálok futnak (dolgozik)"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{projectName}: {label}"
-msgstr ""
+msgstr "{projectName}: {label}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{thinkingCount} thinking"
-msgstr ""
+msgstr "{thinkingCount} gondolkodik"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Add project"
-msgstr ""
+msgstr "Projekt hozzáadása"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
-msgstr ""
+msgstr "Biztosan törli a következő projektet: <0>„{projectName}”</0>?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "Keresés törlése"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "Click to open"
-msgstr ""
+msgstr "Kattintson a megnyitáshoz"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Törlés"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Group"
-msgstr ""
+msgstr "Csoport törlése"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete group <0>\"{groupName}\"</0>?"
-msgstr ""
+msgstr "Törli a következő csoportot: <0>„{groupName}”</0>?"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Project"
-msgstr ""
+msgstr "Projekt törlése"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Group name"
-msgstr ""
+msgstr "Csoport neve"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Group options (or right-click)"
-msgstr ""
+msgstr "Csoportbeállítások (vagy jobb kattintás)"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Hide sidebar"
-msgstr ""
+msgstr "Oldalsáv elrejtése"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "More options"
-msgstr ""
+msgstr "További lehetőségek"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "More project actions"
-msgstr ""
+msgstr "További projektműveletek"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move down"
-msgstr ""
+msgstr "Mozgatás lefelé"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Áthelyezés ide"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move up"
-msgstr ""
+msgstr "Mozgatás felfelé"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "New group"
-msgstr ""
+msgstr "Új csoport"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "New project"
-msgstr ""
+msgstr "Új projekt"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects match"
-msgstr ""
+msgstr "Nincs egyező projekt"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects yet"
-msgstr ""
+msgstr "Még nincsenek projektek"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Open folder as project"
-msgstr ""
+msgstr "Mappa megnyitása projektként"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Open in Explorer"
-msgstr ""
+msgstr "Megnyitás az Intézőben"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "Open menu for {projectName}"
-msgstr ""
+msgstr "Menü megnyitása: {projectName}"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Open menu for group {groupName}"
-msgstr ""
+msgstr "A(z) {groupName} csoport menüjének megnyitása"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Project deleted"
-msgstr ""
+msgstr "Projekt törölve"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Project Settings"
-msgstr ""
+msgstr "Projektbeállítások"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Projektek"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Remove from group"
-msgstr ""
+msgstr "Eltávolítás a csoportból"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Átnevezés"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Search projects..."
-msgstr ""
+msgstr "Projektek keresése..."
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "Show sidebar"
-msgstr ""
+msgstr "Oldalsáv megjelenítése"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
-msgstr ""
+msgstr "Ez eltávolítja a projektet a Kangenticből, de a lemezen lévő fájlokat nem törli."
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Use Add project below to open a folder"
-msgstr ""
+msgstr "Mappa megnyitásához használja a lenti Projekt hozzáadása gombot"

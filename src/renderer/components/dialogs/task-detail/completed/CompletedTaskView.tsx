@@ -104,6 +104,10 @@ export function CompletedTaskView({
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-testid="completed-task-view">
       {report && <CompletedHeaderStrip task={task} report={report} gitTotals={gitTotals} />}
+      {/* `fit`: the five names fit the window's narrowest width in English, but a
+          longer language (German "Beschreibung") reaches the edge there. The tabs
+          carry no icons, so a row that overflows scrolls sideways with the selected
+          tab in view rather than clipping the last one. */}
       <Tabs
         tabs={tabs}
         selectedId={selectedTab}
@@ -111,6 +115,7 @@ export function CompletedTaskView({
         ariaLabel={t`Completed task`}
         idPrefix={ID_PREFIX}
         testId="completed-task-tabs"
+        fit="icons-then-scroll"
       />
       <div
         role="tabpanel"

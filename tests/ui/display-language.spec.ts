@@ -4,8 +4,8 @@
  * offers the OS language. docs/architecture/i18n.md has the design.
  *
  * The mock stands in for main: `language.getInfo()` lists
- * `window.__mockShippedLocales` (English alone by default, as SHIPPED_LOCALES is
- * today) and offers `window.__mockLanguageSuggestion` until config records an
+ * `window.__mockShippedLocales`, which every launch here seeds (English alone
+ * unless a test names more), and offers `window.__mockLanguageSuggestion` until config records an
  * answer, and `setLanguageAndRestart` records each call in
  * `window.__mockLanguageRestartRequests` and applies main's config write. The
  * zh-CN strings asserted below are the design's own, seeded in
@@ -69,8 +69,9 @@ async function openLanguageTab(page: Page): Promise<void> {
   await expect(page.getByTestId('setting-row-displayLanguage')).toBeVisible();
 }
 
+/** By test id: the chevron's name is translated in a session in another language. */
 async function openPicker(page: Page): Promise<void> {
-  await page.getByTestId('setting-row-displayLanguage').getByRole('button', { name: 'Open dropdown' }).click();
+  await page.getByTestId('display-language-toggle').click();
   await expect(page.getByTestId('display-language-menu')).toBeVisible();
 }
 

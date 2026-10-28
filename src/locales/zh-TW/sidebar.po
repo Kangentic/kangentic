@@ -8,190 +8,236 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{name}\""
-msgstr ""
+msgstr "「{name}」"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{search}\""
-msgstr ""
+msgstr "「{search}」"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
-msgstr ""
+msgstr "{count, plural, other {# 個命令終端機執行中 (需要您處理)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
-msgstr ""
+msgstr "{count, plural, other {# 個命令終端機執行中 (閒置)}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
-msgstr ""
+msgstr "{count, plural, other {# 個命令終端機執行中 (工作中)}}"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
-msgstr ""
+msgstr "{groupProjectCount, plural, other {其中的 # 個專案將不再屬於任何群組。}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle"
-msgstr ""
+msgstr "{idleCount} 個閒置"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle, {thinkingCount} thinking"
-msgstr ""
+msgstr "{idleCount} 個閒置，{thinkingCount} 個思考中"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (needs you)"
-msgstr ""
+msgstr "{projectName}，命令終端機執行中 (需要你處理)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (resting)"
-msgstr ""
+msgstr "{projectName}，命令終端機執行中 (閒置中)"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (working)"
-msgstr ""
+msgstr "{projectName}，命令終端機執行中 (工作中)"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{projectName}: {label}"
-msgstr ""
+msgstr "{projectName}: {label}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{thinkingCount} thinking"
-msgstr ""
+msgstr "{thinkingCount} 個思考中"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Add project"
-msgstr ""
+msgstr "新增專案"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
-msgstr ""
+msgstr "確定要刪除<0>「{projectName}」</0>嗎？"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "清除搜尋"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "Click to open"
-msgstr ""
+msgstr "按一下以開啟"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "刪除"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Group"
-msgstr ""
+msgstr "刪除群組"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete group <0>\"{groupName}\"</0>?"
-msgstr ""
+msgstr "要刪除群組<0>「{groupName}」</0>嗎？"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Project"
-msgstr ""
+msgstr "刪除專案"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Group name"
-msgstr ""
+msgstr "群組名稱"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Group options (or right-click)"
-msgstr ""
+msgstr "群組選項 (或按右鍵)"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Hide sidebar"
-msgstr ""
+msgstr "隱藏側邊欄"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "More options"
-msgstr ""
+msgstr "更多選項"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "More project actions"
-msgstr ""
+msgstr "更多專案動作"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move down"
-msgstr ""
+msgstr "下移"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "移至"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move up"
-msgstr ""
+msgstr "上移"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "New group"
-msgstr ""
+msgstr "新增群組"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "New project"
-msgstr ""
+msgstr "新增專案"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects match"
-msgstr ""
+msgstr "沒有符合的專案"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects yet"
-msgstr ""
+msgstr "尚無專案"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Open folder as project"
-msgstr ""
+msgstr "將資料夾開啟為專案"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Open in Explorer"
-msgstr ""
+msgstr "在檔案總管中開啟"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "Open menu for {projectName}"
-msgstr ""
+msgstr "開啟 {projectName} 的選單"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Open menu for group {groupName}"
-msgstr ""
+msgstr "開啟群組 {groupName} 的選單"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Project deleted"
-msgstr ""
+msgstr "已刪除專案"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Project Settings"
-msgstr ""
+msgstr "專案設定"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "專案"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Remove from group"
-msgstr ""
+msgstr "從群組移除"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "重新命名"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Search projects..."
-msgstr ""
+msgstr "搜尋專案..."
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "Show sidebar"
-msgstr ""
+msgstr "顯示側邊欄"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
-msgstr ""
+msgstr "這會從 Kangentic 移除專案，但不會刪除磁碟上的任何檔案。"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Use Add project below to open a folder"
-msgstr ""
+msgstr "使用下方的「新增專案」開啟資料夾"

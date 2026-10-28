@@ -8,764 +8,951 @@ msgstr ""
 "Language: es\n"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{agentName} didn't answer. {reason}"
-msgstr ""
+msgstr "{agentName} no respondió. {reason}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{agentName}, {modelName}"
-msgstr ""
+msgstr "{agentName}, {modelName}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "{chunkCount, plural, other {# chunks}}"
-msgstr ""
+msgstr "{chunkCount, plural, one {# fragmento} many {# de fragmentos} other {# fragmentos}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{conversationCount} conversations, {taskRecordCount} task records"
-msgstr ""
+msgstr "{conversationCount} conversaciones, {taskRecordCount} registros de tareas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{cost} ({tokenText} tokens)"
-msgstr ""
+msgstr "{cost} ({tokenText} tokens)"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{days}d"
-msgstr ""
+msgstr "{days} d"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{days}d {remainingHours}h"
-msgstr ""
+msgstr "{days} d {remainingHours} h"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{doneCount} of {totalCount}"
-msgstr ""
+msgstr "{doneCount} de {totalCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{earliestDate} to {latestDate}"
-msgstr ""
+msgstr "{earliestDate} a {latestDate}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
-msgstr ""
+msgstr "{handedCount, plural, one {# tarea relacionada leída} many {# de tareas relacionadas leídas} other {# tareas relacionadas leídas}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
-msgstr ""
+msgstr "{handedCount, plural, one {Leyendo # tarea relacionada} many {Leyendo # de tareas relacionadas} other {Leyendo # tareas relacionadas}}"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr ""
+msgstr "{hitCount, plural, one {# conversación anterior sobre esto} many {# de conversaciones anteriores sobre esto} other {# conversaciones anteriores sobre esto}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{hours}h"
-msgstr ""
+msgstr "{hours} h"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{hours}h {minutes}m"
-msgstr ""
+msgstr "{hours} h {minutes} min"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{minutes}m"
-msgstr ""
+msgstr "{minutes} min"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
-msgstr ""
+msgstr "{scopedProjectCount, plural, one {Preguntar en # proyecto} many {Preguntar en # proyectos} other {Preguntar en # proyectos}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {# project} other {# projects}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {# proyecto} many {# de proyectos} other {# proyectos}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount} of {indexedCount}"
-msgstr ""
+msgstr "{selectedCount} de {indexedCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount} of {indexedCount} shown"
-msgstr ""
+msgstr "{selectedCount} de {indexedCount} visibles"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "{shownRegionCount} of {regionCount} shown"
-msgstr ""
+msgstr "{shownRegionCount} de {regionCount} visibles"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Show # task} other {Show # tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Mostrar # tarea} many {Mostrar # tareas} other {Mostrar # tareas}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{tokenText} tokens"
-msgstr ""
+msgstr "{tokenText} tokens"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "1 project"
-msgstr ""
+msgstr "1 proyecto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "30 days"
-msgstr ""
+msgstr "30 días"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "90 days"
-msgstr ""
+msgstr "90 días"
 
 #: src/renderer/components/knowledge-graph/PanelRow.tsx
+#, fuzzy
 msgid "About {about}"
-msgstr ""
+msgstr "Acerca de {about}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgctxt "Date range"
 msgid "Active"
-msgstr ""
+msgstr "Activo"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "All"
-msgstr ""
+msgstr "Todo"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "Todos los proyectos"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any"
-msgstr ""
+msgstr "Cualquiera"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any status"
-msgstr ""
+msgstr "Cualquier estado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any time"
-msgstr ""
+msgstr "Cualquier fecha"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Around \"{exploredTitle}\""
-msgstr ""
+msgstr "En torno a «{exploredTitle}»"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Around \"Untitled conversation\""
-msgstr ""
+msgstr "En torno a «Conversación sin título»"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask {askAgentName}"
-msgstr ""
+msgstr "Preguntar a {askAgentName}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Ask a follow-up"
-msgstr ""
+msgstr "Hacer una pregunta de seguimiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask about your tasks and conversations"
-msgstr ""
+msgstr "Pregunta sobre tus tareas y conversaciones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask about your tasks, conversations and code"
-msgstr ""
+msgstr "Pregunta sobre tus tareas, conversaciones y código"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask the agent"
-msgstr ""
+msgstr "Preguntar al agente"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to {title}"
-msgstr ""
+msgstr "Volver a {title}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to the chat"
-msgstr ""
+msgstr "Volver al chat"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to the previous conversation"
-msgstr ""
+msgstr "Volver a la conversación anterior"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to where you were"
-msgstr ""
+msgstr "Volver a donde estabas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Balanced"
-msgstr ""
+msgstr "Equilibrado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Building"
-msgstr ""
+msgstr "Generando"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Building the map"
-msgstr ""
+msgstr "Creando el mapa"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
+#, fuzzy
 msgid "Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph"
-msgstr ""
+msgstr "Cambia las fuentes, el modelo y el agente, o recompila el índice, en Configuración > Grafo de conocimiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Chat"
-msgstr ""
+msgstr "Chat"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph, in the main window."
-msgstr ""
+msgstr "Elige un agente y un modelo en Configuración > Grafo de conocimiento, en la ventana principal."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph."
-msgstr ""
+msgstr "Elige un agente y un modelo en Configuración > Grafo de conocimiento."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Clear region filter"
-msgstr ""
+msgstr "Borrar filtro de regiones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+#, fuzzy
 msgid "Close Knowledge Graph"
-msgstr ""
+msgstr "Cerrar grafo de conocimiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Closest conversations"
-msgstr ""
+msgstr "Conversaciones más cercanas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Coarse"
-msgstr ""
+msgstr "Grueso"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color by"
-msgstr ""
+msgstr "Colorear por"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color by the region of the map each conversation sits in"
-msgstr ""
+msgstr "Colorear según la región del mapa en la que está cada conversación"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color conversations by"
-msgstr ""
+msgstr "Colorear conversaciones por"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "Commits"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "Commits indexados"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Controls"
-msgstr ""
+msgstr "Controles"
 
 #: src/renderer/components/knowledge-graph/open-knowledge-graph-conversation.ts
+#, fuzzy
 msgid "Conversation"
-msgstr ""
+msgstr "Conversación"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Conversation titles"
-msgstr ""
+msgstr "Títulos de conversaciones"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "Conversaciones"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "Conversaciones vectorizadas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Cosine similarity {similarity}"
-msgstr ""
+msgstr "Similitud coseno {similarity}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Coste"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Detail"
-msgstr ""
+msgstr "Detalle"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Display"
-msgstr ""
+msgstr "Visualización"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Drag"
-msgstr ""
+msgstr "Arrastrar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Duration"
-msgstr ""
+msgstr "Duración"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Esfuerzo"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "End the chat"
-msgstr ""
+msgstr "Finalizar el chat"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Every task on this map is done"
-msgstr ""
+msgstr "Todas las tareas de este mapa están terminadas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Every task on this map is open"
-msgstr ""
+msgstr "Todas las tareas de este mapa están abiertas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Explore from here"
-msgstr ""
+msgstr "Explorar desde aquí"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Failed to index"
-msgstr ""
+msgstr "Error al indexar"
 
 #: src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx
+#, fuzzy
 msgid "Failed to load the Knowledge Graph"
-msgstr ""
+msgstr "No se pudo cargar el grafo de conocimiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Fewer, broader regions"
-msgstr ""
+msgstr "Menos regiones, más amplias"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Filter"
-msgstr ""
+msgstr "Filtrar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Filter by the task's status"
-msgstr ""
+msgstr "Filtrar por el estado de la tarea"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Filter by when the conversation was last active"
-msgstr ""
+msgstr "Filtrar por la última actividad de la conversación"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Find a project"
-msgstr ""
+msgstr "Buscar un proyecto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Find a region"
-msgstr ""
+msgstr "Buscar una región"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Finding related work"
-msgstr ""
+msgstr "Buscando trabajo relacionado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Fine"
-msgstr ""
+msgstr "Fino"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly back to the opening view"
-msgstr ""
+msgstr "Volver a la vista inicial"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly Forward and Sideways"
-msgstr ""
+msgstr "Volar adelante y de lado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly Up and Down"
-msgstr ""
+msgstr "Volar arriba y abajo"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Green is done, amber is still open on the board, grey has no task"
-msgstr ""
+msgstr "Verde es terminada, ámbar sigue abierta en el tablero, gris no tiene tarea"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Hidden"
-msgstr ""
+msgstr "Oculto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Hide {label}"
-msgstr ""
+msgstr "Ocultar {label}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Hide tasks"
-msgstr ""
+msgstr "Ocultar tareas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read."
-msgstr ""
+msgstr "Con qué detalle se divide el mapa en regiones. Cada nivel se calcula junto con el mapa, así que el cambio es instantáneo. Ninguna métrica puede elegirlo por usted: toda forma de puntuar un agrupamiento prefiere el menor número de regiones en una nube tan continua, así que depende de cuánto detalle quiera leer."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one"
-msgstr ""
+msgstr "Cuánto tiempo real duró la conversación: cálido y brillante es lenta, índigo oscuro es rápida. Una conversación breve puede ser lenta igualmente"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one"
-msgstr ""
+msgstr "Cuánta transcripción contiene la conversación: cálido y brillante es larga, índigo oscuro es corta. Es texto, no tiempo ni dinero: una conversación larga suele ser barata"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphIndexCard.tsx
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "Índice"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Indexed"
-msgstr ""
+msgstr "Indexado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Just the open project"
-msgstr ""
+msgstr "Solo el proyecto abierto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Grafo de conocimiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Last 30 days"
-msgstr ""
+msgstr "Últimos 30 días"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Last 90 days"
-msgstr ""
+msgstr "Últimos 90 días"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Last active"
-msgstr ""
+msgstr "Última actividad"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Length"
-msgstr ""
+msgstr "Longitud"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Links"
-msgstr ""
+msgstr "Vínculos"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee."
-msgstr ""
+msgstr "Los vínculos se calculan con la dimensionalidad completa de los embeddings y son exactos. La posición es una reducción aproximada, así que la cercanía es una pista, no una garantía."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Loading what this project has indexed."
-msgstr ""
+msgstr "Cargando lo que ha indexado este proyecto."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Map built"
-msgstr ""
+msgstr "Mapa creado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modelo"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "More, narrower regions"
-msgstr ""
+msgstr "Más regiones, más reducidas"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Naming regions"
-msgstr ""
+msgstr "Nombrando regiones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Narrow the map to this conversation and everything it links to"
-msgstr ""
+msgstr "Limitar el mapa a esta conversación y todo lo que enlaza"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No done tasks on this map"
-msgstr ""
+msgstr "No hay tareas completadas en este mapa"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "No map yet"
-msgstr ""
+msgstr "Aún no hay mapa"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No open tasks on this map"
-msgstr ""
+msgstr "No hay tareas abiertas en este mapa"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "No project matches that."
-msgstr ""
+msgstr "Ningún proyecto coincide."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "No project open"
-msgstr ""
+msgstr "No hay ningún proyecto abierto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "No recorded conversation to open here"
-msgstr ""
+msgstr "No hay ninguna conversación grabada que abrir aquí"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No region matches that."
-msgstr ""
+msgstr "Ninguna región coincide."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "No session record for this conversation"
-msgstr ""
+msgstr "No hay registro de sesión para esta conversación"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "No session to open"
-msgstr ""
+msgstr "No hay ninguna sesión que abrir"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "None"
-msgstr ""
+msgstr "Ninguno"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Not indexed"
-msgstr ""
+msgstr "Sin indexar"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "Aún sin indexar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Nothing has been indexed for this project yet."
-msgstr ""
+msgstr "Aún no se ha indexado nada en este proyecto."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Nothing indexed yet, so there is no map to draw"
-msgstr ""
+msgstr "Aún no hay nada indexado, así que no hay mapa que dibujar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Nothing on this map is older than {days} days"
-msgstr ""
+msgstr "Nada en este mapa tiene más de {days} días"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Off"
-msgstr ""
+msgstr "Desactivado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Once per project, in the background. Later updates take moments."
-msgstr ""
+msgstr "Una vez por proyecto, en segundo plano. Las actualizaciones posteriores tardan unos instantes."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Open a project to see what its conversation index has learned."
-msgstr ""
+msgstr "Abre un proyecto para ver lo que ha aprendido su índice de conversaciones."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Open conversation"
-msgstr ""
+msgstr "Abrir conversación"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "Abrir Configuración"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Open the full transcript"
-msgstr ""
+msgstr "Abrir la transcripción completa"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "Open this conversation"
-msgstr ""
+msgstr "Abrir esta conversación"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Orbit the Map"
-msgstr ""
+msgstr "Orbitar el mapa"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Pan the View"
-msgstr ""
+msgstr "Desplazar la vista"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Passages this conversation was split into for search. Longer conversations produce more."
-msgstr ""
+msgstr "Fragmentos en los que se dividió esta conversación para la búsqueda. Las conversaciones más largas generan más."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Places conversations by meaning, with a local model."
-msgstr ""
+msgstr "Ubica las conversaciones por significado, con un modelo local."
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Placing conversations"
-msgstr ""
+msgstr "Ubicando conversaciones"
 
 #: src/renderer/components/knowledge-graph/use-graph-view.ts
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Proyecto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Proyectos"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Ran for"
-msgstr ""
+msgstr "Duración"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Reading conversations"
-msgstr ""
+msgstr "Leyendo conversaciones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Reading the index"
-msgstr ""
+msgstr "Leyendo el índice"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Recency"
-msgstr ""
+msgstr "Antigüedad"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Region"
-msgstr ""
+msgstr "Región"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Region detail"
-msgstr ""
+msgstr "Detalle de regiones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Region labels"
-msgstr ""
+msgstr "Etiquetas de región"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Region of the map"
-msgstr ""
+msgstr "Región del mapa"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Regions"
-msgstr ""
+msgstr "Regiones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Reset view"
-msgstr ""
+msgstr "Restablecer vista"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Right Drag"
-msgstr ""
+msgstr "Arrastrar con botón derecho"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Scroll"
-msgstr ""
+msgstr "Desplazamiento"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Searching \"{query}\""
-msgstr ""
+msgstr "Buscando \"{query}\""
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Send"
-msgstr ""
+msgstr "Enviar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Show"
-msgstr ""
+msgstr "Mostrar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Show {label}"
-msgstr ""
+msgstr "Mostrar {label}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Show all {rowCount}"
-msgstr ""
+msgstr "Mostrar los {rowCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Show fewer"
-msgstr ""
+msgstr "Mostrar menos"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Show the camera keys"
-msgstr ""
+msgstr "Mostrar las teclas de la cámara"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Similarity links"
-msgstr ""
+msgstr "Vínculos de similitud"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Size on disk"
-msgstr ""
+msgstr "Tamaño en disco"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Status"
-msgstr ""
+msgstr "Estado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Stop exploring this neighbourhood"
-msgstr ""
+msgstr "Dejar de explorar este entorno"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "Tareas"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "Tareas vectorizadas"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "The agent didn't answer. {reason}"
-msgstr ""
+msgstr "El agente no respondió. {reason}"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable."
-msgstr ""
+msgstr "El archivo de transcripción del agente ya no existe, pero el texto indexado y sus embeddings siguen aquí y se pueden buscar."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index."
-msgstr ""
+msgstr "Zona del mapa en la que se encuentra esta conversación, nombrada según los términos que distinguen sus conversaciones del resto del índice."
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "The background sweep has not reached these conversations yet."
-msgstr ""
+msgstr "El barrido en segundo plano aún no ha llegado a estas conversaciones."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "The default: regions of roughly 10 to 26 conversations"
-msgstr ""
+msgstr "Predeterminado: regiones de unas 10 a 26 conversaciones"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "The map needs a GPU"
-msgstr ""
+msgstr "El mapa necesita una GPU"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "This conversation has no session record."
-msgstr ""
+msgstr "Esta conversación no tiene registro de sesión."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "This conversation links to nothing else in the index"
-msgstr ""
+msgstr "Esta conversación no enlaza con nada más del índice"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "This machine could not provide a 3D drawing context, so the map cannot be drawn. Coverage and search still work."
-msgstr ""
+msgstr "Este equipo no pudo proporcionar un contexto de dibujo 3D, por lo que no se puede dibujar el mapa. La cobertura y la búsqueda siguen funcionando."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Time spent"
-msgstr ""
+msgstr "Tiempo dedicado"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Titles"
-msgstr ""
+msgstr "Títulos"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Topic"
-msgstr ""
+msgstr "Tema"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Transcript gone"
-msgstr ""
+msgstr "Transcripción eliminada"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Try again"
-msgstr ""
+msgstr "Reintentar"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Turn it on in Settings > Knowledge Graph, in the main window."
-msgstr ""
+msgstr "Actívalo en Configuración > Grafo de conocimiento, en la ventana principal."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "under a minute"
-msgstr ""
+msgstr "menos de un minuto"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "Untitled conversation"
-msgstr ""
+msgstr "Conversación sin título"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Warm is recent, cool is old - shows where your attention has moved"
-msgstr ""
+msgstr "Cálido es reciente, frío es antiguo: muestra hacia dónde se ha movido tu atención"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end"
-msgstr ""
+msgstr "Lo que costó ejecutar la conversación: cálido y brillante es caro, índigo oscuro es barato. Las conversaciones sin costo registrado se dibujan en el extremo barato"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Which projects the map shows and a question is asked across. Starts on the open project."
-msgstr ""
+msgstr "Qué proyectos muestra el mapa y en cuáles se hacen las preguntas. Empieza con el proyecto abierto."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Zoom In and Out"
-msgstr ""
+msgstr "Acercar y alejar"

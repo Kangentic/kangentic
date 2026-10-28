@@ -18,9 +18,10 @@ import { useProjectStore } from '../../stores/project-store';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import {
   BACKLOG_TOOLBAR_COLLAPSE,
-  BOARD_TOOLBAR_COLLAPSE,
-  TOOLBAR_ROW_CONTAINER_CLASS,
-  WORKFLOWS_TOOLBAR_COLLAPSE,
+  TOOLBAR_COLLAPSE,
+  TOOLBAR_ROW_CLASS,
+  collapseStepAttributes,
+  useToolbarCollapseStep,
 } from './toolbar-collapse';
 
 export const ViewToggle = React.memo(function ViewToggle() {
@@ -108,14 +109,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
   }, [foreignHomes]);
 
   const searchInputRef = useRef<HTMLInputElement>(null);
-
-  // Per branch, because the three carry different content and so run out of room at
-  // genuinely different widths: backlog has two actions where board has one, New
-  // Task is wider than Add column, and Workflows has none. The derivation is in
-  // toolbar-collapse.ts.
-  const collapse = activeView === 'board'
-    ? BOARD_TOOLBAR_COLLAPSE
-    : activeView === 'workflows' ? WORKFLOWS_TOOLBAR_COLLAPSE : BACKLOG_TOOLBAR_COLLAPSE;
+  const rowRef = useRef<HTMLDivElement>(null);
+  // The row measures where each branch runs out of room, since that depends on
+  // its content and its language. The ladder is in toolbar-collapse.ts.
+  const collapseStep = useToolbarCollapseStep(rowRef);
+  const collapse = activeView === 'backlog' ? BACKLOG_TOOLBAR_COLLAPSE : TOOLBAR_COLLAPSE;
   // Workflows shares the board's search and filter: its cards are board tasks.
   const boardSearch = activeView !== 'backlog';
 
@@ -158,14 +156,14 @@ export const ViewToggle = React.memo(function ViewToggle() {
   }, [boardSearchFocusNonce, activeView]);
 
   return (
-    // `@container` + `min-w-0`: every control below sheds its text on a container
-    // query against THIS row, so the ladder reads the space the row actually has
-    // (sidebar already subtracted) rather than the window width. The whole ladder,
-    // and why it is not the task-detail header's measurement hook, is in
-    // toolbar-collapse.ts.
+    // Every control below sheds its text on the step this row measured for its
+    // own width (sidebar already subtracted), not the window's. The whole ladder
+    // is in toolbar-collapse.ts.
     <div
-      className={`flex items-center px-4 pt-2 pb-2 border-b border-edge min-w-0 ${TOOLBAR_ROW_CONTAINER_CLASS}`}
+      ref={rowRef}
+      className={`flex items-center px-4 pt-2 pb-2 border-b border-edge min-w-0 ${TOOLBAR_ROW_CLASS}`}
       data-testid="view-toggle"
+      {...collapseStepAttributes(collapseStep)}
     >
       {/* `ground="raised"`: this sits on the app ground, not in a form row, so the
           thumb takes `surface-raised` (lighter than its track in every theme)
@@ -188,8 +186,8 @@ export const ViewToggle = React.memo(function ViewToggle() {
             // Columns-against-list is the least self-evident glyph pair on this
             // row, and at the last step it is all that is left of the switcher.
             tip: t`Board`,
-            // The icon is the label's replacement, not an addition, so it carries
-            // the inverse of the label's container query. Its `h-5` restores the
+            // The icon is the label's replacement, not an addition, so it shows
+            // only once the collapse step hides the label. Its `h-5` restores the
             // 20px content height the label's line box had, so the option keeps
             // its padding-derived 34px once the text goes. Without it the content
             // is the 16px glyph and the option derives 30px instead.

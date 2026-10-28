@@ -57,11 +57,28 @@ export const LOCALE_NATIVE_NAMES: Readonly<Record<AppLocale, string>> = {
 
 /**
  * The languages a user can pick, and the only ones the first-launch suggestion
- * offers. A locale joins this list once its catalog is translated (#919); until
- * then its PO files exist but every entry falls back to English, so offering it
- * would switch the user to an English UI.
+ * offers, in `APP_LOCALES` order. Each is listed by name rather than as
+ * `APP_LOCALES`, so a locale added to that list later does not ship before its
+ * catalogs are translated: until then every entry falls back to English, and
+ * offering it would switch the user to an English UI.
  */
-export const SHIPPED_LOCALES: readonly AppLocale[] = ['en'];
+export const SHIPPED_LOCALES: readonly AppLocale[] = [
+  'en',
+  'zh-CN',
+  'zh-TW',
+  'fr',
+  'de',
+  'it',
+  'es',
+  'ja',
+  'ko',
+  'ru',
+  'pt-BR',
+  'tr',
+  'pl',
+  'cs',
+  'hu',
+];
 
 /**
  * The command-line argument main gives every window (`additionalArguments`) to

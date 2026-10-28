@@ -59,7 +59,10 @@ An entry with a translation and no flag counts as reviewed. The harness never ch
    `one`, `few`, `many` and `other`).
 3. Delete the `#, fuzzy` line. Poedit's "Needs work" toggle does the same thing.
 4. Never edit `msgid` or `msgctxt`. They identify the message.
-5. Run `npm run i18n:check`, then commit the PO file on its own.
+5. Make the same change in every other area of the locale that holds the message. The renderer
+   merges a locale's areas and the last one wins, so a corrected copy does not show while another
+   copy differs, and `tests/unit/i18n-boundaries.test.ts` fails until they match.
+6. Run `npm run i18n:check`, then commit the PO files.
 
 A reviewed entry stays reviewed until its English changes. Rewording a string gives it a new ID,
 so every language gets a fresh draft, and the old translation goes along as a hint (below).
@@ -67,9 +70,10 @@ so every language gets a fresh draft, and the old translation goes along as a hi
 ## Running the harness
 
 `npm run i18n:translate` fills every entry with no translation. With `--redraft` it also re-drafts
-entries still marked `fuzzy`, which is how a glossary change reaches existing drafts. It writes each
-result marked `fuzzy`, then runs the catalog gate and fails if the catalogs no longer match the
-source.
+entries still marked `fuzzy`, which is how a glossary change reaches existing drafts. A message that
+another area of the locale already translates is copied from that area instead of drafted, a
+reviewed copy first, so one message reads one way everywhere. It writes each result marked `fuzzy`,
+then runs the catalog gate and fails if the catalogs no longer match the source.
 
 ```sh
 # The first pass, or any refill, with Claude (needs a signed-in Claude Code)
@@ -131,6 +135,24 @@ Every result is checked before it is written:
 
 A result that fails goes back to the model with the problems, up to two more times. One that still
 fails stays untranslated, so the UI shows its English, and the report lists it.
+
+## The first pass
+
+Claude drafted all 14 languages on 2026-10-28 (task 919): `claude-opus-5-5` at medium effort,
+one locale per process, 44,780 empty entries in all. The validator flagged none of the drafts. A
+run that hit the Claude Code usage limit lost 869 entries to failed calls, and the one rerun of
+those locales drafted them all.
+
+154 entries were written by hand, the same 11 messages in every language: each has two plurals or
+selects, which the harness leaves to a person. They carry every plural category the language uses,
+were checked with the harness's own ICU parse and compile, and are marked `fuzzy` like the drafts.
+The six zh-CN first-launch strings keep the design's wording and no flag.
+
+Each area was drafted on its own, so a word can differ between areas in one language. Italian has
+both "task" and "attività" for a task, and Traditional Chinese both 工作 and 任務. A reviewer
+choosing one term per language is the first useful pass. The same message drafted in two areas
+came out two ways in 391 cases across the 14 languages, and the review pass set every copy to the
+one the renderer showed.
 
 ## The glossary
 

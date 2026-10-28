@@ -30,7 +30,8 @@ If a project's folder was moved or renamed outside Kangentic while the app was c
 
 The Language tab (a shared setting, first in the list) holds one card, Display language, with a picker
 of the languages Kangentic ships. Each row shows the language's own name and its code, such as
-"English (en)", and the current one is checked. Only English ships today, so the picker has one row.
+"English (en)", and the current one is checked. The picker lists English and 14 other languages. Their
+translations are machine-made and open to review.
 
 Picking another language asks to restart: "Switch to {language}?" with Cancel and Restart now. Only
 Restart now saves the choice (`displayLanguage` in the global config), and Kangentic restarts with it.

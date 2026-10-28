@@ -7,8 +7,8 @@
  * handling of an unreadable compiled catalog, and that `formatDuration` takes its
  * unit letters from the ACTIVE catalog instead of hardcoding English.
  *
- * Shipped non-English PO files are still untranslated (SHIPPED_LOCALES is English
- * only), so translated text here comes from catalogs the test builds itself.
+ * Translated text here comes from catalogs the test builds itself, so a reviewer
+ * correcting a real PO entry cannot break it.
  */
 import fs from 'node:fs';
 import os from 'node:os';

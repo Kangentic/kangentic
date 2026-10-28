@@ -237,32 +237,42 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
       `}
     >
       <div className="flex min-w-0 flex-col gap-1 pb-3 pl-3.5 pr-2.5 pt-2.5">
+        {/* A title too long for the card (a longer language) wraps rather than
+            cutting off, since nothing else on the card says it again. The age
+            and the buttons sit in boxes one title line tall, pinned to the top,
+            so they stay level with the first line of a wrapped title. */}
         <div className="flex min-w-0 items-center gap-2">
-          <span className="min-w-0 truncate text-sm font-semibold text-fg" data-testid="toast-title">{toast.title}</span>
-          {toast.since && <ToastAge since={toast.since} />}
-          <span className="flex-1" />
-          {toast.variant === 'error' && (
-            <Tooltip label={copied ? t`Message copied` : t`Copy message`}>
-              <button
-                type="button"
-                onClick={handleCopyClick}
-                data-testid="toast-copy"
-                aria-label={copied ? t`Message copied` : t`Copy message`}
-                className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
-              >
-                {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
-              </button>
-            </Tooltip>
+          <span className="min-w-0 [overflow-wrap:anywhere] text-sm font-semibold text-fg" data-testid="toast-title">{toast.title}</span>
+          {toast.since && (
+            <span className="flex h-5 shrink-0 items-center self-start">
+              <ToastAge since={toast.since} />
+            </span>
           )}
-          <button
-            type="button"
-            onClick={handleDismissClick}
-            data-testid="toast-dismiss"
-            aria-label={t`Dismiss`}
-            className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
-          >
-            <X size={14} />
-          </button>
+          <span className="flex-1" />
+          <span className="flex h-5 shrink-0 items-center gap-2 self-start">
+            {toast.variant === 'error' && (
+              <Tooltip label={copied ? t`Message copied` : t`Copy message`}>
+                <button
+                  type="button"
+                  onClick={handleCopyClick}
+                  data-testid="toast-copy"
+                  aria-label={copied ? t`Message copied` : t`Copy message`}
+                  className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
+                >
+                  {copied ? <Check size={14} className="text-green-500" /> : <Copy size={14} />}
+                </button>
+              </Tooltip>
+            )}
+            <button
+              type="button"
+              onClick={handleDismissClick}
+              data-testid="toast-dismiss"
+              aria-label={t`Dismiss`}
+              className={`${controlPointer} flex flex-shrink-0 p-0.5 text-fg-faint transition-colors hover:text-fg-tertiary`}
+            >
+              <X size={14} />
+            </button>
+          </span>
         </div>
         {/* A body breaks only where it has to: copy is one sentence on one
             line, and only a task or file name is long enough to wrap. */}
