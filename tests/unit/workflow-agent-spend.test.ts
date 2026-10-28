@@ -178,6 +178,9 @@ class FakeSessionManager extends EventEmitter {
   getUsageCache(): Record<string, FakeUsage> {
     return this.usageCache;
   }
+  getReportedTranscriptPath(): string | null {
+    return null;
+  }
   getActivityCache(): Record<string, string> {
     return this.activity;
   }
@@ -460,6 +463,8 @@ describe('a workflow\'s own agent: spend and conversation', () => {
     cwd,
     // The agent's CLI runs on this machine.
     cliTarget: null,
+    // Its status line has reported no transcript path.
+    transcriptPath: null,
     remoteTargets: [],
   }];
 
