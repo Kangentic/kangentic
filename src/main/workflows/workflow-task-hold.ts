@@ -4,7 +4,7 @@ import type { IpcContext } from '../ipc/ipc-context';
 import type { SessionResumedPayload } from '../pty/session-manager';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { supersedeTurnEndWork } from '../automations/turn-end/turn-end-passes';
-import { startWorkflowRecoveryOver } from './workflow-recovery';
+import type { startWorkflowRecoveryOver } from './workflow-recovery';
 import { notifyWorkflowOfTask } from './workflow-changed';
 
 /**
@@ -27,6 +27,19 @@ let requestCatchUp: ((resumed: SessionResumedPayload) => void) | null = null;
 /** Set by the turn-end runner when it registers. */
 export function setHoldReleaseCatchUp(runner: ((resumed: SessionResumedPayload) => void) | null): void {
   requestCatchUp = runner;
+}
+
+/**
+ * How a release starts the task's recovery over. Late-bound, as the catch-up is:
+ * `workflow-recovery` reaches the agent spawn path and the desktop notifier, and
+ * the two writers of the flag (the task update IPC and the MCP task command)
+ * must not load them just to import this module.
+ */
+let requestRecoveryStart: typeof startWorkflowRecoveryOver | null = null;
+
+/** Set by the turn-end runner when it registers. */
+export function setHoldReleaseRecoveryStart(starter: typeof startWorkflowRecoveryOver | null): void {
+  requestRecoveryStart = starter;
 }
 
 /** Recorded on the run log row a release writes, which starts the task's recovery over. */
@@ -72,7 +85,7 @@ function releaseHold(context: IpcContext, projectId: string, task: Task, workflo
   if (task.archived_at) return;
   const column = getProjectRepos(context, projectId).swimlanes.getById(task.swimlane_id);
   if (!column || column.role === 'todo' || column.role === 'done') return;
-  startWorkflowRecoveryOver(context, { projectId, taskId: task.id, columnId: column.id, workflowId }, { detail: HOLD_RELEASE_RECOVERY_DETAIL });
+  requestRecoveryStart?.(context, { projectId, taskId: task.id, columnId: column.id, workflowId }, { detail: HOLD_RELEASE_RECOVERY_DETAIL });
 
   if (!task.session_id) return;
   const session = context.sessionManager.getSession(task.session_id);

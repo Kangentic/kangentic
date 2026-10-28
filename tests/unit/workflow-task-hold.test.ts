@@ -41,12 +41,12 @@ const hoisted = vi.hoisted(() => ({
 
 vi.mock('../../src/main/ipc/helpers/project-repos', () => ({ getProjectRepos: hoisted.getProjectRepos }));
 vi.mock('../../src/main/automations/turn-end/turn-end-passes', () => ({ supersedeTurnEndWork: hoisted.supersedeTurnEndWork }));
-vi.mock('../../src/main/workflows/workflow-recovery', () => ({ startWorkflowRecoveryOver: hoisted.startWorkflowRecoveryOver }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowOfTask: hoisted.notifyWorkflowOfTask }));
 
 const {
   applyAutomationsHoldChange,
   setHoldReleaseCatchUp,
+  setHoldReleaseRecoveryStart,
   HOLD_RELEASE_RECOVERY_DETAIL,
 } = await import('../../src/main/workflows/workflow-task-hold');
 
@@ -96,11 +96,14 @@ describe('applyAutomationsHoldChange', () => {
     } as unknown as IpcContext;
     catchUp = vi.fn();
     setHoldReleaseCatchUp(catchUp as unknown as (resumed: SessionResumedPayload) => void);
+    // The turn-end runner registers the real one; the module imports neither.
+    setHoldReleaseRecoveryStart(hoisted.startWorkflowRecoveryOver);
   });
 
   afterEach(() => {
     // Module state: a registered hook outlives the test that set it.
     setHoldReleaseCatchUp(null);
+    setHoldReleaseRecoveryStart(null);
   });
 
   const pause = (task: Task = taskRow({ automations_disabled: true })) =>

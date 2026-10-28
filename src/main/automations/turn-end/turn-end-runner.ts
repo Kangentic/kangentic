@@ -26,8 +26,9 @@ import {
   resumeWorkflowRecovery,
   runRecoveryAttempt,
   setRecoveryAttemptRunner,
+  startWorkflowRecoveryOver,
 } from '../../workflows/workflow-recovery';
-import { setHoldReleaseCatchUp } from '../../workflows/workflow-task-hold';
+import { setHoldReleaseCatchUp, setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
 import { deliverMessageToSession } from './deliver-message';
@@ -255,6 +256,7 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       void catchUpAfterResume(context, resumed);
     });
   });
+  setHoldReleaseRecoveryStart(startWorkflowRecoveryOver);
   context.sessionManager.on('session-removed', (sessionId: string) => {
     forgetRecapSession(sessionId);
     forgetAbandonedTurnSession(sessionId);
