@@ -2,6 +2,27 @@
 
 <!-- releases -->
 
+## [protocol-v0.25.0] - 2026-10-28
+
+Lets a phone hold one workflow task out of its workflow with the task's own
+automations switch, while the rest of the workflow runs. Additive on the wire;
+`PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWorkflowWire` gains an optional `automations_pausable`. It is true on a
+desktop that honours `automationsDisabled` on a workflow task: `update_task`
+accepts it, and while the switch is on the workflow neither judges, moves nor
+starts the task. A held card's `lock_reason` reads null, and a hand may move it
+to any column but To Do. Null or absent means an older desktop, which refuses
+`automationsDisabled: true` for a workflow task, so a phone offers the switch
+on a workflow task only while the field is true. `parseBoardTaskWorkflowWire`
+populates the key from every wire response.
+
+The `automations_disabled` doc comment follows the desktop's rename: its menu
+row is Pause or Resume automations, and its strip reads "Automations paused".
+
+### Features
+- Hold one workflow task out of its workflow with Pause automations (0a0f4131)
+
 ## [protocol-v0.24.0] - 2026-10-27
 
 Gives a phone a completed task's full report, and lets it list and resume the
