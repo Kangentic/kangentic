@@ -137,8 +137,8 @@ msgid "Attached file paths, one per line (empty if none)."
 msgstr "Attached file paths, one per line (empty if none)."
 
 #: src/shared/automation-manifest.ts
-msgid "Automations are disabled for this task."
-msgstr "Automations are disabled for this task."
+msgid "Automations are paused for this task."
+msgstr "Automations are paused for this task."
 
 #: src/shared/workflow-refusals.ts
 msgid "Available when the workflow agent finishes"
@@ -1059,10 +1059,6 @@ msgstr "This task is archived. Restore it to the board to continue working on it
 #: src/shared/session-resume-eligibility.ts
 msgid "This task is complete. Move it out of Done to continue working on it."
 msgstr "This task is complete. Move it out of Done to continue working on it."
-
-#: src/shared/automation-manifest.ts
-msgid "This task is in a workflow. Pause the workflow to hold it."
-msgstr "This task is in a workflow. Pause the workflow to hold it."
 
 #: src/shared/session-resume-eligibility.ts
 msgid "This task is in To Do. Move it to another column to start its agent."

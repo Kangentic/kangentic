@@ -530,6 +530,10 @@ msgstr ""
 msgid "Couldn't open that folder"
 msgstr ""
 
+#: src/renderer/utils/task-automations.ts
+msgid "Couldn't pause automations"
+msgstr ""
+
 #: src/renderer/utils/session-toggle.ts
 msgid "Couldn't pause session"
 msgstr ""
@@ -584,6 +588,10 @@ msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 msgid "Couldn't restore tasks"
+msgstr ""
+
+#: src/renderer/utils/task-automations.ts
+msgid "Couldn't resume automations"
 msgstr ""
 
 #: src/renderer/utils/session-toggle.ts

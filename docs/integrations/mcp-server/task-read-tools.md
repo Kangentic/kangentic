@@ -63,7 +63,7 @@ Under each of the first five matched board tasks the message carries what the Kn
 
 Past five matches one line says to look a task up by `displayId` for its details. With the index off (`knowledgeGraph.indexingEnabled`) one line says so and nothing is read. `data.tasks[].knowledge` carries the same fields.
 
-A task whose column automations are disabled says `automations disabled` in its task line, and `data.tasks[].automationsDisabled` is `true`; the line says nothing about automations otherwise.
+A task whose column automations are paused says `automations paused` in its task line, and `data.tasks[].automationsDisabled` is `true`; the line says nothing about automations otherwise.
 
 ## kangentic_get_task_report
 

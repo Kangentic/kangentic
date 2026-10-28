@@ -21,6 +21,7 @@ import { boardEnds, nextOnRoute, plannedRouteSteps, routeFromColumns, routeSteps
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, hasRunSettings } from '../../shared/workflow-run-settings';
 import { UNNAMED_BLOCKER_LABEL } from '../../shared/workflow-waiting';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { TaskMoveRepository } from '../db/repositories/task-move-repository';
@@ -162,7 +163,7 @@ export function readWorkflowDetail(context: IpcContext, homeProjectId: string, w
       canvasX: task.canvas_x,
       canvasY: task.canvas_y,
       unnamedBlockerCount: unnamedBlockers.get(task.id) ?? 0,
-      stallReason: place === 'done' ? null : stallOf(projectId, task.id),
+      stallReason: place === 'done' ? null : stallOf(projectId, task),
       planApproval: readTaskPlanApproval(context, projectId, task, workflow.plan_approval, lanes),
     };
   });
@@ -252,7 +253,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       else queuedCount += 1;
     }
     if (place !== 'done') {
-      const stallReason = stallOf(projectId, task.id);
+      const stallReason = stallOf(projectId, task);
       if (stallReason !== null) stalledTasks.push({ taskId: task.id, displayId: task.display_id, reason: stallReason });
       boardTasks[task.id] = { waitingFor, humanGateTargetId, hasLinks: linked.has(task.id), stallReason };
     }
@@ -270,9 +271,13 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
   };
 }
 
-/** While the workflow runs: where a person may drag a task out of the human gate it sits in. */
+/**
+ * While the workflow runs: where a person may drag a task out of the human gate
+ * it sits in. None for a task whose automations are paused, which a hand may
+ * move anywhere but To Do, as a paused workflow's card.
+ */
 function humanGateExit(context: IpcContext, projectId: string, task: Task, workflow: Workflow): string | null {
-  if (workflow.state !== 'running') return null;
+  if (workflow.state !== 'running' || !canTaskRunAutomations(task).ok) return null;
   const lanes = safeLanes(projectId);
   const column = lanes.find((lane) => lane.id === task.swimlane_id);
   if (!column || !isHumanGate(context, projectId, task, column)) return null;

@@ -27,6 +27,7 @@ import {
   runRecoveryAttempt,
   setRecoveryAttemptRunner,
 } from '../../workflows/workflow-recovery';
+import { setHoldReleaseCatchUp } from '../../workflows/workflow-task-hold';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
 import { deliverMessageToSession } from './deliver-message';
@@ -245,6 +246,13 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       recovery: true,
       userWorkMarkAtTurnEnd: userWorkMark(sessionId),
       turnEndMarkAtTurnEnd: turnEndMark(sessionId),
+    });
+  });
+  // A workflow task's automations resumed with its agent live: judge the reply
+  // its visit left, as a resume does. Off the handler's stack, as the resume's is.
+  setHoldReleaseCatchUp((resumed) => {
+    setImmediate(() => {
+      void catchUpAfterResume(context, resumed);
     });
   });
   context.sessionManager.on('session-removed', (sessionId: string) => {

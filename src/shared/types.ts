@@ -685,9 +685,12 @@ export interface Task {
    * for it in any column, a move types no column message, and an Automatic Plan
    * approval is held as Manual (`readPlanApprovalDecision`). Column settings,
    * manual drags, Run again and the task's own `auto_command` are untouched.
-   * Joining a workflow clears it. A move out of Done or a restore keeps it. A
-   * workflow task never carries it (`automationsSwitchRefusal`). Asked only through
-   * `canTaskRunAutomations`.
+   * On a workflow task it is also the task's own hold: the workflow neither
+   * judges, nudges, moves nor starts it, and a hand may move its card. Joining a
+   * workflow clears it. A move out of Done or a restore keeps it. Asked only
+   * through `canTaskRunAutomations`. The UI calls the state "Automations
+   * paused", and the workflow code calls such a task held (`taskHeld`,
+   * `CoreTask.held`).
    */
   automations_disabled: boolean;
   /**
@@ -3873,10 +3876,9 @@ export interface MonitorSessionRow {
    */
   commandTerminalBranch: string | null;
   /**
-   * The task's column automations are disabled, as `canTaskRunAutomations`
-   * answers, so the card and the row wear the board's "Automations disabled"
-   * mark. Always false for a Command Terminal, which has no task, and for a
-   * workflow task, whose workflow's Pause holds it instead.
+   * The task's column automations are paused, as `canTaskRunAutomations`
+   * answers, so the card and the row wear the board's "Automations paused"
+   * mark. Always false for a Command Terminal, which has no task.
    */
   automationsDisabled: boolean;
   /** The task's workflow, for the strip and the table's Workflow column. Null outside a workflow, for a finished workflow, and for a Command Terminal. */
@@ -5536,7 +5538,7 @@ export interface TaskCreateInput {
   profile_id?: string | null;
   /** Which run mode the task was authored in (see `Task.run_mode`). Omitted defaults to `'column_settings'`, except that pinning any of the four Advanced fields implies `'agent_override'`. */
   run_mode?: TaskRunMode;
-  /** Create the task with column automations disabled (see `Task.automations_disabled`). Omitted means enabled. */
+  /** Create the task with its column automations paused (see `Task.automations_disabled`). Omitted means not paused. */
   automations_disabled?: boolean;
   /** External origin carried through when promoting an imported backlog item, so import dedup survives promotion. */
   externalId?: string;
@@ -5597,7 +5599,7 @@ export interface TaskUpdateInput {
   profile_id?: string | null;
   /** Which run mode the task runs in (see `Task.run_mode`). `'agent_override'` clears `profile_id`; `'column_settings'` clears the four pins. Omitted leaves the stored mode alone, unless a pin or profile in the same write implies one. */
   run_mode?: TaskRunMode;
-  /** Disable or enable column automations for the task (see `Task.automations_disabled`). Refused on a workflow task. */
+  /** Pause or resume column automations for the task (see `Task.automations_disabled`). On a workflow task it is the task's own hold. */
   automations_disabled?: boolean;
 }
 

@@ -97,22 +97,10 @@ msgstr "Couldn't move task"
 msgid "Couldn't send task to backlog"
 msgstr "Couldn't send task to backlog"
 
-#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
-msgid "Couldn't turn off automations"
-msgstr "Couldn't turn off automations"
-
-#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
-msgid "Couldn't turn on automations"
-msgstr "Couldn't turn on automations"
-
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgctxt "Default value"
 msgid "Default"
 msgstr "Default"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "Disabled"
-msgstr "Disabled"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Doing now"
@@ -121,10 +109,6 @@ msgstr "Doing now"
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Effort"
 msgstr "Effort"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "Enabled"
-msgstr "Enabled"
 
 #: src/renderer/components/monitor/LazyMonitor.tsx
 msgid "Failed to load the agent monitor"
@@ -203,6 +187,11 @@ msgstr "No sessions match the current filters."
 msgid "Oldest"
 msgstr "Oldest"
 
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "automations state"
+msgid "On"
+msgstr "On"
+
 #: src/renderer/components/monitor/MonitorCard.tsx
 msgid "Open {taskTitle}"
 msgstr "Open {taskTitle}"
@@ -216,6 +205,11 @@ msgstr "Open on board"
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgctxt "Agent status"
+msgid "Paused"
+msgstr "Paused"
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "automations state"
 msgid "Paused"
 msgstr "Paused"
 

@@ -1,5 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { Check, CircleCheckBig, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Check, CircleCheckBig, Columns3Cog, Folder, Layers, Plus, SquareTerminal, Workflow as WorkflowIcon, X } from 'lucide-react';
+import { Trans, useLingui } from '@lingui/react/macro';
+import { canTaskRunAutomations } from '../../../shared/automation-manifest';
+import { useBoardStore } from '../../stores/board-store';
+import { findBoardTask } from '../../utils/board-task-index';
+import { toggleTaskAutomations } from '../../utils/task-automations';
+import { AutomationsDisabledGlyph, useAutomationsPausedText } from '../board/AutomationsDisabledStrip';
 import type { PlanApproval, Task, WorkflowBoardEnds, WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../../shared/types';
 import { WORKFLOW_REFUSAL_MESSAGES } from '../../../shared/workflow-refusals';
 import { translateText } from '../../i18n/translate';
@@ -568,6 +574,43 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
   );
 }
 
+/**
+ * The task's own hold, under its title while its automations are paused: the
+ * card's "Automations paused" strip with Resume beside it, so the person working
+ * it by hand can hand it back to the workflow from here. Nothing otherwise.
+ * Reads the board's live row when the board holds the task, as the canvas card.
+ */
+function AutomationsHoldRow({ viewTask, task }: { viewTask: WorkflowViewTask; task: Task }) {
+  const liveTask = useBoardStore((state) => findBoardTask(state.tasks, task.id));
+  const current = liveTask ?? task;
+  const { label, tip } = useAutomationsPausedText(true);
+  const { t } = useLingui();
+  if (canTaskRunAutomations(current).ok) return null;
+  return (
+    <div
+      className="flex items-center justify-between gap-2 h-9 shrink-0 px-4 border-b border-edge/60 bg-surface/30"
+      data-testid="workflow-inspector-automations-paused"
+    >
+      <Tooltip label={tip}>
+        <span className="inline-flex items-center gap-[5px] text-xs text-fg-muted min-w-0">
+          <AutomationsDisabledGlyph />
+          <span className="truncate">{label}</span>
+        </span>
+      </Tooltip>
+      <button
+        type="button"
+        onClick={() => { void toggleTaskAutomations(current, viewTask.projectId); }}
+        aria-label={t`Resume automations`}
+        className="inline-flex items-center gap-1.5 h-6 px-2 shrink-0 rounded border border-edge-input text-xs text-fg-secondary hover:bg-surface-hover/40 transition-colors"
+        data-testid="workflow-inspector-resume-automations"
+      >
+        <Columns3Cog size={12} className="text-fg-muted" aria-hidden="true" />
+        <Trans context="automations">Resume</Trans>
+      </button>
+    </div>
+  );
+}
+
 function TaskPanel({
   detail,
   task,
@@ -618,6 +661,7 @@ function TaskPanel({
           {task.displayId ? <span className="shrink-0 text-[13px] text-fg-muted tabular-nums">#{task.displayId}</span> : null}
         </div>
       )}
+      {variant === 'canvas' && task.task && task.place !== 'done' && <AutomationsHoldRow viewTask={task} task={task.task} />}
       {variant === 'taskDetail' && (
         <div className="flex items-center gap-2 h-11 shrink-0 px-4 border-b border-edge/60" data-testid="workflow-panel-workflow">
           <WorkflowIcon size={16} className="shrink-0" style={{ color: workflowColor(detail.workflow.color_slot) }} />

@@ -49,12 +49,13 @@ registry, one folder per type, and a manifest the renderer reads.
   automation before it has a name or a value.
 - **`canColumnRun` is the only answer to "will this row run in this column"**, and
   **`canTaskRunAutomations` the only answer to "will any row run for this task"** (a task whose
-  automations the user disabled). Both live in `automation-manifest.ts` and are shared by the
+  automations the user paused). Both live in `automation-manifest.ts` and are shared by the
   engine and the renderer, so the board and the engine can never disagree about what is about to
   happen. The task gate sits in `executeTransition`, the turn-end runner, the two places a move
-  types a column message outside the runner (warm injection, the handoff), and the plan approval
-  reader (`readPlanApprovalDecision`, which holds an Automatic plan approval as Manual); never in
-  `runAutomations`, which Run again shares and which must stay ungated.
+  types a column message outside the runner (warm injection, the handoff), the plan approval
+  reader (`readPlanApprovalDecision`, which holds an Automatic plan approval as Manual), and a
+  workflow task's own step (`workflowStepApplies`, plus the engine's start filter and the lock's
+  `taskHeld`); never in `runAutomations`, which Run again shares and which must stay ungated.
 
 ## Enforcement (self-maintaining)
 

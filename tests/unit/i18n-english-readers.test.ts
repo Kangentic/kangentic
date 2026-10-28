@@ -12,11 +12,6 @@
  * translated, with a marker in front), asserts the UI's translator DOES return the
  * marked text (so the catalog was active), and asserts the English reader did not.
  *
- * The real TASK_UPDATE handler's throw is pinned in
- * task-update-automations-refusal.test.ts; this file covers the descriptor-level
- * readers (`englishText(automationsSwitchRefusal(...))` is what the handler throws
- * and what the MCP task tools return).
- *
  * Red-green: resolving any of these through the global `i18n` instead of
  * `englishI18n` (`englishText`) puts the marker in the English assertions.
  */
@@ -26,10 +21,8 @@ import { englishI18n, englishText } from '../../src/shared/i18n/english';
 import { translateText } from '../../src/renderer/i18n/translate';
 import {
   AUTOMATIONS_DISABLED_REASON,
-  AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL,
   AUTOMATION_TRIGGER_LABELS,
   AUTOMATION_TRIGGER_PHRASES,
-  automationsSwitchRefusal,
   canColumnRun,
 } from '../../src/shared/automation-manifest';
 import { describeAutomation, describeAutomationMarksInWords } from '../../src/shared/automation-describe';
@@ -51,23 +44,12 @@ afterEach(() => {
 describe('the pseudo language the tests below rely on', () => {
   it('is the UI language, and marks what the UI translator returns', () => {
     expect(i18n.locale).toBe(PSEUDO_LOCALE);
-    expect(translateText(AUTOMATIONS_DISABLED_REASON)).toBe(`${PSEUDO_MARKER}Automations are disabled for this task.`);
+    expect(translateText(AUTOMATIONS_DISABLED_REASON)).toBe(`${PSEUDO_MARKER}Automations are paused for this task.`);
   });
 
   it('leaves the English instance on English', () => {
     expect(englishI18n.locale).toBe('en');
-    expect(englishText(AUTOMATIONS_DISABLED_REASON)).toBe('Automations are disabled for this task.');
-  });
-});
-
-describe('the automations switch refusal (what TASK_UPDATE throws and the MCP task tools return)', () => {
-  const REFUSAL_ENGLISH = 'This task is in a workflow. Pause the workflow to hold it.';
-
-  it('reads English through englishText while the UI reads the translation', () => {
-    const refusal = automationsSwitchRefusal({ workflow_id: 'workflow-1' });
-    expect(refusal).toBe(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL);
-    expect(translateText(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL)).toBe(`${PSEUDO_MARKER}${REFUSAL_ENGLISH}`);
-    expect(englishText(refusal ?? '')).toBe(REFUSAL_ENGLISH);
+    expect(englishText(AUTOMATIONS_DISABLED_REASON)).toBe('Automations are paused for this task.');
   });
 });
 

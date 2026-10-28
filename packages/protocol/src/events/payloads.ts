@@ -467,15 +467,16 @@ export interface BoardTaskWire {
    * agent turn end or On task exit row runs for it in any column, and a move
    * types no column message. Column settings, a hand's moves and the task's own
    * first command are untouched. It is the fact the desktop card's "Automations
-   * disabled" strip reads, and the desktop menu's Enable or Disable automations
+   * paused" strip reads, and the desktop menu's Pause or Resume automations
    * row flips it.
    *
    * There is no verb for it. A phone flips it with the `board-tool-write`
    * `update_task` call, whose param is camelCase: `automationsDisabled: true`
-   * or `false`, never `automations_disabled`. A workflow task always reads
-   * false, because its workflow's Pause holds it, and `update_task` refuses
-   * `true` for one. Hide the control while `workflow` is non-null, as the
-   * desktop menu does.
+   * or `false`, never `automations_disabled`. On a workflow task it also holds
+   * the task out of its workflow (no judging, moving or starting) while the
+   * rest runs. A desktop that predates `workflow.automations_pausable`
+   * (pre-0.25.0) refuses `true` for a workflow task, so offer the control on
+   * one only while that field is true.
    *
    * The desktop clears it by itself only when the task joins a workflow. A move
    * out of Done or a restore from the archive keeps it. Every change, by any
@@ -518,8 +519,9 @@ export interface BoardTaskWorkflowWire {
   /** The tasks it waits for that are not done, named as the card's footer names them ("#413"). */
   waiting_for: string[];
   /**
-   * While the card is locked (its workflow runs and it is not waiting in a
-   * human gate), the desktop's sentence for a refused move; null otherwise,
+   * While the card is locked (its workflow runs, its automations are not
+   * paused, and it is not waiting in a human gate), the desktop's sentence for
+   * a refused move; null otherwise,
    * which is when the desktop draws no lock. An unlocked card still never
    * moves into To Do, and while `gate_target_id` is set it moves only there.
    */
@@ -530,6 +532,21 @@ export interface BoardTaskWorkflowWire {
    * route. Moving it there is how the person reports the step done. Null otherwise.
    */
   gate_target_id: string | null;
+  /**
+   * True on a desktop that honours the task's automations switch
+   * (`BoardTaskWire.automations_disabled`) on a workflow task: `update_task`
+   * accepts `automationsDisabled` for it, and while the switch is on the
+   * workflow neither judges, moves nor starts the task, and a hand may move its
+   * card anywhere but To Do (`lock_reason` reads null). Offer the switch on a
+   * workflow task only when this is true.
+   *
+   * Null or absent means a desktop that predates the field (pre-0.25.0), which
+   * refuses `automationsDisabled: true` for a workflow task: hide the control.
+   *
+   * Declared OPTIONAL (`?`) like `BoardTaskWire.pausable`;
+   * `parseBoardTaskWorkflowWire` populates the key from every real wire response.
+   */
+  automations_pausable?: boolean | null;
 }
 
 /**
@@ -887,6 +904,7 @@ export function parseBoardTaskWorkflowWire(value: JsonValue | undefined): BoardT
     waiting_for: strings(value.waiting_for),
     lock_reason: typeof value.lock_reason === 'string' ? value.lock_reason : null,
     gate_target_id: typeof value.gate_target_id === 'string' ? value.gate_target_id : null,
+    automations_pausable: typeof value.automations_pausable === 'boolean' ? value.automations_pausable : null,
   };
 }
 

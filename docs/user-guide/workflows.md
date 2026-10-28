@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Workflows
-description: "How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, card strips and links, and why running workflow cards are locked."
+description: "How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, working one task by hand, card strips and links, and why running workflow cards are locked."
 tags: [workflows, canvas, planning, blockers]
 sources:
   - resource: src/renderer/components/workflows/
@@ -31,7 +31,7 @@ for you. The bottom terminal panel is hidden in this view and comes back on the 
 **On the canvas.** Drag a card by its body to place it, and drag empty space or scroll to pan
 (Ctrl or Cmd with the wheel zooms). Fit view and Auto layout, which puts moved cards back in the
 automatic layout, sit at the bottom left, and Add task at the bottom right. Right-click a started task's card for
-the board's own menu, with Open on board in its top group, below Edit and Show changes, and Pause or Resume session below Show changes. The selected card wears the accent border, and
+the board's own menu, with Open on board in its top group, below Edit and Show changes, and Pause or Resume session and Pause or Resume automations below Show changes. The selected card wears the accent border, and
 its links stand out: what it waits for flows into it (green once that task is done, grey while it
 is not), what waits for it flows out in the accent, and every other link fades back. With
 Animations off (Settings > Performance), the links hold still. A system reduced-motion setting does
@@ -153,6 +153,23 @@ does not end. Pausing the workflow
 cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
 **Workflow stalled** switch is in Settings > Notifications.
 
+**Working one task by hand.** To take one task out of a running workflow while the rest keeps
+going, right-click its card (on the board, the Workflows canvas or the Agent Monitor) and choose
+**Pause automations**. The workflow then leaves that task alone: it does not judge its turns, move
+it on, nudge it, interrupt a hung turn or send a Workflow stalled notice for it, and the plain
+Agent idle notice comes back. Its column's own automations stop too, as on any task. You can drag
+the card to any column but To Do. The tasks that wait for it keep waiting until it reaches Done,
+and a held task in To Do is not started. A plan you approve yourself still moves it on, as the
+approval is yours. The card wears an **Automations paused** strip over its workflow strip, a held
+To Do card's footer says Paused, and the inspector shows the strip with a **Resume** button.
+Choose **Resume automations** (or Resume in the inspector) to hand it back. Nothing the hold
+skipped is replayed: an enter automation a hand move skipped stays skipped (Run again runs it).
+If the agent finished its work in this column and sits idle, its last reply is judged at once and
+the task moves on; a reply from before a hand move is left for the next turn. Its recovery starts
+over, with its own nudges and notice. The workflow's own Pause, on the Workflows header, leaves a
+held task's agent running, and Resume leaves it held. An agent can do the same with
+`kangentic_update_task`'s `automationsDisabled`.
+
 **On the board.** A workflow task's card carries a strip with its workflow's name and a step
 track, and a card in To Do says what it waits for ("Blocked by #413..."). The track is the
 task's whole journey, one mark per stop: To Do, each column on its route, then Done, so it keeps
@@ -180,5 +197,7 @@ drag stays in the card's own column, where you can still reorder it. The excepti
 move on yourself (no Automation agent, or a column with no agent), which you drag onto the next
 column of its route. No workflow task can be moved back to To Do. A refused move leaves the card
 where it is, says why in a toast that opens the workflow when clicked, and shows the card's links. The menu keeps Move
-to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after.
+to, Backlog and Archive, disabled with the same reason. Pause the workflow (the Running button) to move its cards by hand, and Resume it after. To move one card by hand while the rest
+runs, pause that task's automations instead (see Working one task by hand); Backlog and Archive stay
+off for it, since both take the task out of its workflow.
 When every task is in Done, a Workflow complete notification says so (Settings > Notifications).

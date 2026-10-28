@@ -1,4 +1,5 @@
 import type { Task, Workflow } from '../../shared/types';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { getExistingProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { TaskRepository } from '../db/repositories/task-repository';
@@ -44,15 +45,17 @@ export function isInWorkflow(task: Pick<Task, 'workflow_id' | 'workflow_project_
 /**
  * Is the task in a running workflow, in a column between To Do and Done? Its
  * step check judges every turn end there, and says itself when the agent waits
- * on the user or the task stalls, so the generic idle notices leave it alone.
- * False on any read that fails, which keeps the generic notice.
+ * on the user or the task stalls, so the generic idle notices leave it alone,
+ * and the hang check watches its turns. Not while its automations are paused:
+ * nothing judges it then, so the generic notices come back and nothing
+ * interrupts it. False on any read that fails, which keeps the generic notice.
  */
 export function isRunningWorkflowStepTask(projectId: string, taskId: string): boolean {
   try {
     const db = getExistingProjectDb(projectId);
     if (!db) return false;
     const task = new TaskRepository(db).getById(taskId);
-    if (!task || task.archived_at || !task.workflow_id) return false;
+    if (!task || task.archived_at || !task.workflow_id || !canTaskRunAutomations(task).ok) return false;
     const role = new SwimlaneRepository(db).getById(task.swimlane_id)?.role;
     if (role === 'todo' || role === 'done') return false;
     return workflowOfTask(task, projectId)?.state === 'running';

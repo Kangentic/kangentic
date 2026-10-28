@@ -501,9 +501,9 @@ test.describe('agent monitor', () => {
       const rowOf = (taskTitle: string) => page.locator('[data-testid="monitor-table-row"]', { hasText: taskTitle });
       await expect(rowOf('Landing copy pass').locator('[data-testid="monitor-table-workflow"]')).toHaveText('Launch week');
       await expect(rowOf('Fix PTY capture race').locator('[data-testid="monitor-table-workflow"]')).toHaveCount(0);
-      // Disabled, the non-default value, is the chip; Enabled is plain text.
-      await expect(rowOf('Paused work').locator('[data-testid="monitor-table-automations-disabled"]')).toHaveText('Disabled');
-      await expect(rowOf('Fix PTY capture race')).toContainText('Enabled');
+      // Paused, the non-default value, is the chip; On is plain text.
+      await expect(rowOf('Paused work').locator('[data-testid="monitor-table-automations-disabled"]')).toHaveText('Paused');
+      await expect(rowOf('Fix PTY capture race').getByText('On', { exact: true })).toBeVisible();
       // The agent's own words, not the raw ids.
       await expect(rowOf('Fix PTY capture race')).toContainText('Claude Code');
       await expect(rowOf('Fix PTY capture race')).toContainText('Plan (Read-Only)');
@@ -2252,10 +2252,10 @@ test.describe('agent monitor: the table columns', () => {
 });
 
 test.describe('agent monitor: held tasks in the list and the table', () => {
-  test('a held workflow row in the list shows only the held slice, and a workflow row that is not held shows its own', async () => {
+  test('a held workflow row in the list shows both slices, the held one first, and a workflow row that is not held shows only its own', async () => {
     const { browser, page } = await launchWithState(`${monitorPreConfig()}
       ${patchMonitorRowsScript({
-        // Both flags on one row: the held slice has to win over the workflow slice.
+        // Both facts on one row: the card stacks both strips, so the row closes with both slices.
         'sess-other-project': { automationsDisabled: true, track: WORKFLOW_ROW_TRACK },
         // The control: the same shape with automations on.
         'sess-working': { workflow: { id: 'wf-control', title: 'Control flow', colorSlot: 3 } },
@@ -2272,10 +2272,91 @@ test.describe('agent monitor: held tasks in the list and the table', () => {
 
       const held = monitorCardOf(page, 'sess-other-project');
       await expect(held).toHaveAttribute('data-dense', 'true');
-      await expect(held.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveText('Automations disabled');
-      await expect(held.locator('[data-testid="monitor-row-workflow"]')).toHaveCount(0);
-      await expect(held.locator('[data-testid="monitor-row-workflow-name"]')).toHaveCount(0);
-      await expect(held.locator('[data-testid="workflow-step-track"]')).toHaveCount(0);
+      await expect(held.locator('[data-testid="monitor-row-automations-disabled"]')).toHaveText('Automations paused');
+      // The workflow's own slice stays beside it, with its name and its track.
+      await expect(held.locator('[data-testid="monitor-row-workflow"]')).toBeVisible();
+      await expect(held.locator('[data-testid="monitor-row-workflow-name"]')).toHaveText('Launch week');
+      await expect(held.locator('[data-testid="workflow-step-track"]')).toBeVisible();
+      // The held slice comes first, as the card puts its strip over the workflow's.
+      const order = await held.evaluate((row) => Array.from(
+        row.querySelectorAll('[data-testid="monitor-row-automations-disabled"], [data-testid="monitor-row-workflow"]'),
+      ).map((element) => element.getAttribute('data-testid')));
+      expect(order).toEqual(['monitor-row-automations-disabled', 'monitor-row-workflow']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a held workflow row\'s card keeps both strips, the held one over the workflow\'s, and its tip says the workflow leaves it alone', async () => {
+    const { browser, page } = await launchWithState(`${monitorPreConfig()}
+      ${patchMonitorRowsScript({
+        'sess-other-project': { automationsDisabled: true, track: WORKFLOW_ROW_TRACK },
+        // The control: a held task in no workflow gets the plain tip.
+        'sess-paused': { automationsDisabled: true, workflow: null },
+      })}`);
+    try {
+      await openMonitor(page);
+
+      const held = monitorCardOf(page, 'sess-other-project');
+      const heldStrip = held.locator('[data-testid="monitor-card-automations-disabled"]');
+      await expect(heldStrip).toHaveText('Automations paused');
+      await expect(heldStrip).toHaveAccessibleDescription("Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu.");
+      await expect(held.locator('[data-testid="monitor-card-strip"]')).toBeVisible();
+      const order = await held.evaluate((card) => Array.from(
+        card.querySelectorAll('[data-testid="monitor-card-automations-disabled"], [data-testid="monitor-card-strip"]'),
+      ).map((element) => element.getAttribute('data-testid')));
+      expect(order).toEqual(['monitor-card-automations-disabled', 'monitor-card-strip']);
+
+      await expect(monitorCardOf(page, 'sess-paused').locator('[data-testid="monitor-card-automations-disabled"]'))
+        .toHaveAccessibleDescription("Column automations don't run for this task. Resume them from the card's menu.");
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // The list row's slice and the table's chip say what the card's strip says: for a workflow
+  // task the hold also means its workflow does not move it. Each layout reads the row's own
+  // workflow, so each is pinned on its own, beside a held row in no workflow for the plain tip.
+  const HELD_WORKFLOW_TIP = "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu.";
+  const HELD_PLAIN_TIP = "Column automations don't run for this task. Resume them from the card's menu.";
+  const heldWorkflowRows = (): string => `${monitorPreConfig()}
+      ${patchMonitorRowsScript({
+        'sess-other-project': { automationsDisabled: true, track: WORKFLOW_ROW_TRACK },
+        // The control: a held task in no workflow gets the plain tip.
+        'sess-paused': { automationsDisabled: true, workflow: null },
+      })}`;
+
+  test('the list slice of a held workflow row carries the workflow tip, and a held row in no workflow the plain one', async () => {
+    const { browser, page } = await launchWithState(heldWorkflowRows());
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-list"]').click();
+
+      const workflowSlice = monitorCardOf(page, 'sess-other-project').locator('[data-testid="monitor-row-automations-disabled"]');
+      await expect(workflowSlice).toHaveText('Automations paused');
+      await expect(workflowSlice).toHaveAccessibleDescription(HELD_WORKFLOW_TIP);
+
+      const plainSlice = monitorCardOf(page, 'sess-paused').locator('[data-testid="monitor-row-automations-disabled"]');
+      await expect(plainSlice).toHaveText('Automations paused');
+      await expect(plainSlice).toHaveAccessibleDescription(HELD_PLAIN_TIP);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the table chip of a held workflow row carries the workflow tip, and a held row in no workflow the plain one', async () => {
+    const { browser, page } = await launchWithState(heldWorkflowRows());
+    try {
+      await openMonitor(page);
+      await page.locator('[data-testid="monitor-layout-table"]').click();
+
+      const workflowChip = (await tableCellOf(page, 'sess-other-project', 'automations')).locator('[data-testid="monitor-table-automations-disabled"]');
+      await expect(workflowChip).toHaveText('Paused');
+      await expect(workflowChip).toHaveAccessibleDescription(HELD_WORKFLOW_TIP);
+
+      const plainChip = (await tableCellOf(page, 'sess-paused', 'automations')).locator('[data-testid="monitor-table-automations-disabled"]');
+      await expect(plainChip).toHaveText('Paused');
+      await expect(plainChip).toHaveAccessibleDescription(HELD_PLAIN_TIP);
     } finally {
       await browser.close();
     }
@@ -2319,18 +2400,18 @@ test.describe('agent monitor: held tasks in the list and the table', () => {
     }
   });
 
-  test('the table Automations cell reads Enabled, a Disabled chip and a bare dash for a Command Terminal', async () => {
+  test('the table Automations cell reads On, a Paused chip and a bare dash for a Command Terminal', async () => {
     const { browser, page } = await launchWithState(`${monitorPreConfig()}
       ${patchMonitorRowsScript({ 'sess-paused': { automationsDisabled: true } })}`);
     try {
       await openMonitor(page);
       await page.locator('[data-testid="monitor-layout-table"]').click();
 
-      await expect(await tableCellOf(page, 'sess-working', 'automations')).toHaveText('Enabled');
+      await expect(await tableCellOf(page, 'sess-working', 'automations')).toHaveText('On');
       const heldCell = await tableCellOf(page, 'sess-paused', 'automations');
-      await expect(heldCell).toHaveText('Disabled');
+      await expect(heldCell).toHaveText('Paused');
       await expect(heldCell.locator('[data-testid="monitor-table-automations-disabled"]')).toBeVisible();
-      // Exact: not "Enabled", which would claim automations run for a task that does not exist.
+      // Exact: not "On", which would claim automations run for a task that does not exist.
       const terminalCell = await tableCellOf(page, 'sess-command-terminal', 'automations');
       await expect(terminalCell).toHaveText('-');
       await expect(terminalCell.locator('[data-testid="monitor-table-automations-disabled"]')).toHaveCount(0);

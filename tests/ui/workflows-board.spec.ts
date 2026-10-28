@@ -67,6 +67,8 @@ interface Options {
   orphanTask?: boolean;
   /** Why the running workflow is stalled on a task, by task id: main reads it from the run log. */
   stalls?: Record<string, string>;
+  /** Task numbers whose own automations are paused: a person's hold on a workflow task (#923). */
+  held?: number[];
   viewport?: { width: number; height: number };
 }
 
@@ -101,6 +103,7 @@ function seedScript(options: Options): string {
       var supersededSource = ${options.supersededSource ? 'true' : 'false'};
       var newerCompleted = ${options.newerCompleted ?? 0};
       var homeElsewhere = ${options.homeElsewhere ? 'true' : 'false'};
+      var held = ${JSON.stringify(options.held ?? [])};
       state.projects.push({ id: '${PROJECT_ID}', name: 'kangentic', path: '/mock/kangentic', github_url: null, default_agent: 'claude', group_id: null, position: 0, last_opened: ts, created_at: ts });
       if (homeElsewhere) {
         state.projects.push({ id: '${HOME_PROJECT_ID}', name: 'kangentic-planning', path: '/mock/kangentic-planning', github_url: null, default_agent: 'claude', group_id: null, position: 1, last_opened: ts, created_at: ts });
@@ -116,6 +119,7 @@ function seedScript(options: Options): string {
           swimlane_id: 'lane-' + lane, position: id, agent: 'claude', session_id: null, worktree_path: null, branch_name: null,
           pr_number: null, pr_url: null, pr_state: null, base_branch: null, use_worktree: 0, labels: [], priority: 0,
           attachment_count: 0, archived_at: lane === 6 ? ts : null, workflow_id: workflowId, workflow_project_id: workflowId ? '${homeProjectId}' : null,
+          automations_disabled: held.indexOf(id) !== -1,
           route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [], canvas_x: null, canvas_y: null,
           created_at: ts, updated_at: ts,
         };
@@ -417,6 +421,167 @@ test.describe('Workflow tasks on the board', () => {
     } finally {
       await browser.close();
     }
+  });
+
+  // A person's hold on one workflow task (#923): its automations paused, so the rest of the
+  // workflow runs while the person works this card by hand. Each case is paired with the same
+  // card or workflow not held, in the same test or in the lock tests around it, so a pass cannot
+  // come from a card the lock never covered.
+  test.describe('a task whose own automations are paused', () => {
+    const REMOVE_FIRST_TO_DO = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
+    const HELD_TIP = "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu.";
+
+    test('the card stacks the paused strip over its workflow strip, in one wrapper', async () => {
+      const { browser, page } = await launch({ held: [414] });
+      try {
+        const card = boardCard(page, 't414');
+        const heldStrip = card.getByTestId('task-card-automations-disabled');
+        await expect(heldStrip).toHaveText('Automations paused');
+        await expect(heldStrip).toHaveAccessibleDescription(HELD_TIP);
+        await expect(card.getByTestId('workflow-card-strip')).toBeVisible();
+        await expect(card.getByTestId('workflow-card-strip')).toContainText('Usage budgets');
+
+        // One wrapper (the one carrying the workflow's id) holds both, paused first, so the pair
+        // meets the card's rounded top.
+        const inOneWrapper = await card.evaluate((element) => {
+          const wrapper = element.querySelector('[data-workflow-id]');
+          const held = wrapper?.querySelector('[data-testid="task-card-automations-disabled"]');
+          const workflow = wrapper?.querySelector('[data-testid="workflow-card-strip"]');
+          if (!held || !workflow) return null;
+          return Boolean(held.compareDocumentPosition(workflow) & Node.DOCUMENT_POSITION_FOLLOWING);
+        });
+        expect(inOneWrapper).toBe(true);
+
+        // A card of the same workflow that is not held wears the workflow strip alone.
+        await expect(boardCard(page, 't413').getByTestId('workflow-card-strip')).toBeVisible();
+        await expect(boardCard(page, 't413').getByTestId('task-card-automations-disabled')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('its menu moves it by hand to any column but To Do, and says to remove it first for To Do, Backlog and Archive', async () => {
+      const { browser, page } = await launch({ held: [414] });
+      try {
+        // The control, the same workflow's other started card, not held: every row says the lock.
+        await openMenu(page, 't413');
+        const controlRows = byTestId(page, 'task-context-menu').locator('[data-testid="context-move-to"]');
+        await expect(controlRows.filter({ hasText: 'Code Review' })).toHaveAttribute('aria-disabled', 'true');
+        await expect(controlRows.filter({ hasText: 'Code Review' })).toHaveAccessibleDescription('#413 is locked while Usage budgets runs.');
+        await page.keyboard.press('Escape');
+        await expect(byTestId(page, 'task-context-menu')).toHaveCount(0);
+
+        await openMenu(page, 't414');
+        const menu = byTestId(page, 'task-context-menu');
+        const rows = menu.locator('[data-testid="context-move-to"]');
+        for (const name of ['Planning', 'Code Review', 'Testing', 'Merge']) {
+          await expect(rows.filter({ hasText: name }), name).not.toHaveAttribute('aria-disabled', 'true');
+        }
+        await expect(rows.filter({ hasText: 'To Do' })).toHaveAttribute('aria-disabled', 'true');
+        await expect(rows.filter({ hasText: 'To Do' })).toHaveAccessibleDescription(REMOVE_FIRST_TO_DO);
+        for (const testId of ['context-send-to-backlog', 'context-archive-task']) {
+          await expect(menu.locator(`[data-testid="${testId}"]`)).toHaveAccessibleDescription('Remove #414 from Usage budgets first.');
+        }
+        await expect(menu.getByTestId('context-toggle-automations')).toHaveText('Resume automations');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('it drags by hand out of its column in a running workflow, where the same card not held cannot', async () => {
+      const { browser, page } = await launch({ held: [414] });
+      try {
+        await page.evaluate(() => {
+          const tasksApi = window.electronAPI.tasks as unknown as { move: (input: unknown, projectId: unknown) => Promise<unknown> };
+          const original = tasksApi.move;
+          const recorded: unknown[] = [];
+          (window as unknown as { __recordedMoves: unknown[] }).__recordedMoves = recorded;
+          tasksApi.move = (input, projectId) => {
+            recorded.push(input);
+            return original(input, projectId);
+          };
+        });
+
+        await dragToColumn(page, 't414', 'Code Review');
+
+        // The move was asked of main, and the card landed in the column it was dropped on.
+        await expect.poll(() => page.evaluate(() => (window as unknown as { __recordedMoves: Array<{ taskId: string; targetSwimlaneId: string }> }).__recordedMoves))
+          .toEqual([expect.objectContaining({ taskId: 't414', targetSwimlaneId: 'lane-3' })]);
+        await expect(page.locator('[data-swimlane-name="Code Review"] [data-task-id="t414"]')).toBeVisible();
+        await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toHaveCount(0);
+        expect(await toastCountRightNow(page, LOCKED)).toBe(0);
+        // Still held after the move: moving it by hand does not resume it.
+        await expect(boardCard(page, 't414').getByTestId('task-card-automations-disabled')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('dragged into To Do it is refused with the remove-first sentence, and stays where it was', async () => {
+      const { browser, page } = await launch({ held: [414] });
+      try {
+        await dragToColumn(page, 't414', 'To Do');
+
+        const toast = page.locator('[data-testid="toast"]').filter({ hasText: REMOVE_FIRST_TO_DO });
+        await expect(toast.getByTestId('toast-body')).toHaveText(REMOVE_FIRST_TO_DO);
+        await expect(page.locator('[data-swimlane-name="Executing"] [data-task-id="t414"]')).toBeVisible();
+        await expect(page.locator('[data-swimlane-name="To Do"] [data-task-id="t414"]')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a card in To Do reads Paused in its footer where it read Queued, and one that waits still names what it waits for', async () => {
+      const { browser, page } = await launch();
+      try {
+        const footer = (id: string) => boardCard(page, id).locator('[data-testid="workflow-status-bar"]');
+        // Before: #419 is queued and #415 waits for #413.
+        await expect(footer('t419')).toHaveText('Queued...');
+        await expect(footer('t415')).toHaveText('Blocked by #413...');
+
+        for (const id of ['t419', 't415']) {
+          await openMenu(page, id);
+          await byTestId(page, 'task-context-menu').getByTestId('context-toggle-automations').click();
+          await expect(boardCard(page, id).getByTestId('task-card-automations-disabled')).toBeVisible();
+        }
+
+        await expect(footer('t419')).toHaveText('Paused');
+        await expect(footer('t415')).toHaveText('Blocked by #413...');
+        // The task nothing holds still reads as it did.
+        await expect(footer('t416')).toHaveText('Blocked by #413...');
+
+        // And the way back.
+        await openMenu(page, 't419');
+        await expect(byTestId(page, 'task-context-menu').getByTestId('context-toggle-automations')).toHaveText('Resume automations');
+        await byTestId(page, 'task-context-menu').getByTestId('context-toggle-automations').click();
+        await expect(footer('t419')).toHaveText('Queued...');
+        await expect(boardCard(page, 't419').getByTestId('task-card-automations-disabled')).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a held card shows no Stalled mark, where the same card not held does', async () => {
+      const stalls = { t414: 'the agent stopped before its step was done.' };
+      const stalledMark = (page: Page) => boardCard(page, 't414').locator('[data-testid="workflow-card-stalled"]');
+      // The control: the running workflow marks the task it stalled on.
+      const control = await launch({ stalls });
+      try {
+        await expect(stalledMark(control.page)).toBeVisible();
+        await expect(boardCard(control.page, 't414').getByTestId('task-card-automations-disabled')).toHaveCount(0);
+      } finally {
+        await control.browser.close();
+      }
+
+      // Held, a person is working it: the workflow's recovery has stopped, so there is no stall to mark.
+      const { browser, page } = await launch({ stalls, held: [414] });
+      try {
+        await expect(boardCard(page, 't414').getByTestId('task-card-automations-disabled')).toBeVisible();
+        await expect(stalledMark(page)).toHaveCount(0);
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   test('a canvas card\'s strip has no lock: the canvas draws every link', async () => {

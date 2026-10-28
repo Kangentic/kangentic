@@ -27,6 +27,11 @@ vi.mock('../../src/main/db/database', () => ({
 }));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
+// A spy, so the Resume tests can say which tasks it was asked to bring back. The
+// module's one runtime export; a plain factory, not `importOriginal`, since the
+// original sits in an import cycle with the workflow service and a spread of it
+// would leave the service holding the real function.
+vi.mock('../../src/main/ipc/handlers/session-resume', () => ({ resumeTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/workflows/workflow-changed')>()),
@@ -34,6 +39,8 @@ vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => (
 }));
 
 const { handleTaskMove } = await import('../../src/main/ipc/handlers/task-move');
+const { pauseTaskSession } = await import('../../src/main/ipc/handlers/session-pause');
+const { resumeTaskSession } = await import('../../src/main/ipc/handlers/session-resume');
 const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
@@ -189,6 +196,91 @@ describe('workflow operations', () => {
     } finally {
       setWorkflowWake(null);
     }
+  });
+
+  describe('a task whose own automations are paused, when its workflow pauses and resumes', () => {
+    // A held task is a person's to work by hand, so the workflow's Pause leaves
+    // its agent running and Resume leaves it as it is (its own card pauses and
+    // resumes its session). Each case runs the same workflow first with nothing
+    // held, which must pause and resume both agents, so a skip cannot pass
+    // because the sessions were never found or the lane starts no agent.
+    async function runningInExecuting() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'ui', title: 'Budgets UI' }],
+        links: [],
+      });
+      await service.startWorkflow(context, 'home', workflow.id);
+      const executing = lanesOf('home').find((lane) => lane.name === 'Executing')!;
+      expect(executing.auto_spawn).toBe(true);
+      const tasks = tasksOf('home');
+      const byTitle = (title: string) => tasks.listByWorkflow(workflow.id).find((task) => task.title === title)!;
+      for (const title of ['Budgets API', 'Budgets UI']) {
+        const task = byTitle(title);
+        tasks.move({ taskId: task.id, targetSwimlaneId: executing.id, targetPosition: 0 }, { origin: 'workflow' });
+        tasks.update({ id: task.id, session_id: `session-${task.id}` });
+      }
+      return { workflow, api: byTitle('Budgets API'), ui: byTitle('Budgets UI') };
+    }
+
+    const idsOf = (spy: typeof pauseTaskSession | typeof resumeTaskSession) => spy.mock.calls.map(([, taskId]) => taskId).sort();
+
+    beforeEach(() => {
+      vi.mocked(pauseTaskSession).mockReset().mockResolvedValue('paused');
+      vi.mocked(resumeTaskSession).mockReset().mockResolvedValue(undefined as never);
+    });
+
+    afterEach(() => {
+      vi.mocked(pauseTaskSession).mockReset();
+      vi.mocked(resumeTaskSession).mockReset();
+    });
+
+    it('pauses and resumes every agent when nothing is held (the control)', async () => {
+      const { workflow, api, ui } = await runningInExecuting();
+
+      const paused = await service.pauseWorkflow(context, 'home', workflow.id);
+      expect(paused.paused).toBe(2);
+      expect(idsOf(pauseTaskSession)).toEqual([api.id, ui.id].sort());
+
+      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
+      expect(resumed.resumed).toBe(2);
+      expect(idsOf(resumeTaskSession)).toEqual([api.id, ui.id].sort());
+    });
+
+    it('leaves a held task\'s agent running when the workflow pauses, and pauses the rest', async () => {
+      const { workflow, api, ui } = await runningInExecuting();
+      tasksOf('home').update({ id: ui.id, automations_disabled: true });
+
+      const paused = await service.pauseWorkflow(context, 'home', workflow.id);
+
+      expect(paused.paused).toBe(1);
+      expect(idsOf(pauseTaskSession)).toEqual([api.id]);
+      expect(paused.workflow.state).toBe('paused');
+    });
+
+    it('leaves a held task as it is when the workflow resumes, and resumes the rest', async () => {
+      const { workflow, api, ui } = await runningInExecuting();
+      await service.pauseWorkflow(context, 'home', workflow.id);
+      tasksOf('home').update({ id: ui.id, automations_disabled: true });
+
+      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
+
+      expect(resumed.resumed).toBe(1);
+      expect(idsOf(resumeTaskSession)).toEqual([api.id]);
+      expect(resumed.workflow.state).toBe('running');
+    });
+
+    it('brings back the agent of a task whose automations resumed while the workflow was paused', async () => {
+      const { workflow, ui } = await runningInExecuting();
+      tasksOf('home').update({ id: ui.id, automations_disabled: true });
+      await service.pauseWorkflow(context, 'home', workflow.id);
+      tasksOf('home').update({ id: ui.id, automations_disabled: false });
+
+      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
+
+      expect(resumed.resumed).toBe(2);
+      expect(idsOf(resumeTaskSession)).toContain(ui.id);
+    });
   });
 
   it('starts: tasks in To Do on their boards, with routes and cross-board links', async () => {

@@ -55,6 +55,7 @@ import {
   type PlannedPlanSource,
 } from '../plan-approval/workflow-plan-approval';
 import { normalizeTaskPlanApproval } from '../../shared/plan-approval';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -101,6 +102,11 @@ export interface WorkflowTaskView {
   profileName: string | null;
   /** Why its running workflow stalled on it, while that holds; null otherwise. */
   stalled: string | null;
+  /**
+   * Its automations are paused and it is not done: the workflow neither judges,
+   * moves nor starts it, and a hand may move its card.
+   */
+  automationsPaused: boolean;
   /** Its plan approval and where it comes from; null when its route has no plan column. */
   planApproval: TaskPlanApproval | null;
   /**
@@ -115,12 +121,13 @@ export interface WorkflowTaskView {
  * Why a running workflow is stalled on each of its tasks, read from each
  * board's run log once (`listStalledTasks`), so the mark survives a restart
  * and an automatic pause. A paused or finished workflow shows no stall: its
- * state says what it is doing.
+ * state says what it is doing. Nor does a task whose automations are paused:
+ * a person is working it, and its recovery has stopped.
  */
-export function stallReader(workflow: Workflow): (projectId: string, taskId: string) => string | null {
+export function stallReader(workflow: Workflow): (projectId: string, task: Pick<Task, 'id' | 'automations_disabled'>) => string | null {
   const byProject = new Map<string, Map<string, string>>();
-  return (projectId, taskId) => {
-    if (workflow.state !== 'running') return null;
+  return (projectId, task) => {
+    if (workflow.state !== 'running' || !canTaskRunAutomations(task).ok) return null;
     let stalls = byProject.get(projectId);
     if (!stalls) {
       try {
@@ -132,7 +139,7 @@ export function stallReader(workflow: Workflow): (projectId: string, taskId: str
       }
       byProject.set(projectId, stalls);
     }
-    return stalls.get(taskId) ?? null;
+    return stalls.get(task.id) ?? null;
   };
 }
 
@@ -188,6 +195,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
         runSettings: runSettingsOf(planned),
         profileName: profileNameOn(context, projectId, planned.profile_id),
         stalled: null,
+        automationsPaused: false,
         planApproval: readPlannedTaskPlanApproval(context, homeProjectId, planned, workflow.plan_approval, lanes),
         ownPlanApproval: planned.plan_approval ?? workflow.plan_approval,
       };
@@ -230,7 +238,8 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
       waitsFor: links.filter((link) => link.blocked_task_id === task.id).flatMap(blockerKeys),
       runSettings: runSettingsOf(task),
       profileName: profileNameOn(context, projectId, task.profile_id),
-      stalled: place === 'done' ? null : stallOf(projectId, task.id),
+      stalled: place === 'done' ? null : stallOf(projectId, task),
+      automationsPaused: place !== 'done' && !canTaskRunAutomations(task).ok,
       planApproval: readTaskPlanApproval(context, projectId, task, workflow.plan_approval, lanes),
       ownPlanApproval: task.plan_approval ?? workflow.plan_approval,
     };
@@ -940,7 +949,11 @@ function announceWorkflowBoards(context: IpcContext, homeProjectId: string, work
 // Running
 // ---------------------------------------------------------------------------
 
-/** Pause every task's agent at once. Nothing starts or moves until Resume. */
+/**
+ * Pause every task's agent at once. Nothing starts or moves until Resume. A task
+ * whose automations are paused keeps its agent: a person is working it by hand,
+ * and the workflow is not what drives it (Pause session on its card pauses it).
+ */
 export async function pauseWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): Promise<{ workflow: Workflow; paused: number }> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'running') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, so there is nothing to pause.`);
@@ -952,7 +965,7 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   announceWorkflowBoards(context, homeProjectId, workflowId);
   let paused = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
-    if (!task.session_id) continue;
+    if (!task.session_id || !canTaskRunAutomations(task).ok) continue;
     try {
       if (await pauseTaskSession(context, task.id, { projectId }) === 'paused') paused += 1;
     } catch (error) {
@@ -962,7 +975,11 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   return { workflow: requireWorkflow(homeProjectId, workflowId), paused };
 }
 
-/** Resume every paused task's agent, each in the column it is in. */
+/**
+ * Resume every paused task's agent, each in the column it is in. A task whose
+ * automations are paused is left as it is, as Pause left it: its agent is the
+ * person's, and Resume session on its card brings back one that is paused.
+ */
 export async function resumeWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): Promise<{ workflow: Workflow; resumed: number }> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'paused') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, not paused.`);
@@ -971,7 +988,7 @@ export async function resumeWorkflow(context: IpcContext, homeProjectId: string,
   announceWorkflowBoards(context, homeProjectId, workflowId);
   let resumed = 0;
   for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
-    if (task.archived_at) continue;
+    if (task.archived_at || !canTaskRunAutomations(task).ok) continue;
     const lane = safeLanes(projectId).find((candidate) => candidate.id === task.swimlane_id);
     // To Do waits for the engine; Done is finished; a column with no agent has none to resume.
     if (!lane || lane.role === 'todo' || lane.role === 'done' || !lane.auto_spawn) continue;

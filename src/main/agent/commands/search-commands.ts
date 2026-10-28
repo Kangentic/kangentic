@@ -18,7 +18,7 @@ function taskLine(task: Task, column: string): string {
   else if (task.pr_number) parts.push(`PR #${task.pr_number}`);
   // Said only when set: an agent reading its own task learns the board will
   // not advance it, and every other line stays as it was.
-  if (task.automations_disabled) parts.push('automations disabled');
+  if (task.automations_disabled) parts.push('automations paused');
   parts.push(`#${task.display_id}, id: ${task.id}`);
   return `- ${parts.join(' | ')}`;
 }

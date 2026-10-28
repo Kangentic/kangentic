@@ -30,8 +30,8 @@ import { Tooltip } from '../Tooltip';
  * Done or on an archived task) stays in place, disabled, with the reason as
  * its tooltip: controls never come and go with state. The whole row dims, its
  * text, icon and dot together, as one unavailable item. A row that does not
- * apply to this kind of task at all (the automations switch on a workflow
- * task, the session row on a task with no session) is not passed by its host.
+ * apply to this kind of task at all (the session row on a task with no
+ * session) is not passed by its host.
  */
 
 const ROW_CLASS = 'w-full px-3 py-1.5 text-sm text-left flex items-center gap-2 text-fg-secondary';
@@ -82,9 +82,10 @@ export function TaskContextMenu({
   /** New workflow from this task, offered on a To Do card that is in no workflow. */
   onNewWorkflow?: () => void;
   /**
-   * Flip the task's column automations switch. Passed for every task outside a
-   * workflow (`automationsSwitchRefusal` is null), whatever column or state it
-   * is in; a workflow task's host leaves it out, since its Pause holds it.
+   * Pause or resume the task's automations. Every host passes it for every
+   * task, whatever column or state it is in. On a workflow task it is the
+   * task's own hold: the rest of its workflow keeps running. The workflow's
+   * own Pause stays on the Workflows header, since this menu acts on one task.
    */
   onToggleAutomations?: () => void;
   /**
@@ -218,7 +219,7 @@ export function TaskContextMenu({
           {task.automations_disabled
             ? <Columns3Cog size={14} className="text-fg-faint" />
             : <Ban size={14} className="text-fg-faint" />}
-          {task.automations_disabled ? <Trans>Enable automations</Trans> : <Trans>Disable automations</Trans>}
+          {task.automations_disabled ? <Trans>Resume automations</Trans> : <Trans>Pause automations</Trans>}
         </button>
       )}
 

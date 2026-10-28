@@ -97,21 +97,9 @@ msgstr ""
 msgid "Couldn't send task to backlog"
 msgstr ""
 
-#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
-msgid "Couldn't turn off automations"
-msgstr ""
-
-#: src/renderer/components/monitor/MonitorRowContextMenu.tsx
-msgid "Couldn't turn on automations"
-msgstr ""
-
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgctxt "Default value"
 msgid "Default"
-msgstr ""
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "Disabled"
 msgstr ""
 
 #: src/renderer/components/monitor/MonitorTable.tsx
@@ -120,10 +108,6 @@ msgstr ""
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Effort"
-msgstr ""
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "Enabled"
 msgstr ""
 
 #: src/renderer/components/monitor/LazyMonitor.tsx
@@ -203,6 +187,11 @@ msgstr ""
 msgid "Oldest"
 msgstr ""
 
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "automations state"
+msgid "On"
+msgstr ""
+
 #: src/renderer/components/monitor/MonitorCard.tsx
 msgid "Open {taskTitle}"
 msgstr ""
@@ -216,6 +205,11 @@ msgstr ""
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgctxt "Agent status"
+msgid "Paused"
+msgstr ""
+
+#: src/renderer/components/monitor/MonitorTable.tsx
+msgctxt "automations state"
 msgid "Paused"
 msgstr ""
 

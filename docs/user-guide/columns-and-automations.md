@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Columns and automations
-description: "Editing a column in the Column Manager (agent, model, effort and permission overrides, Plan approval, After Plan Mode, Isolated session) and its automations: the five types, the enter, turn end and exit triggers, Condition and Frequency, Run again, and Disable automations per task."
+description: "Editing a column in the Column Manager (agent, model, effort and permission overrides, Plan approval, After Plan Mode, Isolated session) and its automations: the five types, the enter, turn end and exit triggers, Condition and Frequency, Run again, and Pause automations per task."
 tags: [columns, automations, triggers, plan-mode]
 sources:
   - resource: src/renderer/components/dialogs/board-manager/
@@ -145,18 +145,19 @@ in flight when Kangentic quit is marked interrupted the next time the project op
 
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 
-**Holding one task.** Right-click a card and choose **Disable automations** to keep the board from
-advancing it, for example while it waits on CI. While disabled, no automation runs for that task in
+**Holding one task.** Right-click a card and choose **Pause automations** to keep the board from
+advancing it, for example while it waits on CI. While paused, no automation runs for that task in
 any column, on enter, turn end or exit, and a drag into a column sends it no column message.
 Kangentic does not approve its plans either: in a column with **Plan approval** set to Automatic,
 the plan waits for you, and once you approve it the task moves on per **After Plan Mode** as usual.
 The column's agent settings, manual drags and **Run again** still work, and so does the task's own
-command. The card shows an **Automations disabled** strip across its top, and so does its card in
+command. The card shows an **Automations paused** strip across its top, and so does its card in
 the [Agent Monitor](agent-monitor.md#agent-monitor), whose list row and table mark it too. The run log records
-each skipped automation with "Automations are disabled for this task." Choose **Enable automations**
-to turn them back on; nothing that was skipped is replayed. Adding the task to a workflow enables
-them again. A task moved or restored out of Done keeps its automations disabled. A task in a
-workflow has no such row: pause the workflow instead.
+each skipped automation with "Automations are paused for this task." Choose **Resume automations**
+to turn them back on; nothing that was skipped is replayed. Adding the task to a workflow resumes
+them. A task moved or restored out of Done keeps its automations paused. On a task in a workflow
+the same row holds it out of its workflow while the rest runs (see
+[Workflows](workflows.md#workflows)).
 An agent can do the same for its own task with `kangentic_update_task`'s `automationsDisabled`.
 
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so

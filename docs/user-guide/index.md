@@ -14,8 +14,8 @@
 
 ## Automating the board
 
-* [Columns and automations](columns-and-automations.md) - Editing a column in the Column Manager (agent, model, effort and permission overrides, Plan approval, After Plan Mode, Isolated session) and its automations: the five types, the enter, turn end and exit triggers, Condition and Frequency, Run again, and Disable automations per task.
-* [Workflows](workflows.md) - How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, card strips and links, and why running workflow cards are locked.
+* [Columns and automations](columns-and-automations.md) - Editing a column in the Column Manager (agent, model, effort and permission overrides, Plan approval, After Plan Mode, Isolated session) and its automations: the five types, the enter, turn end and exit triggers, Condition and Frequency, Run again, and Pause automations per task.
+* [Workflows](workflows.md) - How linked tasks run on their own: the Workflows view (Mod+Shift+L) with its canvas and inspector, the workflow agent pane, planning and Start, blockers and per-task routes, Plan approval, how a task moves on, working one task by hand, card strips and links, and why running workflow cards are locked.
 
 ## Agents and sessions
 

@@ -10,13 +10,17 @@
  * - **create** writes the row, and only a real boolean counts. The mobile bridge
  *   hands raw wire params straight to the handler, so a truthy string must be
  *   refused rather than disable a task's automations.
- * - **update** writes the row, refuses `true` on a workflow task (its workflow's
- *   Pause is the control), and allows `false` there. A write that names only the
- *   switch is a real change, and never restarts the running session: the live
- *   settings hook (`onTaskSettingsChanged`) is for model and effort moves only.
- * - **find_task** and **get_current_task** say so when a task is held, and carry
- *   a strict boolean in `data`, so an agent reading its own task learns the
- *   board will not advance it.
+ * - **update** writes the row, on a workflow task too, where it is the task's own
+ *   hold out of its workflow. A write that names only the switch is a real
+ *   change, and never restarts the running session: the live settings hook
+ *   (`onTaskSettingsChanged`) is for model and effort moves only. For a workflow
+ *   task the handler also hands the row before and after to the hold module
+ *   (`applyAutomationsHoldChange`, pinned in workflow-task-hold.test.ts and
+ *   mocked here); a missing workflow runtime context costs a warning, never the
+ *   write.
+ * - **find_task** and **get_current_task** say "automations paused" when a task is
+ *   held, and carry a strict boolean in `data`, so an agent reading its own task
+ *   learns the board will not advance it.
  *
  * The runMode row of the settings hook test is the control for "never calls
  * onTaskSettingsChanged": the same real handler does call it for a run mode
@@ -28,19 +32,23 @@ import { runProjectMigrations } from '../../src/main/db/migrations/project-schem
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { openTestDatabase } from './helpers/test-database';
-import { AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL as AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR } from '../../src/shared/automation-manifest';
-import { englishText } from '../../src/shared/i18n/english';
-
-/** The English the engine stores and an agent reads; the constant is a descriptor. */
-const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = englishText(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL_DESCRIPTOR);
 import type { Task, TaskWorkflowMembership } from '../../src/shared/types';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 // Transitively imported by task-commands.ts; the PR linker is not under test.
 vi.mock('../../src/main/pr/pr-linking', () => ({ linkPRForTask: vi.fn() }));
 
+// The hold module is pinned in workflow-task-hold.test.ts. Called lazily, so the
+// const below is initialized by the time the handler runs.
+const mockApplyAutomationsHoldChange = vi.fn();
+vi.mock('../../src/main/workflows/workflow-task-hold', () => ({
+  applyAutomationsHoldChange: (...args: unknown[]) => mockApplyAutomationsHoldChange(...args),
+}));
+
 import { handleCreateTask, handleUpdateTask } from '../../src/main/agent/commands/task-commands';
 import { handleFindTask, handleGetCurrentTask } from '../../src/main/agent/commands/search-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
+import { setWorkflowRuntimeContext } from '../../src/main/workflows/workflow-runtime';
 
 const PARAM_ERROR = 'automationsDisabled must be true or false.';
 
@@ -69,7 +77,9 @@ describe('automationsDisabled in the MCP command handlers', () => {
     onTaskCreated = vi.fn();
     onTaskUpdated = vi.fn();
     onTaskSettingsChanged = vi.fn();
+    mockApplyAutomationsHoldChange.mockReset();
     context = {
+      projectId: 'proj-1',
       getProjectDb: () => database,
       getProjectPath: () => '/mock/project',
       getBoardProfiles: () => [],
@@ -88,6 +98,7 @@ describe('automationsDisabled in the MCP command handlers', () => {
   });
 
   afterEach(() => {
+    setWorkflowRuntimeContext(null);
     database.close();
   });
 
@@ -143,8 +154,14 @@ describe('automationsDisabled in the MCP command handlers', () => {
     });
   }
 
-  function workflowTask(): Task {
-    return tasks.create({ title: 'Workflow step', description: '', swimlane_id: columnAId, workflow: membership() });
+  function workflowTask(options: { disabled?: boolean } = {}): Task {
+    return tasks.create({
+      title: 'Workflow step',
+      description: '',
+      swimlane_id: columnAId,
+      workflow: membership(),
+      ...(options.disabled ? { automations_disabled: true } : {}),
+    });
   }
 
   describe('create', () => {
@@ -154,7 +171,7 @@ describe('automationsDisabled in the MCP command handlers', () => {
       expect(result.success).toBe(true);
       const created = result.data as { taskId: string; automationsDisabled: boolean };
       expect(created.automationsDisabled).toBe(true);
-      expect(result.message).toContain('Its column automations are disabled.');
+      expect(result.message).toContain('Its column automations are paused.');
       expect(storedValue(created.taskId)).toBe(1);
       expect(tasks.getById(created.taskId)!.automations_disabled).toBe(true);
       expect(onTaskCreated).toHaveBeenCalledWith(expect.objectContaining({ id: created.taskId, automations_disabled: true }), expect.any(String), expect.any(String));
@@ -170,7 +187,7 @@ describe('automationsDisabled in the MCP command handlers', () => {
       expect(result.success).toBe(true);
       const created = result.data as { taskId: string; automationsDisabled: boolean };
       expect(created.automationsDisabled).toBe(false);
-      expect(result.message).not.toContain('automations are disabled');
+      expect(result.message).not.toContain('automations are paused');
       expect(storedValue(created.taskId)).toBe(0);
     });
 
@@ -260,22 +277,40 @@ describe('automationsDisabled in the MCP command handlers', () => {
     });
 
     describe('on a workflow task', () => {
-      it('refuses disabling it with the workflow reason, and writes nothing', async () => {
-        const task = workflowTask();
+      // The runtime context the hold module acts through. A sentinel: the module
+      // itself is mocked, so only identity matters here.
+      const runtimeContext = { sentinel: 'workflow runtime context' } as unknown as IpcContext;
 
-        const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: true, title: 'Should not apply' }), context);
-
-        expect(result.success).toBe(false);
-        expect(result.error).toContain(AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL);
-        expect(result.error).toContain('The task was not updated.');
-        expect(storedValue(task.id)).toBe(0);
-        // The refusal comes before any write, so the other fields are not applied either.
-        expect(tasks.getById(task.id)!.title).toBe('Workflow step');
-        expect(onTaskUpdated).not.toHaveBeenCalled();
+      beforeEach(() => {
+        setWorkflowRuntimeContext(runtimeContext);
       });
 
-      it('allows enabling it, since enabled is the only state a workflow task can be in', async () => {
+      it('pauses it, its own hold, and writes the row', async () => {
         const task = workflowTask();
+
+        const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: true }), context);
+
+        expect(result.success).toBe(true);
+        expect((result.data as { automationsDisabled: boolean }).automationsDisabled).toBe(true);
+        expect(storedValue(task.id)).toBe(1);
+        expect(tasks.getById(task.id)!.workflow_id).toBe('workflow-1');
+        expect(onTaskUpdated).toHaveBeenCalledOnce();
+        expect(onTaskUpdated).toHaveBeenCalledWith(expect.objectContaining({ id: task.id, automations_disabled: true }));
+      });
+
+      it('applies the other fields of the same write too', async () => {
+        const task = workflowTask();
+
+        const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: true, title: 'Renamed by hand' }), context);
+
+        expect(result.success).toBe(true);
+        expect(storedValue(task.id)).toBe(1);
+        expect(tasks.getById(task.id)!.title).toBe('Renamed by hand');
+      });
+
+      it('resumes a held one', async () => {
+        const task = workflowTask({ disabled: true });
+        expect(storedValue(task.id)).toBe(1);
 
         const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: false }), context);
 
@@ -285,7 +320,75 @@ describe('automationsDisabled in the MCP command handlers', () => {
         expect(onTaskUpdated).toHaveBeenCalledOnce();
       });
 
-      it('disables the same task once it has left the workflow (the control)', async () => {
+      it('hands the row before and the row after to the hold module, with the runtime context and the project', async () => {
+        const task = workflowTask();
+
+        handleUpdateTask(updateParams(task.id, { automationsDisabled: true }), context);
+
+        expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
+        const [passedContext, projectId, before, after] = mockApplyAutomationsHoldChange.mock.calls[0];
+        expect(passedContext).toBe(runtimeContext);
+        expect(projectId).toBe('proj-1');
+        expect(before).toMatchObject({ id: task.id, workflow_id: 'workflow-1', automations_disabled: false });
+        expect(after).toMatchObject({ id: task.id, workflow_id: 'workflow-1', automations_disabled: true });
+      });
+
+      it('hands a release over the same way, the held row before and the resumed row after', async () => {
+        const task = workflowTask({ disabled: true });
+
+        handleUpdateTask(updateParams(task.id, { automationsDisabled: false }), context);
+
+        expect(mockApplyAutomationsHoldChange).toHaveBeenCalledTimes(1);
+        const [, , before, after] = mockApplyAutomationsHoldChange.mock.calls[0];
+        expect(before).toMatchObject({ automations_disabled: true });
+        expect(after).toMatchObject({ automations_disabled: false });
+      });
+
+      it('applies no hold for a write that names other fields only', async () => {
+        const task = workflowTask({ disabled: true });
+
+        const result = handleUpdateTask(updateParams(task.id, { title: 'Renamed' }), context);
+
+        expect(result.success).toBe(true);
+        expect(mockApplyAutomationsHoldChange).not.toHaveBeenCalled();
+      });
+
+      it('keeps the write and succeeds when the workflow runtime context is not set, with a warning', async () => {
+        setWorkflowRuntimeContext(null);
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          const task = workflowTask();
+
+          const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: true }), context);
+
+          expect(result.success).toBe(true);
+          expect(storedValue(task.id)).toBe(1);
+          expect(mockApplyAutomationsHoldChange).not.toHaveBeenCalled();
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not apply the automations switch'), expect.any(Error));
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('keeps the write and succeeds when the hold module throws, with a warning', async () => {
+        mockApplyAutomationsHoldChange.mockImplementation(() => {
+          throw new Error('recovery store unavailable');
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        try {
+          const task = workflowTask();
+
+          const result = handleUpdateTask(updateParams(task.id, { automationsDisabled: true }), context);
+
+          expect(result.success).toBe(true);
+          expect(storedValue(task.id)).toBe(1);
+          expect(warn).toHaveBeenCalled();
+        } finally {
+          warn.mockRestore();
+        }
+      });
+
+      it('pauses the same task after it has left the workflow, and applies no hold (an ordinary task)', async () => {
         const task = workflowTask();
         tasks.setWorkflowMembership(task.id, null);
 
@@ -293,6 +396,8 @@ describe('automationsDisabled in the MCP command handlers', () => {
 
         expect(result.success).toBe(true);
         expect(storedValue(task.id)).toBe(1);
+        // No workflow, so there is nothing for the hold module to do.
+        expect(mockApplyAutomationsHoldChange).not.toHaveBeenCalled();
       });
     });
 
@@ -331,16 +436,16 @@ describe('automationsDisabled in the MCP command handlers', () => {
   });
 
   describe('find_task', () => {
-    it('says "automations disabled" on the task line of a held task, and carries a true boolean in data', async () => {
+    it('says "automations paused" on the task line of a held task, and carries a true boolean in data', async () => {
       const task = ordinaryTask({ disabled: true });
 
       const result = await handleFindTask({ id: task.id }, context);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('automations disabled');
+      expect(result.message).toContain('automations paused');
       // On the task's own line, ahead of the trailing "#N, id:" that ends it.
       const taskLine = result.message!.split('\n').find((line) => line.includes(task.id))!;
-      expect(taskLine).toContain(' | automations disabled | ');
+      expect(taskLine).toContain(' | automations paused | ');
       const matched = (result.data as { tasks: Array<{ automationsDisabled: unknown }> }).tasks;
       expect(matched).toHaveLength(1);
       expect(matched[0].automationsDisabled).toBe(true);
@@ -352,7 +457,7 @@ describe('automationsDisabled in the MCP command handlers', () => {
       const result = await handleFindTask({ id: task.id }, context);
 
       expect(result.success).toBe(true);
-      expect(result.message).not.toContain('automations disabled');
+      expect(result.message).not.toContain('automations paused');
       const matched = (result.data as { tasks: Array<{ automationsDisabled: unknown }> }).tasks;
       expect(matched[0].automationsDisabled).toBe(false);
     });
@@ -364,8 +469,8 @@ describe('automationsDisabled in the MCP command handlers', () => {
       const result = await handleFindTask({ title: 'wait on' }, context);
 
       const lines = result.message!.split('\n');
-      expect(lines.find((line) => line.includes(held.id))).toContain('automations disabled');
-      expect(lines.find((line) => line.includes(free.id))).not.toContain('automations disabled');
+      expect(lines.find((line) => line.includes(held.id))).toContain('automations paused');
+      expect(lines.find((line) => line.includes(free.id))).not.toContain('automations paused');
     });
 
     it('reports the switch for a completed (archived) task too', async () => {
@@ -379,18 +484,18 @@ describe('automationsDisabled in the MCP command handlers', () => {
       const matched = (result.data as { tasks: Array<{ automationsDisabled: unknown; status: string }> }).tasks;
       expect(matched[0].status).toBe('completed');
       expect(matched[0].automationsDisabled).toBe(true);
-      expect(result.message).toContain('automations disabled');
+      expect(result.message).toContain('automations paused');
     });
   });
 
   describe('get_current_task', () => {
-    it('says "automations disabled" in the message and data of a held task', async () => {
+    it('says "automations paused" in the message and data of a held task', async () => {
       const task = ordinaryTask({ disabled: true, customBranchName: 'task/wait-on-ci' });
 
       const result = await handleGetCurrentTask({ branch: 'task/wait-on-ci' }, context);
 
       expect(result.success).toBe(true);
-      expect(result.message).toContain('automations disabled');
+      expect(result.message).toContain('automations paused');
       const data = result.data as { id: string; automationsDisabled: unknown };
       expect(data.id).toBe(task.id);
       expect(data.automationsDisabled).toBe(true);
@@ -401,7 +506,7 @@ describe('automationsDisabled in the MCP command handlers', () => {
 
       const result = await handleGetCurrentTask({ branch: 'task/wait-on-ci' }, context);
 
-      expect(result.message).not.toContain('automations disabled');
+      expect(result.message).not.toContain('automations paused');
       expect((result.data as { automationsDisabled: unknown }).automationsDisabled).toBe(false);
     });
   });

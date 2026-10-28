@@ -30,9 +30,9 @@ export interface PlanApprovalDecisionInput {
  * - otherwise the column's own, and only while the column runs in plan mode;
  *   a column of any other mode is Manual.
  * Automatic approves only where the session's agent can approve plans, and
- * never for a task whose automations are disabled: an approval would let the
- * After Plan Mode move advance a task the user is holding. A workflow task
- * never carries that switch, so its value is not affected.
+ * never for a task whose automations are paused: an approval would let the
+ * After Plan Mode move advance a task the user is holding. That holds for a
+ * workflow task too, whose own value then waits for the user.
  *
  * The mode is the destination's, the one the session would spawn with there:
  * a plan approval keeps the live session, so whatever `setMode` sets is what

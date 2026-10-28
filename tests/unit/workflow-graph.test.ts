@@ -3,7 +3,7 @@
  * cards can take a link, and the refusal a link would get.
  */
 import { describe, it, expect } from 'vitest';
-import type { WorkflowDetail, WorkflowViewTask, WorkflowTaskPlace } from '../../src/shared/types';
+import type { Task, WorkflowDetail, WorkflowViewTask, WorkflowTaskPlace } from '../../src/shared/types';
 import type { WorkflowRouteStep } from '../../src/shared/types';
 import {
   DONE_COLOR_FALLBACK,
@@ -97,12 +97,59 @@ describe('workflow rules in the view', () => {
       { state: 'paused', links: [['b', 'e']], waitingFor: ['#413', 'a task'] },
     ];
     for (const { state, links, waitingFor } of cases) {
-      const board: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state, waitingFor, humanGateTargetId: null, hasLinks: true };
-      expect(waitingOf(detail(state, withTasks, links), waiting)).toEqual(boardWaiting(board));
+      const board: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state, waitingFor, humanGateTargetId: null, hasLinks: true, stallReason: null };
+      expect(waitingOf(detail(state, withTasks, links), waiting)).toEqual(boardWaiting(board, { automations_disabled: false }));
     }
     const single = viewTask('f', 417, 'todo');
-    const live: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running', waitingFor: ['#413'], humanGateTargetId: null, hasLinks: true };
-    expect(waitingOf(detail('running', [...tasks, single], [['b', 'f']]), single)).toEqual(boardWaiting(live));
+    const live: BoardWorkflow = { workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running', waitingFor: ['#413'], humanGateTargetId: null, hasLinks: true, stallReason: null };
+    expect(waitingOf(detail('running', [...tasks, single], [['b', 'f']]), single)).toEqual(boardWaiting(live, { automations_disabled: false }));
+  });
+
+  describe('a task whose own automations are paused', () => {
+    // The row the canvas card reads its hold from: `viewTask.task`. A planned
+    // task has no row, so it never reads held.
+    const taskRow = (automations_disabled: boolean) => ({ automations_disabled }) as Task;
+    const withRow = (key: string, displayId: number, automationsDisabled: boolean | null): WorkflowViewTask => ({
+      ...viewTask(key, displayId, 'todo'),
+      task: automationsDisabled === null ? null : taskRow(automationsDisabled),
+    });
+
+    it('reads Paused in a running workflow with nothing it waits for, where the same task not held reads Queued', () => {
+      const free = withRow('f', 417, false);
+      const held = withRow('h', 418, true);
+      expect(waitingOf(detail('running', [free], []), free)).toEqual({ label: 'Queued...', paused: false });
+      expect(waitingOf(detail('running', [held], []), held)).toEqual({ label: 'Paused', paused: true });
+    });
+
+    it('names what it waits for before it says Paused', () => {
+      const held = withRow('h', 418, true);
+      const blocker = viewTask('b', 413, 'working');
+      expect(waitingOf(detail('running', [blocker, held], [['b', 'h']]), held)).toEqual({ label: 'Blocked by #413...', paused: false });
+    });
+
+    it('reads a planned task, which has no row to hold, as Queued', () => {
+      const planned = withRow('p', 419, null);
+      expect(waitingOf(detail('running', [planned], []), planned)).toEqual({ label: 'Queued...', paused: false });
+    });
+
+    it('says nothing in a draft workflow, and nothing for a task that has started', () => {
+      const held = withRow('h', 418, true);
+      expect(waitingOf(detail('draft', [held], []), held)).toBeNull();
+      const started = { ...viewTask('w', 420, 'working'), task: taskRow(true) };
+      expect(waitingOf(detail('running', [started], []), started)).toBeNull();
+    });
+
+    it('words the wait the same on its canvas card as on its board card', () => {
+      const held = withRow('h', 418, true);
+      const blocker = viewTask('b', 413, 'working');
+      const board: BoardWorkflow = {
+        workflowId: 'w', homeProjectId: 'p', title: 'Usage budgets', colorSlot: 1, state: 'running',
+        waitingFor: [], humanGateTargetId: null, hasLinks: true, stallReason: null,
+      };
+      expect(waitingOf(detail('running', [held], []), held)).toEqual(boardWaiting(board, { automations_disabled: true }));
+      expect(waitingOf(detail('running', [blocker, held], [['b', 'h']]), held))
+        .toEqual(boardWaiting({ ...board, waitingFor: ['#413'] }, { automations_disabled: true }));
+    });
   });
 
   it('lets only a task that has not started wait, and only an unfinished one block', () => {

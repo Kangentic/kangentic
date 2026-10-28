@@ -1,6 +1,7 @@
 import type { Swimlane, Task } from '../../shared/types';
 import { DEFAULT_AGENT } from '../../shared/types';
 import { automationAgentChoice } from '../../shared/answer-agent';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { nextOnRoute } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
@@ -71,6 +72,7 @@ export function checkWorkflowMove(
     toSwimlaneId: args.toSwimlaneId,
     toRole: toLane?.role ?? null,
     moverIsTaskAgent: args.moverIsTaskAgent,
+    taskHeld: !canTaskRunAutomations(task).ok,
     humanGateTargetId,
   });
 }
@@ -100,6 +102,7 @@ export function checkWorkflowMoveForAgent(
       toSwimlaneId,
       toRole: toLane?.role ?? null,
       moverIsTaskAgent,
+      taskHeld: !canTaskRunAutomations(task).ok,
       humanGateTargetId: null,
     });
   } catch {

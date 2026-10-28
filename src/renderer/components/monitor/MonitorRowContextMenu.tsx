@@ -31,13 +31,11 @@ import { SendToBacklogDialog } from '../board/SendToBacklogDialog';
 import { useSessionStore } from '../../stores/session-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useToastStore } from '../../stores/toast-store';
-import { useBoardStore } from '../../stores/board-store';
-import { useProjectStore } from '../../stores/project-store';
 import { useConfigStore } from '../../stores/config-store';
 import { requestMonitorDetail } from './MonitorDetailLayer';
 import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 import { sendToBacklogAsksFirst } from '../../utils/send-to-backlog-confirm';
-import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
+import { toggleTaskAutomations } from '../../utils/task-automations';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 import { useTaskDisplayKind } from '../../utils/task-progress';
 import { runSessionToggle, sessionToggleRowFor } from '../../utils/session-toggle';
@@ -223,23 +221,13 @@ export function MonitorRowContextMenu({
           }).finally(() => resyncBoardAfterMonitorWrite(row.projectId));
         },
       } : undefined}
-      onToggleAutomations={automationsSwitchRefusal(resolved.task) === null ? () => {
-        const disable = !resolved.task.automations_disabled;
-        const input = { id: row.taskId, automations_disabled: disable };
-        const failureTitle = disable ? t`Couldn't turn off automations` : t`Couldn't turn on automations`;
-        // A row of the open project writes through the board store, so the card
-        // under this overlay gains or loses its strip without a board reload. A
-        // row of another project writes to the IPC, and the resync drops that
-        // project's warm snapshot. In the detached monitor no project is open,
-        // so every row takes the IPC, and main tells the main window.
-        if (row.projectId === useProjectStore.getState().currentProject?.id) {
-          void useBoardStore.getState().updateTask(input)
-            .then(refreshRows)
-            .catch((error) => reportActionFailure(failureTitle, error));
-          return;
-        }
-        runWrite(failureTitle, window.electronAPI.tasks.update(input, row.projectId));
-      } : undefined}
+      // Stamped with the row's own project (`toggleTaskAutomations` says where it
+      // writes), then the rows catch up.
+      onToggleAutomations={() => {
+        void toggleTaskAutomations(resolved.task, row.projectId).then((landed) => {
+          if (landed) refreshRows();
+        });
+      }}
       // Opens the detail HERE, in edit mode - the same destination a plain row
       // click uses, so the menu never teleports the user somewhere else.
       onEdit={() => requestMonitorDetail(row.projectId, row.taskId, { initialEdit: true })}

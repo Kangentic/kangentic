@@ -1,4 +1,5 @@
 import type { AutomationRunStatus, Swimlane, Task } from '../../shared/types';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { nextOnRoute } from '../../shared/workflow-route';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { conditionCheckDeps } from '../ipc/helpers/agent-spawn';
@@ -81,9 +82,13 @@ export interface WorkflowStepResult {
   firstThisVisit?: boolean;
 }
 
-/** Does this task's turn end get a workflow step check? Cheap: one row read. */
-export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id'>, projectId: string): boolean {
-  if (!task.workflow_id) return false;
+/**
+ * Does this task's turn end get a workflow step check? Cheap: one row read. Not
+ * while the task's own automations are paused: a person is working it by hand,
+ * so its workflow neither judges, nudges nor moves it, and its recovery stops.
+ */
+export function workflowStepApplies(task: Pick<Task, 'workflow_id' | 'workflow_project_id' | 'automations_disabled'>, projectId: string): boolean {
+  if (!task.workflow_id || !canTaskRunAutomations(task).ok) return false;
   try {
     return workflowOfTask(task, projectId)?.state === 'running';
   } catch {

@@ -137,9 +137,10 @@ Right-click any task card on the board to open a context menu with:
   outside To Do. It does what the task window's header toggle does, with no window to open. A
   paused task in Done or an archived one keeps a disabled Resume row, with the reason as its
   tooltip; the header shows no toggle for it
-- **Disable automations** / **Enable automations** - on any task outside a workflow, whatever its
-  column or state (an archived task's menu does not offer it): holds the task out of every column's automations (see
-  [Automations](columns-and-automations.md#automations))
+- **Pause automations** / **Resume automations** - on any task, whatever its column or state (an
+  archived task's menu does not offer it): holds the task out of every column's automations (see
+  [Automations](columns-and-automations.md#automations)). On a workflow task it also holds the task
+  out of its workflow while the rest runs (see [Workflows](workflows.md#workflows))
 - **Open workflow** - on a task in a workflow (see [Workflows](workflows.md#workflows))
 - **New workflow** - on a To Do task in no workflow: a new workflow with this task as its brief
 - **Move to** - submenu listing all other columns as move targets

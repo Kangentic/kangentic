@@ -535,7 +535,7 @@ export function useBoardDragDrop({ swimlanes, tasks, archivedTasks }: UseBoardDr
           ?? state.archivedTasks.find((candidate) => candidate.id === id);
         if (task) {
           const workflow = task.workflow_id ? boardWorkflowNow(task) : null;
-          lockedLaneRef.current = workflow && isLockedOnBoard(workflow) ? task.swimlane_id : null;
+          lockedLaneRef.current = workflow && isLockedOnBoard(workflow, task) ? task.swimlane_id : null;
           setActiveTask(task);
           dragOriginRef.current = task.swimlane_id;
           const sourceElement = document.querySelector(`[data-task-id="${id}"]`);

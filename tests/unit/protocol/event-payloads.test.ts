@@ -81,6 +81,7 @@ const workflowFixture: JsonValue = {
   waiting_for: ['#413'],
   lock_reason: '#7 is locked while Usage budgets runs.',
   gate_target_id: null,
+  automations_pausable: true,
 };
 
 describe('parseTranscriptEntriesWire', () => {
@@ -337,8 +338,27 @@ describe('board row guards', () => {
     const sparse = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: { id: 'wf-1', title: 'Usage budgets', project_id: 'p-1', route: ['lane-2', 4], waiting_for: 'x' } };
     expect(parseBoardTaskWire(sparse).workflow).toEqual({
       id: 'wf-1', title: 'Usage budgets', project_id: 'p-1', state: 'running', color_slot: 1,
-      route: ['lane-2'], waiting_for: [], lock_reason: null, gate_target_id: null,
+      route: ['lane-2'], waiting_for: [], lock_reason: null, gate_target_id: null, automations_pausable: null,
     });
+  });
+
+  // Only a real boolean counts: anything else reads null, which hides the phone's
+  // control on a workflow task (a desktop that refuses the hold sends no field).
+  it.each([
+    ['a true boolean keeps true', true, true],
+    ['a false boolean keeps false', false, false],
+    ['a string reads null', 'true', null],
+    ['a number reads null', 1, null],
+    ['a null reads null', null, null],
+  ])('automations_pausable: %s', (_label, sent, parsed) => {
+    const withFlag = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: { ...(workflowFixture as Record<string, JsonValue>), automations_pausable: sent as JsonValue } };
+    expect(parseBoardTaskWire(withFlag).workflow?.automations_pausable).toBe(parsed);
+  });
+
+  it('reads a workflow fact from a desktop that predates automations_pausable as null, so the control stays hidden', () => {
+    const { automations_pausable: _omitted, ...oldFact } = workflowFixture as Record<string, JsonValue>;
+    const withOldFact = { ...(boardTaskFixture as Record<string, JsonValue>), workflow: oldFact };
+    expect(parseBoardTaskWire(withOldFact).workflow?.automations_pausable).toBeNull();
   });
 
   it('passes through a present pr_merge_readiness value', () => {
