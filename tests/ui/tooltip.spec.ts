@@ -372,7 +372,7 @@ test('the rich shape draws a header band over its body', async () => {
     await expect(tip.locator('[data-tooltip-part="header"]')).toHaveText('Wildcard examples');
     await expect(tip.locator('[data-tooltip-part="body"] code')).toHaveCount(4);
     await expect(info).toHaveAccessibleName('Wildcard examples');
-    await expect(info).toHaveAccessibleDescription(/^Wildcard examples\. Ready for review: exactly this line/);
+    await expect(info).toHaveAccessibleDescription(/^Wildcard examples\. Ready for review: Exactly this line/);
   } finally {
     await browser.close();
   }
