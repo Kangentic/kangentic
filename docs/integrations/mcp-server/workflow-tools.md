@@ -22,7 +22,10 @@ end, or no Automation agent set up is a human gate: a person drags the card on.
 While a workflow runs its tasks are locked. Only the workflow, its column automations, plan exit
 and a task's OWN agent move them; a drag, the phone or another agent is refused with
 "#414 is locked while Usage budgets runs." Nothing moves a workflow task into To Do. Paused, its
-cards move by hand except into To Do.
+cards move by hand except into To Do. So does a task whose automations are paused
+(`automationsDisabled`, see [Disabling automations for one
+task](../../architecture/automations/triggers.md#disabling-automations-for-one-task)): it is not
+locked, and a hand may move it to any column but To Do.
 
 A workflow lives in the project it was made in (pass `project` to reach another). Its tasks can sit
 on other registered projects' boards: name the project on the planned task. Of these tools the

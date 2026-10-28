@@ -241,8 +241,8 @@ export async function buildMonitorSnapshot(context: IpcContext, sources: Monitor
       displayId: task?.display_id ?? null,
       columnName: task ? project.swimlaneNames.get(task.swimlane_id) ?? '' : '',
       commandTerminalBranch: managed.commandTerminalBranch,
-      // The shared gate, so the card and the engine never disagree. A workflow
-      // task never carries the flag: joining a workflow clears it.
+      // The shared gate, so the card and the engine never disagree. On a
+      // workflow task it is also the task's own hold out of its workflow.
       automationsDisabled: task ? !canTaskRunAutomations(task).ok : false,
       workflow: task?.workflow_id
         ? readWorkflow(task.workflow_project_id ?? managed.projectId, task.workflow_id)

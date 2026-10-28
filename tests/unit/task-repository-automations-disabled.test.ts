@@ -4,8 +4,10 @@
  *
  * The switch is the user's hold on a task: no On task enter, On agent turn end
  * or On task exit row runs for it. It clears in exactly one situation: the task
- * joins a workflow. A workflow task never carries the switch, since the
- * workflow's Pause is its control: create, update and join all write it false.
+ * joins a workflow. A task already in a workflow may carry it: there it is the
+ * task's own hold out of the workflow (the workflow neither judges, moves nor
+ * starts it), so create and update store it as written on a workflow task, and
+ * only joining clears it, since a workflow's run starts fresh.
  *
  * Every move keeps it, by any mover, a move out of Done and a restore from the
  * archive included. Finishing a task is not the user changing their mind, so a
@@ -209,8 +211,8 @@ describe('the automations switch across moves, unarchive and workflow membership
     });
   });
 
-  describe('a workflow task never carries it', () => {
-    it('create with a workflow stores false even when the input says true', () => {
+  describe('a workflow task may carry it, as its own hold', () => {
+    it('create with a workflow stores true when the input says true', () => {
       const created = tasks.create({
         title: 'Workflow step',
         description: '',
@@ -219,10 +221,17 @@ describe('the automations switch across moves, unarchive and workflow membership
         workflow: membership,
       });
 
-      expect(created.automations_disabled).toBe(false);
+      expect(created.automations_disabled).toBe(true);
       expect(created.workflow_id).toBe('workflow-1');
+      expect(storedValue(created.id)).toBe(1);
+      expect(tasks.getById(created.id)!.automations_disabled).toBe(true);
+    });
+
+    it('create with a workflow stores false when the input says nothing', () => {
+      const created = tasks.create({ title: 'Workflow step', description: '', swimlane_id: columnAId, workflow: membership });
+
+      expect(created.automations_disabled).toBe(false);
       expect(storedValue(created.id)).toBe(0);
-      expect(tasks.getById(created.id)!.automations_disabled).toBe(false);
     });
 
     it('create without a workflow still honors true (the control)', () => {
@@ -237,14 +246,31 @@ describe('the automations switch across moves, unarchive and workflow membership
       expect(storedValue(created.id)).toBe(1);
     });
 
-    it('update to true on a workflow task stores false, in the returned row and in SQLite', () => {
+    it('update to true on a workflow task stores true, in the returned row and in SQLite', () => {
       const created = tasks.create({ title: 'Workflow step', description: '', swimlane_id: columnAId, workflow: membership });
 
       const updated = tasks.update({ id: created.id, automations_disabled: true });
 
+      expect(updated.automations_disabled).toBe(true);
+      expect(updated.workflow_id).toBe('workflow-1');
+      expect(storedValue(created.id)).toBe(1);
+      expect(tasks.getById(created.id)!.automations_disabled).toBe(true);
+    });
+
+    it('update to false on a held workflow task releases it, in the returned row and in SQLite', () => {
+      const created = tasks.create({
+        title: 'Workflow step',
+        description: '',
+        swimlane_id: columnAId,
+        automations_disabled: true,
+        workflow: membership,
+      });
+
+      const updated = tasks.update({ id: created.id, automations_disabled: false });
+
       expect(updated.automations_disabled).toBe(false);
       expect(storedValue(created.id)).toBe(0);
-      expect(tasks.getById(created.id)!.automations_disabled).toBe(false);
+      expect(tasks.getById(created.id)!.workflow_id).toBe('workflow-1');
     });
 
     it('update to true on an ordinary task stores true (the control)', () => {
@@ -256,7 +282,7 @@ describe('the automations switch across moves, unarchive and workflow membership
       expect(storedValue(created.id)).toBe(1);
     });
 
-    it('an unrelated update keeps a workflow task false', () => {
+    it('an unrelated update keeps a workflow task as it was: false when it was not held', () => {
       const created = tasks.create({ title: 'Workflow step', description: '', swimlane_id: columnAId, workflow: membership });
 
       const renamed = tasks.update({ id: created.id, title: 'Workflow step, renamed' });
@@ -264,6 +290,40 @@ describe('the automations switch across moves, unarchive and workflow membership
       expect(renamed.automations_disabled).toBe(false);
       expect(storedValue(created.id)).toBe(0);
     });
+
+    it('an unrelated update keeps a held workflow task held', () => {
+      const created = tasks.create({
+        title: 'Workflow step',
+        description: '',
+        swimlane_id: columnAId,
+        automations_disabled: true,
+        workflow: membership,
+      });
+
+      const renamed = tasks.update({ id: created.id, title: 'Workflow step, renamed' });
+
+      expect(renamed.automations_disabled).toBe(true);
+      expect(storedValue(created.id)).toBe(1);
+    });
+
+    it.each(['renderer', 'agent', 'workflow', 'auto-move'] as const)(
+      'a %s move keeps a held workflow task held, into an ordinary column and into Done',
+      (origin) => {
+        const created = tasks.create({
+          title: 'Workflow step',
+          description: '',
+          swimlane_id: columnAId,
+          automations_disabled: true,
+          workflow: membership,
+        });
+
+        moveTo(created.id, columnBId, origin);
+        expect(storedValue(created.id)).toBe(1);
+
+        moveTo(created.id, doneLaneId, origin);
+        expect(storedValue(created.id)).toBe(1);
+      },
+    );
 
     it('joining a workflow clears a disabled task, in SQLite and on the next read', () => {
       const taskId = disabledTask('Held task');

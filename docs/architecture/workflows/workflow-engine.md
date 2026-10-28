@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Workflow engine
-description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the hung-turn check, the move lock, and project-delete cleanup."
+description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
 tags: [workflows, engine, scheduling]
 sources:
   - resource: src/main/workflows/
@@ -32,6 +32,7 @@ src/main/workflows/
   workflow-recovery.ts       # a task whose step did not finish: re-judge, nudge, or one notice, on a schedule that ends
   workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
+  workflow-task-hold.ts      # one task's own hold (its automations switch): what putting it on and taking it off does
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
   workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
   workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
@@ -205,9 +206,10 @@ src/main/workflows/
   - It is armed by a turn end's verdict, by a resume whose reply was already judged (a restart; the
     engine's own boot pass runs before any session resumes, so it cannot see who is idle), by a
     commit to idle with nothing armed (a turn that failed with no Stop), and by sending a nudge.
-  - It is stopped by a move (`supersedeTurnEndWork`), the workflow's Pause, removing the task or
-    deleting the workflow, and a low-memory pause (which sends the notice). The idle sweep leaves a
-    task under recovery alone (`isUnderWorkflowRecovery`).
+  - It is stopped by a move (`supersedeTurnEndWork`), the workflow's Pause, pausing the task's own
+    automations (the same supersede), removing the task or deleting the workflow, and a low-memory
+    pause (which sends the notice). The idle sweep leaves a task under recovery alone
+    (`isUnderWorkflowRecovery`).
   - A start that keeps failing for 30 minutes sends the same stall notice through
     `announceWorkflowStall`, and its retries go on.
 - **A hung turn** (`workflow-hang-check.ts`) ends no turn, so recovery never sees it. Once a minute,
@@ -236,6 +238,31 @@ src/main/workflows/
     freeze none of the engine's own watchdogs fired, which looks like the host itself stopping.
 - **The lock** (`workflowMoveRefusal`) is asked by `handleTaskMove` before it aborts anything and
   again inside its Phase 1 lock, and by `kangentic_move_task` before it fires. The caller's task
-  comes from the MCP request's caller segment (`CommandContext.callerTaskId`).
+  comes from the MCP request's caller segment (`CommandContext.callerTaskId`). Every caller passes
+  `taskHeld`; a held card in a running workflow moves by hand as a paused workflow's card does.
+- **One task's own hold** is its automations switch (`tasks.automations_disabled`), asked only
+  through `canTaskRunAutomations`, so a person can work one task by hand while the rest runs.
+  - `workflowStepApplies` answers no for a held task, which stops the step check at a turn end
+    (and its post-check re-read, so a hold set during the paid check moves nothing), the resume
+    catch-up, `armWorkflowRecoveryOnIdle` and each recovery attempt. `isRunningWorkflowStepTask`
+    answers no too, so the hang check leaves its turns alone and the plain idle notice and the
+    phone's turn-complete push come back. `announceWorkflowStall` sends nothing for it and
+    `stallReader` shows no mark.
+  - The core's `readyTasks` skips a held task (`CoreTask.held`), and `startTask` re-checks it, so
+    a held task in To Do stays queued and what waits for it keeps waiting.
+  - The lock lets a person move its card to any column but To Do (`taskHeld`), and the board's
+    reads agree: `humanGateExit` names no gate for it, `isLockedOnBoard` and `sendAwayRefusal`
+    read the hold, and the phone's `lock_reason` is null. Backlog and Archive stay refused.
+  - Pause and Resume workflow skip a held task's session, so the agent a person is working keeps
+    running.
+  - A plan approved by hand still moves it on: the `plan-exit` auto-move is the person's act, and
+    Automatic approval is held as Manual (`readPlanApprovalDecision`).
+  - `applyAutomationsHoldChange` (`workflow-task-hold.ts`) runs after the two writes that flip it
+    (the task update IPC and `handleUpdateTask`, which the phone shares). Putting it on calls
+    `supersedeTurnEndWork`. Taking it off, in a working column, writes a recovery start (so a task
+    held while stalled comes back with a fresh schedule rather than a spent one) and, with a live
+    agent, schedules the resume catch-up (`setHoldReleaseCatchUp`), which judges a reply of this
+    visit. Point forward only: a reply from before a hand move and the enter rows that move
+    skipped are left alone, and a paused agent stays paused.
 - **MCP:** thirteen workflow tools in their own category (`workflow-tools.ts`,
   `workflow-commands.ts`). Only list, get, pause and resume reach the phone's board-tool path.

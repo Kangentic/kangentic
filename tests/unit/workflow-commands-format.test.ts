@@ -29,6 +29,7 @@ vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: 
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
+const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 const { formatWorkflow } = await import('../../src/main/workflows/workflow-format');
 
@@ -159,6 +160,63 @@ describe('formatWorkflow: which board a task is on', () => {
       expect(lineOf(text, 'Budgets API').endsWith(` Stalled: ${WHY}`)).toBe(true);
       expect(lineOf(text, 'Budgets UI')).not.toContain('Stalled');
       expect(lineOf(text, 'Budgets on the phone')).not.toContain('Stalled');
+    });
+  });
+
+  describe('a task whose automations are paused', () => {
+    const HELD_SENTENCE = ' Automations paused: the workflow does not judge, move or start it until they resume.';
+
+    it('says the workflow does not judge, move or start it, and says nothing for a task that is not held', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const readText = () => formatWorkflow(service.readWorkflow(context, 'home', workflow.id));
+      const api = taskTitled(service.readWorkflow(context, 'home', workflow.id), 'Budgets API');
+      // Nothing held yet: no line carries the sentence, so the one below can only gain it from the switch.
+      expect(readText()).not.toContain('Automations paused');
+
+      new TaskRepository(harness.dbs.get('home') as Database.Database).update({ id: api.taskId!, automations_disabled: true });
+      const text = readText();
+
+      expect(lineOf(text, 'Budgets API')).toContain(HELD_SENTENCE);
+      expect(lineOf(text, 'Budgets UI')).not.toContain('Automations paused');
+      expect(lineOf(text, 'Budgets on the phone')).not.toContain('Automations paused');
+    });
+
+    it('reads the held board\'s task too, and drops the sentence once the task resumes', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const phone = taskTitled(service.readWorkflow(context, 'home', workflow.id), 'Budgets on the phone');
+      const phoneTasks = new TaskRepository(harness.dbs.get('mobile') as Database.Database);
+
+      phoneTasks.update({ id: phone.taskId!, automations_disabled: true });
+      expect(lineOf(formatWorkflow(service.readWorkflow(context, 'home', workflow.id)), 'Budgets on the phone')).toContain(HELD_SENTENCE);
+
+      phoneTasks.update({ id: phone.taskId!, automations_disabled: false });
+      expect(lineOf(formatWorkflow(service.readWorkflow(context, 'home', workflow.id)), 'Budgets on the phone')).not.toContain('Automations paused');
+    });
+
+    it('prints the sentence before a stall, so a held task\'s line still ends with why it stalled', async () => {
+      const workflow = planAcrossBoards(service, context);
+      await service.startWorkflow(context, 'home', workflow.id);
+      const view = service.readWorkflow(context, 'home', workflow.id);
+      const heldAndStalled = {
+        ...view,
+        tasks: view.tasks.map((task) => (
+          task.title === 'Budgets API' ? { ...task, automationsPaused: true, stalled: 'the agent stopped before its step was done.' } : task
+        )),
+      };
+
+      const line = lineOf(formatWorkflow(heldAndStalled), 'Budgets API');
+
+      expect(line.indexOf('Automations paused')).toBeGreaterThan(-1);
+      expect(line.indexOf('Automations paused')).toBeLessThan(line.indexOf('Stalled:'));
+      expect(line.endsWith(' Stalled: the agent stopped before its step was done.')).toBe(true);
+    });
+
+    it('prints nothing of it for a draft, whose planned tasks have no row to hold', () => {
+      const workflow = planAcrossBoards(service, context);
+
+      expect(formatWorkflow(service.readWorkflow(context, 'home', workflow.id))).not.toContain('Automations paused');
     });
   });
 });

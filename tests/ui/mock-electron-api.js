@@ -1444,11 +1444,6 @@
         var idx = tasks.findIndex(function (t) {
           return t.id === input.id;
         });
-        // The desktop's TASK_UPDATE refusal (automationsSwitchRefusal): a workflow
-        // task has no automations switch, since its workflow's Pause holds it.
-        if (idx >= 0 && input.automations_disabled === true && tasks[idx].workflow_id) {
-          throw new Error('This task is in a workflow. Pause the workflow to hold it.');
-        }
         if (idx >= 0) {
           tasks[idx] = Object.assign({}, tasks[idx], input, { updated_at: now() });
           return tasks[idx];
@@ -5800,7 +5795,7 @@
               unnamedBlockerCount: links.filter(function (link) {
                 return link.workflow_id === workflow.id && link.blocked_task_id === task.id && keys.indexOf(link.blocker_task_id) === -1 && blockerHeld(link);
               }).length,
-              stallReason: place === 'done' ? null : stallOf(workflow, task.id),
+              stallReason: place === 'done' ? null : stallOf(workflow, task),
               planApproval: taskPlanApprovalOf(entry, task, taskProjectId, place),
             };
           }),
@@ -5824,10 +5819,12 @@
 
       // Why a running workflow is stalled on a task. Main reads it from the run
       // log; a test seeds it as window.__mockWorkflowStalls = { [taskId]: reason }.
-      function stallOf(workflow, taskId) {
-        if (workflow.state !== 'running') return null;
+      // As main's stallReader: no mark while the workflow is not running, or
+      // while the task's own automations are paused.
+      function stallOf(workflow, task) {
+        if (workflow.state !== 'running' || task.automations_disabled) return null;
         var stalls = window.__mockWorkflowStalls || {};
-        return typeof stalls[taskId] === 'string' ? stalls[taskId] : null;
+        return typeof stalls[task.id] === 'string' ? stalls[task.id] : null;
       }
 
       function summary(entry) {
@@ -5840,7 +5837,7 @@
         var boardTasks = {};
         var stalledTasks = [];
         function noteStall(task) {
-          var reason = stallOf(workflow, task.id);
+          var reason = stallOf(workflow, task);
           if (reason !== null) stalledTasks.push({ taskId: task.id, displayId: task.display_id, reason: reason });
           return reason;
         }
@@ -5882,7 +5879,7 @@
       // checks only auto_spawn, even where the web build's agent list carries
       // reportsTurnEnd, so here a column that starts no agent is the only gate.
       function humanGateExit(workflow, task, projectId) {
-        if (workflow.state !== 'running') return null;
+        if (workflow.state !== 'running' || task.automations_disabled) return null;
         var column = laneOf(task.swimlane_id);
         if (!column || column.auto_spawn) return null;
         var after = routeColumns(task, projectId).find(function (lane) { return lane.position > column.position; });

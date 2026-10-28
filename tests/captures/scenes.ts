@@ -2267,7 +2267,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     name: 'card-menu',
     reach: 'boot',
     description: 'A card\'s context menu, which opens on right-click only, so the choreography right-clicks the card and the pose holds the menu open. Live, the pointer runs down the items without picking one, a click on empty board closes the menu, and the card is right-clicked again.',
-    alt: 'A task card\'s right-click menu open over the board: Edit, Disable automations, New workflow, a Move to list of the other columns, then Backlog, Archive, and Delete.',
+    alt: 'A task card\'s right-click menu open over the board: Edit, Pause automations, New workflow, a Move to list of the other columns, then Backlog, Archive, and Delete.',
     ready: '[data-testid="task-context-menu"]',
     focus: '[data-testid="task-context-menu"]',
     choreography: [

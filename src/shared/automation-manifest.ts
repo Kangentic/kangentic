@@ -533,31 +533,19 @@ export function canTriggerRun(column: AutomationColumnFacts, trigger: Automation
   return { ok: true };
 }
 
-/** The run log's reason for every row a task with automations disabled skips. */
-export const AUTOMATIONS_DISABLED_REASON = msg`Automations are disabled for this task.`;
-
-/** Why a workflow task cannot have its automations disabled: its workflow holds it instead. */
-export const AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL = msg`This task is in a workflow. Pause the workflow to hold it.`;
+/** The run log's reason for every row a task with automations paused skips. */
+export const AUTOMATIONS_DISABLED_REASON = msg`Automations are paused for this task.`;
 
 /**
  * Can ANY column automation run for this task? The task-scoped half of "will
  * this run here": `canColumnRun` answers for a row in a column, this answers
  * for a task the user has held. Shared by every engine gate (enter, turn end,
- * exit, and the column message a move types) and the renderer, so the card's
- * strip and the engine never disagree.
+ * exit, the column message a move types, and a workflow task's step check,
+ * recovery and start) and the renderer, so the card's strip and the engine
+ * never disagree.
  */
 export function canTaskRunAutomations(task: Pick<Task, 'automations_disabled'>): AutomationRunnability {
   return task.automations_disabled ? { ok: false, reason: AUTOMATIONS_DISABLED_REASON } : { ok: true };
-}
-
-/**
- * Why this task's automations switch is not offered, or null when it is. A
- * workflow task has no switch: the workflow's Pause is its control, and joining
- * a workflow clears the flag. The card menu hides the row on a refusal; the
- * task update IPC and the MCP task tools refuse with it.
- */
-export function automationsSwitchRefusal(task: Pick<Task, 'workflow_id'>): MessageDescriptor | null {
-  return task.workflow_id ? AUTOMATIONS_SWITCH_WORKFLOW_REFUSAL : null;
 }
 
 /** Is this type offered on this trigger? (`AutomationManifestEntry.triggers`) */

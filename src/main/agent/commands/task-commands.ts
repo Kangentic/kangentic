@@ -32,8 +32,7 @@ import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode } from '../../../shared/types';
-import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
-import { englishText } from '../../../shared/i18n/english';
+import { applyAutomationsHoldChange } from '../../workflows/workflow-task-hold';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
 
@@ -408,7 +407,7 @@ export const handleCreateTask: CommandHandler = async (
       automationsDisabled: createdTask.automations_disabled,
     },
     message: `Created task "${createdTask.title}" in ${targetSwimlane.name} column (#${createdTask.display_id}, id: ${createdTask.id})`
-      + (createdTask.automations_disabled ? '. Its column automations are disabled.' : ''),
+      + (createdTask.automations_disabled ? '. Its column automations are paused.' : ''),
   };
 };
 
@@ -560,12 +559,6 @@ export const handleUpdateTask: CommandHandler = (
   // "leave it alone". A pin or profile in this same write still implies a mode
   // via applyProfileExclusivity.
   if (newRunMode !== undefined) updates.run_mode = newRunMode;
-  // A workflow task has no switch; enabling is always allowed, since it is
-  // already the only state a workflow task can be in.
-  if (newAutomationsDisabled === true) {
-    const refusal = automationsSwitchRefusal(task);
-    if (refusal) return { success: false, error: `${englishText(refusal)} The task was not updated.` };
-  }
   if (newAutomationsDisabled !== null) updates.automations_disabled = newAutomationsDisabled;
 
   // A workflow task's own plan approval goes through the workflow's setter, so
@@ -626,6 +619,15 @@ export const handleUpdateTask: CommandHandler = (
   }
 
   context.onTaskUpdated(updated);
+
+  // A workflow task's hold stops or starts its workflow's judging and moving.
+  if (newAutomationsDisabled !== null && updated.workflow_id) {
+    try {
+      applyAutomationsHoldChange(requireWorkflowRuntimeContext(), context.projectId, task, updated);
+    } catch (error) {
+      console.warn(`[update_task] Could not apply the automations switch on #${task.display_id}:`, error);
+    }
+  }
 
   // A write that moves the task's model or effort target reaches a running
   // session, as a ContextBar pick does. Compared on the stored row, so a write

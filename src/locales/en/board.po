@@ -23,10 +23,6 @@ msgstr "\"{movedTaskTitle}\" is now in column."
 msgid "\"{taskTitle}\""
 msgstr "\"{taskTitle}\""
 
-#: src/renderer/components/board/TaskCard.tsx
-msgid "\"{toggledTaskTitle}\": {reason}"
-msgstr "\"{toggledTaskTitle}\": {reason}"
-
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
 msgstr "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
@@ -124,8 +120,8 @@ msgid "Archive"
 msgstr "Archive"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-msgid "Automations disabled"
-msgstr "Automations disabled"
+msgid "Automations paused"
+msgstr "Automations paused"
 
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "Awaiting permission for {duration}"
@@ -181,20 +177,16 @@ msgid "Changes detected in kangentic.json. Apply the updated board configuration
 msgstr "Changes detected in kangentic.json. Apply the updated board configuration?"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-msgid "Column automations don't run for this task. Enable them from the card's menu."
-msgstr "Column automations don't run for this task. Enable them from the card's menu."
+msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
+msgstr "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
+
+#: src/renderer/components/board/AutomationsDisabledStrip.tsx
+msgid "Column automations don't run for this task. Resume them from the card's menu."
+msgstr "Column automations don't run for this task. Resume them from the card's menu."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "Completed ({archivedTotalCount})"
 msgstr "Completed ({archivedTotalCount})"
-
-#: src/renderer/components/board/TaskCard.tsx
-msgid "Couldn't turn off automations"
-msgstr "Couldn't turn off automations"
-
-#: src/renderer/components/board/TaskCard.tsx
-msgid "Couldn't turn on automations"
-msgstr "Couldn't turn on automations"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/DeleteTaskDialog.tsx
@@ -210,10 +202,6 @@ msgstr "Delete completed task"
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 msgid "Delete task"
 msgstr "Delete task"
-
-#: src/renderer/components/board/TaskContextMenu.tsx
-msgid "Disable automations"
-msgstr "Disable automations"
 
 #: src/renderer/components/board/BoardDialogs.tsx
 msgid "Dismiss"
@@ -239,10 +227,6 @@ msgstr "Edit"
 #: src/renderer/components/board/Swimlane.tsx
 msgid "Edit {columnName} column"
 msgstr "Edit {columnName} column"
-
-#: src/renderer/components/board/TaskContextMenu.tsx
-msgid "Enable automations"
-msgstr "Enable automations"
 
 #: src/renderer/components/board/task-card-view.tsx
 msgctxt "Agent status"
@@ -299,6 +283,10 @@ msgid "Open workflow"
 msgstr "Open workflow"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Pause automations"
+msgstr "Pause automations"
+
+#: src/renderer/components/board/TaskContextMenu.tsx
 msgid "Pause session"
 msgstr "Pause session"
 
@@ -343,6 +331,10 @@ msgstr "Resetting <0>\"{taskTitle}\"</0> will destroy its session history."
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "Restore to"
 msgstr "Restore to"
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Resume automations"
+msgstr "Resume automations"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
 msgid "Resume session"

@@ -215,8 +215,8 @@ every column's automations: see [Automation triggers > Disabling automations for
 task](../architecture/automations/triggers.md#disabling-automations-for-one-task). It is written by `create()` and
 `update()`, and with no caller asking it is cleared only when the task joins a workflow
 (`setWorkflowMembership()`). `move()` and `unarchive()` never touch it, out of a `done` column
-too. A workflow task never carries it: `create()` and `update()` write 0 for one whatever the
-input says.
+too. A task already in a workflow can carry it: there it is the task's own hold out of its
+workflow.
 
 ## schema_meta table
 

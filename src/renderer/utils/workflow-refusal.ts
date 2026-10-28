@@ -22,7 +22,7 @@ export function boardWorkflowNow(task: Pick<Task, 'id' | 'workflow_id' | 'workfl
 
 /** Why the lock refuses this move; null allows it (or the task is in no workflow). */
 export function refusedBoardMove(
-  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id'>,
+  task: Pick<Task, 'id' | 'display_id' | 'swimlane_id' | 'workflow_id' | 'workflow_project_id' | 'automations_disabled'>,
   targetSwimlaneId: string,
   swimlanes: readonly Pick<Swimlane, 'id' | 'role'>[],
 ): string | null {

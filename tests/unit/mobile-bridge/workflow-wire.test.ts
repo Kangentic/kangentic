@@ -48,6 +48,7 @@ function task(overrides: Partial<Task>): Task {
     route_start_swimlane_id: null,
     route_last_swimlane_id: null,
     skipped_swimlane_ids: [],
+    automations_disabled: false,
     ...overrides,
   } as Task;
 }
@@ -98,6 +99,7 @@ describe('workflowWireFacts', () => {
       waiting_for: [],
       lock_reason: null,
       gate_target_id: 'review',
+      automations_pausable: true,
     });
     expect(facts.get('t-2')).toMatchObject({
       waiting_for: ['#414'],
@@ -107,6 +109,33 @@ describe('workflowWireFacts', () => {
     });
     // One summaries read per home project, however many of its tasks are here.
     expect(listSummaries).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a held task of a running workflow unlocked, since a hand may move it, and a twin not held locked', () => {
+    // Two tasks of one running workflow, outside any human gate, that differ only
+    // in their own automations switch.
+    listSummaries.mockReturnValue([
+      summary(workflow({}), { 't-1': { waitingFor: [], humanGateTargetId: null }, 't-2': { waitingFor: [], humanGateTargetId: null } }),
+    ]);
+    const facts = workflowWireFacts(context, 'proj-1', [
+      task({ workflow_id: 'wf-1', automations_disabled: true }),
+      task({ id: 't-2', display_id: 415, workflow_id: 'wf-1', automations_disabled: false }),
+    ]);
+
+    expect(facts.get('t-1')).toMatchObject({ state: 'running', lock_reason: null, gate_target_id: null });
+    expect(facts.get('t-2')).toMatchObject({ state: 'running', lock_reason: '#415 is locked while Usage budgets runs.' });
+  });
+
+  it('marks every workflow fact automations_pausable, whatever the workflow state, so a phone offers the switch', () => {
+    listSummaries.mockReturnValue([summary(workflow({}), { 't-1': { waitingFor: [], humanGateTargetId: null } })]);
+    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(true);
+
+    listSummaries.mockReturnValue([summary(workflow({ state: 'paused' }), { 't-1': { waitingFor: [], humanGateTargetId: null } })]);
+    expect(workflowWireFacts(context, 'proj-1', [task({ workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(true);
+
+    listSummaries.mockReturnValue([]);
+    workflowGetById.mockReturnValue(workflow({ state: 'done' }));
+    expect(workflowWireFacts(context, 'proj-1', [task({ swimlane_id: 'done', workflow_id: 'wf-1' })]).get('t-1')?.automations_pausable).toBe(true);
   });
 
   it('leaves a paused workflow task unlocked, since a hand may move it', () => {

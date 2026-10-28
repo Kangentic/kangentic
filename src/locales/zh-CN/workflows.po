@@ -6,3 +6,12 @@ msgstr ""
 "Content-Transfer-Encoding: 8bit\n"
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgctxt "automations"
+msgid "Resume"
+msgstr ""
+
+#: src/renderer/components/workflows/WorkflowInspector.tsx
+msgid "Resume automations"
+msgstr ""

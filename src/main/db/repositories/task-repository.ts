@@ -436,8 +436,7 @@ export class TaskRepository {
       auto_command: input.auto_command ?? null,
       profile_id: exclusive.profile_id,
       run_mode: exclusive.run_mode,
-      // A workflow's own task never carries the switch: its Pause holds it.
-      automations_disabled: input.workflow ? false : (input.automations_disabled ?? false),
+      automations_disabled: input.automations_disabled ?? false,
       workflow_id: input.workflow?.workflow_id ?? null,
       workflow_project_id: input.workflow?.workflow_project_id ?? null,
       route_start_swimlane_id: input.workflow?.route_start_swimlane_id ?? null,
@@ -478,8 +477,8 @@ export class TaskRepository {
    * Put a task in a workflow, or take it out (`null`), with its route. A task
    * taken out keeps nothing: it is an ordinary task again, on the auto layout.
    * Does not bump `updated_at`: membership is not an edit the board orders by.
-   * Joining enables the task's column automations again: a workflow task never
-   * carries the switch, since the workflow's Pause is what holds it.
+   * Joining resumes the task's automations: a workflow's run starts fresh, and a
+   * hold is a person's choice made on a workflow task, not one carried into it.
    */
   setWorkflowMembership(taskId: string, membership: TaskWorkflowMembership | null): void {
     const join = writeTransaction(this.db, () => {
@@ -600,9 +599,6 @@ export class TaskRepository {
     const updated: Task = {
       ...merged,
       ...applyProfileExclusivity(merged, input),
-      // The last line of the invariant the IPC and MCP refusals state: a
-      // workflow task never carries the switch, whoever writes it.
-      automations_disabled: merged.workflow_id ? false : merged.automations_disabled,
     };
 
     // The fork point lives exactly as long as the branch it describes, so a

@@ -23,10 +23,6 @@ msgstr ""
 msgid "\"{taskTitle}\""
 msgstr ""
 
-#: src/renderer/components/board/TaskCard.tsx
-msgid "\"{toggledTaskTitle}\": {reason}"
-msgstr ""
-
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
 msgstr ""
@@ -124,7 +120,7 @@ msgid "Archive"
 msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-msgid "Automations disabled"
+msgid "Automations paused"
 msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
@@ -181,19 +177,15 @@ msgid "Changes detected in kangentic.json. Apply the updated board configuration
 msgstr ""
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-msgid "Column automations don't run for this task. Enable them from the card's menu."
+msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
+msgstr ""
+
+#: src/renderer/components/board/AutomationsDisabledStrip.tsx
+msgid "Column automations don't run for this task. Resume them from the card's menu."
 msgstr ""
 
 #: src/renderer/components/board/DoneSwimlane.tsx
 msgid "Completed ({archivedTotalCount})"
-msgstr ""
-
-#: src/renderer/components/board/TaskCard.tsx
-msgid "Couldn't turn off automations"
-msgstr ""
-
-#: src/renderer/components/board/TaskCard.tsx
-msgid "Couldn't turn on automations"
 msgstr ""
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
@@ -209,10 +201,6 @@ msgstr ""
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 msgid "Delete task"
-msgstr ""
-
-#: src/renderer/components/board/TaskContextMenu.tsx
-msgid "Disable automations"
 msgstr ""
 
 #: src/renderer/components/board/BoardDialogs.tsx
@@ -238,10 +226,6 @@ msgstr ""
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/Swimlane.tsx
 msgid "Edit {columnName} column"
-msgstr ""
-
-#: src/renderer/components/board/TaskContextMenu.tsx
-msgid "Enable automations"
 msgstr ""
 
 #: src/renderer/components/board/task-card-view.tsx
@@ -299,6 +283,10 @@ msgid "Open workflow"
 msgstr ""
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Pause automations"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
 msgid "Pause session"
 msgstr ""
 
@@ -342,6 +330,10 @@ msgstr ""
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "Restore to"
+msgstr ""
+
+#: src/renderer/components/board/TaskContextMenu.tsx
+msgid "Resume automations"
 msgstr ""
 
 #: src/renderer/components/board/TaskContextMenu.tsx

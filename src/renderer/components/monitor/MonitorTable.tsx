@@ -7,7 +7,7 @@ import { ActivityMark } from '../ActivityMark';
 import { DataTable, type DataTableColumn } from '../DataTable';
 import { ElapsedTime } from '../terminal/ElapsedTime';
 import { formatActivityReasonText } from '../board/activity-reason-text';
-import { AutomationsDisabledGlyph, automationsDisabledTip } from '../board/AutomationsDisabledStrip';
+import { AutomationsDisabledGlyph, useAutomationsPausedText } from '../board/AutomationsDisabledStrip';
 import { TicketNumber } from '../board/task-card-view';
 import { Tooltip } from '../Tooltip';
 import { WorkflowGlyph } from '../workflows/WorkflowStrip';
@@ -102,6 +102,22 @@ function automationsSortValue(row: MonitorSessionRow): number | null {
   return row.automationsDisabled ? 0 : 1;
 }
 
+/** The Automations cell of a held task: the Column Manager's chip, with the mark's tip. */
+function AutomationsPausedChip({ inWorkflow }: { inWorkflow: boolean }) {
+  const { tip } = useAutomationsPausedText(inWorkflow);
+  return (
+    <Tooltip label={tip}>
+      <span
+        className="inline-flex h-[22px] max-w-full min-w-0 items-center gap-1 whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
+        data-testid="monitor-table-automations-disabled"
+      >
+        <AutomationsDisabledGlyph />
+        <span className="truncate"><Trans context="automations state">Paused</Trans></span>
+      </span>
+    </Tooltip>
+  );
+}
+
 /** A cell value, or the Column Manager's faint "Default" where the agent's own default applies. */
 function ValueOrDefault({ value }: { value: string | null }) {
   return value === null
@@ -176,27 +192,15 @@ export function MonitorTable({
       headerTip: t`The workflow the task belongs to`,
     },
     {
-      // Disabled is the non-default value, so it gets the Column Manager's chip
-      // for a value set on purpose; Enabled stays its faint, inherited text.
+      // Paused is the non-default value, so it gets the Column Manager's chip
+      // for a value set on purpose; On stays its faint, inherited text.
       key: 'automations',
       label: t`Automations`,
       sortValue: automationsSortValue,
       render: (row) => {
         if (row.isCommandTerminal) return <span className="text-fg-disabled">-</span>;
-        if (row.automationsDisabled) {
-          return (
-            <Tooltip label={automationsDisabledTip()}>
-              <span
-                className="inline-flex h-[22px] max-w-full min-w-0 items-center gap-1 whitespace-nowrap rounded bg-surface-hover/50 px-2 font-medium text-fg"
-                data-testid="monitor-table-automations-disabled"
-              >
-                <AutomationsDisabledGlyph />
-                <span className="truncate"><Trans>Disabled</Trans></span>
-              </span>
-            </Tooltip>
-          );
-        }
-        return <span className="truncate block text-fg-faint"><Trans>Enabled</Trans></span>;
+        if (row.automationsDisabled) return <AutomationsPausedChip inWorkflow={row.workflow !== null} />;
+        return <span className="truncate block text-fg-faint"><Trans context="automations state">On</Trans></span>;
       },
       headerTip: t`Whether the column's automations run for the task`,
     },

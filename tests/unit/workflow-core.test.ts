@@ -101,6 +101,7 @@ function coreTask(taskId: string, place: CoreTask['place'], extra: Partial<CoreT
     todoPosition: 0,
     startColumnId: 'executing',
     startTakesSlot: true,
+    held: false,
     ...extra,
   };
 }
@@ -120,6 +121,64 @@ describe('the start and completion plan', () => {
       [link('t1', 't3'), link('t1', 't4'), link('t2', 't4')],
     );
     expect(readyTasks(plan).map((task) => task.taskId)).toEqual(['t3']);
+  });
+
+  describe('a task whose own automations are paused', () => {
+    // A held task stays in To Do for a person to work by hand, and what waits
+    // for it keeps waiting, since only Done frees a blocker. Each case pairs
+    // with the same plan for a task that is not held.
+    it('is not ready, where the same task not held is', () => {
+      expect(readyTasks(workflow([coreTask('t1', 'todo', { held: false })])).map((task) => task.taskId)).toEqual(['t1']);
+      expect(readyTasks(workflow([coreTask('t1', 'todo', { held: true })]))).toEqual([]);
+    });
+
+    it('is passed over while the tasks after it in To Do order still start', () => {
+      const plan = workflow([
+        coreTask('t1', 'todo', { todoPosition: 0, held: true }),
+        coreTask('t2', 'todo', { todoPosition: 1 }),
+      ]);
+      expect(readyTasks(plan).map((task) => task.taskId)).toEqual(['t2']);
+      expect(planPass([plan], 4, new Set()).map((intent) => intent.kind === 'start' ? intent.taskId : intent.kind)).toEqual(['t2']);
+    });
+
+    it('takes no slot, so a free slot goes to the next task', () => {
+      const plan = workflow([
+        coreTask('t1', 'todo', { todoPosition: 0, held: true }),
+        coreTask('t2', 'todo', { todoPosition: 1 }),
+        coreTask('t3', 'todo', { todoPosition: 2 }),
+      ]);
+      const intents = planPass([plan], 1, new Set());
+      expect(intents.map((intent) => intent.kind === 'start' ? intent.taskId : intent.kind)).toEqual(['t2']);
+    });
+
+    it('keeps what waits for it blocked, and leaves that task unstarted', () => {
+      const heldBlocker = workflow(
+        [coreTask('t1', 'todo', { held: true }), coreTask('t2', 'todo', { todoPosition: 1 })],
+        [link('t1', 't2')],
+      );
+      expect(readyTasks(heldBlocker)).toEqual([]);
+      expect(planPass([heldBlocker], 4, new Set())).toEqual([]);
+      const freeBlocker = workflow(
+        [coreTask('t1', 'todo', { held: false }), coreTask('t2', 'todo', { todoPosition: 1 })],
+        [link('t1', 't2')],
+      );
+      // The blocker starts; its dependent waits for it to reach Done.
+      expect(readyTasks(freeBlocker).map((task) => task.taskId)).toEqual(['t1']);
+    });
+
+    it('does not change blockersDone for a held blocker already in Done', () => {
+      const plan = workflow(
+        [coreTask('t1', 'done', { held: true }), coreTask('t2', 'todo')],
+        [link('t1', 't2')],
+      );
+      expect(blockersDone(plan, plan.tasks[1])).toBe(true);
+      expect(readyTasks(plan).map((task) => task.taskId)).toEqual(['t2']);
+    });
+
+    it('does not stop a workflow of held and finished tasks from completing', () => {
+      const plan = workflow([coreTask('t1', 'done'), coreTask('t2', 'done', { held: true })]);
+      expect(planPass([plan], 4, new Set())).toEqual([{ kind: 'complete', workflowId: 'w1', homeProjectId: 'home' }]);
+    });
   });
 
   it('never counts a blocker missing from the snapshot as done', () => {
@@ -236,6 +295,7 @@ describe('the move lock', () => {
       toSwimlaneId: 'review',
       toRole: null,
       moverIsTaskAgent: false,
+      taskHeld: false,
       humanGateTargetId: null,
       ...extra,
     };
@@ -337,6 +397,77 @@ describe('the move lock', () => {
     it.each(ALLOWED)('is null for %s', (_name, extra) => {
       expect(workflowMoveRefusalMessage(check(extra))).toBeNull();
       expect(workflowMoveRefusal(check(extra))).toBeNull();
+    });
+  });
+
+  describe('a card whose own automations are paused', () => {
+    // The task's hold: the rest of its workflow runs, and the person working the
+    // task moves it. Each case is paired with the same move for a card that is
+    // not held, which is refused, so the pair differs only in `taskHeld`.
+    const LOCKED = '#414 is locked while Usage budgets runs.';
+    const REMOVE_FIRST = '#414 is in Usage budgets. Remove it from the workflow to move it to To Do.';
+
+    it.each(['renderer', 'mobile'] as const)('lets a person (%s) move it to another working column of a running workflow', (origin) => {
+      expect(workflowMoveRefusal(check({ origin, taskHeld: false }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ origin, taskHeld: true }))).toBeNull();
+    });
+
+    it.each(['renderer', 'mobile'] as const)('lets a person (%s) move it to Done of a running workflow', (origin) => {
+      const toDone = { origin, toSwimlaneId: 'done', toRole: 'done' as const };
+      expect(workflowMoveRefusal(check({ ...toDone, taskHeld: false }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ ...toDone, taskHeld: true }))).toBeNull();
+    });
+
+    it('lets a person move it out of a human gate to any column, not only the gate\'s target', () => {
+      const gate = { humanGateTargetId: 'review', toSwimlaneId: 'testing' };
+      expect(workflowMoveRefusal(check({ ...gate, taskHeld: false }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ ...gate, taskHeld: true }))).toBeNull();
+    });
+
+    it.each(['renderer', 'mobile'] as const)('still refuses a person (%s) To Do, with the sentence that says to remove it first, not the lock\'s', (origin) => {
+      const toDo = { origin, toSwimlaneId: 'todo', toRole: 'todo' as const };
+      expect(workflowMoveRefusal(check({ ...toDo, taskHeld: false }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ ...toDo, taskHeld: true }))).toBe(REMOVE_FIRST);
+    });
+
+    it('still refuses another agent, which is not the person working it', () => {
+      expect(workflowMoveRefusal(check({ origin: 'agent', taskHeld: true }))).toBe(LOCKED);
+      expect(workflowMoveRefusal(check({ origin: 'agent', taskHeld: false }))).toBe(LOCKED);
+    });
+
+    it('still refuses another agent To Do with the remove-first sentence', () => {
+      expect(workflowMoveRefusal(check({ origin: 'agent', toSwimlaneId: 'todo', toRole: 'todo', taskHeld: true }))).toBe(REMOVE_FIRST);
+    });
+
+    it('leaves the task\'s own agent and the workflow, its automations and auto-move as they were', () => {
+      for (const taskHeld of [false, true]) {
+        expect(workflowMoveRefusal(check({ origin: 'agent', moverIsTaskAgent: true, taskHeld }))).toBeNull();
+        expect(workflowMoveRefusal(check({ origin: 'workflow', taskHeld }))).toBeNull();
+        expect(workflowMoveRefusal(check({ origin: 'automation', taskHeld }))).toBeNull();
+        expect(workflowMoveRefusal(check({ origin: 'auto-move', taskHeld }))).toBeNull();
+      }
+    });
+
+    it('moves by hand exactly as a paused workflow\'s card does (an agent is told the lock, not the pause)', () => {
+      const targets = [
+        { toSwimlaneId: 'review', toRole: null },
+        { toSwimlaneId: 'done', toRole: 'done' as const },
+        { toSwimlaneId: 'todo', toRole: 'todo' as const },
+      ];
+      for (const target of targets) {
+        for (const origin of ['renderer', 'mobile'] as const) {
+          expect(workflowMoveRefusal(check({ ...target, origin, workflowState: 'running', taskHeld: true })))
+            .toBe(workflowMoveRefusal(check({ ...target, origin, workflowState: 'paused', taskHeld: false })));
+        }
+      }
+    });
+
+    it('changes nothing in a paused, draft or finished workflow, or for a reorder', () => {
+      for (const workflowState of ['paused', 'draft', 'done'] as const) {
+        expect(workflowMoveRefusal(check({ workflowState, taskHeld: true })))
+          .toBe(workflowMoveRefusal(check({ workflowState, taskHeld: false })));
+      }
+      expect(workflowMoveRefusal(check({ toSwimlaneId: 'executing', taskHeld: true }))).toBeNull();
     });
   });
 });

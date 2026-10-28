@@ -2,6 +2,7 @@ import type { WorkflowDetail, WorkflowRouteStep, WorkflowViewTask } from '../../
 import { WORKFLOW_REFUSAL_MESSAGES, workflowTaskLabel } from '../../../shared/workflow-refusals';
 import { translateText } from '../../i18n/translate';
 import { UNNAMED_BLOCKER_LABEL, waitingLabel } from '../../../shared/workflow-waiting';
+import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import type { WorkflowWaiting } from './WorkflowCanvasCard';
 
 /**
@@ -59,13 +60,15 @@ export function pendingBlockers(detail: WorkflowDetail, key: string): WorkflowVi
 
 /**
  * Why a started workflow's task in To Do has not started: what it waits for, a
- * free slot, or the pause. Worded by `waitingLabel`, as the board card is.
+ * free slot, or a pause (the workflow's, or the task's own automations). Worded
+ * by `waitingLabel`, as the board card is.
  */
 export function waitingOf(detail: WorkflowDetail, task: WorkflowViewTask): WorkflowWaiting | null {
   if (task.place !== 'todo' || detail.workflow.state === 'draft') return null;
   const pending = pendingBlockers(detail, task.key).map(taskLabel);
   for (let index = 0; index < task.unnamedBlockerCount; index += 1) pending.push(UNNAMED_BLOCKER_LABEL);
-  const waiting = waitingLabel(pending, detail.workflow.state === 'paused');
+  const held = task.task !== null && !canTaskRunAutomations(task.task).ok;
+  const waiting = waitingLabel(pending, detail.workflow.state === 'paused' || held);
   return { label: translateText(waiting.label), paused: waiting.paused };
 }
 

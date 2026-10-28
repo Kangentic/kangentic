@@ -348,6 +348,102 @@ describe('the Workflows view operations', () => {
       expect(view.listWorkflowSummaries(context, 'home')[0].boardTasks[api.id].stallReason).toBeNull();
     });
 
+    describe('a task whose own automations are paused', () => {
+      // The task's hold: a person works it by hand while the rest of the workflow
+      // runs. The workflow neither judges nor nudges it, so no stall is read for
+      // it, and no human-gate exit is offered (a hand may move it anywhere but
+      // To Do). Every case first asserts the same task not held, so a "none"
+      // cannot pass because the fixture was never stalled or never in a gate.
+      async function startedInExecuting() {
+        const fixture = await started();
+        const tasks = new TaskRepository(homeDb());
+        const executing = laneId('home', 'Executing');
+        tasks.move({ taskId: fixture.api.id, targetSwimlaneId: executing, targetPosition: 0 }, { origin: 'workflow' });
+        return { ...fixture, tasks, executing };
+      }
+
+      const summaryTask = (workflowId: string, taskId: string) =>
+        view.listWorkflowSummaries(context, 'home').find((summary) => summary.workflow.id === workflowId)!.boardTasks[taskId];
+      const viewTask = (workflowId: string, taskId: string) =>
+        view.readWorkflowDetail(context, 'home', workflowId).tasks.find((task) => task.key === taskId)!;
+      const agentTask = (workflowId: string, taskId: string) =>
+        service.readWorkflow(context, 'home', workflowId).tasks.find((task) => task.taskId === taskId)!;
+
+      it('reads no stall for it in the summary, the canvas or the agent view, and reads it again once resumed', async () => {
+        const { workflow, api, tasks, executing } = await startedInExecuting();
+        new AutomationRunRepository(homeDb()).recordWorkflowStall({
+          taskId: api.id, swimlaneId: executing, workflowId: workflow.id, reason: 'the step check could not run.', countedNudges: 0,
+        });
+        // Not held: the stall shows everywhere it is read.
+        expect(summaryTask(workflow.id, api.id).stallReason).toBe('the step check could not run.');
+        expect(view.listWorkflowSummaries(context, 'home')[0].stalledTasks).toHaveLength(1);
+        expect(viewTask(workflow.id, api.id).stallReason).toBe('the step check could not run.');
+        expect(agentTask(workflow.id, api.id).stalled).toBe('the step check could not run.');
+
+        tasks.update({ id: api.id, automations_disabled: true });
+
+        expect(summaryTask(workflow.id, api.id).stallReason).toBeNull();
+        expect(view.listWorkflowSummaries(context, 'home')[0].stalledTasks).toEqual([]);
+        expect(viewTask(workflow.id, api.id).stallReason).toBeNull();
+        expect(agentTask(workflow.id, api.id).stalled).toBeNull();
+
+        // The row is still in the run log, so resuming brings the mark back
+        // until recovery starts over (the hold module's job, pinned apart).
+        tasks.update({ id: api.id, automations_disabled: false });
+        expect(summaryTask(workflow.id, api.id).stallReason).toBe('the step check could not run.');
+      });
+
+      it('names no human-gate exit for it, where the same task not held names the next column', async () => {
+        const { workflow, api, tasks } = await startedInExecuting();
+        expect(summaryTask(workflow.id, api.id).humanGateTargetId).toBe(laneId('home', 'Code Review'));
+
+        tasks.update({ id: api.id, automations_disabled: true });
+
+        expect(summaryTask(workflow.id, api.id).humanGateTargetId).toBeNull();
+      });
+
+      it('lets a hand move it to any column but To Do, through the real lock check, and keeps another agent out', async () => {
+        const { api, tasks } = await startedInExecuting();
+        const check = (column: string, origin: 'renderer' | 'agent') => lock.checkWorkflowMove(context, {
+          projectId: 'home',
+          task: tasks.getById(api.id)!,
+          toSwimlaneId: laneId('home', column),
+          origin,
+          moverIsTaskAgent: false,
+        });
+        // Not held: only the gate's next column is open to a hand.
+        expect(check('Testing', 'renderer')).toMatch(/is locked while/);
+
+        tasks.update({ id: api.id, automations_disabled: true });
+
+        expect(check('Testing', 'renderer')).toBeNull();
+        expect(check('Done', 'renderer')).toBeNull();
+        expect(check('To Do', 'renderer')).toMatch(/Remove it from the workflow to move it to To Do/);
+        expect(check('Testing', 'agent')).toMatch(/is locked while/);
+      });
+
+      it('says so in the agent view of a started task, and not for a finished one', async () => {
+        const { workflow, api, ui, tasks } = await startedInExecuting();
+        expect(agentTask(workflow.id, api.id).automationsPaused).toBe(false);
+
+        tasks.update({ id: api.id, automations_disabled: true });
+        tasks.update({ id: ui.id, automations_disabled: true });
+        expect(agentTask(workflow.id, api.id).automationsPaused).toBe(true);
+        // Held in To Do reads held too: the engine will not start it.
+        expect(agentTask(workflow.id, ui.id).automationsPaused).toBe(true);
+
+        tasks.move({ taskId: api.id, targetSwimlaneId: laneId('home', 'Done'), targetPosition: 0 }, { origin: 'workflow' });
+        expect(agentTask(workflow.id, api.id).automationsPaused).toBe(false);
+      });
+
+      it('says nothing of it for a planned task, which has no row to hold', () => {
+        const workflow = service.createWorkflow('home', {});
+        view.addViewTask(context, 'home', workflow.id, { title: 'Budgets API' });
+
+        expect(service.readWorkflow(context, 'home', workflow.id).tasks.map((task) => task.automationsPaused)).toEqual([false]);
+      });
+    });
+
     describe('when a blocker on another board is missing from the read', () => {
       /** Budgets UI waits for Budgets API, which is on the mobile board. */
       async function startedAcrossBoards() {

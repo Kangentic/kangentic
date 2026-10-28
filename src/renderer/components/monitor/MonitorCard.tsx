@@ -15,8 +15,7 @@ import { CardStrip, cardStripBleedClass } from '../board/CardStrip';
 import {
   AutomationsDisabledCardStrip,
   AutomationsDisabledGlyph,
-  automationsDisabledLabel,
-  automationsDisabledTip,
+  useAutomationsPausedText,
 } from '../board/AutomationsDisabledStrip';
 import {
   BrowserAliveGlobe,
@@ -58,7 +57,7 @@ import { bucketOf, formatMonitorStatus, monitorActivityMark, monitorSlotKind, ne
  * in the strip across the top, the way the Workflows canvas card carries it: the
  * project on the left (with the workflow, or a Command Terminal's branch), and the
  * step track on the right, whose current step is the column's own marker. A held
- * task stacks the board's "Automations disabled" strip above it. Nothing new gets
+ * task stacks the board's "Automations paused" strip above it. Nothing new gets
  * a row of its own; that is what the eyebrow and its activity pill used to be.
  *
  * One departure remains, earning its place: a live OUTPUT PEEK as a third slot
@@ -263,7 +262,7 @@ function WorkflowLabel({ row, testId, className }: { row: MonitorSessionRow; tes
 }
 
 /**
- * The card's strips: the board's "Automations disabled" strip on a held task,
+ * The card's strips: the board's "Automations paused" strip on a held task,
  * then the strip every card wears. One bleed wrapper around both, so they stack
  * flush and the pair still meets the card's rounded top corners.
  *
@@ -275,7 +274,7 @@ function WorkflowLabel({ row, testId, className }: { row: MonitorSessionRow; tes
 function MonitorCardStrips({ row, density }: { row: MonitorSessionRow; density: AppConfig['cardDensity'] }) {
   return (
     <div className={cardStripBleedClass(density)}>
-      {row.automationsDisabled && <AutomationsDisabledCardStrip testId="monitor-card-automations-disabled" />}
+      {row.automationsDisabled && <AutomationsDisabledCardStrip testId="monitor-card-automations-disabled" inWorkflow={row.workflow !== null} />}
       <CardStrip data-testid="monitor-card-strip">
         <span className="flex items-center gap-2.5 min-w-0">
           {row.isCommandTerminal ? (
@@ -307,32 +306,38 @@ function MonitorCardStrips({ row, density }: { row: MonitorSessionRow; density: 
 }
 
 /**
- * The list row's slice: what the full card's strip carries, turned on its side
- * and closing the row at its right edge. The strip's shell, so it reads as the
- * same object: a held task's "Automations disabled", or a workflow task's name and
- * track. Nothing for any other row, which keeps the row as it is today.
+ * The list row's slices: what the full card's strips carry, turned on their
+ * side and closing the row at its right edge. The strip's shell, so each reads
+ * as the same object: a held task's "Automations paused", then a workflow
+ * task's name and track, both on a held workflow task as its card stacks both
+ * strips. Nothing for any other row, which keeps the row as it is today.
  */
 function MonitorRowSlice({ row }: { row: MonitorSessionRow }) {
   const shell = 'shrink-0 flex items-center px-2.5 border-l border-edge bg-surface/30 text-xs text-fg-muted whitespace-nowrap';
-  if (row.automationsDisabled) {
-    return (
-      <Tooltip label={automationsDisabledTip()}>
-        <span className={`${shell} gap-[5px]`} data-testid="monitor-row-automations-disabled">
-          <AutomationsDisabledGlyph />
-          <span>{automationsDisabledLabel()}</span>
+  if (!row.automationsDisabled && !row.workflow) return null;
+  return (
+    <>
+      {row.automationsDisabled && <AutomationsPausedSlice className={`${shell} gap-[5px]`} inWorkflow={row.workflow !== null} />}
+      {row.workflow && (
+        <span className={`${shell} gap-2.5`} data-testid="monitor-row-workflow">
+          <WorkflowLabel row={row} testId="monitor-row-workflow-name" className="gap-[5px] text-fg-muted max-w-[22ch]" />
+          {row.track && <WorkflowStepTrack {...row.track} currentStep="marker" />}
         </span>
-      </Tooltip>
-    );
-  }
-  if (row.workflow) {
-    return (
-      <span className={`${shell} gap-2.5`} data-testid="monitor-row-workflow">
-        <WorkflowLabel row={row} testId="monitor-row-workflow-name" className="gap-[5px] text-fg-muted max-w-[22ch]" />
-        {row.track && <WorkflowStepTrack {...row.track} currentStep="marker" />}
+      )}
+    </>
+  );
+}
+
+function AutomationsPausedSlice({ className, inWorkflow }: { className: string; inWorkflow: boolean }) {
+  const { label, tip } = useAutomationsPausedText(inWorkflow);
+  return (
+    <Tooltip label={tip}>
+      <span className={className} data-testid="monitor-row-automations-disabled">
+        <AutomationsDisabledGlyph />
+        <span>{label}</span>
       </span>
-    );
-  }
-  return null;
+    </Tooltip>
+  );
 }
 
 /**

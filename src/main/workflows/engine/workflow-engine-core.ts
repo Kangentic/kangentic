@@ -40,6 +40,8 @@ export interface CoreTask {
   startColumnId: string | null;
   /** Whether that column starts an agent, so a start takes a slot. */
   startTakesSlot: boolean;
+  /** Its automations are paused: it stays in To Do, and what waits for it keeps waiting. */
+  held: boolean;
 }
 
 export interface CoreLink {
@@ -96,10 +98,10 @@ export function blockersDone(workflow: CoreWorkflow, task: Pick<CoreTask, 'proje
   );
 }
 
-/** Tasks that can start now: in To Do, with somewhere to start, and nothing left to wait for. */
+/** Tasks that can start now: in To Do, not held, with somewhere to start, and nothing left to wait for. */
 export function readyTasks(workflow: CoreWorkflow): CoreTask[] {
   return workflow.tasks
-    .filter((task) => task.place === 'todo' && task.startColumnId !== null && blockersDone(workflow, task))
+    .filter((task) => task.place === 'todo' && !task.held && task.startColumnId !== null && blockersDone(workflow, task))
     .sort((left, right) => left.todoPosition - right.todoPosition);
 }
 

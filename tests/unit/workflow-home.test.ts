@@ -6,8 +6,10 @@
  * the hang check asks it before it interrupts a turn, so a wrong "true" silences
  * a notice the user needs and a wrong "false" lets a second one fire. It is true
  * only for an unarchived task that has a workflow, in a column whose role is
- * neither `todo` nor `done`, whose workflow is `running`. A read that fails
- * counts as false, which keeps the generic notice.
+ * neither `todo` nor `done`, whose workflow is `running`, and whose own
+ * automations are not paused (a held task is a person's to work: nothing judges
+ * it, so the generic notices come back). A read that fails counts as false,
+ * which keeps the generic notice.
  *
  * Real, migrated SQLite (better-sqlite3). Each negative case is the positive
  * fixture with exactly one fact flipped, and asserts the positive first, so a
@@ -53,6 +55,8 @@ interface StepTaskOptions {
   /** False leaves the task in no workflow at all. */
   inWorkflow?: boolean;
   archived?: boolean;
+  /** The task's own automations are paused: a person is working it by hand. */
+  held?: boolean;
 }
 
 describe('isRunningWorkflowStepTask', () => {
@@ -77,7 +81,7 @@ describe('isRunningWorkflowStepTask', () => {
 
   /** A task as the positive case has it unless the options flip a fact. Returns its id. */
   function addStepTask(options: StepTaskOptions = {}): string {
-    const { board = 'home', place = 'middle', workflowState = 'running', inWorkflow = true, archived = false } = options;
+    const { board = 'home', place = 'middle', workflowState = 'running', inWorkflow = true, archived = false, held = false } = options;
     const workflows = new WorkflowRepository(databaseOf('home'));
     const workflow = workflows.create({});
     workflows.setState(workflow.id, workflowState);
@@ -86,6 +90,7 @@ describe('isRunningWorkflowStepTask', () => {
       title: 'Budgets API',
       description: '',
       swimlane_id: columnId(board, place),
+      automations_disabled: held,
       workflow: inWorkflow
         ? {
           workflow_id: workflow.id,
@@ -140,6 +145,19 @@ describe('isRunningWorkflowStepTask', () => {
 
   it('is false for an archived task, though it still names its workflow', () => {
     expectFlipToFalse({ archived: true });
+  });
+
+  it('is false while the task\'s own automations are paused, since nothing judges it then', () => {
+    expectFlipToFalse({ held: true });
+  });
+
+  it('is true again once the task\'s automations resume', () => {
+    const taskId = addStepTask({ held: true });
+    expect(isRunningWorkflowStepTask('home', taskId)).toBe(false);
+
+    new TaskRepository(databaseOf('home')).update({ id: taskId, automations_disabled: false });
+
+    expect(isRunningWorkflowStepTask('home', taskId)).toBe(true);
   });
 
   it('is false for a task in no workflow', () => {

@@ -18,8 +18,9 @@ export const UNNAMED_BLOCKER_LABEL = 'a task';
 
 /**
  * `pending` names what the task waits for that is not done ("#413", or
- * `UNNAMED_BLOCKER_LABEL`); `paused` is its workflow's pause. `label` is a
- * message: resolve it where it shows.
+ * `UNNAMED_BLOCKER_LABEL`); `paused` is its workflow's pause, or its own
+ * automations' (the engine starts neither). `label` is a message: resolve it
+ * where it shows.
  */
 export function waitingLabel(pending: readonly string[], paused: boolean): { label: MessageDescriptor; paused: boolean } {
   // A whole message, so a translation never carries the English placeholder.

@@ -36,9 +36,12 @@ export function formatWorkflow(view: WorkflowView): string {
       // A planned task's board is in its settings, as save_workflow's `project`.
       const board = task.board !== null && workflow.state !== 'draft' ? ` on board "${task.board}"` : '';
       const stalled = task.stalled ? ` Stalled: ${task.stalled}` : '';
+      const held = task.automationsPaused
+        ? ' Automations paused: the workflow does not judge, move or start it until they resume.'
+        : '';
       // What happens and where it comes from, so an agent never reads a board's columns to learn it.
       const planApproval = ` ${taskPlanApprovalSentence(task.planApproval)}`;
-      lines.push(`- ${label} ${task.title}. In ${task.column}${board}. Route: ${route}.${waits}${settings}${planApproval}${stalled}`);
+      lines.push(`- ${label} ${task.title}. In ${task.column}${board}. Route: ${route}.${waits}${settings}${planApproval}${held}${stalled}`);
     }
   }
   return lines.join('\n');

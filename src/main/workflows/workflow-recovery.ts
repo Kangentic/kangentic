@@ -1,5 +1,6 @@
 import type { Swimlane, Task, WorkflowStalledEvent } from '../../shared/types';
 import { IPC } from '../../shared/ipc-channels';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import type { IpcContext } from '../ipc/ipc-context';
 import { sendToRenderer } from '../ipc/send-to-renderer';
 import type { TurnEndedPayload } from '../pty/session-manager';
@@ -748,7 +749,8 @@ function noticeStall(context: IpcContext, entry: RecoveryEntry, reason: string):
  * A running workflow stalled on this task: write the stall row (the notice's
  * latch and the task's mark), then tell the user on desktop, phone and the
  * in-app toast, and refresh the workflow's view. Recovery calls it when it
- * runs out, and the engine host when a start keeps failing.
+ * runs out, and the engine host when a start keeps failing. A task whose
+ * automations are paused gets none of it: a person is working it by hand.
  */
 export function announceWorkflowStall(
   context: IpcContext,
@@ -758,6 +760,11 @@ export function announceWorkflowStall(
   let taskTitle = '';
   try {
     const repos = getProjectRepos(context, stall.projectId);
+    const task = repos.tasks.getById(stall.taskId);
+    if (task && !canTaskRunAutomations(task).ok) {
+      console.log(`[WORKFLOW] Task ${stall.taskId.slice(0, 8)} would have stalled (${stall.reason}), but its automations are paused.`);
+      return;
+    }
     repos.automationRuns.recordWorkflowStall({
       taskId: stall.taskId,
       swimlaneId: stall.columnId,
@@ -765,7 +772,6 @@ export function announceWorkflowStall(
       reason: stall.reason,
       countedNudges: stall.countedNudges,
     });
-    const task = repos.tasks.getById(stall.taskId);
     homeProjectId = task?.workflow_project_id ?? stall.projectId;
     taskTitle = task?.title ?? '';
   } catch (error) {

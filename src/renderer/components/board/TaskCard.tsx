@@ -25,8 +25,7 @@ import { OpenWorkflowMenuItem } from './workflow-menu-items';
 import { useWorkflowStore } from '../../stores/workflow-store';
 import { sendAwayRefusal, type BoardWorkflow } from '../../utils/board-workflow';
 import { boardWorkflowNow, refusedBoardMove } from '../../utils/workflow-refusal';
-import { automationsSwitchRefusal } from '../../../shared/automation-manifest';
-import { describeIpcError, asSentence } from '../../lib/ipc-error';
+import { toggleTaskAutomations } from '../../utils/task-automations';
 import { runSessionToggle, sessionToggleRowFor, type SessionToggleDirection } from '../../utils/session-toggle';
 import { resyncBoardAfterMonitorWrite } from '../monitor/resync-board-after-monitor-write';
 import { openTaskFromNotification } from '../../utils/open-task-from-notification';
@@ -182,23 +181,9 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
     useWorkflowStore.getState().openWorkflow(workflow.homeProjectId, workflow.workflowId, task.id);
   };
 
-  // The card's strip appears or clears as the update lands. A refusal (only a
-  // workflow task, which never offers the row) or a lost write says why.
+  // The card's strip appears or clears as the update lands; a lost write says why.
   const handleToggleAutomations = () => {
-    const disable = !task.automations_disabled;
-    const toggleProjectId = useProjectStore.getState().currentProject?.id ?? null;
-    const toggledTaskId = task.id;
-    useBoardStore.getState().updateTask({ id: toggledTaskId, automations_disabled: disable }).catch((error: unknown) => {
-      const toggledTaskTitle = task.title;
-      // Main's reason, as written.
-      const reason = asSentence(describeIpcError(error));
-      useToastStore.getState().addToast({
-        title: disable ? t`Couldn't turn off automations` : t`Couldn't turn on automations`,
-        message: t`"${toggledTaskTitle}": ${reason}`,
-        variant: 'warning',
-        onOpen: toggleProjectId !== null ? () => openTaskFromNotification(toggleProjectId, toggledTaskId) : undefined,
-      });
-    });
+    void toggleTaskAutomations(task, useProjectStore.getState().currentProject?.id ?? null);
   };
 
   // No window to close: the card's status bar shows the pause through the
@@ -314,7 +299,7 @@ const TaskCardInner = function TaskCard({ task, isDragOverlay, compact, onDelete
           navigationItem={menuWorkflow && (
             <OpenWorkflowMenuItem workflow={menuWorkflow} onOpen={() => openTaskWorkflow(menuWorkflow)} onClose={() => setContextMenu(null)} />
           )}
-          onToggleAutomations={automationsSwitchRefusal(task) === null ? handleToggleAutomations : undefined}
+          onToggleAutomations={handleToggleAutomations}
           sessionToggle={menuSessionToggle
             ? { ...menuSessionToggle, onToggle: () => handleToggleSession(menuSessionToggle.direction) }
             : undefined}
