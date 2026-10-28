@@ -281,10 +281,9 @@ src/main/workflows/
   - The lock refuses the `workflow` origin while paused. `handleTaskMove` asks it under the task
     lock, so an engine start or a step move that raced the Pause does not move the card. The
     engine host takes that refusal as the Pause working, not as a failed start: no backoff, toast
-    or stall notice, and Resume's wake starts the task. A step move refused that way is
-    recorded as a failed move (`runWorkflowStep`), and recovery does not run while paused. After
-    Resume, the resumed agent's catch-up sees that run row and starts recovery again from the run
-    log.
+    or stall notice, and Resume's wake starts the task. A step move refused that way
+    records no failed move and arms no recovery (`runWorkflowStep`), so the reply is judged again
+    after Resume.
   - `handleTaskMove` notes in Phase 1 whether a move no person made (`workflow`, `automation`,
     `auto-move`, or `agent`, which the lock admits under a running workflow only from the task's
     own agent) passed the lock under a running workflow. Its Phase 3 skips the spawn when that
