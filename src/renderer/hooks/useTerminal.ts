@@ -3,7 +3,7 @@ import { Terminal } from '@xterm/xterm';
 import { FitAddon, CONFORM_FONT_STEP_PX, CONFORM_MIN_FONT_PX, type CellSize, type FitOutcome } from '../addons/fit-addon';
 import { attachWebglRenderer, notifyFontChanged } from '../utils/terminal-webgl';
 import { createTerminalRepaintWait, type TerminalRepaintWait } from '../utils/terminal-repaint-wait';
-import { isTerminalLayoutLandingFor, nextFrame, noteTerminalFitInLanding } from '../utils/terminal-layout-transition';
+import { countHiddenFrames, isTerminalLayoutLandingFor, nextFrame, noteTerminalFitInLanding } from '../utils/terminal-layout-transition';
 import { motionReduced } from '../utils/motion-reduced';
 import { swallowXtversionQuery, TERMINAL_VT_EXTENSIONS } from '../utils/terminal-query-replies';
 import { resolveTerminalFontSize } from '../utils/terminal-font-size';
@@ -1132,15 +1132,7 @@ export function useTerminal(options: UseTerminalOptions) {
     if (screen) screen.style.opacity = '0';
     // Dev-only: how many frames painted with the screen hidden before it showed
     // again. 0 is the swap working; more on a box that shrank is a blank flash.
-    const hiddenFrames = { count: -1, counting: __KANGENTIC_DEV__ };
-    if (hiddenFrames.counting) {
-      const countFrame = (): void => {
-        if (!hiddenFrames.counting) return;
-        hiddenFrames.count += 1;
-        requestAnimationFrame(countFrame);
-      };
-      requestAnimationFrame(countFrame);
-    }
+    const hiddenFrames = __KANGENTIC_DEV__ ? countHiddenFrames() : null;
     clearFrameHoldStyle(terminal, true);
     frameHoldRef.current = null;
     const wasAtBottom = isAtBottomRef.current;
@@ -1168,8 +1160,8 @@ export function useTerminal(options: UseTerminalOptions) {
     // asked for now runs after the renderer's in that frame, so the screen shows
     // in the same paint as the canvas it drew (or after 50 ms in a window that
     // draws none).
-    await nextFrame();
-    hiddenFrames.counting = false;
+    const shownAt = await nextFrame();
+    const framesHidden = hiddenFrames?.finish(shownAt) ?? 0;
     // A refit during the draw opened a new hold, which has set the screen the
     // way that hold shows it.
     if (screen && !frameHoldRef.current) {
@@ -1179,7 +1171,7 @@ export function useTerminal(options: UseTerminalOptions) {
       if (grew && !motionReduced()) screen.animate([{ opacity: 0 }, { opacity: 1 }], { duration: GROW_FADE_IN_MS, easing: 'ease-out' });
     }
     if (!frameHoldRef.current) host?.removeAttribute(TERMINAL_FRAME_HOLD_ATTRIBUTE);
-    traceTerminalRenderer(sessionIdRef.current, 'frame-hold-finished', () => ({ accepted, grew, framesHidden: Math.max(0, hiddenFrames.count) }));
+    traceTerminalRenderer(sessionIdRef.current, 'frame-hold-finished', () => ({ accepted, grew, framesHidden }));
   }, [clearFrameHoldStyle]);
 
   /**
