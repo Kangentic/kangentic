@@ -32,6 +32,22 @@ vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: 
 // original sits in an import cycle with the workflow service and a spread of it
 // would leave the service holding the real function.
 vi.mock('../../src/main/ipc/handlers/session-resume', () => ({ resumeTaskSession: vi.fn() }));
+vi.mock('../../src/main/ipc/handlers/session-reconcile', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/handlers/session-reconcile')>()),
+  reconcileTaskSessionRef: vi.fn(),
+}));
+// A plain factory: the module sits in an import cycle with this service, and a
+// partial mock built through importOriginal hands the service the real export.
+vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({ autoSpawnForTask: vi.fn() }));
+// The notice a failed Resume shows: only the call is pinned, not the toast it sends.
+vi.mock('../../src/main/ipc/helpers/task-git', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/task-git')>()),
+  notifySpawnBlocked: vi.fn(),
+}));
+vi.mock('../../src/main/automations/turn-end/turn-end-passes', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/automations/turn-end/turn-end-passes')>()),
+  supersedeTurnEndWork: vi.fn(),
+}));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/workflows/workflow-changed')>()),
@@ -41,6 +57,10 @@ vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => (
 const { handleTaskMove } = await import('../../src/main/ipc/handlers/task-move');
 const { pauseTaskSession } = await import('../../src/main/ipc/handlers/session-pause');
 const { resumeTaskSession } = await import('../../src/main/ipc/handlers/session-resume');
+const { reconcileTaskSessionRef } = await import('../../src/main/ipc/handlers/session-reconcile');
+const { autoSpawnForTask } = await import('../../src/main/ipc/helpers/agent-spawn');
+const { notifySpawnBlocked } = await import('../../src/main/ipc/helpers/task-git');
+const { supersedeTurnEndWork } = await import('../../src/main/automations/turn-end/turn-end-passes');
 const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
@@ -49,6 +69,7 @@ const { TaskLinkRepository } = await import('../../src/main/db/repositories/task
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const service = await import('../../src/main/workflows/workflow-service');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
+const { setWorkflowCatchUp } = await import('../../src/main/workflows/workflow-catch-up');
 
 import { openTestDatabase } from './helpers/test-database';
 import { planAcrossBoards, taskTitled } from './helpers/workflow-plans';
@@ -168,11 +189,11 @@ describe('workflow operations', () => {
     const boardsAnnounced = (): string[] => [...new Set(emit.mock.calls.map(([event]) => event.projectId))].sort();
 
     emit.mockClear();
-    await service.pauseWorkflow(context, 'home', workflow.id);
+    await service.pauseWorkflow(context, 'home', workflow.id, 'a test');
     expect(boardsAnnounced()).toEqual(['home', 'mobile']);
 
     emit.mockClear();
-    await service.resumeWorkflow(context, 'home', workflow.id);
+    await service.resumeWorkflow(context, 'home', workflow.id, 'a test');
     expect(boardsAnnounced()).toEqual(['home', 'mobile']);
 
     emit.mockClear();
@@ -187,99 +208,355 @@ describe('workflow operations', () => {
     const wake = vi.fn();
     setWorkflowWake(wake);
     try {
-      await service.pauseWorkflow(context, 'home', workflow.id);
+      await service.pauseWorkflow(context, 'home', workflow.id, 'a test');
       expect(wake.mock.calls.every(([retryWorkflowId]) => retryWorkflowId === undefined)).toBe(true);
 
       wake.mockClear();
-      await service.resumeWorkflow(context, 'home', workflow.id);
+      await service.resumeWorkflow(context, 'home', workflow.id, 'a test');
       expect(wake).toHaveBeenCalledWith(workflow.id);
     } finally {
       setWorkflowWake(null);
     }
   });
 
-  describe('a task whose own automations are paused, when its workflow pauses and resumes', () => {
-    // A held task is a person's to work by hand, so the workflow's Pause leaves
-    // its agent running and Resume leaves it as it is (its own card pauses and
-    // resumes its session). Each case runs the same workflow first with nothing
-    // held, which must pause and resume both agents, so a skip cannot pass
-    // because the sessions were never found or the lane starts no agent.
-    async function runningInExecuting() {
-      const workflow = service.createWorkflow('home', {});
-      service.savePlan(context, 'home', workflow.id, {
-        tasks: [{ key: 'api', title: 'Budgets API' }, { key: 'ui', title: 'Budgets UI' }],
-        links: [],
-      });
-      await service.startWorkflow(context, 'home', workflow.id);
-      const executing = lanesOf('home').find((lane) => lane.name === 'Executing')!;
-      expect(executing.auto_spawn).toBe(true);
-      const tasks = tasksOf('home');
-      const byTitle = (title: string) => tasks.listByWorkflow(workflow.id).find((task) => task.title === title)!;
-      for (const title of ['Budgets API', 'Budgets UI']) {
-        const task = byTitle(title);
-        tasks.move({ taskId: task.id, targetSwimlaneId: executing.id, targetPosition: 0 }, { origin: 'workflow' });
-        tasks.update({ id: task.id, session_id: `session-${task.id}` });
+  describe('Pause stops every agent and Resume brings every one back', () => {
+    beforeEach(() => {
+      for (const mock of [pauseTaskSession, resumeTaskSession, reconcileTaskSessionRef, autoSpawnForTask, supersedeTurnEndWork, notifySpawnBlocked]) {
+        vi.mocked(mock).mockReset();
       }
-      return { workflow, api: byTitle('Budgets API'), ui: byTitle('Budgets UI') };
+    });
+
+    const homeDb = (): Database.Database => harness.dbs.get('home') as Database.Database;
+    const laneNamed = (name: string) => lanesOf('home').find((lane) => lane.name === name)!;
+    function place(taskId: string, laneName: string): void {
+      homeDb().prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(laneNamed(laneName).id, taskId);
     }
 
-    const idsOf = (spy: typeof pauseTaskSession | typeof resumeTaskSession) => spy.mock.calls.map(([, taskId]) => taskId).sort();
+    /** A started workflow of the named tasks, all on the home board and in To Do. */
+    async function startedWith(titles: string[]): Promise<{ workflowId: string; taskIdOf: (title: string) => string }> {
+      const created = service.createWorkflowWithPlan(context, 'home', {}, {
+        tasks: titles.map((title) => ({ key: title, title })),
+        links: [],
+      });
+      await service.startWorkflow(context, 'home', created.id);
+      const tasks = tasksOf('home').listByWorkflow(created.id);
+      return { workflowId: created.id, taskIdOf: (title) => tasks.find((task) => task.title === title)!.id };
+    }
 
-    beforeEach(() => {
-      vi.mocked(pauseTaskSession).mockReset().mockResolvedValue('paused');
-      vi.mocked(resumeTaskSession).mockReset().mockResolvedValue(undefined as never);
+    /** The session registry as Resume reads it: paused rows, and the tasks with a live agent. */
+    function withSessions(pausedTaskIds: string[], liveTaskIds: Set<string>): IpcContext {
+      return {
+        ...context,
+        // One Board Profile, which turns Testing's agent off for a task that rides it.
+        boardConfigManager: {
+          getBoardProfiles: () => [{ id: 'quiet', name: 'Quiet', columns: { [laneNamed('Testing').id]: { autoSpawn: false } } }],
+        },
+        sessionManager: {
+          listSessions: () => pausedTaskIds.map((taskId) => ({ taskId, status: 'suspended', transient: false })),
+          findLiveSessionByTaskId: (taskId: string) => (liveTaskIds.has(taskId) ? { id: `live-${taskId}` } : undefined),
+          currentWorkSerial: () => 7,
+          getActivityCache: () => Object.fromEntries([...liveTaskIds].map((taskId) => [`live-${taskId}`, 'idle'])),
+        },
+      } as unknown as IpcContext;
+    }
+
+    it('asks every task, a task with no session pointer included, and reports what each did', async () => {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      await service.startWorkflow(context, 'home', workflow.id);
+      const members = [...tasksOf('home').listByWorkflow(workflow.id), ...tasksOf('mobile').listByWorkflow(workflow.id)];
+      // None of them has a session pointer: the pause's own reconcile is what
+      // finds a live agent whose pointer was lost, so it is asked for each.
+      expect(members.every((task) => task.session_id === null)).toBe(true);
+      const api = members.find((task) => task.title === 'Budgets API')!;
+      const phone = members.find((task) => task.title === 'Budgets on the phone')!;
+      vi.mocked(pauseTaskSession).mockImplementation(async (_context, taskId) => {
+        if (taskId === api.id) return 'paused';
+        if (taskId === phone.id) throw new Error('suspend failed');
+        return 'not-live';
+      });
+
+      const result = await service.pauseWorkflow(context, 'home', workflow.id, 'a test');
+
+      expect(vi.mocked(pauseTaskSession).mock.calls.map(([, taskId, options]) => [taskId, options?.projectId]).sort())
+        .toEqual(members.map((task) => [task.id, task.id === phone.id ? 'mobile' : 'home']).sort());
+      expect(result).toMatchObject({ paused: 1, notLive: 1, failed: [{ projectId: 'mobile', taskId: phone.id, displayId: phone.display_id }] });
+      expect(result.workflow.state).toBe('paused');
+      // Turn-end work a running agent's last turn set off is stopped first, for every task.
+      expect(vi.mocked(supersedeTurnEndWork).mock.calls.map(([taskId]) => taskId).sort())
+        .toEqual(members.map((task) => task.id).sort());
     });
 
-    afterEach(() => {
-      vi.mocked(pauseTaskSession).mockReset();
-      vi.mocked(resumeTaskSession).mockReset();
+    it('pauses a held task\'s agent too: a workflow set down frees every agent it holds', async () => {
+      // Decided 2026-10-27 (#925): #923's hold never suspends an agent by itself, but
+      // the workflow's own Pause does, for every task.
+      const { workflowId, taskIdOf } = await startedWith(['held', 'free']);
+      place(taskIdOf('held'), 'Executing');
+      place(taskIdOf('free'), 'Executing');
+      homeDb().prepare('UPDATE tasks SET automations_disabled = 1 WHERE id = ?').run(taskIdOf('held'));
+      vi.mocked(pauseTaskSession).mockResolvedValue('paused');
+
+      const result = await service.pauseWorkflow(context, 'home', workflowId, 'a test');
+
+      expect(vi.mocked(pauseTaskSession).mock.calls.map(([, taskId]) => taskId).sort())
+        .toEqual([taskIdOf('held'), taskIdOf('free')].sort());
+      expect(result).toMatchObject({ paused: 2, failed: [] });
     });
 
-    it('pauses and resumes every agent when nothing is held (the control)', async () => {
-      const { workflow, api, ui } = await runningInExecuting();
+    it('resumes a paused agent in any working column, starts one where there is none, and leaves a live one alone', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['paused', 'gate', 'empty', 'quiet', 'live', 'waiting', 'done']);
+      place(taskIdOf('paused'), 'Executing');
+      // A person resumed this one in a column that starts no agent, and the Pause stopped it.
+      homeDb().prepare('UPDATE swimlanes SET auto_spawn = 0 WHERE id = ?').run(laneNamed('Code Review').id);
+      place(taskIdOf('gate'), 'Code Review');
+      place(taskIdOf('empty'), 'Testing');
+      // Its Board Profile turns Testing's agent off, so Resume starts none for it.
+      place(taskIdOf('quiet'), 'Testing');
+      homeDb().prepare('UPDATE tasks SET profile_id = ? WHERE id = ?').run('quiet', taskIdOf('quiet'));
+      place(taskIdOf('live'), 'Executing');
+      place(taskIdOf('done'), 'Done');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
 
-      const paused = await service.pauseWorkflow(context, 'home', workflow.id);
-      expect(paused.paused).toBe(2);
-      expect(idsOf(pauseTaskSession)).toEqual([api.id, ui.id].sort());
+      const live = new Set([taskIdOf('live')]);
+      const runtime = withSessions([taskIdOf('paused'), taskIdOf('gate')], live);
+      vi.mocked(reconcileTaskSessionRef).mockImplementation((_context, _projectId, taskId) => ({
+        task: tasksOf('home').getById(taskId)!,
+        liveSession: live.has(taskId)
+          ? ({ id: `live-${taskId}`, taskId, projectId: 'home', agentSessionId: 'agent-1', isolatedSwimlaneId: null } as never)
+          : null,
+      }));
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => ({ id: `resumed-${taskId}` }) as never);
+      // A start that never settles: Resume answers on acceptance, as the phone's Start does.
+      vi.mocked(autoSpawnForTask).mockImplementation(() => new Promise<void>(() => {}));
+      const catchUps: unknown[] = [];
+      setWorkflowCatchUp((resumed) => catchUps.push(resumed));
 
-      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
-      expect(resumed.resumed).toBe(2);
-      expect(idsOf(resumeTaskSession)).toEqual([api.id, ui.id].sort());
+      let result: Awaited<ReturnType<typeof service.resumeWorkflow>>;
+      try {
+        result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+      } finally {
+        setWorkflowCatchUp(null);
+      }
+
+      expect(vi.mocked(resumeTaskSession).mock.calls.map(([, taskId]) => taskId).sort())
+        .toEqual([taskIdOf('paused'), taskIdOf('gate')].sort());
+      // Not an explicit start: the column's own auto_spawn and a held pause still decide.
+      expect(vi.mocked(autoSpawnForTask).mock.calls).toEqual([
+        [runtime, 'home', { id: taskIdOf('empty'), title: 'empty' }, laneNamed('Testing').id],
+      ]);
+      expect(result).toMatchObject({ resumed: 2, started: 1, alreadyRunning: 1, failed: [] });
+      expect(result.workflow.state).toBe('running');
+      // The agent left running gets its reply judged, so a card worked to the
+      // end of its column during the pause moves on. The resumed ones get theirs
+      // from their own resume.
+      expect(catchUps).toEqual([{
+        sessionId: `live-${taskIdOf('live')}`,
+        taskId: taskIdOf('live'),
+        projectId: 'home',
+        agentSessionId: 'agent-1',
+        isolatedSwimlaneId: null,
+        workSerial: 7,
+      }]);
     });
 
-    it('leaves a held task\'s agent running when the workflow pauses, and pauses the rest', async () => {
-      const { workflow, api, ui } = await runningInExecuting();
-      tasksOf('home').update({ id: ui.id, automations_disabled: true });
+    it('brings back a held task\'s paused agent, and starts none for a held task with no agent', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['held paused', 'held empty']);
+      place(taskIdOf('held paused'), 'Executing');
+      place(taskIdOf('held empty'), 'Executing');
+      homeDb().prepare('UPDATE tasks SET automations_disabled = 1 WHERE id IN (?, ?)').run(taskIdOf('held paused'), taskIdOf('held empty'));
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
 
-      const paused = await service.pauseWorkflow(context, 'home', workflow.id);
+      const runtime = withSessions([taskIdOf('held paused')], new Set());
+      vi.mocked(reconcileTaskSessionRef).mockImplementation((_context, _projectId, taskId) => ({
+        task: tasksOf('home').getById(taskId)!,
+        liveSession: null,
+      }));
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => ({ id: `resumed-${taskId}` }) as never);
 
-      expect(paused.paused).toBe(1);
-      expect(idsOf(pauseTaskSession)).toEqual([api.id]);
-      expect(paused.workflow.state).toBe('paused');
+      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+
+      expect(vi.mocked(resumeTaskSession).mock.calls.map(([, taskId]) => taskId)).toEqual([taskIdOf('held paused')]);
+      expect(autoSpawnForTask).not.toHaveBeenCalled();
+      expect(result).toMatchObject({ resumed: 1, started: 0 });
     });
 
-    it('leaves a held task as it is when the workflow resumes, and resumes the rest', async () => {
-      const { workflow, api, ui } = await runningInExecuting();
-      await service.pauseWorkflow(context, 'home', workflow.id);
-      tasksOf('home').update({ id: ui.id, automations_disabled: true });
+    it('counts no resume another action cancelled, and reports one that failed', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['cancelled', 'broken']);
+      place(taskIdOf('cancelled'), 'Executing');
+      place(taskIdOf('broken'), 'Executing');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
 
-      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
+      const runtime = withSessions([taskIdOf('cancelled'), taskIdOf('broken')], new Set());
+      vi.mocked(reconcileTaskSessionRef).mockImplementation((_context, _projectId, taskId) => ({
+        task: tasksOf('home').getById(taskId)!,
+        liveSession: null,
+      }));
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => {
+        if (taskId === taskIdOf('broken')) throw new Error('Worktree setup failed: disk full');
+        return null;
+      });
 
-      expect(resumed.resumed).toBe(1);
-      expect(idsOf(resumeTaskSession)).toEqual([api.id]);
-      expect(resumed.workflow.state).toBe('running');
+      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+
+      const broken = tasksOf('home').getById(taskIdOf('broken'))!;
+      expect(result).toMatchObject({
+        resumed: 0,
+        started: 0,
+        failed: [{ projectId: 'home', taskId: broken.id, displayId: broken.display_id }],
+      });
     });
 
-    it('brings back the agent of a task whose automations resumed while the workflow was paused', async () => {
-      const { workflow, ui } = await runningInExecuting();
-      tasksOf('home').update({ id: ui.id, automations_disabled: true });
-      await service.pauseWorkflow(context, 'home', workflow.id);
-      tasksOf('home').update({ id: ui.id, automations_disabled: false });
+    /** Resume reads each task as it is now: the row, and no live agent. */
+    function reconcileToCurrentRows(): void {
+      vi.mocked(reconcileTaskSessionRef).mockImplementation((_context, projectId, taskId) => ({
+        task: tasksOf(projectId).getById(taskId)!,
+        liveSession: null,
+      }));
+    }
 
-      const resumed = await service.resumeWorkflow(context, 'home', workflow.id);
+    it('hands the resume a hook that shows the spawn-blocked notice for the task it failed on, on that task\'s own board', async () => {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, plan());
+      await service.startWorkflow(context, 'home', workflow.id);
+      // The phone task is on the mobile board, so the home board's id is the wrong answer.
+      const phone = tasksOf('mobile').listByWorkflow(workflow.id).find((task) => task.title === 'Budgets on the phone')!;
+      const mobileExecuting = lanesOf('mobile').find((lane) => lane.name === 'Executing')!;
+      (harness.dbs.get('mobile') as Database.Database).prepare('UPDATE tasks SET swimlane_id = ? WHERE id = ?').run(mobileExecuting.id, phone.id);
+      await service.pauseWorkflow(context, 'home', workflow.id, 'a test');
 
-      expect(resumed.resumed).toBe(2);
-      expect(idsOf(resumeTaskSession)).toContain(ui.id);
+      const runtime = withSessions([phone.id], new Set());
+      reconcileToCurrentRows();
+      const received: { options?: Parameters<typeof resumeTaskSession>[2] } = {};
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId, options) => {
+        received.options = options;
+        return { id: `resumed-${taskId}` } as never;
+      });
+
+      const result = await service.resumeWorkflow(runtime, 'home', workflow.id, 'a test');
+
+      expect(result).toMatchObject({ resumed: 1, failed: [] });
+      expect(received.options?.projectId).toBe('mobile');
+      expect(received.options?.onFailed).toBeTypeOf('function');
+      // Nothing failed yet, so no notice: the hook is what raises one.
+      expect(notifySpawnBlocked).not.toHaveBeenCalled();
+
+      // The task the resume hands the hook is the one it re-read, not the one Resume listed.
+      const failure = new Error('Worktree setup failed: disk full');
+      const rereadTask = { ...phone, title: 'Budgets on the phone, re-read' };
+      received.options!.onFailed!('worktree', failure, rereadTask);
+
+      expect(notifySpawnBlocked).toHaveBeenCalledTimes(1);
+      const [noticeContext, noticeTask, noticeStep, noticeError, noticeProjectId] = vi.mocked(notifySpawnBlocked).mock.calls[0];
+      expect(noticeContext).toBe(runtime);
+      expect(noticeTask).toBe(rereadTask);
+      expect(noticeStep).toBe('worktree');
+      expect(noticeError).toBe(failure);
+      expect(noticeProjectId).toBe('mobile');
+    });
+
+    it('skips, and does not fail, a resume that rejects after its card left for To Do or Done or was archived', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['to do', 'done', 'archived']);
+      for (const title of ['to do', 'done', 'archived']) place(taskIdOf(title), 'Executing');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
+
+      const runtime = withSessions([taskIdOf('to do'), taskIdOf('done'), taskIdOf('archived')], new Set());
+      reconcileToCurrentRows();
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => {
+        // The person's answer lands while the resume is in flight, after Resume
+        // saw each card in a working column, so the resume then refuses.
+        if (taskId === taskIdOf('to do')) place(taskId, 'To Do');
+        else if (taskId === taskIdOf('done')) place(taskId, 'Done');
+        else tasksOf('home').archive(taskId);
+        throw new Error('Cannot resume a task that has left its working column');
+      });
+
+      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+
+      expect(vi.mocked(resumeTaskSession)).toHaveBeenCalledTimes(3);
+      expect(result).toMatchObject({ resumed: 0, started: 0, alreadyRunning: 0, failed: [] });
+    });
+
+    it('skips a resume that rejects after its card was deleted', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['deleted']);
+      place(taskIdOf('deleted'), 'Executing');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
+
+      const runtime = withSessions([taskIdOf('deleted')], new Set());
+      reconcileToCurrentRows();
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => {
+        // A row delete, not TaskRepository.delete, which also releases dev ports through the global database.
+        homeDb().prepare('DELETE FROM tasks WHERE id = ?').run(taskId);
+        throw new Error('Task not found');
+      });
+
+      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+
+      expect(vi.mocked(resumeTaskSession)).toHaveBeenCalledTimes(1);
+      expect(result).toMatchObject({ resumed: 0, started: 0, alreadyRunning: 0, failed: [] });
+    });
+
+    it('a refusal does not hide a sibling\'s real failure: only the card still in its working column is reported failed', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['moved on', 'broken']);
+      place(taskIdOf('moved on'), 'Executing');
+      place(taskIdOf('broken'), 'Executing');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
+
+      const runtime = withSessions([taskIdOf('moved on'), taskIdOf('broken')], new Set());
+      reconcileToCurrentRows();
+      vi.mocked(resumeTaskSession).mockImplementation(async (_context, taskId) => {
+        if (taskId === taskIdOf('moved on')) place(taskId, 'Done');
+        throw new Error('Worktree setup failed: disk full');
+      });
+
+      const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+
+      const broken = tasksOf('home').getById(taskIdOf('broken'))!;
+      expect(result).toMatchObject({
+        resumed: 0,
+        failed: [{ projectId: 'home', taskId: broken.id, displayId: broken.display_id }],
+      });
+      expect(result.failed).toHaveLength(1);
+    });
+
+    it('counts a start as accepted when its agent later fails to start, and leaves that rejection caught', async () => {
+      const { workflowId, taskIdOf } = await startedWith(['empty']);
+      place(taskIdOf('empty'), 'Testing');
+      await service.pauseWorkflow(context, 'home', workflowId, 'a test');
+
+      const runtime = withSessions([], new Set());
+      reconcileToCurrentRows();
+      // autoSpawnForTask shows its own spawn-blocked notice before it rejects:
+      // Resume only has to survive the rejection, not report it. Not
+      // mockRejectedValue: vi.fn() attaches its own reaction to every real
+      // Promise a mock returns, to record the settled result, and that marks the
+      // rejection handled, so a missing catch would never reach Node's
+      // unhandled-rejection tracking. A thenable that is not a Promise is left
+      // alone; only a handler the code under test attaches handles it.
+      const rejection = new Error('Worktree setup failed: disk full');
+      vi.mocked(autoSpawnForTask).mockImplementation(() => {
+        const rejected = Promise.reject(rejection);
+        return {
+          then: (onFulfilled: never, onRejected: never) => rejected.then(onFulfilled, onRejected),
+          catch: (onRejected: never) => rejected.catch(onRejected),
+        } as never;
+      });
+      const unhandled: unknown[] = [];
+      const collectUnhandled = (reason: unknown): void => { unhandled.push(reason); };
+      process.on('unhandledRejection', collectUnhandled);
+
+      try {
+        const result = await service.resumeWorkflow(runtime, 'home', workflowId, 'a test');
+        // Node reports an unhandled rejection once the microtask queue drains:
+        // let the loop turn twice so a missing catch has been seen.
+        await new Promise((resolve) => setImmediate(resolve));
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(autoSpawnForTask).toHaveBeenCalledTimes(1);
+        expect(result).toMatchObject({ resumed: 0, started: 1, alreadyRunning: 0, failed: [] });
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off('unhandledRejection', collectUnhandled);
+      }
     });
   });
 
@@ -1007,7 +1284,7 @@ describe('workflow operations', () => {
       armRecovery(api.id, workflow.id);
       armRecovery('task-elsewhere', OTHER_WORKFLOW_ID);
 
-      await service.pauseWorkflow(context, 'home', workflow.id);
+      await service.pauseWorkflow(context, 'home', workflow.id, 'a test');
 
       expect(isUnderWorkflowRecovery(api.id)).toBe(false);
       expect(getRecoveryEntry(api.id)).toBeUndefined();

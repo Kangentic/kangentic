@@ -139,7 +139,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_pause_workflow',
     {
-      description: 'Pause a running workflow: every task\'s agent pauses at once, and nothing starts or moves until it is resumed.',
+      description: 'Pause a running workflow: every task\'s agent pauses at once, and the workflow starts, judges and moves nothing until it is resumed. A card a person works by hand meanwhile runs its column automations as any card does. The reply counts the agents paused and names any it could not pause.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -152,7 +152,7 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
   server.registerTool(
     'kangentic_resume_workflow',
     {
-      description: 'Resume a paused workflow: each task\'s agent resumes in the column it is in, and waiting tasks start again as their blockers finish.',
+      description: 'Resume a paused workflow: each paused agent resumes in the column its task is in now, a task in an agent column with no agent gets one started, and waiting tasks start again as their blockers finish. An agent already running is left alone.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

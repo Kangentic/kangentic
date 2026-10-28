@@ -41,7 +41,8 @@ src/main/workflows/
   workflow-prompt-facts.ts   # what {{workflow_xml}} tells a workflow task's agent
   workflow-tasks.ts          # every created task of a workflow, across projects (a plain read), and
                              #   linkEndState: whether a link's missing end is gone or still holds
-  workflow-home.ts           # the workflow a task is in, read in its home, never creating a gone home's database
+  workflow-home.ts           # the workflow a task is in, read in its home, never creating a gone home's database,
+                             #   and whether it is paused (isTaskWorkflowPaused) for the paths that start nothing then
   workflow-project-delete.ts # what a project delete does to the workflows it is part of
   workflow-agent.ts          # the workflow's own agent: open, resume, pause, end, start over on a lost resume,
                              #   read access to other projects, its spend captured for Stats
@@ -53,6 +54,7 @@ src/main/workflows/
   workflow-agent-effort.ts   # the effort it started at, for its Stats rows when the status line reports none
   workflow-runtime.ts        # the IPC context the operations act through
   workflow-wake.ts           # wake the engine from a write that does not wake it itself (a task or link delete, a project delete, a workflow started, resumed or edited)
+  workflow-catch-up.ts       # Resume's ask that the turn-end runner judge a live agent's last reply, as a resume does
 ```
 
 - **The workflow agent** that plans a workflow is a transient session with its own MCP scope; see
@@ -181,6 +183,10 @@ src/main/workflows/
   - The schedule is 5, 15, 30 and 60 minutes. Each attempt runs as a pass of the turn-end runner's
     own (`recovery`), judges the session's current turn (reusing a verdict it already has for that
     turn), and then moves, nudges, or notifies.
+  - A reply written before the task entered its column is never judged there, as the resume
+    catch-up never judges one (`judgeCurrentTurn`). That reply belongs to the last column. Judged
+    as this column's, a reply that read done moved a card a person dragged on past work it never
+    did. The attempt reads it as a stall and nudges, with no paid check.
   - A nudge is one line typed into the terminal, only while nobody is there: no draft, no focused
     terminal, nothing on its way, the agent idle on the judged turn. It tells the agent to go ahead
     with the step's own work (commit, run the gate) without asking first, and to stop only for
@@ -253,16 +259,60 @@ src/main/workflows/
   - The lock lets a person move its card to any column but To Do (`taskHeld`), and the board's
     reads agree: `humanGateExit` names no gate for it, `isLockedOnBoard` and `sendAwayRefusal`
     read the hold, and the phone's `lock_reason` is null. Backlog and Archive stay refused.
-  - Pause and Resume workflow skip a held task's session, so the agent a person is working keeps
-    running.
+  - The hold never suspends an agent by itself. The workflow's own Pause does stop a held task's
+    agent, and Resume brings it back still held, with no new agent for a held task that has none
+    (decided 2026-10-27, task #925).
   - A plan approved by hand still moves it on: the `plan-exit` auto-move is the person's act, and
     Automatic approval is held as Manual (`readPlanApprovalDecision`).
   - `applyAutomationsHoldChange` (`workflow-task-hold.ts`) runs after the two writes that flip it
     (the task update IPC and `handleUpdateTask`, which the phone shares). Putting it on calls
     `supersedeTurnEndWork`. Taking it off, in a working column, writes a recovery start (so a task
     held while stalled comes back with a fresh schedule rather than a spent one) and, with a live
-    agent, schedules the resume catch-up (`setHoldReleaseCatchUp`), which judges a reply of this
-    visit. Point forward only: a reply from before a hand move and the enter rows that move
-    skipped are left alone, and a paused agent stays paused.
+    agent that is idle, asks for the resume catch-up (`requestWorkflowCatchUp`, shared with the
+    workflow's Resume), which judges a reply of this visit. Point forward only: a reply from before
+    a hand move and the enter rows that move skipped are left alone, and a paused agent stays
+    paused.
+- **Pause** (`pauseWorkflow`) writes the state, cancels recovery and stops each task's turn-end
+  work (`supersedeTurnEndWork`), so a row a running agent's last turn set off moves nothing. Then it
+  calls `pauseTaskSession` for every task at once, a held task's included, with or without a
+  session pointer. The pause's own reconcile re-links a live agent whose pointer was lost, and
+  cancels a resume or an `autoSpawnForTask` still in flight. A paused workflow starts nothing by
+  itself:
+  - The lock refuses the `workflow` origin while paused. `handleTaskMove` asks it under the task
+    lock, so an engine start or a step move that raced the Pause does not move the card. The
+    engine host takes that refusal as the Pause working, not as a failed start: no backoff, toast
+    or stall notice, and Resume's wake starts the task. A step move refused that way is
+    recorded as a failed move (`runWorkflowStep`), and recovery does not run while paused. After
+    Resume, the resumed agent's catch-up sees that run row and starts recovery again from the run
+    log.
+  - `handleTaskMove` notes in Phase 1 whether a move no person made (`workflow`, `automation`,
+    `auto-move`, or `agent`, which the lock admits under a running workflow only from the task's
+    own agent) passed the lock under a running workflow. Its Phase 3 skips the spawn when that
+    workflow paused during the unlocked Phase 2. The card stays where it landed, and Resume brings
+    its agent back there.
+  - The startup auto-spawn pass skips a paused workflow's tasks (`isTaskWorkflowPaused`), except in
+    a pty-host-loss pass (`lostScope`), which brings back agents a person had resumed.
+
+  Hands, the `automation` and `auto-move` origins and the task's own agent still pass the lock. A
+  card a person works during a pause is an ordinary card and may run on through its board (decided
+  2026-10-27, task #925). A card the Pause stopped stays paused through a drag, because `spawnAgent`
+  respects its held pause.
+- **Resume** (`resumeWorkflow`) decides each task in a working column under its lock. A live agent
+  is left running, and its last reply goes to the turn-end catch-up (`requestWorkflowCatchUp`,
+  which the runner registers with `setWorkflowCatchUp`): a person may have worked it to the end of
+  its column during the pause, and an idle agent ends no turn that would be judged. A paused one (a
+  `suspended` registry row or record) comes back through
+  `resumeTaskSession`, in any column, and is awaited (all tasks at once). A task with none, its
+  automations on and its column's profile-folded `auto_spawn` on, gets `autoSpawnForTask` without
+  `explicitStart`, so a held pause still decides, and the column's enter list runs. That start is
+  counted on acceptance and not awaited: an enter list can run a script for minutes, and the
+  phone's Resume answers within 10 s. Then the engine wakes, and a task finished during the pause
+  lets its dependents start.
+- **The record.** Pause and Resume each log one line naming who asked: the Workflows view, the phone
+  (`CommandContext.via`), a task's agent, or an MCP client. `[WORKFLOW] Paused "<title>" from the
+  phone: 3 agents paused, 2 tasks had no live agent, 1 failed (#917)`. Their report
+  (`WorkflowPauseReport`, `WorkflowResumeReport`) is the IPC answer, where a Pause that could not
+  stop an agent raises a toast naming its task, the MCP reply's counts, and the phone's board-tool
+  result.
 - **MCP:** thirteen workflow tools in their own category (`workflow-tools.ts`,
   `workflow-commands.ts`). Only list, get, pause and resume reach the phone's board-tool path.

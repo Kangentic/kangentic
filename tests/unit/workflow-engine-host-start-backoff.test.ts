@@ -561,6 +561,26 @@ describe('the workflow engine host', () => {
     });
   });
 
+  describe('a start the Pause stopped', () => {
+    it('is no failure: no backoff, no toast, no stall, when the lock refused it because the workflow paused meanwhile', async () => {
+      // The pass read the workflow running; the Pause landed while this start
+      // waited for the task lock, which then refused the workflow's own move.
+      const { workflowId, taskIds: [taskId] } = runningWorkflow('Usage budgets');
+      harness.handleTaskMove.mockImplementation(async () => {
+        startTimes.push(Date.now());
+        new WorkflowRepository(dbOf('home')).setState(workflowId, 'paused');
+        throw new Error('#1 is in Usage budgets, which is paused. Resume it to move its tasks.');
+      });
+
+      await advance(DEBOUNCE_MS * 2);
+
+      expect(startTimes).toHaveLength(1);
+      expect(engine.failedStart('home', taskId)).toBeNull();
+      expect(harness.notifySpawnBlocked).not.toHaveBeenCalled();
+      expect(vi.getTimerCount()).toBe(0);
+    });
+  });
+
   describe('a resume', () => {
     it('clears that workflow\'s backoff through wakeWorkflowEngine(workflowId), so the next pass retries at once', async () => {
       const first = runningWorkflow('Usage budgets');

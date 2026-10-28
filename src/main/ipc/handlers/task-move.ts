@@ -63,6 +63,8 @@ import {
 import { checkWorkflowMove, readTaskForWorkflowPrecheck } from '../../workflows/workflow-lock-check';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
+import { isTaskWorkflowPaused, taskWorkflowState } from '../../workflows/workflow-home';
+import { isMoveByAPerson } from '../../../shared/task-move-origin';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
@@ -353,6 +355,13 @@ export async function handleTaskMove(
   // so on the common paths there is no task in scope by the time we announce.
   let moveCommitted = false;
   let movedTaskTitle = '';
+  // Whether the task's workflow was running when this move passed its lock, for
+  // a move no person made (an automation's, a plan exit's, the workflow's own).
+  // Phase 3 starts no agent for one whose workflow was paused during Phase 2: the
+  // turn that set it off belonged to a workflow that has since been set down.
+  // A move a person's own work makes while the workflow is paused sees it paused
+  // here, and starts its agent as on any card.
+  let ranUnderRunningWorkflow = false;
   /**
    * The destination column's enter rows, on a move Phase 1 fully handles.
    *
@@ -429,6 +438,7 @@ export async function handleTaskMove(
 
       // The workflow lock, against the row as it is now (see the pre-check).
       workflowCheck(task, resolvedProjectId);
+      ranUnderRunningWorkflow = !isMoveByAPerson(origin) && taskWorkflowState(task, resolvedProjectId) === 'running';
 
       // A move out of the column supersedes the task's turn-end work: a group
       // running for the column it is leaving, or a moved task's message still
@@ -1554,6 +1564,15 @@ export async function handleTaskMove(
               `[TASK_MOVE] Task ${task.id.slice(0, 8)} already has session ${current.session_id.slice(0, 8)},`
               + ' started by another path while this move made its worktree - skipping spawn',
             );
+            return;
+          }
+          // A move no person made passed the lock while its workflow ran (an
+          // engine start, a step move, a Move to column row, a plan exit), and
+          // the workflow was paused while this move made its worktree. A paused
+          // workflow starts nothing: the card stays where the move put it, and
+          // Resume brings its agent back there.
+          if (ranUnderRunningWorkflow && isTaskWorkflowPaused(current, resolvedProjectId)) {
+            console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)}: its workflow was paused during Phase 2 - skipping spawn`);
             return;
           }
 

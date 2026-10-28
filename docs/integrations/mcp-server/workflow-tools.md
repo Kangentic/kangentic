@@ -147,8 +147,12 @@ to Done, unless the plan took it in.
 
 ## kangentic_pause_workflow
 
-Pause every agent in a running workflow at once (a mid-board suspend: nothing is reaped). Nothing
-starts or moves until it is resumed.
+Pause every agent in a running workflow at once, a task with paused automations included (a
+mid-board suspend: nothing is reaped). The workflow then starts, judges and moves nothing until it
+is resumed. A card a person works meanwhile (an agent resumed by hand, a drag) runs its column
+automations as any card does, and its own agent may move it. The reply counts the agents paused and
+names each task whose agent could not be paused; the phone gets the same counts as the result's
+`paused`, `notLive` and `failed`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
@@ -157,7 +161,12 @@ starts or moves until it is resumed.
 
 ## kangentic_resume_workflow
 
-Resume a paused workflow: each task's agent resumes in the column it is in.
+Resume a paused workflow. Each paused agent resumes in the column its task is in now, in any
+working column. A task in an agent column with no agent gets one started, with the column's
+message, unless its automations are paused. An agent already running is left alone. Waiting tasks
+start as their blockers reach Done. The reply counts the agents resumed, started and already
+running, and names any that failed; the phone gets them as `resumed`, `started`, `alreadyRunning`
+and `failed`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

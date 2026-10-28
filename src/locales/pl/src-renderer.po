@@ -188,6 +188,10 @@ msgstr ""
 msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
 msgstr ""
 
+#: src/renderer/stores/workflow-store.ts
+msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
+msgstr ""
+
 #: src/renderer/components/TemplateTextField.tsx
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr ""
@@ -1254,6 +1258,10 @@ msgstr ""
 
 #: src/renderer/App.tsx
 msgid "Still preparing: {taskTitle}"
+msgstr ""
+
+#: src/renderer/stores/workflow-store.ts
+msgid "Still running: {tasks}."
 msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts

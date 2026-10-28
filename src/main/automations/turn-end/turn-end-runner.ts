@@ -28,7 +28,8 @@ import {
   setRecoveryAttemptRunner,
   startWorkflowRecoveryOver,
 } from '../../workflows/workflow-recovery';
-import { setHoldReleaseCatchUp, setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
+import { setHoldReleaseRecoveryStart } from '../../workflows/workflow-task-hold';
+import { setWorkflowCatchUp } from '../../workflows/workflow-catch-up';
 import type { AutomationRunRepository, RunConditionAnswer } from '../../db/repositories/automation-run-repository';
 import type { TaskVisit } from '../../db/repositories/task-move-repository';
 import { deliverMessageToSession } from './deliver-message';
@@ -206,6 +207,14 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       void catchUpAfterResume(context, resumed);
     });
   });
+  // A workflow's Resume, or a task's automations resumed, found the agent
+  // already live: judge the reply it left, as a resume does. Off the caller's
+  // stack, as the resume's is.
+  setWorkflowCatchUp((resumed) => {
+    setImmediate(() => {
+      void catchUpAfterResume(context, resumed);
+    });
+  });
   // Where a recap's turn ends (`recap-turns.ts`): a map lookup for any other session.
   context.sessionManager.on('activity', (sessionId: string, activity: ActivityState) => {
     if (dispositionOf(activity) === 'idle') noteRecapSessionIdle(sessionId, Date.now());
@@ -247,13 +256,6 @@ export function registerTurnEndAutomations(context: IpcContext): void {
       recovery: true,
       userWorkMarkAtTurnEnd: userWorkMark(sessionId),
       turnEndMarkAtTurnEnd: turnEndMark(sessionId),
-    });
-  });
-  // A workflow task's automations resumed with its agent live: judge the reply
-  // its visit left, as a resume does. Off the handler's stack, as the resume's is.
-  setHoldReleaseCatchUp((resumed) => {
-    setImmediate(() => {
-      void catchUpAfterResume(context, resumed);
     });
   });
   setHoldReleaseRecoveryStart(startWorkflowRecoveryOver);

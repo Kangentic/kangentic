@@ -324,8 +324,27 @@ describe('the move lock', () => {
 
   it('lets a paused workflow\'s cards move by hand, but never into To Do', () => {
     expect(workflowMoveRefusal(check({ workflowState: 'paused' }))).toBeNull();
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'mobile' }))).toBeNull();
     expect(workflowMoveRefusal(check({ workflowState: 'paused', toSwimlaneId: 'todo', toRole: 'todo' })))
       .toBe('#414 is in Usage budgets. Remove it from the workflow to move it to To Do.');
+  });
+
+  it('refuses the paused workflow\'s own move, a step move or a start that raced the Pause', () => {
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'workflow' })))
+      .toBe('#414 is in Usage budgets, which is paused. Resume it to move its tasks.');
+  });
+
+  it('lets a card a person works while paused move as any card does: its automations, plan exit and its own agent', () => {
+    // Decided 2026-10-27 (#925): a card a person touches during a pause is an
+    // ordinary card, and may run on through its board.
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'automation' }))).toBeNull();
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'auto-move' }))).toBeNull();
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'agent', moverIsTaskAgent: true }))).toBeNull();
+  });
+
+  it('refuses another task\'s agent while paused', () => {
+    expect(workflowMoveRefusal(check({ workflowState: 'paused', origin: 'agent' })))
+      .toBe('#414 is in Usage budgets, which is paused. Resume it to move its tasks.');
   });
 
   it('refuses To Do even for the task\'s own agent', () => {

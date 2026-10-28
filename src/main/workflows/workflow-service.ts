@@ -11,11 +11,16 @@ import type {
   TaskRunMode,
   TaskWorkflowMembership,
   Workflow,
+  WorkflowAgentFailure,
   WorkflowDraft,
   WorkflowDraftLink,
   WorkflowDraftTask,
+  WorkflowPauseReport,
+  WorkflowResumeReport,
   WorkflowTaskRunSettings,
 } from '../../shared/types';
+import { canTaskRunAutomations } from '../../shared/automation-manifest';
+import { isTaskPaused, resumeBlockReasonForTask } from '../../shared/session-resume-eligibility';
 import { routeCandidates, routeColumns, todoColumn, doneColumn } from '../../shared/workflow-route';
 import { WORKFLOW_REFUSALS } from '../../shared/workflow-refusals';
 import { DEFAULT_RUN_SETTINGS, PERMISSION_MODES, RUN_MODES, hasRunSettings, isPermissionMode, isRunMode } from '../../shared/workflow-run-settings';
@@ -35,10 +40,18 @@ import { validateSpawnOverrides } from '../agent/mcp-http/spawn-override-validat
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { resumeTaskSession } from '../ipc/handlers/session-resume';
+import { reconcileTaskSessionRef } from '../ipc/handlers/session-reconcile';
+import { autoSpawnForTask } from '../ipc/helpers/agent-spawn';
+import { notifySpawnBlocked } from '../ipc/helpers/task-git';
+import { loadTaskProfile } from '../ipc/helpers/task-profile';
+import { applyProfileToLane } from '../transition-engine/column-strategy';
+import { withTaskLock } from '../ipc/task-lifecycle-lock';
 import type { IpcContext } from '../ipc/ipc-context';
+import { supersedeTurnEndWork } from '../automations/turn-end/turn-end-passes';
 import { wouldCreateCycle } from './engine/workflow-engine-core';
 import { MAX_WORKFLOW_TASKS } from './workflow-limits';
 import { wakeWorkflowEngine } from './workflow-wake';
+import { requestWorkflowCatchUp } from './workflow-catch-up';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { cancelWorkflowRecovery, forgetWorkflowRecovery } from './workflow-recovery-state';
 import { announceBoardChange } from './workflow-board-announce';
@@ -55,7 +68,6 @@ import {
   type PlannedPlanSource,
 } from '../plan-approval/workflow-plan-approval';
 import { normalizeTaskPlanApproval } from '../../shared/plan-approval';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
 
 /**
  * The operations on a workflow: everything an agent (over MCP) or the
@@ -950,11 +962,21 @@ function announceWorkflowBoards(context: IpcContext, homeProjectId: string, work
 // ---------------------------------------------------------------------------
 
 /**
- * Pause every task's agent at once. Nothing starts or moves until Resume. A task
- * whose automations are paused keeps its agent: a person is working it by hand,
- * and the workflow is not what drives it (Pause session on its card pauses it).
+ * Pause every task's agent at once, a held task's included: the workflow is
+ * set down, and its agents stop holding memory. The workflow then starts,
+ * judges and nudges nothing until Resume. A person may still resume one card's
+ * agent or move a card by hand, and that card runs its column's automations as
+ * any card does (docs/user-guide/workflows.md, "Pausing").
+ *
+ * `source` names who asked, for the log line: a pause that worked used to
+ * leave no trace at all.
  */
-export async function pauseWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): Promise<{ workflow: Workflow; paused: number }> {
+export async function pauseWorkflow(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  source: string,
+): Promise<{ workflow: Workflow } & WorkflowPauseReport> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'running') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, so there is nothing to pause.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'paused');
@@ -963,47 +985,174 @@ export async function pauseWorkflow(context: IpcContext, homeProjectId: string, 
   // The header flips to Resume at once; the sessions suspend after.
   notifyWorkflowChanged(homeProjectId, workflowId);
   announceWorkflowBoards(context, homeProjectId, workflowId);
-  let paused = 0;
-  for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
-    if (!task.session_id || !canTaskRunAutomations(task).ok) continue;
-    try {
-      if (await pauseTaskSession(context, task.id, { projectId }) === 'paused') paused += 1;
-    } catch (error) {
-      console.warn(`[WORKFLOW] Could not pause #${task.display_id}:`, error);
+  const members = workflowTasks(context, homeProjectId, workflowId);
+  // A turn that ended just before the Pause may still be running its column's
+  // rows (a Condition check, a Move to column) or a step check: stop them, so
+  // no row moves a card on and starts the next column's agent.
+  for (const { task } of members) supersedeTurnEndWork(task.id);
+  // Every task, with or without a session pointer: the pause's own reconcile
+  // re-links a live agent whose pointer was lost, and answers `not-live` cheaply
+  // for the rest. It also cancels a start or a resume still in flight.
+  const outcomes = await Promise.allSettled(
+    members.map(({ projectId, task }) => pauseTaskSession(context, task.id, { projectId })),
+  );
+  const report: WorkflowPauseReport = { paused: 0, notLive: 0, failed: [] };
+  outcomes.forEach((outcome, index) => {
+    const { projectId, task } = members[index];
+    if (outcome.status === 'rejected') {
+      console.warn(`[WORKFLOW] Could not pause #${task.display_id}:`, outcome.reason);
+      report.failed.push({ projectId, taskId: task.id, displayId: task.display_id });
+    } else if (outcome.value === 'paused') {
+      report.paused += 1;
+    } else {
+      report.notLive += 1;
     }
-  }
-  return { workflow: requireWorkflow(homeProjectId, workflowId), paused };
+  });
+  console.log(
+    `[WORKFLOW] Paused "${workflow.title}" from ${source}: ${report.paused} ${plural(report.paused, 'agent')} paused,`
+    + ` ${report.notLive} ${plural(report.notLive, 'task')} had no live agent, ${failureSummary(report.failed)}`,
+  );
+  return { workflow: requireWorkflow(homeProjectId, workflowId), ...report };
 }
 
+type ResumeOutcome = 'resumed' | 'started' | 'alreadyRunning' | 'skipped';
+
 /**
- * Resume every paused task's agent, each in the column it is in. A task whose
- * automations are paused is left as it is, as Pause left it: its agent is the
- * person's, and Resume session on its card brings back one that is paused.
+ * Bring back every agent its Pause stopped, each in the column it is in now,
+ * and start one for a task in an agent column that has none: the workflow
+ * reads the board as it is, so a card a person moved on or finished while it
+ * was paused is picked up from there. A held task's paused agent comes back
+ * too, still held; a held task with no agent gets none, since the workflow
+ * starts nothing for a task it does not drive.
  */
-export async function resumeWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): Promise<{ workflow: Workflow; resumed: number }> {
+export async function resumeWorkflow(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  source: string,
+): Promise<{ workflow: Workflow } & WorkflowResumeReport> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'paused') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, not paused.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'running');
   notifyWorkflowChanged(homeProjectId, workflowId);
   announceWorkflowBoards(context, homeProjectId, workflowId);
-  let resumed = 0;
-  for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
-    if (task.archived_at || !canTaskRunAutomations(task).ok) continue;
-    const lane = safeLanes(projectId).find((candidate) => candidate.id === task.swimlane_id);
-    // To Do waits for the engine; Done is finished; a column with no agent has none to resume.
-    if (!lane || lane.role === 'todo' || lane.role === 'done' || !lane.auto_spawn) continue;
-    const hasSuspended = new SessionRepository(getProjectDb(projectId)).getLatestForTask(task.id)?.status === 'suspended';
-    if (!hasSuspended && !task.session_id) continue;
-    try {
-      await resumeTaskSession(context, task.id, { projectId });
-      resumed += 1;
-    } catch (error) {
-      console.warn(`[WORKFLOW] Could not resume #${task.display_id}:`, error);
+  const members = workflowTasks(context, homeProjectId, workflowId);
+  const outcomes = await Promise.allSettled(
+    members.map(({ projectId, task }) => bringBackTaskAgent(context, projectId, task)),
+  );
+  const report: WorkflowResumeReport = { resumed: 0, started: 0, alreadyRunning: 0, failed: [] };
+  outcomes.forEach((outcome, index) => {
+    const { projectId, task } = members[index];
+    if (outcome.status === 'rejected') {
+      console.warn(`[WORKFLOW] Could not resume #${task.display_id}:`, outcome.reason);
+      report.failed.push({ projectId, taskId: task.id, displayId: task.display_id });
+    } else if (outcome.value !== 'skipped') {
+      report[outcome.value] += 1;
     }
-  }
+  });
+  console.log(
+    `[WORKFLOW] Resumed "${workflow.title}" from ${source}: ${report.resumed} resumed, ${report.started} started,`
+    + ` ${report.alreadyRunning} already running, ${failureSummary(report.failed)}`,
+  );
   // Resume is also the user's way to retry a start that keeps failing.
   wakeWorkflowEngine(workflowId);
-  return { workflow: requireWorkflow(homeProjectId, workflowId), resumed };
+  return { workflow: requireWorkflow(homeProjectId, workflowId), ...report };
+}
+
+/**
+ * One task's part of Resume. Decided under the task lock, because the
+ * reconcile writes: it clears a pointer at an exited row, so the start below is
+ * not refused by a stale one. The lock is released before the resume or start,
+ * since each takes its own (`withTaskLock` is not reentrant) and re-checks.
+ */
+async function bringBackTaskAgent(context: IpcContext, projectId: string, task: Task): Promise<ResumeOutcome> {
+  // To Do waits for the engine, and Done is finished. Asked of the list's task
+  // row first, so the many tasks there cost no lock, then of the task row the
+  // reconcile reads under it. Both ask this one read of the columns.
+  const lanes = safeLanes(projectId);
+  const workingColumn = (swimlaneId: string): Swimlane | null => {
+    const lane = lanes.find((candidate) => candidate.id === swimlaneId);
+    return lane && lane.role !== 'todo' && lane.role !== 'done' ? lane : null;
+  };
+  if (task.archived_at || !workingColumn(task.swimlane_id)) return 'skipped';
+  const decision = await withTaskLock(task.id, async () => {
+    const { task: current, liveSession } = reconcileTaskSessionRef(context, projectId, task.id);
+    if (liveSession) return { kind: 'live' as const, liveSession };
+    const lane = workingColumn(current.swimlane_id);
+    if (current.archived_at || !lane) return { kind: 'skip' as const };
+    const latest = new SessionRepository(getProjectDb(projectId)).getLatestForTask(task.id);
+    if (isTaskPaused(context.sessionManager.listSessions(), task.id) || latest?.status === 'suspended') return { kind: 'resume' as const };
+    if (!canTaskRunAutomations(current).ok) return { kind: 'skip' as const };
+    // The column's own auto_spawn, through the task's Board Profile, as the
+    // start below reads it, so a column that starts no agent is not counted.
+    const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+    if (!applyProfileToLane(lane, loadTaskProfile(context, current, projectPath))?.auto_spawn) return { kind: 'skip' as const };
+    return { kind: 'start' as const, laneId: lane.id };
+  });
+  switch (decision.kind) {
+    case 'live':
+      // Left running, never restarted. A person may have worked it to the end
+      // of its column while the workflow was paused: judge the reply it left,
+      // so the card moves on from where it is.
+      requestWorkflowCatchUp(context, decision.liveSession);
+      return 'alreadyRunning';
+    case 'skip':
+      return 'skipped';
+    case 'resume': {
+      // In any column, an auto_spawn=false one included: an agent a person
+      // resumed in a human gate, which the Pause then stopped, comes back too.
+      // The phone's failure hook, since nobody awaits this resume's rejection
+      // in a toast: a failed one shows the desktop's spawn-blocked notice.
+      try {
+        const session = await resumeTaskSession(context, task.id, {
+          projectId,
+          onFailed: (step, error, failedTask) => notifySpawnBlocked(context, failedTask, step, error, projectId),
+        });
+        // Null: a newer resume, a pause or a reset took the task over.
+        return session ? 'resumed' : 'skipped';
+      } catch (error) {
+        // A refusal is a person's answer, not a failure: the card left for To
+        // Do or Done, or was archived or deleted, after the decision above.
+        // The resume shows no notice for one, and neither does the report.
+        if (resumeNowRefused(projectId, task.id)) return 'skipped';
+        throw error;
+      }
+    }
+    case 'start':
+      // Not an explicit start: the column's own (profile-folded) auto_spawn
+      // decides again under its lock, and a held pause stays held. It runs the
+      // column's enter list, so the new agent gets the column message, and it
+      // reports its own failure with the spawn-blocked notice. Not awaited: that
+      // list can run a script for minutes, and the phone's Resume answers in
+      // 10 s. It is counted as accepted, as the phone's own Start is.
+      autoSpawnForTask(context, projectId, { id: task.id, title: task.title }, decision.laneId).catch((error: unknown) => {
+        console.warn(`[WORKFLOW] Could not start #${task.display_id}'s agent on Resume:`, error);
+      });
+      return 'started';
+  }
+}
+
+/** Whether Resume now refuses the task: it is gone, archived, or in To Do or Done. False when unreadable. */
+function resumeNowRefused(projectId: string, taskId: string): boolean {
+  try {
+    const { tasks, lanes } = projectRepos(projectId);
+    const current = tasks.getById(taskId);
+    if (!current) return true;
+    const lane = lanes.find((candidate) => candidate.id === current.swimlane_id);
+    return resumeBlockReasonForTask({ task: current, laneRole: lane?.role }) !== null;
+  } catch {
+    return false;
+  }
+}
+
+function plural(count: number, noun: string): string {
+  return count === 1 ? noun : `${noun}s`;
+}
+
+/** The log's failure clause: "0 failed", or "2 failed (#917, #918)". */
+function failureSummary(failed: WorkflowAgentFailure[]): string {
+  if (failed.length === 0) return '0 failed';
+  return `${failed.length} failed (${failed.map((failure) => `#${failure.displayId}`).join(', ')})`;
 }
 
 function describeState(workflow: Workflow): string {

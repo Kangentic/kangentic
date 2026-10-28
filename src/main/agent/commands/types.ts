@@ -111,6 +111,12 @@ export interface CommandContext {
    */
   callerTaskId?: string | null;
   /**
+   * Set to `'phone'` by the phone's board-tool path, which calls these
+   * handlers directly, and unset for every MCP call. Only for naming the caller
+   * in a log line; never a permission.
+   */
+  via?: 'phone';
+  /**
    * Tasks were re-sequenced WITHIN one column. Distinct from `onTaskMove`
    * because a reorder is presentation only: no column change, no session
    * spawn/suspend, no worktree. It must not go through `handleTaskMove`, which

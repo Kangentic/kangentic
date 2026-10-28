@@ -21,7 +21,11 @@ import { isMoveByAPerson } from './task-move-origin';
  *   Drags, the phone and other agents are refused, except that a person may drag
  *   a card out of a human gate (a column whose work no agent can judge) into
  *   the next column on its route: the drag is the report.
- * - A paused workflow's cards move by hand, except into To Do.
+ * - A paused workflow moves none of its cards itself: a step move or an
+ *   engine start that raced the Pause is refused here, under the move's task
+ *   lock. A person moves its cards by hand, except into To Do. A card a person
+ *   works while it is paused is an ordinary card, so its column automations,
+ *   its own agent and a plan approval still move it.
  * - A card whose automations are paused (the task's own hold) moves by hand as
  *   a paused workflow's card does, while the rest of its workflow runs: the
  *   person working it is the one who moves it on.
@@ -79,7 +83,10 @@ export function workflowMoveRefusalMessage(check: WorkflowMoveCheck): MessageDes
       ? WORKFLOW_REFUSAL_MESSAGES.locked(label, check.workflowTitle)
       : WORKFLOW_REFUSAL_MESSAGES.toDoNeedsRemove(label, check.workflowTitle);
   }
-  if (check.origin === 'workflow' || check.origin === 'automation' || check.origin === 'auto-move') return null;
+  if (check.origin === 'workflow') {
+    return check.workflowState === 'paused' ? WORKFLOW_REFUSAL_MESSAGES.pausedForAgents(label, check.workflowTitle) : null;
+  }
+  if (check.origin === 'automation' || check.origin === 'auto-move') return null;
   if (check.origin === 'agent' && check.moverIsTaskAgent) return null;
 
   if (check.workflowState === 'paused') {

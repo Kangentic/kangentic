@@ -22,6 +22,8 @@
  *    answer follows that path's own Phase 1 (`live` or `starting`). An exited
  *    row, and a suspended Command Terminal row (`transient`), are not paused
  *    and still start the column.
+ * 7. A task in a paused workflow starts like any task: a person may bring one
+ *    task back to work it, and the workflow itself stays paused.
  *
  * session-resume-eligibility.ts is deliberately left unmocked: the refusal
  * copy is exactly what a phone shows, so the test asserts the real strings.
@@ -75,10 +77,10 @@ vi.mock('../../src/main/ipc/handlers/session-resume', () => ({
     return mockResumeTaskSession(context, taskId, options);
   },
 }));
+// Watched so the test can say a start never reads its task's workflow.
 const mockWorkflowGetById = vi.fn();
-const mockGetExistingProjectDb = vi.fn((projectId: string): { projectId: string } | null => ({ projectId }));
 vi.mock('../../src/main/db/database', () => ({
-  getExistingProjectDb: (projectId: string) => mockGetExistingProjectDb(projectId),
+  getExistingProjectDb: (projectId: string) => ({ projectId }),
 }));
 vi.mock('../../src/main/db/repositories/workflow-repository', () => ({
   WorkflowRepository: class {
@@ -138,39 +140,11 @@ describe('startTaskSession', () => {
     expect(mockReconcileTaskSessionRef).toHaveBeenCalledTimes(1);
   });
 
-  it('refuses a task in a paused workflow with the reason, reading the workflow from its home project', async () => {
-    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'paused' });
+  it('starts a workflow\'s task as it would any task, without reading its workflow, a paused one included', async () => {
+    // A person may bring one task of a paused workflow back to work it, as the
+    // desktop's Resume and a hand move do (#925). The workflow stays paused.
     mockReconcileTaskSessionRef.mockReturnValue({
       task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: 'proj-home' }),
-      liveSession: null,
-    });
-
-    await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID))
-      .rejects.toThrow('#414 is in Usage budgets, which is paused. Resume the workflow to start its tasks again.');
-    expect(mockGetExistingProjectDb).toHaveBeenLastCalledWith('proj-home');
-    expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
-  });
-
-  it('starts a task whose workflow home was deleted, as an ordinary task, without reading a workflow there', async () => {
-    mockWorkflowGetById.mockClear();
-    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'paused' });
-    mockGetExistingProjectDb.mockReturnValueOnce(null);
-    mockReconcileTaskSessionRef.mockReturnValue({
-      task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: 'proj-deleted' }),
-      liveSession: null,
-    });
-
-    const result = await startTaskSession(makeContext(), PROJECT_ID, TASK_ID);
-
-    expect(result.outcome).toBe('starting');
-    expect(mockGetExistingProjectDb).toHaveBeenLastCalledWith('proj-deleted');
-    expect(mockWorkflowGetById).not.toHaveBeenCalled();
-  });
-
-  it('starts a task in a running workflow as it would any task', async () => {
-    mockWorkflowGetById.mockReturnValue({ id: 'wf-1', title: 'Usage budgets', state: 'running' });
-    mockReconcileTaskSessionRef.mockReturnValue({
-      task: makeTask({ display_id: 414, workflow_id: 'wf-1', workflow_project_id: null }),
       liveSession: null,
     });
 
@@ -178,6 +152,7 @@ describe('startTaskSession', () => {
 
     expect(result.outcome).toBe('starting');
     expect(mockAutoSpawnForTask).toHaveBeenCalledTimes(1);
+    expect(mockWorkflowGetById).not.toHaveBeenCalled();
   });
 
   it('returns live and spawns nothing when the task already has a running session', async () => {

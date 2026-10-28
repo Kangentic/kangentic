@@ -53,8 +53,9 @@ contract was kept in sync across three files by prose comments alone.
   enter automations run as they do on a move. That flag lifts exactly two guards, the column's `auto_spawn` default
   and the manually-paused check, both of which exist to stop an AUTOMATIC spawn from overriding a
   choice the user made; the To Do / Done role gate stays. Only an explicit user gesture passes it.
-  A create, promote, unarchive, startup, or `reconcileAutoSpawnChange` caller never does, or a
-  column flip would silently un-pause a task the user paused.
+  A create, promote, unarchive, startup, `reconcileAutoSpawnChange`, or workflow Resume
+  (`resumeWorkflow`) caller never does, or a column flip or a Resume would silently un-pause a task
+  the user paused.
 - **A column's EXIT automations** (`handlers/task-move.ts`, Phase 1) are the third allowlisted
   direct engine call, and the only one that is not a spawn at all. They run the SOURCE column's
   exit rows as a task leaves, pass no `startAgent`, and the runner cannot start an agent on exit:

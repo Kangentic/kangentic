@@ -136,7 +136,8 @@ describe('handleBoardTool', () => {
     const response = await handleBoardTool(fakeRequest('board-tool-write', { tool: 'update_task', params }), fakeContext('proj-1'));
 
     expect(response.ok).toBe(true);
-    expect(updateTaskHandler).toHaveBeenCalledWith(params, commandContext);
+    // The project's context, marked as the phone's so a handler's log can name its caller.
+    expect(updateTaskHandler).toHaveBeenCalledWith(params, { ...commandContext, via: 'phone' });
   });
 
   it('maps a failed CommandResponse into a capability-response error', async () => {

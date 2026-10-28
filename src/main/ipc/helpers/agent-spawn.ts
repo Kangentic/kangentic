@@ -857,8 +857,9 @@ function readAutoSpawnGates(
  * bridge) and the external CommandBridge `onTaskCreated` callback, from the
  * auto_spawn reconcile, from the startup pass for a task that never had an
  * agent (`autoSpawnTasks`' `startFirstAgent`, wired in `handlers/projects.ts`),
- * and from the phone's start-session verb (`handlers/session-start.ts`), which
- * is the one caller passing `explicitStart`.
+ * from a workflow's Resume for a task in an agent column with none
+ * (`resumeWorkflow`), and from the phone's start-session verb
+ * (`handlers/session-start.ts`), which is the one caller passing `explicitStart`.
  *
  * Split-locked the way SESSION_RESUME and handleTaskMove are (see
  * `withTaskLock`'s JSDoc): Phase 1 runs the gates under the task lock, Phase 2

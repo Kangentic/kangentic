@@ -1,11 +1,11 @@
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import type { Task } from '../../shared/types';
 import type { IpcContext } from '../ipc/ipc-context';
-import type { SessionResumedPayload } from '../pty/session-manager';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { supersedeTurnEndWork } from '../automations/turn-end/turn-end-passes';
 import type { startWorkflowRecoveryOver } from './workflow-recovery';
 import { notifyWorkflowOfTask } from './workflow-changed';
+import { requestWorkflowCatchUp } from './workflow-catch-up';
 
 /**
  * A workflow task's own hold: its automations switch (`automations_disabled`),
@@ -20,14 +20,6 @@ import { notifyWorkflowOfTask } from './workflow-changed';
  * column's enter rows that a hand move skipped stay skipped (Run again runs
  * them), and a reply from before that move is the last column's.
  */
-
-/** How a release reaches the turn-end runner's resume catch-up. */
-let requestCatchUp: ((resumed: SessionResumedPayload) => void) | null = null;
-
-/** Set by the turn-end runner when it registers. */
-export function setHoldReleaseCatchUp(runner: ((resumed: SessionResumedPayload) => void) | null): void {
-  requestCatchUp = runner;
-}
 
 /**
  * How a release starts the task's recovery over. Late-bound, as the catch-up is:
@@ -90,15 +82,5 @@ function releaseHold(context: IpcContext, projectId: string, task: Task, workflo
   if (!task.session_id) return;
   const session = context.sessionManager.getSession(task.session_id);
   if (!session || session.status !== 'running') return;
-  // The session's own serial, so a turn the user starts meanwhile reads as newer.
-  const workSerial = context.sessionManager.currentWorkSerial(session.id);
-  if (workSerial === undefined) return;
-  requestCatchUp?.({
-    sessionId: session.id,
-    taskId: task.id,
-    projectId,
-    agentSessionId: session.agentSessionId ?? null,
-    isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
-    workSerial,
-  });
+  requestWorkflowCatchUp(context, session);
 }

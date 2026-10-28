@@ -851,6 +851,30 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(hoisted.check).toHaveBeenCalledTimes(checksAtTheQuestion);
     });
 
+    // Red before (#925): a card a person dragged into this column, then resumed,
+    // had its last column's reply judged as this column's step. One that read
+    // done moved the card past work it never did.
+    it('nudges, and judges nothing, when its last reply was written before it moved into this column', async () => {
+      // The reply, done by its marker, was written in the last column...
+      currentReply = FINISHED_REPLY;
+      replyAt = Date.now() - 10 * MINUTE;
+      // ...and a person then dragged the card into this one.
+      const otherLane = lanes.find((lane) => lane.role === null && lane.id !== workingLane.id)!;
+      (hoisted.database as DatabaseType.Database)
+        .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+        .run(randomUUID(), taskId, otherLane.id, workingLane.id, 'renderer', null, new Date(Date.now() - MINUTE).toISOString());
+
+      // Resumed there: it comes back idle, with no turn end.
+      sessionManager.emit('activity', SESSION_ID, 'idle');
+      await settle();
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(hoisted.check).not.toHaveBeenCalled();
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).toContain(`The ${workingLane.name} step is not done yet: your last reply was written before this task moved to ${workingLane.name}.`);
+    });
+
     // A column that is not a working column has no step for recovery to finish.
     it.each(['todo', 'done'] as const)('is left alone in a %s column', async (role) => {
       const restingLane = lanes.find((lane) => lane.role === role);
