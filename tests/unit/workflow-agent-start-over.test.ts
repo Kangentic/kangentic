@@ -191,6 +191,9 @@ class FakeSessionManager extends EventEmitter {
   getUsageCache(): Record<string, unknown> {
     return {};
   }
+  getReportedTranscriptPath(): string | null {
+    return null;
+  }
   getActivityCache(): Record<string, string> {
     return {};
   }
