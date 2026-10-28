@@ -6,6 +6,8 @@ import {
 import {
   AUTOMATION_MANIFEST,
   RETIRED_ACTION_TYPES,
+  automationMoveTargetName,
+  automationMovesTask,
   canColumnRun,
   canTriggerRun,
   isAutomationType,
@@ -99,6 +101,26 @@ describe('automation manifest entries', () => {
       expect(englishText(entry.label).length).toBeGreaterThan(0);
       expect(entry.icon).toMatch(/^[a-z][a-z0-9-]*$/);
     }
+  });
+
+  // `automationMoveTargetName` reads a moving row's target from its one
+  // `column` field, and the workflow step check reads it to tell a row that
+  // sends the task forward from one that sends it back. A moving type with no
+  // such field, or two, would leave the step unable to say where its row goes.
+  it('gives every type that moves the task exactly one column field, read back by the shared helpers', () => {
+    const movingTypes = (Object.keys(AUTOMATION_MANIFEST) as AutomationType[]).filter((type) => automationMovesTask(type));
+    expect(movingTypes).toEqual(['move_to_column']);
+    for (const type of movingTypes) {
+      const columnFields = AUTOMATION_MANIFEST[type].fields.filter((field) => field.kind === 'column');
+      expect(columnFields, `${type} must declare exactly one column field`).toHaveLength(1);
+      const key = columnFields[0].key;
+      expect(automationMoveTargetName(type, { [key]: '  Testing ' })).toBe('Testing');
+      expect(automationMoveTargetName(type, { [key]: '' })).toBeNull();
+      expect(automationMoveTargetName(type, {})).toBeNull();
+    }
+    expect(automationMovesTask('send_message')).toBe(false);
+    expect(automationMovesTask('kill_session')).toBe(false);
+    expect(automationMoveTargetName('send_message', { targetColumn: 'Testing' })).toBeNull();
   });
 
   it('declares a timeout for every type that can hang', () => {

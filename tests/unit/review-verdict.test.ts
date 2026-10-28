@@ -26,6 +26,8 @@
  *    starts with `Verdict:` or `<digits>.` and a Decisions made entry is one line.
  * 10. The command line exits 2 with a usage line for a wrong argument count and with
  *     `could not read` for text that is not JSON.
+ * 11. `--no-changes` ends an empty review Blocked, with one step above the verdict, so a branch
+ *     with nothing to review goes back to Executing instead of matching no Code Review row.
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
@@ -38,7 +40,9 @@ import {
   renderSummary,
   renderClosingBlock,
   renderLedger,
+  renderNoChanges,
 } from '../../scripts/review-verdict.mjs';
+import { matchFinalLine } from '../../src/shared/final-line-match';
 
 const SCRIPT_PATH = path.resolve(__dirname, '../../scripts/review-verdict.mjs');
 
@@ -564,5 +568,48 @@ describe('review-verdict.mjs: command line', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('invalid findings file (1 problem):');
     expect(result.stderr).toContain(FOLLOW_UPS_RETIRED);
+  });
+});
+
+// Task 916: a review of a branch identical to main ended "No changes to review." with no verdict
+// line. Neither Code Review row (kangentic.json: "Verdict: Blocked" back to Executing,
+// "Verdict: Ready" on to Testing) matched it, and the workflow's step check moved the task on.
+describe('review-verdict.mjs: --no-changes', () => {
+  it('ends Blocked, with one step above the verdict, so the send-back row matches it', () => {
+    const lines = renderNoChanges('main').split('\n');
+    expect(lines).toEqual([
+      'No changes to review.',
+      '',
+      '1. main: the branch and its working tree match main, so there was nothing to review. Do this task\'s work, then commit it.',
+      'Verdict: Blocked',
+    ]);
+    const message = renderNoChanges('main');
+    expect(matchFinalLine('Verdict: Blocked', message).met).toBe(true);
+    expect(matchFinalLine('Verdict: Ready', message).met).toBe(false);
+  });
+
+  it('names the working tree alone when no base resolved', () => {
+    expect(renderNoChanges('').split('\n').slice(-2)).toEqual([
+      '1. Working tree: there are no changes to review. Do this task\'s work, then commit it.',
+      'Verdict: Blocked',
+    ]);
+  });
+
+  it('prints the message and exits 0 from the command line, with or without a base', () => {
+    const withBase = runScriptWithArguments(['--no-changes', 'origin/main']);
+    expect(withBase.exitCode).toBe(0);
+    expect(withBase.stdout.trimEnd()).toBe(renderNoChanges('origin/main'));
+    const withoutBase = runScriptWithArguments(['--no-changes']);
+    expect(withoutBase.exitCode).toBe(0);
+    expect(withoutBase.stdout.trimEnd().split('\n').pop()).toBe('Verdict: Blocked');
+  });
+
+  it('exits 2 with a usage line for a second base or another flag', () => {
+    for (const scriptArguments of [['--no-changes', 'main', 'develop'], ['--no-changes', '--ledger'], ['--no-changes', '-x']]) {
+      const result = runScriptWithArguments(scriptArguments);
+      expect(result.exitCode).toBe(2);
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('usage:');
+    }
   });
 });

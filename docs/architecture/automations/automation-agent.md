@@ -58,7 +58,9 @@ retries it on its recovery's schedule (see
 ## The workflow step's two asks
 
 The first ask is `workflowStepCondition`: is the step done, with the agent not waiting on the user.
-It is the wording measured on 2026-10-04, and only its yes moves the task. When it says no, a
+It is the wording measured on 2026-10-04, and only its yes moves the task. A yes still moves
+nothing when the column's own Text match exit rows refuse the reply (`stepExitVerdict`, see
+[Workflow engine](../workflows/workflow-engine.md)). When it says no, or the rows refuse the reply, a
 second call asks two more Conditions (`workflow-step-condition.ts`):
 
 1. Does the agent need something only the user can give, without which the step cannot go on (a

@@ -104,7 +104,11 @@ blocker; a step it has reached cannot change). Remove takes a task out of the wo
 
 **Moving on.** When a task's agent finishes a turn, the Automation agent (Settings > Workflows)
 judges whether that column's work is done and the agent is not waiting on you. Done moves the task
-to the next column on its route, and the last one to Done; not done leaves it where it is. A task
+to the next column on its route, and the last one to Done; not done leaves it where it is. A column
+with a Move to column automation that moves the task forward on the agent's last line (a Text match
+such as "Verdict: Ready") has said what finishes it. There a task moves on only when that last line
+matches a forward one. A reply that matches none of them, or matches only one that sends the task
+back, is treated as not finished, whatever the Automation agent made of it. A task
 that finishes a plan moves on when its plan is approved. Who approves is the task's own **Plan
 approval**, at the top of its panel in the inspector and in task detail's Workflow panel:
 **Automatic** has Kangentic approve the task's plan, and **Manual** leaves it to you. Left alone,

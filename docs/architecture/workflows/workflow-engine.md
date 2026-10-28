@@ -30,7 +30,7 @@ src/main/workflows/
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it), and its verdict
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?"),
-                             #   and the second ask of why a step that is not done stopped
+                             #   the second ask of why a step that is not done stopped, and the column's exit rows' verdict
   workflow-recovery.ts       # a task whose step did not finish: re-judge, nudge, or one notice, on a schedule that ends
   workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
@@ -170,8 +170,9 @@ src/main/workflows/
 - **A start** is `handleTaskMove` with origin `workflow`, into the first column of the task's route,
   after `forgetRecentFetches` so the worktree is cut from the blockers' merged code. Starts go in To
   Do order, up to `SessionManager.getFreeAgentSlots()`.
-- **A step** finishes at a turn end the Automation agent judges done (after the column's own
-  turn-end rows), at plan approval, or when the task's own agent moves it. The answer is recorded in
+- **A step** finishes at a turn end the Automation agent judges done and the column's own exit rows
+  accept (after the column's own turn-end rows; see below), at plan approval, or when the task's own
+  agent moves it. The answer is recorded in
   `automation_runs` as a `workflow_step` row. A step that is not done gets a second ask of why it
   stopped, so `runWorkflowStep` returns one verdict: `done`, `move-failed`, `waiting` (a decision,
   information or access only the user can give), `working` (work it started is still running),
@@ -180,6 +181,23 @@ src/main/workflows/
   since a wrong nudge costs one paid turn and a wrong stop holds the workflow until someone looks.
   A check that could not run is recorded too, with `condition_met` NULL, so it never counts as
   having judged the reply. A failed move is reported, not thrown.
+  - **A column's own exit rows outrank the check's yes** (`stepExitVerdict`). Exit rows are the
+    column's enabled turn-end rows whose type moves the task (the manifest's `endsGroup`) behind a
+    Text match, each with its target resolved by `resolveMoveTarget`, as the row's own move resolves
+    it. A row into Done or a later column is forward; any other row sends the task back. A yes on a
+    reply whose final line no forward row matches, in a column that has one, is not done. So is a
+    yes on a reply only a send-back row matches. Either goes on to the second ask like any no, with
+    a reason that quotes the line and never names the line to type, since a nudged reviewer told
+    which line moves it on could type just that. A column with no exit rows, or only send-back
+    rows and no match, is judged by the check alone. Task 916 is why: its review ended "No changes
+    to review.", neither Code Review row matched, and the check moved it to Testing unreviewed.
+  - Forward is by position, not by equality with the route's next column, so a route that skips
+    the column a row names still accepts that row's line, and the step moves the task to the
+    route's own next column. Frequency is not read: Code Review's "On to Testing" runs once, so a
+    second pass through Code Review relies on the step to accept "Verdict: Ready" after the row is
+    spent, and a spent "Back for revisions" must not let a fourth "Verdict: Blocked" go forward.
+    The rule holds wherever the step runs, including the resume catch-up and recovery, which run no
+    rows.
 - **Recovery** (`workflow-recovery.ts`) acts on a verdict that does not move the task. It holds the
   rule that a running workflow either moves on or tells the user why it cannot.
   - The schedule is 5, 15, 30 and 60 minutes. Each attempt runs as a pass of the turn-end runner's

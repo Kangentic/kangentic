@@ -9,6 +9,7 @@
  * skips alone. See docs/audits/code-review-fanout-audit.md section 15.
  *
  * Usage: node scripts/review-verdict.mjs <findings.json> [--ledger]
+ *        node scripts/review-verdict.mjs --no-changes [base-ref]
  *   default   prints the Summary block, the Decisions made list, and the closing verdict block.
  *             The skill pastes that output verbatim and makes the closing block the LAST thing in
  *             the pass's final message, so a person and an agent read the same signal: the line
@@ -22,6 +23,12 @@
  *             pass reads them back with `git log --grep="(review)" --format=%B <base>..HEAD`. Keyed
  *             by file, symbol and mechanism, never by line number, because line numbers drift
  *             between passes.
+ *   --no-changes  prints the whole final message of a pass that found nothing to review (the diff
+ *             from the base through the working tree is empty): "No changes to review.", then a
+ *             closing block with one step and `Verdict: Blocked`. Blocked, not a third verdict: on
+ *             the board an empty diff is a task whose Executing step committed nothing, and the bare
+ *             line used to match neither Code Review row, so the workflow moved task 916 on to
+ *             Testing unreviewed. The step sends it back to do its work.
  *
  * Exit 0 for both verdicts (each is a valid outcome). Exit 2 for a usage error or an invalid
  * findings file, with every problem listed on stderr.
@@ -222,6 +229,18 @@ export function renderClosingBlock(report) {
   return lines.join('\n');
 }
 
+/**
+ * The final message of a pass with nothing to review (`--no-changes`): the closing block in its
+ * usual shape, one step above `Verdict: Blocked`. With no base, as when none resolved, the step
+ * names the working tree alone.
+ */
+export function renderNoChanges(base) {
+  const step = isNonEmptyString(base)
+    ? `${oneLine(base)}: the branch and its working tree match ${oneLine(base)}, so there was nothing to review. Do this task's work, then commit it.`
+    : 'Working tree: there are no changes to review. Do this task\'s work, then commit it.';
+  return ['No changes to review.', '', `1. ${step}`, 'Verdict: Blocked'].join('\n');
+}
+
 /** `Refuted:` and `Decisions:` lines for the review commit body, one per item. */
 export function renderLedger(report) {
   const lines = [];
@@ -238,11 +257,23 @@ export function renderLedger(report) {
   return lines.join('\n');
 }
 
+const USAGE = 'usage: node scripts/review-verdict.mjs <findings.json> [--ledger] | --no-changes [base-ref]';
+
 function main(argv) {
+  if (argv.includes('--no-changes')) {
+    const rest = argv.filter((argument) => argument !== '--no-changes');
+    // No ref starts with `-`, so one that does is a flag this mode does not take.
+    if (rest.length > 1 || rest.some((argument) => argument.startsWith('-'))) {
+      console.error(USAGE);
+      return 2;
+    }
+    console.log(renderNoChanges(rest[0] ?? ''));
+    return 0;
+  }
   const ledgerOnly = argv.includes('--ledger');
   const positional = argv.filter((argument) => argument !== '--ledger');
   if (positional.length !== 1) {
-    console.error('usage: node scripts/review-verdict.mjs <findings.json> [--ledger]');
+    console.error(USAGE);
     return 2;
   }
   let report;

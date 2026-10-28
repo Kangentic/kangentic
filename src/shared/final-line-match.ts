@@ -186,6 +186,10 @@ function trimmedOrNull(text: string | null | undefined): string | null {
 export function matchFinalLine(pattern: string, reply: string | null | undefined): FinalLineMatch {
   const line = finalMatchLine(reply);
   if (line === null) return { met: false, reason: TEXT_MATCH_NO_REPLY_REASON };
-  const shown = line.length > REASON_LINE_MAX ? `${line.slice(0, REASON_LINE_MAX)}...` : line;
-  return { met: lineMatchesPattern(pattern, line), reason: `The final line reads "${shown}".` };
+  return { met: lineMatchesPattern(pattern, line), reason: `The final line reads "${shownFinalLine(line)}".` };
+}
+
+/** A final line as a reason quotes it: cut after `REASON_LINE_MAX` characters. */
+export function shownFinalLine(line: string): string {
+  return line.length > REASON_LINE_MAX ? `${line.slice(0, REASON_LINE_MAX)}...` : line;
 }

@@ -1,4 +1,5 @@
 import type { Swimlane, Task } from '../../shared/types';
+import { finalMatchLine, lineMatchesPattern, shownFinalLine, textMatchCanMatch } from '../../shared/final-line-match';
 import { doneColumn, nextOnRoute, routeCandidates, routeColumns } from '../../shared/workflow-route';
 
 /**
@@ -17,6 +18,7 @@ import { doneColumn, nextOnRoute, routeCandidates, routeColumns } from '../../sh
  *   approve) never get here: the agent is mid-turn, and no turn has ended.
  * - Before the last column it judges the column's work, given the route, so a
  *   turn that ends early (a progress note mid-work) does not skip the work.
+ * - A column's own Text match exit rows outrank its yes (`stepExitVerdict`).
  */
 
 /** Where the task's route goes from the column it is in, for the check to read. */
@@ -123,4 +125,57 @@ export function workflowStepRunningCondition(column: Pick<Swimlane, 'name'>): st
     + 'step (a command or job in the background, a test run or build, CI checks, a gate), and that it will go on once that '
     + 'finishes. A message that only says it is waiting for the gate, the tests or CI counts, with no more detail. A note '
     + 'about work the agent itself was in the middle of, such as fixing tests or editing files, is not this.';
+}
+
+/** One of a column's exit rows: a turn-end row that moves the task, behind a Text match. */
+export interface StepExitRow {
+  /** The row's Text match. */
+  finalLine: string;
+  /** The column the row moves the task to, or null when its target names no column. */
+  target: Pick<Swimlane, 'name' | 'position' | 'role'> | null;
+}
+
+export type StepExitVerdict = { accepted: true } | { accepted: false; reason: string };
+
+/**
+ * What a column's own exit rows make of the reply the step check judged done.
+ *
+ * A column that routes on exact final lines ("Verdict: Ready" on to Testing,
+ * "Verdict: Blocked" back to Executing) has said what finishes its step, and a
+ * measured check must not overrule it: task 916 left Code Review on "No changes
+ * to review.", which neither row matched, and the check moved it on. So:
+ *
+ * - A final line a row that moves the task forward matches: accepted, and the
+ *   check's answer stands. Forward is Done or a later column by position, not
+ *   the route's next column, so a route that skips the column a row names still
+ *   accepts that row's line.
+ * - A final line only a row sending the task back matches: refused. The row
+ *   moved the task already, unless its Frequency is spent or no row ran (a
+ *   resume's catch-up, recovery), and then the step must not send it forward.
+ * - No match, in a column with a forward row: refused.
+ * - Null otherwise (no exit rows, or only send-back rows and no match): the
+ *   check alone judges, as on a column whose forward exit is the step itself.
+ *
+ * The reason is a fact, never the line to type: a reviewer nudged with "end on
+ * Verdict: Ready" could type just that. A row whose Text match can match no
+ * line is not an exit, since it never runs.
+ */
+export function stepExitVerdict(
+  column: Pick<Swimlane, 'name' | 'position'>,
+  exitRows: readonly StepExitRow[],
+  agentReply: string | null,
+): StepExitVerdict | null {
+  const exits = exitRows.filter((row) => textMatchCanMatch(row.finalLine));
+  if (exits.length === 0) return null;
+  const isForward = (row: StepExitRow): boolean => row.target !== null && (row.target.role === 'done' || row.target.position > column.position);
+  const line = finalMatchLine(agentReply);
+  const matched = line === null ? [] : exits.filter((row) => lineMatchesPattern(row.finalLine, line));
+  if (matched.some(isForward)) return { accepted: true };
+  const sendBack = matched.find((row) => row.target !== null && !isForward(row));
+  if (line !== null && sendBack?.target) {
+    return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", sends the task back to ${sendBack.target.name}` };
+  }
+  if (!exits.some(isForward)) return null;
+  if (line === null) return { accepted: false, reason: 'the turn ended without a final message' };
+  return { accepted: false, reason: `the final line, "${shownFinalLine(line)}", is not one ${column.name} moves the task on from` };
 }
