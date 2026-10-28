@@ -1182,6 +1182,11 @@ export class SessionTelemetry {
     return this.usage.getUsageCache();
   }
 
+  /** The transcript path the session's agent last reported, or null. */
+  getReportedTranscriptPath(sessionId: string): string | null {
+    return this.usage.getSessionUsage(sessionId)?.transcriptPath ?? null;
+  }
+
   /** See `UsageAccumulator.getFirstReportedEffort`. */
   getFirstReportedEffort(sessionId: string): string | null {
     return this.usage.getFirstReportedEffort(sessionId);

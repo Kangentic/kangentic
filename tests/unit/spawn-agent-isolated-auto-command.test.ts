@@ -974,4 +974,35 @@ describe('spawnAgent handoff branch: telling the new agent it can read the prior
     // tools at one it cannot call.
     expect(prefix).not.toContain(MCP_TOOL_LINE);
   });
+
+  it('locates the source session file through the transcript path its agent reported', async () => {
+    // A resumed conversation can sit outside the folder the cwd maps to; the
+    // path on the row is how the source adapter follows it.
+    const reportedPath = '/mock/home/.claude/projects/-mock-project/claude-session-1.jsonl';
+    const locateSessionHistoryFile = vi.fn(async () => SOURCE_SESSION_FILE);
+    const adapters: Record<string, Record<string, unknown>> = {
+      claude: { sessionType: 'claude_agent', locateSessionHistoryFile },
+      codex: { sessionType: 'codex_agent', kangenticMcp: 'per-session' },
+    };
+    vi.mocked(agentRegistry.get).mockImplementation(((name: string) => adapters[name] ?? null) as never);
+
+    const lane = makeSwimlane('lane-target', { session_target: 'main', handoff_context: true, agent_override: 'codex' });
+    const deps = makeDeps({
+      manualPauseRecord: makeRecord({
+        id: 'rec-claude',
+        isolated_swimlane_id: null,
+        agent_session_id: 'claude-session-1',
+        cwd: '/mock/project',
+        transcript_path: reportedPath,
+      }),
+      resumeRecord: undefined,
+      taskFields: { session_id: FRESH_PTY_SESSION_ID },
+    });
+    vi.mocked(resolveTargetAgent).mockReturnValueOnce({ agent: 'codex', isHandoff: true });
+
+    await runSpawn(lane, deps, true, false, PROJECT_ID);
+
+    // Red: dropping the row's path leaves the fourth argument undefined.
+    expect(locateSessionHistoryFile).toHaveBeenCalledWith('claude-session-1', '/mock/project', null, reportedPath);
+  });
 });
