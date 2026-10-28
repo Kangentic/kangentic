@@ -31,6 +31,24 @@ export function applyMachineTranslation(message, icu) {
 }
 
 /**
+ * Write each translated outcome into its message, marked for review, and tally
+ * the rest. Only a `translated` outcome changes a message: a flagged, manual or
+ * invalid-source entry stays as it was, so the UI keeps showing its English.
+ *
+ * - `outcomes`: `translateEntries`'s map of id to outcome.
+ */
+export function applyOutcomes(messages, outcomes) {
+  const counts = { translated: 0, flagged: 0, manual: 0, 'invalid-source': 0 };
+  const problems = [];
+  for (const [id, outcome] of outcomes) {
+    counts[outcome.status] += 1;
+    if (outcome.status === 'translated') applyMachineTranslation(messages[id], outcome.icu);
+    else problems.push({ english: messages[id].message, status: outcome.status, errors: outcome.errors, lastReply: outcome.lastReply ?? null });
+  }
+  return { counts, problems };
+}
+
+/**
  * The IDs to translate: every entry with no translation, and with `redraft` also
  * every entry still marked for review. A reviewed translation is never picked.
  */

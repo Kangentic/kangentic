@@ -36,55 +36,41 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { isEntrypoint } from '../lib/is-entrypoint.mjs';
-import { importTsModule } from '../lib/bundle-ts-module.mjs';
-import { applyMachineTranslation, loadCatalogs, readCatalogAt, resolveBaseRef, selectEntryIds } from './catalogs.mjs';
+import { applyOutcomes, loadCatalogs, readCatalogAt, resolveBaseRef, selectEntryIds } from './catalogs.mjs';
+import { loadAppModules, readFlags, refuseIfAutomated, sourceReader } from './cli.mjs';
 import { removedEntries } from './context.mjs';
 import { loadGlossary } from './glossary.mjs';
-import { translateEntries } from './translate-catalog.mjs';
+import { DEFAULT_BATCH_SIZE, translateEntries } from './translate-catalog.mjs';
 import { createClaudeEngine, DEFAULT_CLAUDE_EFFORT, DEFAULT_CLAUDE_MODEL } from './engines/claude.mjs';
 import { createOpenAiCompatibleEngine, DEFAULT_LOCAL_URL, REFILL_MODEL } from './engines/openai-compatible.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(here, '..', '..');
 
+const VALUE_FLAGS = ['--engine', '--locales', '--areas', '--base', '--limit', '--concurrency', '--batch-size', '--model', '--effort', '--cli', '--url', '--out'];
+const SWITCH_FLAGS = ['--redraft', '--dry-run'];
+
 export function parseArgs(argv) {
-  const value = (flag) => {
-    const at = argv.indexOf(flag);
-    return at === -1 ? null : argv[at + 1] ?? null;
-  };
-  const list = (flag) => (value(flag) ?? '').split(',').map((item) => item.trim()).filter(Boolean);
-  const positive = (flag) => {
-    const raw = value(flag);
-    if (raw === null) return null;
-    const number = Number(raw);
-    if (!Number.isInteger(number) || number < 1) throw new Error(`${flag}: ${raw} is not a positive whole number`);
-    return number;
-  };
-  const engine = value('--engine') ?? 'claude';
+  const flags = readFlags(argv, { valueFlags: VALUE_FLAGS, switchFlags: SWITCH_FLAGS });
+  const engine = flags.value('--engine') ?? 'claude';
   if (engine !== 'claude' && engine !== 'local') throw new Error(`--engine: ${engine} is not claude or local`);
   const isLocal = engine === 'local';
   return {
     engine,
-    locales: list('--locales'),
-    areas: list('--areas'),
-    base: value('--base'),
-    redraft: argv.includes('--redraft'),
-    dryRun: argv.includes('--dry-run'),
-    limit: positive('--limit'),
-    concurrency: positive('--concurrency') ?? (isLocal ? 1 : 4),
-    batchSize: positive('--batch-size') ?? (isLocal ? 10 : 30),
-    model: value('--model') ?? (isLocal ? REFILL_MODEL.name : DEFAULT_CLAUDE_MODEL),
-    effort: value('--effort') ?? DEFAULT_CLAUDE_EFFORT,
-    cli: value('--cli') ?? 'claude',
-    url: value('--url') ?? DEFAULT_LOCAL_URL,
-    out: value('--out'),
+    locales: flags.list('--locales'),
+    areas: flags.list('--areas'),
+    base: flags.value('--base'),
+    redraft: flags.has('--redraft'),
+    dryRun: flags.has('--dry-run'),
+    limit: flags.positive('--limit'),
+    concurrency: flags.positive('--concurrency') ?? (isLocal ? 1 : 4),
+    batchSize: flags.positive('--batch-size') ?? DEFAULT_BATCH_SIZE[engine],
+    model: flags.value('--model') ?? (isLocal ? REFILL_MODEL.name : DEFAULT_CLAUDE_MODEL),
+    effort: flags.value('--effort') ?? DEFAULT_CLAUDE_EFFORT,
+    cli: flags.value('--cli') ?? 'claude',
+    url: flags.value('--url') ?? DEFAULT_LOCAL_URL,
+    out: flags.value('--out'),
   };
-}
-
-/** Every translation is a real model call, so a CI job never runs one by accident. */
-function refuseIfAutomated() {
-  const automated = ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILD_NUMBER'].find((name) => process.env[name]);
-  if (automated) throw new Error(`Refusing to run: ${automated} is set. Every translation is a real model call.`);
 }
 
 /**
@@ -101,29 +87,6 @@ export function descriptionBudgets(appModules, repoRoot) {
   return budgets;
 }
 
-/**
- * `wcwidthV11` and the settings card scan (app-modules.ts), bundled once per run.
- * The constant is pinned as vitest pins it: the settings registry is app code.
- */
-export function loadAppModules() {
-  return importTsModule(path.join(here, 'app-modules.ts'), { external: ['typescript'], define: { __KANGENTIC_DEV__: 'false' } });
-}
-
-/** A source file reader for neighbours, cached, relative to the repo. */
-export function sourceReader(repoRoot) {
-  const cache = new Map();
-  return (file) => {
-    if (!cache.has(file)) {
-      try {
-        cache.set(file, fs.readFileSync(path.resolve(repoRoot, file), 'utf8'));
-      } catch {
-        cache.set(file, null);
-      }
-    }
-    return cache.get(file);
-  };
-}
-
 function createEngine(options) {
   if (options.engine === 'claude') return createClaudeEngine({ cli: options.cli, model: options.model, effort: options.effort });
   return createOpenAiCompatibleEngine({ url: options.url, model: options.model });
@@ -131,7 +94,7 @@ function createEngine(options) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  if (!options.dryRun) refuseIfAutomated();
+  if (!options.dryRun) refuseIfAutomated('Every translation is a real model call.');
   // Lingui resolves catalog and source paths from the working directory.
   process.chdir(REPO_ROOT);
 
@@ -185,13 +148,7 @@ async function main() {
           batchSize: options.batchSize,
           concurrency: options.concurrency,
         });
-        const counts = { translated: 0, flagged: 0, manual: 0, 'invalid-source': 0 };
-        const problems = [];
-        for (const [id, outcome] of outcomes) {
-          counts[outcome.status] += 1;
-          if (outcome.status === 'translated') applyMachineTranslation(messages[id], outcome.icu);
-          else problems.push({ english: messages[id].message, status: outcome.status, errors: outcome.errors, lastReply: outcome.lastReply ?? null });
-        }
+        const { counts, problems } = applyOutcomes(messages, outcomes);
         if (counts.translated > 0) {
           await catalog.write(locale, messages);
           wroteAny = true;

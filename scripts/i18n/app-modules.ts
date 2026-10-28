@@ -1,5 +1,5 @@
 // What the translation harness takes from the app and its test helpers. They are
-// TypeScript with extensionless imports, so scripts/i18n/translate.mjs bundles
+// TypeScript with extensionless imports, so scripts/i18n/cli.mjs bundles
 // this entry with scripts/lib/bundle-ts-module.mjs rather than importing them.
 
 // The width table the app's terminals use, East Asian wide characters at two columns.

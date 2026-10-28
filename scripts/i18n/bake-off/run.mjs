@@ -37,9 +37,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import PQueue from 'p-queue';
 import { isEntrypoint } from '../../lib/is-entrypoint.mjs';
-import { loadAppModules, sourceReader } from '../translate.mjs';
+import { loadAppModules, readFlags, refuseIfAutomated, sourceReader } from '../cli.mjs';
 import { loadGlossary } from '../glossary.mjs';
-import { translateEntries } from '../translate-catalog.mjs';
+import { DEFAULT_BATCH_SIZE, translateEntries } from '../translate-catalog.mjs';
 import { languageName } from '../prompt.mjs';
 import { createClaudeCaller, createClaudeEngine } from '../engines/claude.mjs';
 import { createOpenAiCompatibleEngine, DEFAULT_LOCAL_URL } from '../engines/openai-compatible.mjs';
@@ -59,26 +59,23 @@ const DEFAULT_JUDGE_MODEL = 'claude-opus-5-5';
  */
 export const WINNER_RULE = { minimumFinalPass: 0.95, tieMargin: 0.15 };
 
+const VALUE_FLAGS = ['--arm', '--out', '--locales', '--kinds', '--limit', '--url', '--cli', '--judge-model', '--concurrency'];
+const SWITCH_FLAGS = ['--write'];
+
 export function parseArgs(argv) {
-  const value = (flag) => {
-    const at = argv.indexOf(flag);
-    return at === -1 ? null : argv[at + 1] ?? null;
-  };
-  const limit = value('--limit');
-  const concurrency = Number(value('--concurrency') ?? 1);
-  if (!Number.isInteger(concurrency) || concurrency < 1) throw new Error(`--concurrency: ${value('--concurrency')} is not a positive whole number`);
+  const flags = readFlags(argv, { valueFlags: VALUE_FLAGS, switchFlags: SWITCH_FLAGS, positionalCount: 1 });
   return {
-    concurrency,
-    command: argv[0],
-    arm: value('--arm'),
-    out: value('--out') ?? DEFAULT_OUT,
-    locales: (value('--locales') ?? '').split(',').filter(Boolean),
-    kinds: (value('--kinds') ?? '').split(',').filter(Boolean),
-    limit: limit === null ? null : Number(limit),
-    url: value('--url') ?? DEFAULT_LOCAL_URL,
-    cli: value('--cli') ?? 'claude',
-    judgeModel: value('--judge-model') ?? DEFAULT_JUDGE_MODEL,
-    write: argv.includes('--write'),
+    concurrency: flags.positive('--concurrency') ?? 1,
+    command: flags.positionals[0] ?? null,
+    arm: flags.value('--arm'),
+    out: flags.value('--out') ?? DEFAULT_OUT,
+    locales: flags.list('--locales'),
+    kinds: flags.list('--kinds'),
+    limit: flags.positive('--limit'),
+    url: flags.value('--url') ?? DEFAULT_LOCAL_URL,
+    cli: flags.value('--cli') ?? 'claude',
+    judgeModel: flags.value('--judge-model') ?? DEFAULT_JUDGE_MODEL,
+    write: flags.has('--write'),
   };
 }
 
@@ -166,7 +163,7 @@ async function translateArm(options) {
         budgetFor: (message) => (message.budget ? appModules.DESCRIPTION_BUDGET[message.budget] : null),
         widthOfCodepoint: appModules.wcwidthV11,
         readSource: sourceReader(REPO_ROOT),
-        batchSize: isLocal ? 10 : 30,
+        batchSize: DEFAULT_BATCH_SIZE[isLocal ? 'local' : 'claude'],
         concurrency: options.concurrency,
       });
       const wallMs = performance.now() - started;
@@ -290,6 +287,7 @@ async function judge(options) {
           candidates: Object.fromEntries(lettered.map((candidate) => [candidate.letter, candidate.icu])),
         })), null, 1);
         const { reply } = await caller.ask({ system: judgeSystemPrompt(locale), user, schema: JUDGE_SCHEMA });
+        if (!Array.isArray(reply?.scores)) throw new Error(`the judge's ${locale} reply has no "scores" list`);
         const byKey = new Map(reply.scores.map((score) => [score.key, score.candidates]));
         batch.forEach(({ entry, lettered }, index) => {
           const scores = byKey.get(`k${index + 1}`) ?? {};
@@ -408,13 +406,21 @@ export function scoreRecords({ records, verdicts, arms, sample, locales }) {
   };
 }
 
+const JSON_PRIMITIVE = String.raw`(?:"(?:[^"\\]|\\.)*"|-?\d[\d.eE+-]*|true|false|null)`;
+/**
+ * An indented array whose elements are all numbers, strings, booleans or null.
+ * It opens with `[` and a line break, which never occurs inside a string, since
+ * JSON escapes a newline there, so a bracket in a string value never matches.
+ */
+const PRIMITIVE_ARRAY = new RegExp(String.raw`\[\n\s*(${JSON_PRIMITIVE}(?:,\n\s*${JSON_PRIMITIVE})*)\n\s*\]`, 'g');
+
 /**
  * results.json as written: indented, with each array of numbers or strings on
  * one line, so a string's five scores stay one line instead of seven.
  */
 export function formatResults(results) {
   const indented = JSON.stringify(results, null, 1);
-  return `${indented.replace(/\[\s*([^[\]{}]*?)\s*\]/g, (match, inner) => `[${inner.split(/\s*,\s*/).join(', ')}]`)}\n`;
+  return `${indented.replace(PRIMITIVE_ARRAY, (match, elements) => `[${elements.replace(/,\n\s*/g, ', ')}]`)}\n`;
 }
 
 function printTable(results) {
@@ -440,8 +446,7 @@ async function score(options) {
 }
 
 async function main() {
-  const automated = ['CI', 'CONTINUOUS_INTEGRATION', 'GITHUB_ACTIONS', 'BUILD_NUMBER'].find((name) => process.env[name]);
-  if (automated) throw new Error(`Refusing to run: ${automated} is set. The bake-off makes real model calls.`);
+  refuseIfAutomated('The bake-off makes real model calls.');
   const options = parseArgs(process.argv.slice(2));
   if (options.command === 'translate') await translateArm(options);
   else if (options.command === 'judge') await judge(options);

@@ -81,7 +81,7 @@ export function translateGemmaPrompt(text, locale) {
     + `${text.trim()}<end_of_turn>\n<start_of_turn>model\n`;
 }
 
-export function createOpenAiCompatibleEngine({ url = DEFAULT_LOCAL_URL, model = REFILL_MODEL.name, promptStyle = 'instructed', temperature = 0.2 }) {
+export function createOpenAiCompatibleEngine({ url = DEFAULT_LOCAL_URL, model = REFILL_MODEL.name, promptStyle = 'instructed', temperature = 0.2 } = {}) {
   const base = url.replace(/\/$/, '');
   const endpoint = `${base}/chat/completions`;
   // llama.cpp's native endpoint sits beside /v1, not under it.

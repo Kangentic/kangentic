@@ -7,7 +7,7 @@
  */
 import { parse } from '@messageformat/parser';
 import { compileMessageOrThrow } from '@lingui/message-utils/compileMessage';
-import { buildIcu, pluralCategories, referenceForm, splitMasked, targetKeys } from './messages.mjs';
+import { buildIcu, isPluralChoice, pluralCategories, pluralType, referenceForm, splitMasked, targetKeys } from './messages.mjs';
 import { glossaryErrors } from './glossary.mjs';
 
 /** The number token's ids in a message (`#` inside a plural). */
@@ -117,7 +117,7 @@ export function validateReply({ prepared, reply, locale, glossary, budget, width
     for (const key of keys) forms.push({ label: key, reference: referenceForm(prepared, key), translated: replied[key] });
   }
 
-  const inPlural = prepared.kind === 'choice' && prepared.choiceType !== 'select';
+  const inPlural = isPluralChoice(prepared);
   for (const form of forms) {
     errors.push(...formErrors({ ...form, tokens: prepared.tokens, inPlural }));
     errors.push(...glossaryErrors({ english: form.reference, translated: form.translated, locale, glossary, label: form.label }));
@@ -134,7 +134,7 @@ export function validateReply({ prepared, reply, locale, glossary, budget, width
   try {
     icu = buildIcu(prepared, prepared.kind === 'text' ? reply.text : reply.forms, keys);
     compileMessageOrThrow(icu);
-    const type = prepared.kind === 'choice' && prepared.choiceType === 'selectordinal' ? 'ordinal' : 'cardinal';
+    const type = pluralType(prepared);
     parse(icu, type === 'ordinal' ? { ordinal: pluralCategories(locale, 'ordinal') } : { cardinal: pluralCategories(locale) });
   } catch (error) {
     return { ok: false, errors: [`the rebuilt message is not valid ICU: ${error instanceof Error ? error.message : String(error)}`] };

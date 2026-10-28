@@ -26,13 +26,14 @@
  * the app runs answers in its own answer home. `MAX_THINKING_TOKENS=0` is set at low only, as the
  * Claude adapter's `answerEnv` does.
  */
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
+import { removeDirectory, stopTree } from './lib/headless-cli.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PROJECT_ROOT = path.resolve(HERE, '..');
@@ -287,29 +288,11 @@ async function loadSummaryParser() {
   }
 }
 
-/** A temp folder removal that never throws: on Windows a CLI's leftover child can still hold it. */
-function removeDirectory(directory) {
-  try {
-    fs.rmSync(directory, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
-  } catch {
-    // Left in the temp folder; the OS clears it.
-  }
-}
-
-/** Stop the CLI and the MCP servers it started. On Windows `child.kill()` ends only the CLI. */
-function stopTree(child) {
-  if (process.platform !== 'win32') {
-    child.kill();
-    return;
-  }
-  try {
-    execFileSync('taskkill', ['/pid', String(child.pid), '/T', '/F'], { stdio: 'ignore' });
-  } catch {
-    // Already gone.
-  }
-}
-
-/** One replay from an empty temp folder. Never rejects: a CLI that cannot start resolves with code -1. */
+/**
+ * One replay from an empty temp folder, recording when each output line arrived.
+ * lib/headless-cli.mjs's `runOnce` keeps only the whole output, so this one stays
+ * its own. Never rejects: a CLI that cannot start resolves with code -1.
+ */
 export function runOnce(cli, argv, stdinText, env) {
   return new Promise((resolve) => {
     const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'eval-answer-models-cwd-'));

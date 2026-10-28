@@ -38,15 +38,20 @@ import { DESCRIPTION_BUDGET, registryDescriptions, scanRealSettings, scanSnippet
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 
+// The real tree is parsed once for the three checks below. A scan that throws
+// leaves nothing cached, so each check still reports the failure on its own.
+let realScan: ReturnType<typeof scanRealSettings> | undefined;
+const realSettings = () => (realScan ??= scanRealSettings(REPO_ROOT));
+
 describe('settings card design', () => {
   it('every tab is cards, every card body is tiles, and no tile restyles itself', () => {
-    const { violations } = scanRealSettings(REPO_ROOT);
+    const { violations } = realSettings();
     const report = violations.map((violation) => `${violation.file}:${violation.line} in ${violation.where}: ${violation.found}`);
     expect(report, 'Put settings in a SettingsCard; wrap custom content in <CardTile>; use CardRow or CardToggleRow for a setting').toEqual([]);
   });
 
   it('every description a card shows fits on one line', () => {
-    const { descriptions } = scanRealSettings(REPO_ROOT);
+    const { descriptions } = realSettings();
     // A length read off anything but text is undefined, and `undefined > budget` passes.
     expect(descriptions.filter((entry) => typeof entry.text !== 'string').map((entry) => entry.owner)).toEqual([]);
     const over = descriptions
@@ -56,7 +61,7 @@ describe('settings card design', () => {
   });
 
   it('reads the real settings tree, so no check passes vacuously', () => {
-    const { cards, checkedTabs, descriptions, tileComponents, tabLabels } = scanRealSettings(REPO_ROOT);
+    const { cards, checkedTabs, descriptions, tileComponents, tabLabels } = realSettings();
     // Every tab file is covered by the top-level check.
     expect(tabLabels.size).toBeGreaterThan(15);
     expect(checkedTabs.length).toBe(tabLabels.size);
