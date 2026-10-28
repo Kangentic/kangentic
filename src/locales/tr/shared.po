@@ -8,53 +8,66 @@ msgstr ""
 "Language: tr\n"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "{waitedCalls, plural, one {How long each tool ran. Leaves out the # call that waited for your answer or approval.} other {How long each tool ran. Leaves out the # calls that waited for your answer or approval.}}"
-msgstr ""
+msgstr "{waitedCalls, plural, one {Her aracın ne kadar süre çalıştığı. Yanıtınızı veya onayınızı bekleyen # çağrı hariç tutulur.} other {Her aracın ne kadar süre çalıştığı. Yanıtınızı veya onayınızı bekleyen # çağrı hariç tutulur.}}"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Average run time of the calls Time counts."
-msgstr ""
+msgstr "Süre sütununda sayılan çağrıların ortalama çalışma süresi."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Avg"
-msgstr ""
+msgstr "Ort."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "Çağrılar"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Maliyet"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted."
-msgstr ""
+msgstr "Bu aracın çıktısının ana konuşmaya eklediği tahmini token sayısı. Faturalandırılan token değildir; alt ajan çağrıları sayılmaz."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "Başarısız"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "How long each tool ran."
-msgstr ""
+msgstr "Her aracın ne kadar süre çalıştığı."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "In"
-msgstr ""
+msgstr "Giriş"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Out"
-msgstr ""
+msgstr "Çıkış"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Time"
-msgstr ""
+msgstr "Süre"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "Token"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "Araç"

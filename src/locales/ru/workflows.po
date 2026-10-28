@@ -8,662 +8,820 @@ msgstr ""
 "Language: ru\n"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is now in {targetName}."
-msgstr ""
+msgstr "«{taskTitle}» теперь в {targetName}."
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": {reason}"
-msgstr ""
+msgstr "«{taskTitle}»: {reason}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{blockedCount} blocked"
-msgstr ""
+msgstr "заблокировано: {blockedCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{doneCount} of {taskCount}"
-msgstr ""
+msgstr "{doneCount} из {taskCount}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{doneCount} of {taskCount} done"
-msgstr ""
+msgstr "выполнено {doneCount} из {taskCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{idleTasks} idle"
-msgstr ""
+msgstr "Простаивают: {idleTasks}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{inProgressCount} in progress"
-msgstr ""
+msgstr "в работе: {inProgressCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{name}, {countText}"
-msgstr ""
+msgstr "{name}, {countText}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{progress}."
-msgstr ""
+msgstr "{progress}."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{progress}. {counts}."
-msgstr ""
+msgstr "{progress}. {counts}."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{queuedCount} queued"
-msgstr ""
+msgstr "в очереди: {queuedCount}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: done"
-msgstr ""
+msgstr "{stopName}: готово"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: next"
-msgstr ""
+msgstr "{stopName}: далее"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: now"
-msgstr ""
+msgstr "{stopName}: сейчас"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, one {# задача} few {# задачи} many {# задач} other {# задачи}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Creates # task. It starts automatically.} other {Creates # tasks. They start automatically in the order this workflow sets.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Создаёт # задачу. Она запустится автоматически.} few {Создаёт # задачи. Они запустятся автоматически в порядке, заданном этим рабочим процессом.} many {Создаёт # задач. Они запустятся автоматически в порядке, заданном этим рабочим процессом.} other {Создаёт # задачи. Они запустятся автоматически в порядке, заданном этим рабочим процессом.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Deletes its # planned task and the agent conversation. Nothing else changes.} other {Deletes its # planned tasks and the agent conversation. Nothing else changes.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Удаляет # запланированную задачу и беседу с агентом. Больше ничего не меняется.} few {Удаляет # запланированные задачи и беседу с агентом. Больше ничего не меняется.} many {Удаляет # запланированных задач и беседу с агентом. Больше ничего не меняется.} other {Удаляет # запланированной задачи и беседу с агентом. Больше ничего не меняется.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
-msgstr ""
+msgstr "{unfinished, plural, =0 {Его задачи выполнены и остаются на своих местах. Беседа с агентом удаляется.} one {Его # незавершённая задача остаётся на месте как обычная задача. Беседа с агентом удаляется.} few {Его # незавершённые задачи остаются на месте как обычные задачи. Беседа с агентом удаляется.} many {Его # незавершённых задач остаются на месте как обычные задачи. Беседа с агентом удаляется.} other {Его # незавершённой задачи остаются на месте как обычные задачи. Беседа с агентом удаляется.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr ""
+msgstr "{unfinished, plural, one {Она остаётся на паузе, пока вы её не возобновите.} few {Они остаются на паузе, пока вы их не возобновите.} many {Они остаются на паузе, пока вы их не возобновите.} other {Они остаются на паузе, пока вы их не возобновите.}}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "{workflowTitle} is complete."
-msgstr ""
+msgstr "{workflowTitle}: завершено."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "#{displayId}: {reason}"
-msgstr ""
+msgstr "#{displayId}: {reason}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "task activity"
 msgid "Active"
-msgstr ""
+msgstr "Активна"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Add a task to this workflow"
-msgstr ""
+msgstr "Добавить задачу в этот рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Add blocker"
-msgstr ""
+msgstr "Добавить блокирующую"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Add task"
-msgstr ""
+msgstr "Добавить задачу"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "Агент активен"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "Агент простаивает"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent idle, last message {lastMessageTime}"
-msgstr ""
+msgstr "Агент простаивает, последнее сообщение {lastMessageTime}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent paused"
-msgstr ""
+msgstr "Агент приостановлен"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Another project"
-msgstr ""
+msgstr "Другой проект"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Approve this task's plans for you. Questions the agent asks still wait."
-msgstr ""
+msgstr "Планы этой задачи одобряются автоматически. Вопросы агента по-прежнему ждут ответа."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Ask for changes"
-msgstr ""
+msgstr "Запросить изменения"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Auto layout"
-msgstr ""
+msgstr "Авторазмещение"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
-msgstr ""
+msgstr "Автоматически"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Blocked by"
-msgstr ""
+msgstr "Блокируется"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Blocking"
-msgstr ""
+msgstr "Блокирует"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Отмена"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Choose a workflow agent"
-msgstr ""
+msgstr "Выберите агента рабочих процессов"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Close workflow panel"
-msgstr ""
+msgstr "Закрыть панель рабочего процесса"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Collapse agent"
-msgstr ""
+msgstr "Свернуть агента"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgctxt "stand-in for a column name"
 msgid "column"
-msgstr ""
+msgstr "колонка"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Columns on its board"
-msgstr ""
+msgstr "Столбцы на её доске"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Columns on the {boardName} board"
-msgstr ""
+msgstr "Столбцы на доске {boardName}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Complete"
-msgstr ""
+msgstr "Завершено"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "Не удалось удалить задачу"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "Не удалось переместить задачу"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Create your first workflow"
-msgstr ""
+msgstr "Создайте первый рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Удалить"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Delete {workflowTitle}?"
-msgstr ""
+msgstr "Удалить {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Deletes the agent conversation. Nothing else changes."
-msgstr ""
+msgstr "Удаляет беседу с агентом. Больше ничего не меняется."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "Закрыть"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "Done"
-msgstr ""
+msgstr "Готово"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Drag to resize"
-msgstr ""
+msgstr "Перетащите для изменения размера"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Edit Task"
-msgstr ""
+msgstr "Изменить задачу"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Every route ends in {name}"
-msgstr ""
+msgstr "Каждый маршрут заканчивается в {name}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Every route starts in {name}"
-msgstr ""
+msgstr "Каждый маршрут начинается в {name}"
 
 #: src/renderer/components/workflows/LazyWorkflowsView.tsx
+#, fuzzy
 msgid "Failed to load the workflows"
-msgstr ""
+msgstr "Не удалось загрузить рабочие процессы"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Fit every card in view"
-msgstr ""
+msgstr "Показать все карточки"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Fit view"
-msgstr ""
+msgstr "По размеру экрана"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgctxt "canvas link port"
 msgid "Handle"
-msgstr ""
+msgstr "Маркер"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "task activity"
 msgid "Idle"
-msgstr ""
+msgstr "Простаивает"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Include {stepName}"
-msgstr ""
+msgstr "Включить {stepName}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "It exists only in this workflow, so it is gone for good."
-msgstr ""
+msgstr "Она существует только в этом рабочем процессе, поэтому будет удалена безвозвратно."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It plans your workflows, and starts when you ask for changes."
-msgstr ""
+msgstr "Он планирует рабочие процессы и запускается, когда вы запрашиваете изменения."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It plans your workflows, and starts when you close Settings."
-msgstr ""
+msgstr "Он планирует рабочие процессы и запускается, когда вы закрываете параметры."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It starts when you close Settings."
-msgstr ""
+msgstr "Он запустится, когда вы закроете параметры."
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "It stays where it is, as an ordinary task."
-msgstr ""
+msgstr "Она останется на месте как обычная задача."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "stand-in for a project name"
 msgid "its board"
-msgstr ""
+msgstr "её доске"
 
 #. Stands in for a column name inside "has reached ..."
 #: src/renderer/components/workflows/workflow-graph.ts
+#, fuzzy
 msgid "its column"
-msgstr ""
+msgstr "своей колонки"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Linked tasks that run through your board on their own."
-msgstr ""
+msgstr "Связанные задачи, которые сами проходят по вашей доске."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Loading..."
-msgstr ""
+msgstr "Загрузка..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Make this task wait for another"
-msgstr ""
+msgstr "Задача будет ждать другую"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
-msgstr ""
+msgstr "Вручную"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Moved selected node {direction, select, left {left} right {right} up {up} down {down} other {}}. New position, x: {x}, y: {y}"
-msgstr ""
+msgstr "{direction, select, left {Выбранный узел перемещён влево. Новая позиция: x: {x}, y: {y}} right {Выбранный узел перемещён вправо. Новая позиция: x: {x}, y: {y}} up {Выбранный узел перемещён вверх. Новая позиция: x: {x}, y: {y}} down {Выбранный узел перемещён вниз. Новая позиция: x: {x}, y: {y}} other {Выбранный узел перемещён. Новая позиция: x: {x}, y: {y}}}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "New workflow"
-msgstr ""
+msgstr "Новый рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "No card has been moved"
-msgstr ""
+msgstr "Ни одна карточка не перемещена"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "No conversation yet"
-msgstr ""
+msgstr "Беседы пока нет"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "No task matches the search."
-msgstr ""
+msgstr "Нет задач, соответствующих поиску."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "No tasks yet."
-msgstr ""
+msgstr "Задач пока нет."
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "No workflow to start"
-msgstr ""
+msgstr "Нет рабочего процесса для запуска"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "No workflows"
-msgstr ""
+msgstr "Нет рабочих процессов"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Not started"
-msgstr ""
+msgstr "Не запущено"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Nothing planned yet"
-msgstr ""
+msgstr "Пока ничего не запланировано"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open on {otherBoardName}"
-msgstr ""
+msgstr "Открыть на {otherBoardName}"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Open on board"
-msgstr ""
+msgstr "Открыть на доске"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "Открыть параметры"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open task"
-msgstr ""
+msgstr "Открыть задачу"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open the main window to see the workflow."
-msgstr ""
+msgstr "Откройте главное окно, чтобы увидеть рабочий процесс."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open workflow"
-msgstr ""
+msgstr "Открыть рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Or right-click a task and choose New workflow."
-msgstr ""
+msgstr "Или щелкните задачу правой кнопкой мыши и выберите «Новый рабочий процесс»."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "Приостановить сеанс"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
-msgstr ""
+msgstr "Приостановлено"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Paused {pausedTime}"
-msgstr ""
+msgstr "Приостановлено {pausedTime}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Plan approval"
-msgstr ""
+msgstr "Одобрение плана"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Press enter or space to select a node. Press escape to cancel."
-msgstr ""
+msgstr "Нажмите Enter или пробел, чтобы выбрать узел. Нажмите Escape для отмены."
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel."
-msgstr ""
+msgstr "Нажмите Enter или пробел, чтобы выбрать узел. Затем узел можно перемещать клавишами со стрелками. Нажмите Escape для отмены."
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Press Start and the tasks run automatically in order until complete."
-msgstr ""
+msgstr "Нажмите «Запустить», и задачи будут автоматически выполняться по порядку до завершения."
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Put moved cards back in the automatic layout"
-msgstr ""
+msgstr "Вернуть перемещённые карточки в автоматическую раскладку"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Release on a task to make it wait for {blockerLabel}"
-msgstr ""
+msgstr "Отпустите над задачей, чтобы она ожидала {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowTaskNode.tsx
+#, fuzzy
 msgid "Release to make {blockedLabel} wait for {blockerLabel}"
-msgstr ""
+msgstr "Отпустите: {blockedLabel} будет ожидать {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "Убрать"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Remove {label} from {workflowTitle}?"
-msgstr ""
+msgstr "Убрать {label} из {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Remove #{displayId} from its workflow first."
-msgstr ""
+msgstr "Сначала удалите #{displayId} из рабочего процесса."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Remove link"
-msgstr ""
+msgstr "Удалить связь"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Переименовать"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Rename workflow"
-msgstr ""
+msgstr "Переименовать рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resize the workflow agent"
-msgstr ""
+msgstr "Изменить размер агента рабочих процессов"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "automations"
 msgid "Resume"
-msgstr ""
+msgstr "Возобновить"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
-msgstr ""
+msgstr "Возобновить"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Resume automations"
-msgstr ""
+msgstr "Возобновить автоматизации"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "Возобновить сеанс"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Resume workflow"
-msgstr ""
+msgstr "Возобновить рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Возобновление агента..."
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Review the plan, and click a task to change its route or blockers."
-msgstr ""
+msgstr "Просмотрите план и щелкните задачу, чтобы изменить ее маршрут или блокирующие задачи."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Route"
-msgstr ""
+msgstr "Маршрут"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Route step refused"
-msgstr ""
+msgstr "Переход к шагу отклонён"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Run order"
-msgstr ""
+msgstr "Порядок запуска"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Running"
-msgstr ""
+msgstr "Выполняется"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Running. Pause workflow"
-msgstr ""
+msgstr "Выполняется. Приостановить рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "Сохранить"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Select this task"
-msgstr ""
+msgstr "Выбрать эту задачу"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Show the workflow agent"
-msgstr ""
+msgstr "Показать агента рабочих процессов"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Skip {stepName}"
-msgstr ""
+msgstr "Пропустить {stepName}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "Stalled"
-msgstr ""
+msgstr "Остановлено"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "Stalled on {stalledCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{stalledCount, plural, one {Остановлено на # задаче} few {Остановлено на # задачах} many {Остановлено на # задачах} other {Остановлено на # задачи}}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "Stalled on #{displayId}"
-msgstr ""
+msgstr "Остановлено на задаче #{displayId}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "Stalled: {reason}"
-msgstr ""
+msgstr "Остановлено: {reason}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgctxt "workflow action"
 msgid "Start"
-msgstr ""
+msgstr "Запустить"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Start {workflowTitle}?"
-msgstr ""
+msgstr "Запустить {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Start this workflow"
-msgstr ""
+msgstr "Запустить этот рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Start workflow"
-msgstr ""
+msgstr "Запустить рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Запуск агента..."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Starting the workflow agent..."
-msgstr ""
+msgstr "Запуск агента рабочих процессов..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Take this task out of the workflow"
-msgstr ""
+msgstr "Исключить эту задачу из рабочего процесса"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Task {sourceTaskLabel} moves to Done."
-msgstr ""
+msgstr "Задача {sourceTaskLabel} перемещается в «Готово»."
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "Задача перемещена"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Tell the workflow agent what to build, and it plans the tasks."
-msgstr ""
+msgstr "Опишите агенту рабочего процесса, что нужно создать, и он спланирует задачи."
 
 #: src/renderer/components/workflows/workflow-graph.ts
+#, fuzzy
 msgid "That task is no longer in this workflow."
-msgstr ""
+msgstr "Этой задачи больше нет в этом рабочем процессе."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "The earlier conversation could not be resumed, so the agent started a new one."
-msgstr ""
+msgstr "Не удалось возобновить предыдущую беседу, поэтому агент начал новую."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "The workflow agent has not seen this plan"
-msgstr ""
+msgstr "Агент рабочих процессов не видел этот план"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "The workflow this task is in could not be loaded."
-msgstr ""
+msgstr "Не удалось загрузить рабочий процесс этой задачи."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "The workflow this task was in no longer exists."
-msgstr ""
+msgstr "Рабочий процесс этой задачи больше не существует."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "This task is no longer in {workflowTitle}."
-msgstr ""
+msgstr "Эта задача больше не находится в {workflowTitle}."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "This task is not in a workflow."
-msgstr ""
+msgstr "Эта задача не входит в рабочий процесс."
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "This workflow has no tasks yet."
-msgstr ""
+msgstr "В этом рабочем процессе пока нет задач."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "To Do"
-msgstr ""
+msgstr "К выполнению"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "Показать беседу"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot..."
-msgstr ""
+msgstr "Ожидание свободного слота агента..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Waiting for you"
-msgstr ""
+msgstr "Ожидает вас"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Workflow"
-msgstr ""
+msgstr "Рабочий процесс"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "Агент рабочих процессов"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent chosen"
-msgstr ""
+msgstr "Агент рабочих процессов выбран"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent is waiting for you"
-msgstr ""
+msgstr "Агент рабочих процессов ожидает вас"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Workflow agent is working"
-msgstr ""
+msgstr "Агент рабочих процессов работает"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Workflow name"
-msgstr ""
+msgstr "Имя рабочего процесса"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "Рабочие процессы"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgctxt "agent pane state"
 msgid "Working"
-msgstr ""
+msgstr "Работает"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "You approve this task's plans."
-msgstr ""
+msgstr "Вы утверждаете планы этой задачи."

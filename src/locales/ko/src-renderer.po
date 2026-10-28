@@ -8,1442 +8,1799 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" failed against the task's current state."
-msgstr ""
+msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 실패했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "\"{automationName}\"이(가) {columnName}에서 실패했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
-msgstr ""
+msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 아직 실행 중입니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" succeeded against the task's current state."
-msgstr ""
+msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 성공했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" was interrupted against the task's current state."
-msgstr ""
+msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 중단되었습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" was skipped against the task's current state."
-msgstr ""
+msgstr "작업의 현재 상태에서 \"{automationName}\"을(를) 건너뛰었습니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "\"{projectName}\" is now at {projectPath}."
-msgstr ""
+msgstr "\"{projectName}\"이(가) 이제 {projectPath}에 있습니다."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{swimlaneName}\""
-msgstr ""
+msgstr "\"{swimlaneName}\""
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{taskTitle}\""
-msgstr ""
+msgstr "\"{taskTitle}\""
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하지 않았습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" exited with code {exitCode}."
-msgstr ""
+msgstr "\"{taskTitle}\"이(가) 코드 {exitCode}(으)로 종료되었습니다."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{taskTitle}\" in {columnName}."
-msgstr ""
+msgstr "{columnName}의 \"{taskTitle}\"."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is {phase}."
-msgstr ""
+msgstr "\"{taskTitle}\" 상태: {phase}."
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is archived."
-msgstr ""
+msgstr "\"{taskTitle}\"이(가) 보관되었습니다."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 도구 실행을 요청하고 있습니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is back in {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\" 작업이 {columnName} 열로 돌아왔습니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is back on the board."
-msgstr ""
+msgstr "\"{taskTitle}\" 작업이 보드로 돌아왔습니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is running."
-msgstr ""
+msgstr "\"{taskTitle}\" 작업이 실행 중입니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is waiting on the git queue."
-msgstr ""
+msgstr "\"{taskTitle}\"이(가) git 대기열에서 대기 중입니다."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is waiting on you."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 응답을 기다리고 있습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and cleared your unsent text."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하고 보내지 않은 텍스트를 지웠습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and interrupted the agent mid-task."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하고 작업 중이던 에이전트를 중단했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하고 이를 전달하기 위해 세션을 다시 시작했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, cleared your unsent text and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하고 보내지 않은 텍스트를 지운 후 이를 전달하기 위해 세션을 다시 시작했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, interrupted the agent mid-task and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\"에서 {command}을(를) 실행하고 작업 중이던 에이전트를 중단한 후 이를 전달하기 위해 세션을 다시 시작했습니다."
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "\"{taskTitle}\" replaces the placeholder title."
-msgstr ""
+msgstr "임시 제목이 \"{taskTitle}\"(으)로 바뀌었습니다."
 
 #: src/renderer/lib/conversation-expired.ts
+#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its conversation from {lastActive} expired."
-msgstr ""
+msgstr "\"{taskTitle}\"의 {lastActive} 대화가 만료되어 새로 시작되었습니다."
 
 #: src/renderer/lib/conversation-expired.ts
+#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its last conversation expired."
-msgstr ""
+msgstr "\"{taskTitle}\"의 마지막 대화가 만료되어 새로 시작되었습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{timeoutMinutes, plural, other {\"{taskTitle}\"이(가) #분 동안 유휴 상태였습니다.}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr ""
+msgstr "{amount, plural, other {{projectName}, #일 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, other {{projectName}, #시간 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, other {{projectName}, #분 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr ""
+msgstr "{amount, plural, other {#일 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr ""
+msgstr "{amount, plural, other {#일 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, other {#시간 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, other {#시간 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, other {#분 대기함}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, other {#분 대기함}}"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{basePill} will be checked out in the project folder"
-msgstr ""
+msgstr "{basePill}이(가) 프로젝트 폴더에 체크아웃됩니다"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} exists and will be checked out in a new worktree"
-msgstr ""
+msgstr "{branchPill}이(가) 있으며 새 작업 트리에 체크아웃됩니다"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} exists and will be checked out in the project folder"
-msgstr ""
+msgstr "{branchPill}이(가) 있으며 프로젝트 폴더에 체크아웃됩니다"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} will be created from {basePill} in a new worktree"
-msgstr ""
+msgstr "{basePill}에서 {branchPill}이(가) 새 작업 트리에 생성됩니다"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
-msgstr ""
+msgstr "{basePill}에서 {branchPill}이(가) 프로젝트 폴더에 생성됩니다"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr ""
+msgstr "{count, plural, =1 {유휴 에이전트 일시 중지됨} other {유휴 에이전트 #개 일시 중지됨}}"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr ""
+msgstr "{count, plural, =1 {Kangentic이 메모리 확보를 위해 에이전트를 일시 중지했습니다.} other {Kangentic이 메모리 확보를 위해 에이전트를 일시 중지했습니다.}}"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
-msgstr ""
+msgstr "{count, plural, other {에이전트 #개를 일시 중지할 수 없음}}"
 
 #: src/renderer/components/TemplateTextField.tsx
+#, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
-msgstr ""
+msgstr "{count, plural, other {알 수 없는 변수: {variableNames}. 입력한 그대로 전송됩니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
-msgstr ""
+msgstr "{failedCount, plural, other {\"{taskTitle}\"의 프로세스 #개를 중지할 수 없으며, {keptCount, plural, other {#개가 아직 실행 중입니다.}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\".} other {Couldn't stop # processes from \"{taskTitle}\".}}"
-msgstr ""
+msgstr "{failedCount, plural, other {\"{taskTitle}\"의 프로세스 #개를 중지할 수 없습니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
-msgstr ""
+msgstr "{failedCount, plural, other {{taskCount, plural, other {작업 #개}}의 프로세스 #개를 중지할 수 없으며, {keptCount, plural, other {#개가 아직 실행 중입니다.}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}.} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}.}}"
-msgstr ""
+msgstr "{failedCount, plural, other {{taskCount, plural, other {작업 #개}}의 프로세스 #개를 중지할 수 없습니다.}}"
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{hours}h {minutes}m"
-msgstr ""
+msgstr "{hours}시간 {minutes}분"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{interruptedCount, plural, one {# automation didn't finish before Kangentic closed.} other {# automations didn't finish before Kangentic closed.}}"
-msgstr ""
+msgstr "{interruptedCount, plural, other {자동화 #개가 Kangentic이 종료되기 전에 완료되지 않았습니다.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{interruptedCount, plural, one {Automation interrupted} other {Automations interrupted}}"
-msgstr ""
+msgstr "{interruptedCount, plural, other {자동화 중단됨}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{keptCount, plural, one {# process from \"{taskTitle}\" is still running.} other {# processes from \"{taskTitle}\" are still running.}}"
-msgstr ""
+msgstr "{keptCount, plural, other {\"{taskTitle}\"의 프로세스 #개가 아직 실행 중입니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{keptCount, plural, one {# process from {taskCount, plural, other {# tasks}} is still running.} other {# processes from {taskCount, plural, other {# tasks}} are still running.}}"
-msgstr ""
+msgstr "{keptCount, plural, other {{taskCount, plural, other {작업 #개}}의 프로세스 #개가 아직 실행 중입니다.}}"
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{minutes}m {seconds}s"
-msgstr ""
+msgstr "{minutes}분 {seconds}초"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
-msgstr ""
+msgstr "{processCount, plural, other {\"{taskTitle}\"에서 프로세스 #개가 실행 중인 상태로 남았습니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
-msgstr ""
+msgstr "{processCount, plural, other {{taskCount, plural, other {작업 #개}}에서 프로세스 #개가 실행 중인 상태로 남았습니다.}}"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{remaining} of memory reservations left."
-msgstr ""
+msgstr "메모리 예약이 {remaining} 남았습니다."
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{seconds}s"
-msgstr ""
+msgstr "{seconds}초"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{sessionIdShort} exited with code {exitCode}."
-msgstr ""
+msgstr "{sessionIdShort}이(가) 코드 {exitCode}(으)로 종료되었습니다."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "{sessionIdShort} is asking to run a tool."
-msgstr ""
+msgstr "{sessionIdShort}에서 도구 실행을 요청하고 있습니다."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "{sessionIdShort} is waiting on you."
-msgstr ""
+msgstr "{sessionIdShort}에서 응답을 기다리고 있습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{sessionIdShort} was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{timeoutMinutes, plural, other {{sessionIdShort}이(가) #분 동안 유휴 상태였습니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from \"{taskTitle}\".} other {Stopped # leftover processes from \"{taskTitle}\".}}"
-msgstr ""
+msgstr "{stoppedCount, plural, other {\"{taskTitle}\"의 남은 프로세스 #개를 중지했습니다.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from {taskCount, plural, other {# tasks}}.} other {Stopped # leftover processes from {taskCount, plural, other {# tasks}}.}}"
-msgstr ""
+msgstr "{stoppedCount, plural, other {{taskCount, plural, other {작업 #개}}의 남은 프로세스 #개를 중지했습니다.}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task is back in {columnName}.} other {# tasks are back in {columnName}.}}"
-msgstr ""
+msgstr "{taskCount, plural, other {작업 #개가 {columnName} 열로 돌아왔습니다.}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task is back on the board.} other {# tasks are back on the board.}}"
-msgstr ""
+msgstr "{taskCount, plural, other {작업 #개가 보드로 돌아왔습니다.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {The task of \"{workflowTitle}\" is in Done.} other {All # tasks of \"{workflowTitle}\" are in Done.}}"
-msgstr ""
+msgstr "{taskCount, plural, other {\"{workflowTitle}\"의 작업 #개가 모두 완료 열에 있습니다.}}"
 
 #: src/renderer/components/ColumnPicker.tsx
+#, fuzzy
 msgid "{value} (not on this board)"
-msgstr ""
+msgstr "{value}(이 보드에 없음)"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
-msgstr ""
+msgstr "{worktreeCount, plural, other {작업 트리 #개 중 {failedCount}개를 정리하지 못했습니다.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "A project"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
-msgstr ""
+msgstr "tmux 서버입니다. 중지하면 모든 tmux 세션이 종료됩니다."
 
 #: src/renderer/components/KebabMenu.tsx
+#, fuzzy
 msgid "Actions"
-msgstr ""
+msgstr "작업"
 
 #: src/renderer/utils/agent-display-name.ts
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "에이전트"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Agent didn't start"
-msgstr ""
+msgstr "에이전트가 시작되지 않음"
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "Agent finished"
-msgstr ""
+msgstr "에이전트 완료"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Agent paused"
-msgstr ""
+msgstr "에이전트 일시 중지됨"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Agent resumed"
-msgstr ""
+msgstr "에이전트 재개됨"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Agent started"
-msgstr ""
+msgstr "에이전트 시작됨"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Almost no memory reservations left."
-msgstr ""
+msgstr "메모리 예약이 거의 남지 않았습니다."
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "An unexpected error occurred."
-msgstr ""
+msgstr "예기치 않은 오류가 발생했습니다."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Auto-generated branch will be created from {basePill} in a new worktree"
-msgstr ""
+msgstr "{basePill}에서 자동 생성된 분기가 새 작업 트리에 생성됩니다"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Automation failed"
-msgstr ""
+msgstr "자동화 실패"
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Back Click"
-msgstr ""
+msgstr "뒤로 버튼 클릭"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Back to writing markdown"
-msgstr ""
+msgstr "마크다운 작성으로 돌아가기"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Base branch not refreshed"
-msgstr ""
+msgstr "기본 분기를 새로 고치지 못함"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "blocked"
-msgstr ""
+msgstr "차단됨"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "Can't move To Do"
-msgstr ""
+msgstr "할 일 열을 이동할 수 없음"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Change not saved to disk"
-msgstr ""
+msgstr "변경 내용이 디스크에 저장되지 않음"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Choose a project folder"
-msgstr ""
+msgstr "프로젝트 폴더 선택"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Choose folder"
-msgstr ""
+msgstr "폴더 선택"
 
 #: src/renderer/components/MultiSelectDropdown.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "지우기"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Clear all filters"
-msgstr ""
+msgstr "모든 필터 지우기"
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "검색 지우기"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr ""
+msgstr "클릭하여 정렬 - Shift+클릭으로 보조 정렬 추가"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "닫기"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #: src/renderer/window-manager/components/WindowTitleBar.tsx
+#, fuzzy
 msgid "Close window"
-msgstr ""
+msgstr "창 닫기"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "closed"
-msgstr ""
+msgstr "닫힘"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Closing now will discard your unsaved edits to this task."
-msgstr ""
+msgstr "지금 닫으면 이 작업에 대해 저장하지 않은 편집 내용이 삭제됩니다."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Column changed by agent"
-msgstr ""
+msgstr "에이전트가 열을 변경함"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Command didn't run"
-msgstr ""
+msgstr "명령이 실행되지 않음"
 
 #: src/renderer/utils/shell-display-name.ts
+#, fuzzy
 msgid "Command Prompt"
-msgstr ""
+msgstr "명령 프롬프트"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Command ran"
-msgstr ""
+msgstr "명령 실행됨"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Command terminal"
-msgstr ""
+msgstr "명령 터미널"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "conflicts"
-msgstr ""
+msgstr "충돌"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Conversation moved"
-msgstr ""
+msgstr "대화 이동됨"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Copy conversation"
-msgstr ""
+msgstr "대화 복사"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Copy conversation as Markdown"
-msgstr ""
+msgstr "대화를 Markdown으로 복사"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Copy task ID"
-msgstr ""
+msgstr "작업 ID 복사"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Copying <0>{copiedEntries}</0> of <1>{totalEntries}</1>..."
-msgstr ""
+msgstr "<1>{totalEntries}</1>개 중 <0>{copiedEntries}</0>개 복사 중..."
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't add project"
-msgstr ""
+msgstr "프로젝트를 추가할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't add the task"
-msgstr ""
+msgstr "작업을 추가할 수 없음"
 
 #: src/renderer/stores/board-store/board-config-slice.ts
+#, fuzzy
 msgid "Couldn't apply kangentic.json"
-msgstr ""
+msgstr "kangentic.json을 적용할 수 없음"
 
 #: src/renderer/stores/board-store/task-slice.ts
 #: src/renderer/stores/session-store/transient-session-slice.ts
+#, fuzzy
 msgid "Couldn't apply model or effort"
-msgstr ""
+msgstr "모델 또는 노력 수준을 적용할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't change plan approval"
-msgstr ""
+msgstr "계획 승인을 변경할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't change the route"
-msgstr ""
+msgstr "경로를 변경할 수 없음"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "Couldn't complete task"
-msgstr ""
+msgstr "작업을 완료할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't create the workflow"
-msgstr ""
+msgstr "워크플로를 만들 수 없음"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "작업을 삭제할 수 없음"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't delete tasks"
-msgstr ""
+msgstr "작업을 삭제할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't delete the workflow"
-msgstr ""
+msgstr "워크플로를 삭제할 수 없음"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Couldn't generate title"
-msgstr ""
+msgstr "제목을 생성할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't link the tasks"
-msgstr ""
+msgstr "작업을 연결할 수 없음"
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+#, fuzzy
 msgid "Couldn't load the terminals for this window."
-msgstr ""
+msgstr "이 창의 터미널을 불러올 수 없습니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Couldn't move project"
-msgstr ""
+msgstr "프로젝트를 이동할 수 없음"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "작업을 이동할 수 없음"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Couldn't open project"
-msgstr ""
+msgstr "프로젝트를 열 수 없음"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't open that folder"
-msgstr ""
+msgstr "해당 폴더를 열 수 없음"
 
 #: src/renderer/utils/task-automations.ts
+#, fuzzy
 msgid "Couldn't pause automations"
-msgstr ""
+msgstr "자동화를 일시 중지할 수 없음"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Couldn't pause session"
-msgstr ""
+msgstr "세션을 일시 중지할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't pause the workflow"
-msgstr ""
+msgstr "워크플로를 일시 중지할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't pause the workflow agent"
-msgstr ""
+msgstr "워크플로 에이전트를 일시 중지할 수 없음"
 
 #: src/renderer/stores/backlog-store.ts
+#, fuzzy
 msgid "Couldn't promote tasks"
-msgstr ""
+msgstr "작업을 승격하지 못했습니다"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Couldn't reach the MCP server"
-msgstr ""
+msgstr "MCP 서버에 연결할 수 없음"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't read that folder"
-msgstr ""
+msgstr "해당 폴더를 읽을 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't remove the link"
-msgstr ""
+msgstr "연결을 제거할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't remove the task"
-msgstr ""
+msgstr "작업을 제거할 수 없음"
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "Couldn't rename task"
-msgstr ""
+msgstr "작업 이름을 바꾸지 못함"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't rename the workflow"
-msgstr ""
+msgstr "워크플로 이름을 바꿀 수 없음"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
+#, fuzzy
 msgid "Couldn't reorder columns"
-msgstr ""
+msgstr "열 순서를 변경할 수 없음"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't reorder task"
-msgstr ""
+msgstr "작업 순서를 변경할 수 없음"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't restore task"
-msgstr ""
+msgstr "작업을 복원할 수 없음"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't restore tasks"
-msgstr ""
+msgstr "작업을 복원할 수 없음"
 
 #: src/renderer/utils/task-automations.ts
+#, fuzzy
 msgid "Couldn't resume automations"
-msgstr ""
+msgstr "자동화를 다시 시작할 수 없음"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Couldn't resume session"
-msgstr ""
+msgstr "세션을 재개할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't resume the workflow"
-msgstr ""
+msgstr "워크플로를 재개할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't resume the workflow agent"
-msgstr ""
+msgstr "워크플로 에이전트를 재개할 수 없음"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Couldn't run again"
-msgstr ""
+msgstr "다시 실행할 수 없음"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
+#, fuzzy
 msgid "Couldn't save profiles"
-msgstr ""
+msgstr "프로필을 저장할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't save the layout"
-msgstr ""
+msgstr "레이아웃을 저장할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't save the task"
-msgstr ""
+msgstr "작업을 저장할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't start the workflow"
-msgstr ""
+msgstr "워크플로를 시작할 수 없음"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't start the workflow agent"
-msgstr ""
+msgstr "워크플로 에이전트를 시작할 수 없음"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Couldn't stop it. Try again, or close it yourself."
-msgstr ""
+msgstr "중지할 수 없습니다. 다시 시도하거나 직접 종료하세요."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Couldn't stop processes"
-msgstr ""
+msgstr "프로세스를 중지할 수 없음"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "작업 삭제"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Describe the task for the agent..."
-msgstr ""
+msgstr "에이전트에게 맡길 작업을 설명하세요..."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation could not start: {reason}"
-msgstr ""
+msgstr "받아쓰기를 시작할 수 없음: {reason}"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation could not start."
-msgstr ""
+msgstr "받아쓰기를 시작할 수 없습니다."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed to start"
-msgstr ""
+msgstr "받아쓰기 시작 실패"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed: {reason}"
-msgstr ""
+msgstr "받아쓰기 실패: {reason}"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed."
-msgstr ""
+msgstr "받아쓰기에 실패했습니다."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "저장되지 않은 변경 사항을 삭제할까요?"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+#, fuzzy
 msgid "Download didn't finish"
-msgstr ""
+msgstr "다운로드가 완료되지 않음"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+#, fuzzy
 msgid "Downloaded"
-msgstr ""
+msgstr "다운로드됨"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "draft"
-msgstr ""
+msgstr "초안"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "Drag failed"
-msgstr ""
+msgstr "끌기 실패"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "드래그하여 순서 변경"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Edit Task"
-msgstr ""
+msgstr "작업 편집"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Enable"
-msgstr ""
+msgstr "사용"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Enable worktree?"
-msgstr ""
+msgstr "작업 트리를 사용할까요?"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load the {panelLabel}"
-msgstr ""
+msgstr "{panelLabel}을(를) 불러오지 못했습니다"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "변경 사항 패널을 로드하지 못했습니다"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "Failed to load the Command Terminal"
-msgstr ""
+msgstr "명령 터미널을 불러오지 못했습니다"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "Failed to load the Conversation"
-msgstr ""
+msgstr "대화를 불러오지 못했습니다"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+#, fuzzy
 msgid "Failed to load the File diff"
-msgstr ""
+msgstr "파일 diff를 불러오지 못했습니다"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load the panel"
-msgstr ""
+msgstr "패널을 불러오지 못했습니다"
 
 #: src/renderer/components/NumberStepper.tsx
+#, fuzzy
 msgid "Fewer: {ariaLabel}"
-msgstr ""
+msgstr "줄이기: {ariaLabel}"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "File search unavailable."
-msgstr ""
+msgstr "파일 검색을 사용할 수 없습니다."
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
+#, fuzzy
 msgid "Filter"
-msgstr ""
+msgstr "필터"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Float this window out of the tiled layout"
-msgstr ""
+msgstr "이 창을 바둑판식 레이아웃에서 분리하여 띄우기"
 
 #: src/renderer/pop-out/PopOutButton.tsx
+#, fuzzy
 msgid "Focus detached window"
-msgstr ""
+msgstr "분리된 창에 포커스"
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Forward Click"
-msgstr ""
+msgstr "앞으로 버튼 클릭"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "From:"
-msgstr ""
+msgstr "원본:"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Generate a title from the description"
-msgstr ""
+msgstr "설명에서 제목 생성"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Generating a title"
-msgstr ""
+msgstr "제목 생성 중"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Git setup failed"
-msgstr ""
+msgstr "Git 설정 실패"
 
 #: src/renderer/utils/gpu-notice.ts
+#, fuzzy
 msgid "Graphics acceleration off"
-msgstr ""
+msgstr "그래픽 가속 꺼짐"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Has an open window."
-msgstr ""
+msgstr "열린 창이 있습니다."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Hide workflow"
-msgstr ""
+msgstr "워크플로 숨기기"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Initializing..."
-msgstr ""
+msgstr "초기화 중..."
 
 #: src/renderer/hooks/useBranchSettings.ts
+#, fuzzy
 msgid "Invalid git branch name"
-msgstr ""
+msgstr "잘못된 git 분기 이름"
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Isolated"
-msgstr ""
+msgstr "격리됨"
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Isolated session"
-msgstr ""
+msgstr "격리된 세션"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "It may have been moved or renamed."
-msgstr ""
+msgstr "이동되었거나 이름이 변경되었을 수 있습니다."
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Its own context, separate from the main conversation"
-msgstr ""
+msgstr "기본 대화와 분리된 자체 컨텍스트"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Its record could not be found after refreshing the project list."
-msgstr ""
+msgstr "프로젝트 목록을 새로 고친 후에도 해당 레코드를 찾을 수 없습니다."
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Jump to start"
-msgstr ""
+msgstr "처음으로 이동"
 
 #: src/renderer/lib/datetime.ts
+#, fuzzy
 msgid "just now"
-msgstr ""
+msgstr "방금 전"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "Kangentic이 디스크에서 폴더를 이동합니다. 모든 작업, 기록 및 작업 트리가 함께 이동됩니다."
 
 #: src/renderer/stores/board-store/board-config-slice.ts
+#, fuzzy
 msgid "kangentic.json warning"
-msgstr ""
+msgstr "kangentic.json 경고"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "계속 편집"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Labels"
-msgstr ""
+msgstr "레이블"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest"
-msgstr ""
+msgstr "최신"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest {modelFamily}"
-msgstr ""
+msgstr "최신 {modelFamily}"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest {modelFamily}, currently {currentModel}"
-msgstr ""
+msgstr "최신 {modelFamily}, 현재 {currentModel}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Leftover processes"
-msgstr ""
+msgstr "남은 프로세스"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Leftover processes stopped"
-msgstr ""
+msgstr "남은 프로세스 중지됨"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Low on memory"
-msgstr ""
+msgstr "메모리 부족"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
-msgstr ""
+msgstr "각 작업이 자체 작업 트리를 갖도록 첫 커밋을 만드세요."
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Maximize"
-msgstr ""
+msgstr "최대화"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr ""
+msgstr "마지막 PR 새로 고침 기준 검토, 검사 또는 분기 규칙으로 병합이 차단됨"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Merge conflicts with the base branch as of the last PR refresh"
-msgstr ""
+msgstr "마지막 PR 새로 고침 기준 기본 분기와 병합 충돌이 있음"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "merged"
-msgstr ""
+msgstr "병합됨"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Microphone access was denied. Enable it in your OS settings."
-msgstr ""
+msgstr "마이크 액세스가 거부되었습니다. OS 설정에서 허용하세요."
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Middle Click"
-msgstr ""
+msgstr "가운데 버튼 클릭"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Minimize"
-msgstr ""
+msgstr "최소화"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Model change saved"
-msgstr ""
+msgstr "모델 변경 사항 저장됨"
 
 #: src/renderer/components/NumberStepper.tsx
+#, fuzzy
 msgid "More: {ariaLabel}"
-msgstr ""
+msgstr "늘리기: {ariaLabel}"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move <0>\"{pendingProjectName}\"</0> to a new folder?"
-msgstr ""
+msgstr "<0>\"{pendingProjectName}\"</0>을(를) 새 폴더로 이동하시겠습니까?"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move Folder"
-msgstr ""
+msgstr "폴더 이동"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move Project Folder"
-msgstr ""
+msgstr "프로젝트 폴더 이동"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Moved \"{taskTitle}\" to {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\"을(를) {columnName}(으)로 이동했습니다."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Moved \"{taskTitle}\" to the next column."
-msgstr ""
+msgstr "\"{taskTitle}\"을(를) 다음 열로 이동했습니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Moving project folder..."
-msgstr ""
+msgstr "프로젝트 폴더 이동 중..."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "Needs permission"
-msgstr ""
+msgstr "권한 필요"
 
 #: src/renderer/lib/conversation-expired-toast.ts
+#, fuzzy
 msgid "New conversation"
-msgstr ""
+msgstr "새 대화"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "No active agent sessions."
-msgstr ""
+msgstr "활성 에이전트 세션이 없습니다."
 
 #: src/renderer/pop-out/roots/PopOutBrowserRoot.tsx
+#, fuzzy
 msgid "No active session for this task"
-msgstr ""
+msgstr "이 작업에 활성 세션이 없습니다"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+#, fuzzy
 msgid "No changes for this file"
-msgstr ""
+msgstr "이 파일에 변경 사항이 없습니다"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "No changes on this branch"
-msgstr ""
+msgstr "이 분기에 변경 사항이 없습니다"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "No commits yet"
-msgstr ""
+msgstr "아직 커밋 없음"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "No data"
-msgstr ""
+msgstr "데이터 없음"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "No longer running."
-msgstr ""
+msgstr "더 이상 실행 중이 아닙니다."
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "No matching files or folders."
-msgstr ""
+msgstr "일치하는 파일 또는 폴더가 없습니다."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "No microphone is available."
-msgstr ""
+msgstr "사용 가능한 마이크가 없습니다."
 
 #: src/renderer/stores/session-store/transient-session-slice.ts
+#, fuzzy
 msgid "No project is currently open"
-msgstr ""
+msgstr "현재 열려 있는 프로젝트가 없습니다"
 
 #: src/renderer/hooks/useCommandBar.ts
+#, fuzzy
 msgid "No project open"
-msgstr ""
+msgstr "열린 프로젝트 없음"
 
 #: src/renderer/lib/ipc-error.ts
+#, fuzzy
 msgid "No reason was given."
-msgstr ""
+msgstr "사유가 제공되지 않았습니다."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Not a git repository"
-msgstr ""
+msgstr "git 리포지토리가 아님"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Nothing to preview"
-msgstr ""
+msgstr "미리 볼 내용 없음"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Old folder not removed"
-msgstr ""
+msgstr "이전 폴더가 제거되지 않음"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Older versions"
-msgstr ""
+msgstr "이전 버전"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "open"
-msgstr ""
+msgstr "열림"
 
 #: src/renderer/hooks/useCommandBar.ts
+#, fuzzy
 msgid "Open a project first."
-msgstr ""
+msgstr "먼저 프로젝트를 여세요."
 
 #: src/renderer/pop-out/PopOutButton.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "새 창에서 열기"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "Open PR #{prNumber} in browser"
-msgstr ""
+msgstr "브라우저에서 PR #{prNumber} 열기"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "Open PR in browser"
-msgstr ""
+msgstr "브라우저에서 PR 열기"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Open settings"
-msgstr ""
+msgstr "설정 열기"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Open task"
-msgstr ""
+msgstr "작업 열기"
 
 #: src/renderer/components/OptionalTag.tsx
+#, fuzzy
 msgid "Optional"
-msgstr ""
+msgstr "선택 사항"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Other work uses it too. Stopping it can break that work."
-msgstr ""
+msgstr "다른 작업에서도 사용 중입니다. 중지하면 해당 작업이 중단될 수 있습니다."
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Paste or drop files here"
-msgstr ""
+msgstr "여기에 파일을 붙여넣거나 끌어다 놓으세요"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Pick the folder that holds your code."
-msgstr ""
+msgstr "코드가 있는 폴더를 선택하세요."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "계획 완료"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Plan complete: {taskTitle}"
-msgstr ""
+msgstr "계획 완료: {taskTitle}"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Pop out"
-msgstr ""
+msgstr "분리"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "PR"
-msgstr ""
+msgstr "PR"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber}"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Preview"
-msgstr ""
+msgstr "미리 보기"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Preview rendered markdown"
-msgstr ""
+msgstr "렌더링된 마크다운 미리 보기"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Priority"
-msgstr ""
+msgstr "우선순위"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes from \"{taskTitle}\""
-msgstr ""
+msgstr "\"{taskTitle}\"의 프로세스"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes from {taskCount, plural, other {# tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, other {작업 #개의 프로세스}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes still running"
-msgstr ""
+msgstr "아직 실행 중인 프로세스"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Project moved"
-msgstr ""
+msgstr "프로젝트 이동됨"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Project not available"
-msgstr ""
+msgstr "프로젝트를 사용할 수 없음"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "queued"
-msgstr ""
+msgstr "대기 중"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Ran again"
-msgstr ""
+msgstr "다시 실행함"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Ran in the project folder."
-msgstr ""
+msgstr "프로젝트 폴더에서 실행되었습니다."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Ran in the worktree."
-msgstr ""
+msgstr "작업 트리에서 실행되었습니다."
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "ready"
-msgstr ""
+msgstr "준비됨"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Ready to merge as of the last PR refresh"
-msgstr ""
+msgstr "마지막 PR 새로 고침 기준 병합 준비됨"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Reconnected"
-msgstr ""
+msgstr "다시 연결됨"
 
 #: src/renderer/components/ErrorBoundary.tsx
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reload"
-msgstr ""
+msgstr "다시 로드"
 
 #: src/renderer/components/LabelInput.tsx
+#, fuzzy
 msgid "Remove {label}"
-msgstr ""
+msgstr "{label} 제거"
 
 #: src/renderer/utils/gpu-notice.ts
+#, fuzzy
 msgid "Repeated failures shut down your last run."
-msgstr ""
+msgstr "반복된 오류로 인해 마지막 실행이 종료되었습니다."
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Required checks or policies are queued as of the last PR refresh"
-msgstr ""
+msgstr "마지막 PR 새로 고침 기준 필수 검사 또는 정책이 대기 중임"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Required checks or policies are running as of the last PR refresh"
-msgstr ""
+msgstr "마지막 PR 새로 고침 기준 필수 검사 또는 정책이 실행 중임"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Restart to update"
-msgstr ""
+msgstr "다시 시작하여 업데이트"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume follows the conversation started by /clear."
-msgstr ""
+msgstr "재개 시 /clear로 시작된 대화를 이어갑니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "에이전트 재개 중..."
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "다시 시도"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Review"
-msgstr ""
+msgstr "검토"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Run again"
-msgstr ""
+msgstr "다시 실행"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "running"
-msgstr ""
+msgstr "실행 중"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Running agents are resuming."
-msgstr ""
+msgstr "실행 중인 에이전트를 재개하는 중입니다."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs in the project folder"
-msgstr ""
+msgstr "프로젝트 폴더에서 실행"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs in the project folder on {branchPill}"
-msgstr ""
+msgstr "프로젝트 폴더의 {branchPill}에서 실행"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Runs in the project folder."
-msgstr ""
+msgstr "프로젝트 폴더에서 실행됩니다."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Runs in the worktree."
-msgstr ""
+msgstr "작업 트리에서 실행됩니다."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs on the remote server"
-msgstr ""
+msgstr "원격 서버에서 실행"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "저장"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Save changes before closing?"
-msgstr ""
+msgstr "닫기 전에 변경 내용을 저장할까요?"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "Searching files and folders..."
-msgstr ""
+msgstr "파일 및 폴더 검색 중..."
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Session"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Session ended"
-msgstr ""
+msgstr "세션 종료됨"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "설정"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Show workflow"
-msgstr ""
+msgstr "워크플로 표시"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Some worktrees remain"
-msgstr ""
+msgstr "일부 작업 트리가 남아 있음"
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "Something went wrong"
-msgstr ""
+msgstr "문제가 발생했습니다"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Specific versions"
-msgstr ""
+msgstr "특정 버전"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Started a git repo"
-msgstr ""
+msgstr "Git 리포지토리를 시작함"
 
 #: src/renderer/utils/task-progress.ts
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "에이전트 시작 중..."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Still preparing"
-msgstr ""
+msgstr "아직 준비 중"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Still preparing: {taskTitle}"
-msgstr ""
+msgstr "아직 준비 중: {taskTitle}"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Still running: {tasks}."
-msgstr ""
+msgstr "아직 실행 중: {tasks}."
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "Task completed"
-msgstr ""
+msgstr "작업 완료됨"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task created by agent"
-msgstr ""
+msgstr "에이전트가 작업을 생성함"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task deleted by agent"
-msgstr ""
+msgstr "에이전트가 작업을 삭제함"
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "Task renamed"
-msgstr ""
+msgstr "작업 이름 변경됨"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Task restored"
-msgstr ""
+msgstr "작업 복원됨"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task updated by agent"
-msgstr ""
+msgstr "에이전트가 작업을 업데이트함"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Tasks restored"
-msgstr ""
+msgstr "작업 복원됨"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Tasks will share one working tree in this folder."
-msgstr ""
+msgstr "작업들이 이 폴더의 작업 트리 하나를 공유합니다."
 
 #: src/renderer/components/TemplateVariablePicker.tsx
+#, fuzzy
 msgid "Template variable"
-msgstr ""
+msgstr "템플릿 변수"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Terminals restarted"
-msgstr ""
+msgstr "터미널 다시 시작됨"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "The agent runs on a remote server"
-msgstr ""
+msgstr "에이전트가 원격 서버에서 실행됨"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "The automation did not start."
-msgstr ""
+msgstr "자동화가 시작되지 않았습니다."
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "The list has been refreshed."
-msgstr ""
+msgstr "목록을 새로 고쳤습니다."
 
 #: src/renderer/lib/knowledge-graph-support.ts
+#, fuzzy
 msgid "The local model does not run on {platformName}."
-msgstr ""
+msgstr "로컬 모델은 {platformName}에서 실행되지 않습니다."
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "The new title was not saved."
-msgstr ""
+msgstr "새 제목이 저장되지 않았습니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "The original copy remains at {originalPath}."
-msgstr ""
+msgstr "원본 사본이 {originalPath}에 남아 있습니다."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "The project folder is itself a git worktree"
-msgstr ""
+msgstr "프로젝트 폴더 자체가 git 작업 트리임"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "The project list may be out of sync. Try again."
-msgstr ""
+msgstr "프로젝트 목록이 동기화되지 않았을 수 있습니다. 다시 시도하세요."
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "The running agent picks it up the next time it resumes."
-msgstr ""
+msgstr "실행 중인 에이전트가 다음에 재개될 때 적용됩니다."
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "The session was already running."
-msgstr ""
+msgstr "세션이 이미 실행 중입니다."
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "The task's changes could not be read"
-msgstr ""
+msgstr "작업의 변경 사항을 읽을 수 없습니다"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
-msgstr ""
+msgstr "다음 활성 에이전트 세션은 중지된 후 새 위치에서 자동으로 재개됩니다."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "이 작업은 실행 취소할 수 없습니다."
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+#, fuzzy
 msgid "This project is no longer in Kangentic."
-msgstr ""
+msgstr "이 프로젝트는 더 이상 Kangentic에 없습니다."
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "This task is no longer available."
-msgstr ""
+msgstr "이 작업은 더 이상 사용할 수 없습니다."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
-msgstr ""
+msgstr "이 작업에 대해 격리된 작업 트리를 만듭니다. 세션 기록은 유지되며 에이전트는 새 작업 트리에서 중단된 지점부터 계속합니다."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "작업, 해당 세션 기록 및 연결된 작업 트리가 영구적으로 삭제됩니다."
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "To Do must stay the first column."
-msgstr ""
+msgstr "할 일 열은 첫 번째 열로 유지해야 합니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "To:"
-msgstr ""
+msgstr "대상:"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Toggle workflow"
-msgstr ""
+msgstr "워크플로 전환"
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "Try again"
-msgstr ""
+msgstr "다시 시도"
 
 #: src/renderer/components/LabelInput.tsx
+#, fuzzy
 msgid "Type to add..."
-msgstr ""
+msgstr "입력하여 추가..."
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "Type to search files and folders."
-msgstr ""
+msgstr "입력하여 파일 및 폴더를 검색하세요."
 
 #: src/renderer/lib/knowledge-graph-support.ts
+#, fuzzy
 msgid "Unavailable"
-msgstr ""
+msgstr "사용할 수 없음"
 
 #: src/renderer/utils/shell-display-name.ts
+#, fuzzy
 msgid "Unknown"
-msgstr ""
+msgstr "알 수 없음"
 
 #: src/renderer/lib/ipc-error.ts
+#, fuzzy
 msgid "Unknown error"
-msgstr ""
+msgstr "알 수 없는 오류"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Update ready"
-msgstr ""
+msgstr "업데이트 준비됨"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Updates blocked"
-msgstr ""
+msgstr "업데이트 차단됨"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Version {version} is ready to install."
-msgstr ""
+msgstr "버전 {version}을(를) 설치할 준비가 되었습니다."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "워크플로 에이전트"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "워크플로 완료"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow complete: {workflowTitle}"
-msgstr ""
+msgstr "워크플로 완료: {workflowTitle}"
 
 #: src/renderer/utils/workflow-refusal.ts
+#, fuzzy
 msgid "Workflow controls this task"
-msgstr ""
+msgstr "워크플로가 이 작업을 제어합니다"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "워크플로 중단됨"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Write"
-msgstr ""
+msgstr "작성"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Your edits to this task are not saved."
-msgstr ""
+msgstr "이 작업에 대한 편집 내용이 저장되지 않았습니다."

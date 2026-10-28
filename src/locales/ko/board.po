@@ -8,449 +8,557 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "\"{doneTaskTitle}\""
-msgstr ""
+msgstr "\"{doneTaskTitle}\""
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in {targetName}."
-msgstr ""
+msgstr "\"{movedTaskTitle}\"이(가) 이제 {targetName}에 있습니다."
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in column."
-msgstr ""
+msgstr "\"{movedTaskTitle}\"이(가) 이제 열에 있습니다."
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{taskTitle}\""
-msgstr ""
+msgstr "\"{taskTitle}\""
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
-msgstr ""
+msgstr "{backlogItemCount, plural, other {백로그, 항목 {backlogItemCountText}개}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# background shell ({shellIds})} other {# background shells ({shellIds})}}"
-msgstr ""
+msgstr "{count, plural, other {백그라운드 셸 #개({shellIds})}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# background shell} other {# background shells}}"
-msgstr ""
+msgstr "{count, plural, other {백그라운드 셸 #개}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# subagent active} other {# subagents active}}"
-msgstr ""
+msgstr "{count, plural, other {하위 에이전트 #개 활성}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
-msgstr ""
+msgstr "{count, plural, other {도구 #개 실행 중}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
-msgstr ""
+msgstr "{runningWorkflowCount, plural, other {워크플로, #개 실행 중}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 진입 시 {enterCount}개, 이탈 시 {exitCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 진입 시 {enterCount}개, 턴 종료 시 {turnEndCount}개, 이탈 시 {exitCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 진입 시 {enterCount}개, 턴 종료 시 {turnEndCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 진입 시 {enterCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 이탈 시 {exitCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 턴 종료 시 {turnEndCount}개, 이탈 시 {exitCount}개}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
-msgstr ""
+msgstr "{total, plural, other {여기서 자동화 #개 실행: 턴 종료 시 {turnEndCount}개}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file will be lost} other {{fileCountText} uncommitted files will be lost}}"
-msgstr ""
+msgstr "{uncommittedFileCount, plural, other {커밋되지 않은 파일 {fileCountText}개가 손실됩니다}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file} other {{fileCountText} uncommitted files}}"
-msgstr ""
+msgstr "{uncommittedFileCount, plural, other {커밋되지 않은 파일 {fileCountText}개}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} commit exists only on the local branch and will be lost when the branch is deleted} other {{commitCountText} commits exist only on the local branch and will be lost when the branch is deleted}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, other {커밋 {commitCountText}개가 로컬 분기에만 있으며 분기를 삭제하면 손실됩니다}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} unpushed commit} other {{commitCountText} unpushed commits}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, other {푸시되지 않은 커밋 {commitCountText}개}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {<0>{commitCountText} commit exists only on branch <1>{displayBranch}</1> and will be lost when the branch is deleted</0>} other {<2>{commitCountText} commits exist only on branch <3>{displayBranch}</3> and will be lost when the branch is deleted</2>}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, other {<2>커밋 {commitCountText}개가 <3>{displayBranch}</3> 분기에만 있으며 분기를 삭제하면 손실됩니다</2>}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{workflowCount, plural, one {Workflows, # workflow} other {Workflows, # workflows}}"
-msgstr ""
+msgstr "{workflowCount, plural, other {워크플로, 워크플로 #개}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Add column"
-msgstr ""
+msgstr "열 추가"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Add task"
-msgstr ""
+msgstr "작업 추가"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Always apply automatically"
-msgstr ""
+msgstr "항상 자동으로 적용"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Apply"
-msgstr ""
+msgstr "적용"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Archive"
-msgstr ""
+msgstr "보관"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Automations paused"
-msgstr ""
+msgstr "자동화 일시 중지됨"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Awaiting permission for {duration}"
-msgstr ""
+msgstr "{duration} 동안 권한 대기 중"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Backlog"
-msgstr ""
+msgstr "백로그"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Backlog"
-msgstr ""
+msgstr "백로그"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "보드"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Board configuration changed"
-msgstr ""
+msgstr "보드 구성이 변경됨"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be deleted"
-msgstr ""
+msgstr "<0>{displayBranch}</0> 분기가 삭제됩니다"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be kept"
-msgstr ""
+msgstr "<0>{displayBranch}</0> 분기가 유지됩니다"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Browser running"
-msgstr ""
+msgstr "브라우저 실행 중"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Browser running for the agent. Close it from the task menu to free memory."
-msgstr ""
+msgstr "에이전트용 브라우저가 실행 중입니다. 메모리를 확보하려면 작업 메뉴에서 닫으세요."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "취소"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json for \"{projectName}\". Apply the updated board configuration? This will switch to that project."
-msgstr ""
+msgstr "\"{projectName}\"의 kangentic.json에서 변경 사항이 감지되었습니다. 업데이트된 보드 구성을 적용할까요? 해당 프로젝트로 전환됩니다."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json for \"Unknown project\". Apply the updated board configuration? This will switch to that project."
-msgstr ""
+msgstr "\"알 수 없는 프로젝트\"의 kangentic.json에서 변경 사항이 감지되었습니다. 업데이트된 보드 구성을 적용할까요? 해당 프로젝트로 전환됩니다."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
-msgstr ""
+msgstr "kangentic.json에서 변경 사항이 감지되었습니다. 업데이트된 보드 구성을 적용할까요?"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr ""
+msgstr "이 작업에는 열 자동화가 실행되지 않으며 워크플로도 이 작업을 이동하지 않습니다. 카드 메뉴에서 다시 시작하세요."
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
-msgstr ""
+msgstr "이 작업에는 열 자동화가 실행되지 않습니다. 카드 메뉴에서 다시 시작하세요."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Completed ({archivedTotalCount})"
-msgstr ""
+msgstr "완료됨({archivedTotalCount})"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Delete completed task"
-msgstr ""
+msgstr "완료된 작업 삭제"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "작업 삭제"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "닫기"
 
 #: src/renderer/components/board/KanbanBoard.tsx
+#, fuzzy
 msgid "Dismiss warning"
-msgstr ""
+msgstr "경고 닫기"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "드래그하여 순서 변경"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Drop here to complete"
-msgstr ""
+msgstr "여기에 놓아 완료"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Edit"
-msgstr ""
+msgstr "편집"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Edit {columnName} column"
-msgstr ""
+msgstr "{columnName} 열 편집"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
-msgstr ""
+msgstr "유휴"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Idle for {duration}"
-msgstr ""
+msgstr "{duration} 동안 유휴 상태"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
-msgstr ""
+msgstr "이 작업을 다시 시작하면 분기의 마지막 커밋에서 작업 트리가 다시 생성됩니다."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Keep Working"
-msgstr ""
+msgstr "계속 작업"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Local worktree will be deleted"
-msgstr ""
+msgstr "로컬 작업 트리가 삭제됩니다"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Move"
-msgstr ""
+msgstr "이동"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "이동"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Move to Done?"
-msgstr ""
+msgstr "완료로 이동할까요?"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "New Task"
-msgstr ""
+msgstr "새 작업"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "New workflow"
-msgstr ""
+msgstr "새 워크플로"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "No completed tasks yet"
-msgstr ""
+msgstr "완료된 작업이 아직 없습니다"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Open"
-msgstr ""
+msgstr "열기"
 
 #: src/renderer/components/board/workflow-menu-items.tsx
+#, fuzzy
 msgid "Open workflow"
-msgstr ""
+msgstr "워크플로 열기"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Pause automations"
-msgstr ""
+msgstr "자동화 일시 중지"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "세션 일시 중지"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Paused"
-msgstr ""
+msgstr "일시 중지됨"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued..."
-msgstr ""
+msgstr "대기 중..."
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Removed from team config"
-msgstr ""
+msgstr "팀 구성에서 제거됨"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Removed from team config. Move tasks to continue."
-msgstr ""
+msgstr "팀 구성에서 제거되었습니다. 계속하려면 작업을 이동하세요."
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Reorder {columnName} column"
-msgstr ""
+msgstr "{columnName} 열 순서 변경"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reset"
-msgstr ""
+msgstr "재설정"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Reset task?"
-msgstr ""
+msgstr "작업을 초기화할까요?"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will delete its worktree and destroy its session history."
-msgstr ""
+msgstr "<0>\"{taskTitle}\"</0>을(를) 초기화하면 작업 트리가 삭제되고 세션 기록이 영구 삭제됩니다."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will destroy its session history."
-msgstr ""
+msgstr "<0>\"{taskTitle}\"</0>을(를) 초기화하면 세션 기록이 영구 삭제됩니다."
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgid "Restore to"
-msgstr ""
+msgstr "복원 위치"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Resume automations"
-msgstr ""
+msgstr "자동화 재개"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "세션 재개"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "에이전트 재개 중..."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgctxt "Workflow status"
 msgid "Running"
-msgstr ""
+msgstr "실행 중"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Running {toolName}"
-msgstr ""
+msgstr "{toolName} 실행 중"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Search backlog..."
-msgstr ""
+msgstr "백로그 검색..."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Search board..."
-msgstr ""
+msgstr "보드 검색..."
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "Send to Backlog"
-msgstr ""
+msgstr "백로그로 보내기"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Sent to backlog"
-msgstr ""
+msgstr "백로그로 보냄"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Session history will be kept"
-msgstr ""
+msgstr "세션 기록이 유지됩니다"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "변경 내용 표시"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "에이전트 시작 중..."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Superseded by {workflowTitle}"
-msgstr ""
+msgstr "{workflowTitle}(으)로 대체됨"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Task #{displayId}"
-msgstr ""
+msgstr "작업 #{displayId}"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Task archived"
-msgstr ""
+msgstr "작업 보관됨"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Task ID copied"
-msgstr ""
+msgstr "작업 ID가 복사됨"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "작업 이동됨"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Thinking"
-msgstr ""
+msgstr "생각하는 중"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "이 작업은 실행 취소할 수 없습니다."
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "This will move \"{taskTitle}\" to the backlog and clean up its session and worktree."
-msgstr ""
+msgstr "\"{taskTitle}\"을(를) 백로그로 이동하고 해당 세션과 작업 트리를 정리합니다."
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
+#, fuzzy
 msgid "This will permanently delete \"{taskTitle}\" and its session data."
-msgstr ""
+msgstr "\"{taskTitle}\" 및 해당 세션 데이터가 영구적으로 삭제됩니다."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "작업, 해당 세션 기록 및 연결된 작업 트리가 영구적으로 삭제됩니다."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Unable to verify pending changes. There may be unsaved work."
-msgstr ""
+msgstr "보류 중인 변경 사항을 확인할 수 없습니다. 저장되지 않은 작업이 있을 수 있습니다."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "View"
-msgstr ""
+msgstr "보기"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "View all"
-msgstr ""
+msgstr "모두 보기"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "대화 보기"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "워크플로"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
-msgstr ""
+msgstr "워크플로, {workflowCount, plural, other {워크플로 #개}}, {runningWorkflowCount, plural, other {#개 실행 중}}"
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "You can move it back to the board later."
-msgstr ""
+msgstr "나중에 보드로 다시 이동할 수 있습니다."

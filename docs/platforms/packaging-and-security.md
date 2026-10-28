@@ -78,6 +78,8 @@ the grant itself (electron-builder#10242); `tests/unit/nsis-acl-grant.test.ts` f
 
 The deb package declares `depends` on Electron's required system libraries (`libnss3`, `libatk-bridge2.0-0`, `libgtk-3-0`, `libgbm1`, `libasound2t64 | libasound2`, `libdrm2`, `libxshmfence1`); the alternation covers Ubuntu 24.04+'s rename of `libasound2` to `libasound2t64`. The rpm package declares `depends` as `.so` soname capabilities (`libnss3.so()(64bit)`, `libatk-1.0.so.0()(64bit)`, `libgtk-3.so.0()(64bit)`, `libgbm.so.1()(64bit)`, `libasound.so.2()(64bit)`, `libdrm.so.2()(64bit)`, `libxshmfence.so.1()(64bit)`) rather than package names, because RPM package names differ per distro (Fedora `libxshmfence` vs. openSUSE `libxshmfence1`) while every distro's rpmbuild auto-generates a `Provides:` for the soname itself. See `.claude/rules/linux-package-dependencies.md`. Without these, the app crashes on launch, or fails to install at all, on fresh Linux installations.
 
+Neither package depends on a font. The interface in Chinese, Japanese or Korean needs a CJK font on the system. The Ubuntu desktop installs one. A minimal install or a container may have none, and then that text renders as empty boxes. The app names no UI font, so Chromium's fallback picks the CJK font by the page's `<html lang>`. Measured on Ubuntu with both a Chinese and a Japanese font installed, zh-CN drew in the Chinese one and ja in the Japanese one ([Display language and i18n](../architecture/i18n.md)).
+
 ## Auto-Update Platform Guard
 
 Auto-update via `electron-updater` runs on **all three platforms**. The guard in `src/main/updater.ts` checks `app.isPackaged` only, so the sole exclusion is dev mode.

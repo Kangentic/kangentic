@@ -8,138 +8,171 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "{doneCount} of {stepCount} done"
-msgstr ""
+msgstr "{doneCount}/{stepCount} kész"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "{laneName} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager."
-msgstr ""
+msgstr "A(z) {laneName} oszlop alapból ügynököt indít, a feladat címével és leírásával mint prompttal. Bármely oszlop indíthat ügynököt; ezt a Táblakezelőben állíthatja be."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Add your first task"
-msgstr ""
+msgstr "Adja hozzá az első feladatát"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Choose your defaults"
-msgstr ""
+msgstr "Alapértelmezések kiválasztása"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Create a task"
-msgstr ""
+msgstr "Feladat létrehozása"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Done"
-msgstr ""
+msgstr "Kész"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag a task into {laneName}"
-msgstr ""
+msgstr "Húzzon egy feladatot ide: {laneName}"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag a task into a column that starts an agent"
-msgstr ""
+msgstr "Húzzon egy feladatot egy ügynököt indító oszlopba"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag it to {laneName}"
-msgstr ""
+msgstr "Húzza ide: {laneName}"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag it to a column that starts an agent"
-msgstr ""
+msgstr "Húzza egy ügynököt indító oszlopba"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Dropping a task in a column that starts an agent runs it."
-msgstr ""
+msgstr "Ha egy feladatot ügynököt indító oszlopba ejt, az el is indul."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Every task starts with these unless a column overrides them. Change any one and this step is done."
-msgstr ""
+msgstr "Minden feladat ezekkel indul, hacsak egy oszlop felül nem bírálja őket. Módosítsa bármelyiket, és ez a lépés kész."
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Finish"
-msgstr ""
+msgstr "Befejezés"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Five steps to your first agent run. Take them in any order."
-msgstr ""
+msgstr "Öt lépés az első ügynökfuttatásig. Tetszőleges sorrendben elvégezheted őket."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Make the board yours"
-msgstr ""
+msgstr "Szabja testre a táblát"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Next step"
-msgstr ""
+msgstr "Következő lépés"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "No column starts an agent yet. Turn that on for a column in Board manager."
-msgstr ""
+msgstr "Még egyik oszlop sem indít ügynököt. Kapcsolja be ezt egy oszlopnál a Táblakezelőben."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Open the task"
-msgstr ""
+msgstr "Feladat megnyitása"
 
 #: src/renderer/components/onboarding/OverseerMascot.tsx
+#, fuzzy
 msgid "Pixel-art Kangentic mascot"
-msgstr ""
+msgstr "Pixel art stílusú Kangentic-kabalafigura"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Rename a column, or give it a different icon, color, or agent. Click any column header to open this again."
-msgstr ""
+msgstr "Nevezzen át egy oszlopot, vagy adjon neki más ikont, színt vagy ügynököt. Bármely oszlopfejlécre kattintva újra megnyithatja ezt."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Rename columns, change their colors and icons, or add your own."
-msgstr ""
+msgstr "Nevezze át az oszlopokat, módosítsa a színüket és ikonjukat, vagy adjon hozzá sajátot."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Say what you want done in a sentence or two."
-msgstr ""
+msgstr "Írja le egy-két mondatban, mit szeretne elvégeztetni."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Set the agent, model, effort, or permission mode new tasks inherit."
-msgstr ""
+msgstr "Állítsa be az új feladatok által örökölt ügynököt, modellt, erőfeszítést vagy engedélymódot."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Set your defaults"
-msgstr ""
+msgstr "Alapértelmezések beállítása"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Shape your board"
-msgstr ""
+msgstr "A tábla kialakítása"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Skip for now"
-msgstr ""
+msgstr "Most kihagyom"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Start"
-msgstr ""
+msgstr "Indítás"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgid "Step {stepNumber} of {stepCount}"
-msgstr ""
+msgstr "{stepNumber}. lépés / {stepCount}"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgid "Stop showing me this step"
-msgstr ""
+msgstr "Ne mutassa többé ezt a lépést"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Tasks start from this button. An agent can also create them for you through Kangentic's MCP server."
-msgstr ""
+msgstr "A feladatok ezzel a gombbal indulnak. Egy ügynök is létrehozhatja őket Önnek a Kangentic MCP-szerverén keresztül."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "This is where the run lives: the agent's terminal, its changes, and a prompt to steer it. Moves to later columns carry this same conversation along."
-msgstr ""
+msgstr "Itt zajlik a futtatás: az ügynök terminálja, módosításai és egy prompt az irányításához. A későbbi oszlopokba mozgatva ugyanez a beszélgetés folytatódik."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Watch the agent work, read its output, and steer it."
-msgstr ""
+msgstr "Kövesse az ügynök munkáját, olvassa a kimenetét, és irányítsa."
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Welcome to Kangentic"
-msgstr ""
+msgstr "Üdvözöl a Kangentic"

@@ -8,764 +8,951 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{agentName} didn't answer. {reason}"
-msgstr ""
+msgstr "{agentName} nem válaszolt. {reason}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{agentName}, {modelName}"
-msgstr ""
+msgstr "{agentName}, {modelName}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "{chunkCount, plural, other {# chunks}}"
-msgstr ""
+msgstr "{chunkCount, plural, one {# részlet} other {# részlet}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{conversationCount} conversations, {taskRecordCount} task records"
-msgstr ""
+msgstr "{conversationCount} beszélgetés, {taskRecordCount} feladatrekord"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{cost} ({tokenText} tokens)"
-msgstr ""
+msgstr "{cost} ({tokenText} token)"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{days}d"
-msgstr ""
+msgstr "{days} n"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{days}d {remainingHours}h"
-msgstr ""
+msgstr "{days} n {remainingHours} ó"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{doneCount} of {totalCount}"
-msgstr ""
+msgstr "{doneCount}/{totalCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{earliestDate} to {latestDate}"
-msgstr ""
+msgstr "{earliestDate} – {latestDate}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
-msgstr ""
+msgstr "{handedCount, plural, one {# kapcsolódó feladat elolvasva} other {# kapcsolódó feladat elolvasva}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
-msgstr ""
+msgstr "{handedCount, plural, one {# kapcsolódó feladat olvasása} other {# kapcsolódó feladat olvasása}}"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr ""
+msgstr "{hitCount, plural, one {# korábbi beszélgetés erről} other {# korábbi beszélgetés erről}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{hours}h"
-msgstr ""
+msgstr "{hours} ó"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{hours}h {minutes}m"
-msgstr ""
+msgstr "{hours} ó {minutes} p"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{minutes}m"
-msgstr ""
+msgstr "{minutes} p"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
-msgstr ""
+msgstr "{scopedProjectCount, plural, one {Kérdezés # projektben} other {Kérdezés # projektben}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {# project} other {# projects}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {# projekt} other {# projekt}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount} of {indexedCount}"
-msgstr ""
+msgstr "{selectedCount} / {indexedCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "{selectedCount} of {indexedCount} shown"
-msgstr ""
+msgstr "{selectedCount} / {indexedCount} látható"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "{shownRegionCount} of {regionCount} shown"
-msgstr ""
+msgstr "{shownRegionCount} / {regionCount} látható"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Show # task} other {Show # tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, one {# feladat megjelenítése} other {# feladat megjelenítése}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "{tokenText} tokens"
-msgstr ""
+msgstr "{tokenText} token"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "1 project"
-msgstr ""
+msgstr "1 projekt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "30 days"
-msgstr ""
+msgstr "30 nap"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "90 days"
-msgstr ""
+msgstr "90 nap"
 
 #: src/renderer/components/knowledge-graph/PanelRow.tsx
+#, fuzzy
 msgid "About {about}"
-msgstr ""
+msgstr "Téma: {about}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgctxt "Date range"
 msgid "Active"
-msgstr ""
+msgstr "Aktív"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Ügynök"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "All"
-msgstr ""
+msgstr "Összes"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "Összes projekt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any"
-msgstr ""
+msgstr "Bármely"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any status"
-msgstr ""
+msgstr "Bármely állapot"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Any time"
-msgstr ""
+msgstr "Bármikor"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Around \"{exploredTitle}\""
-msgstr ""
+msgstr "„{exploredTitle}” környezete"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Around \"Untitled conversation\""
-msgstr ""
+msgstr "„Névtelen beszélgetés” környezete"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask {askAgentName}"
-msgstr ""
+msgstr "{askAgentName} megkérdezése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Ask a follow-up"
-msgstr ""
+msgstr "További kérdés feltevése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask about your tasks and conversations"
-msgstr ""
+msgstr "Kérdezzen a feladatairól és beszélgetéseiről"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask about your tasks, conversations and code"
-msgstr ""
+msgstr "Kérdezzen a feladatairól, beszélgetéseiről és a kódról"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Ask the agent"
-msgstr ""
+msgstr "Az ügynök megkérdezése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to {title}"
-msgstr ""
+msgstr "Vissza ide: {title}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to the chat"
-msgstr ""
+msgstr "Vissza a csevegéshez"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to the previous conversation"
-msgstr ""
+msgstr "Vissza az előző beszélgetéshez"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Back to where you were"
-msgstr ""
+msgstr "Vissza oda, ahol tartott"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Balanced"
-msgstr ""
+msgstr "Kiegyensúlyozott"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Building"
-msgstr ""
+msgstr "Építés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Building the map"
-msgstr ""
+msgstr "Térkép készítése"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
+#, fuzzy
 msgid "Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph"
-msgstr ""
+msgstr "A források, a modell és az ügynök módosítása, illetve az index újraépítése: Beállítások > Tudásgráf"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Chat"
-msgstr ""
+msgstr "Csevegés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph, in the main window."
-msgstr ""
+msgstr "Válasszon ügynököt és modellt a főablakban: Beállítások > Tudásgráf."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph."
-msgstr ""
+msgstr "Válasszon ügynököt és modellt itt: Beállítások > Tudásgráf."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Clear region filter"
-msgstr ""
+msgstr "Régiószűrő törlése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+#, fuzzy
 msgid "Close Knowledge Graph"
-msgstr ""
+msgstr "Tudásgráf bezárása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Closest conversations"
-msgstr ""
+msgstr "Legközelebbi beszélgetések"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Coarse"
-msgstr ""
+msgstr "Durva"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color by"
-msgstr ""
+msgstr "Színezés alapja"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color by the region of the map each conversation sits in"
-msgstr ""
+msgstr "Színezés aszerint, hogy az egyes beszélgetések a térkép melyik régiójában vannak"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Color conversations by"
-msgstr ""
+msgstr "Beszélgetések színezése"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "Commitok"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "Indexelt commitok"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Controls"
-msgstr ""
+msgstr "Vezérlők"
 
 #: src/renderer/components/knowledge-graph/open-knowledge-graph-conversation.ts
+#, fuzzy
 msgid "Conversation"
-msgstr ""
+msgstr "Beszélgetés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Conversation titles"
-msgstr ""
+msgstr "Beszélgetések címei"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "Beszélgetések"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "Beágyazott beszélgetések"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Cosine similarity {similarity}"
-msgstr ""
+msgstr "Koszinusz-hasonlóság: {similarity}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Költség"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Detail"
-msgstr ""
+msgstr "Részletesség"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Display"
-msgstr ""
+msgstr "Megjelenítés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Drag"
-msgstr ""
+msgstr "Húzás"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Duration"
-msgstr ""
+msgstr "Időtartam"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Erőfeszítés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "End the chat"
-msgstr ""
+msgstr "Csevegés befejezése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Every task on this map is done"
-msgstr ""
+msgstr "A térképen minden feladat kész"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Every task on this map is open"
-msgstr ""
+msgstr "A térképen minden feladat nyitott"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Explore from here"
-msgstr ""
+msgstr "Felfedezés innen"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Failed to index"
-msgstr ""
+msgstr "Az indexelés sikertelen"
 
 #: src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx
+#, fuzzy
 msgid "Failed to load the Knowledge Graph"
-msgstr ""
+msgstr "Nem sikerült betölteni a tudásgráfot"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Fewer, broader regions"
-msgstr ""
+msgstr "Kevesebb, tágabb régió"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Filter"
-msgstr ""
+msgstr "Szűrés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Filter by the task's status"
-msgstr ""
+msgstr "Szűrés a feladat állapota szerint"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Filter by when the conversation was last active"
-msgstr ""
+msgstr "Szűrés aszerint, hogy a beszélgetés mikor volt utoljára aktív"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Find a project"
-msgstr ""
+msgstr "Projekt keresése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Find a region"
-msgstr ""
+msgstr "Régió keresése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Finding related work"
-msgstr ""
+msgstr "Kapcsolódó munkák keresése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Fine"
-msgstr ""
+msgstr "Finom"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly back to the opening view"
-msgstr ""
+msgstr "Visszarepülés a kezdőnézethez"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly Forward and Sideways"
-msgstr ""
+msgstr "Repülés előre és oldalra"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Fly Up and Down"
-msgstr ""
+msgstr "Repülés fel és le"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Green is done, amber is still open on the board, grey has no task"
-msgstr ""
+msgstr "Zöld: kész, borostyán: még nyitott a táblán, szürke: nincs feladat"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Hidden"
-msgstr ""
+msgstr "Rejtett"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Hide {label}"
-msgstr ""
+msgstr "{label} elrejtése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Hide tasks"
-msgstr ""
+msgstr "Feladatok elrejtése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read."
-msgstr ""
+msgstr "Milyen finoman legyen a térkép régiókra osztva. Mindegyik a térképpel együtt készül el, így a váltás azonnali. Ezt semmilyen mérés nem tudja eldönteni helyetted: egy ennyire folytonos ponthalmazon a klaszterezés minden értékelési módja a legkevesebb régiót részesíti előnyben, így ez attól függ, mennyi részletet szeretnél látni."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one"
-msgstr ""
+msgstr "Mennyi ideig tartott a beszélgetés valós időben: a meleg és világos a lassú, a mély indigó a gyors. Egy rövid beszélgetés is lehet lassú"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one"
-msgstr ""
+msgstr "Mennyi átiratot tartalmaz a beszélgetés: a meleg és élénk hosszút, a mély indigó rövidet jelent. Ez szöveg, nem idő vagy pénz – egy hosszú beszélgetés gyakran olcsó"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphIndexCard.tsx
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "Index"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Indexed"
-msgstr ""
+msgstr "Indexelve"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Just the open project"
-msgstr ""
+msgstr "Csak a megnyitott projekt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Tudásgráf"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Last 30 days"
-msgstr ""
+msgstr "Elmúlt 30 nap"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Last 90 days"
-msgstr ""
+msgstr "Elmúlt 90 nap"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Last active"
-msgstr ""
+msgstr "Utoljára aktív"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Length"
-msgstr ""
+msgstr "Hossz"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Links"
-msgstr ""
+msgstr "Kapcsolatok"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee."
-msgstr ""
+msgstr "A kapcsolatok számítása a teljes beágyazási dimenzióban történik, így pontosak. A pozíció közelítő redukció, ezért a közelség csak utalás, nem garancia."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Loading what this project has indexed."
-msgstr ""
+msgstr "A projekt indexelt tartalmának betöltése."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Map built"
-msgstr ""
+msgstr "A térkép elkészült"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modell"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "More, narrower regions"
-msgstr ""
+msgstr "Több, szűkebb régió"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Naming regions"
-msgstr ""
+msgstr "Régiók elnevezése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Narrow the map to this conversation and everything it links to"
-msgstr ""
+msgstr "A térkép szűkítése erre a beszélgetésre és mindarra, amire hivatkozik"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No done tasks on this map"
-msgstr ""
+msgstr "Nincs kész feladat ezen a térképen"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "No map yet"
-msgstr ""
+msgstr "Még nincs térkép"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No open tasks on this map"
-msgstr ""
+msgstr "Nincs nyitott feladat ezen a térképen"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "No project matches that."
-msgstr ""
+msgstr "Nincs ilyen projekt."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "No project open"
-msgstr ""
+msgstr "Nincs megnyitott projekt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "No recorded conversation to open here"
-msgstr ""
+msgstr "Nincs itt megnyitható rögzített beszélgetés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "No region matches that."
-msgstr ""
+msgstr "Nincs ennek megfelelő régió."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "No session record for this conversation"
-msgstr ""
+msgstr "Ehhez a beszélgetéshez nincs munkamenet-rekord"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "No session to open"
-msgstr ""
+msgstr "Nincs megnyitható munkamenet"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "None"
-msgstr ""
+msgstr "Nincs"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Not indexed"
-msgstr ""
+msgstr "Nincs indexelve"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "Még nincs indexelve"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Nothing has been indexed for this project yet."
-msgstr ""
+msgstr "Ehhez a projekthez még semmi sincs indexelve."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Nothing indexed yet, so there is no map to draw"
-msgstr ""
+msgstr "Még nincs indexelt tartalom, így nincs mit ábrázolni"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Nothing on this map is older than {days} days"
-msgstr ""
+msgstr "A térképen semmi sem régebbi {days} napnál"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Off"
-msgstr ""
+msgstr "Ki"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Once per project, in the background. Later updates take moments."
-msgstr ""
+msgstr "Projektenként egyszer, a háttérben. A későbbi frissítések csak pillanatokig tartanak."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Open a project to see what its conversation index has learned."
-msgstr ""
+msgstr "Nyisson meg egy projektet, hogy lássa, mit tanult a beszélgetésindexe."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Open conversation"
-msgstr ""
+msgstr "Beszélgetés megnyitása"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "Beállítások megnyitása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Open the full transcript"
-msgstr ""
+msgstr "A teljes átirat megnyitása"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "Open this conversation"
-msgstr ""
+msgstr "Beszélgetés megnyitása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Orbit the Map"
-msgstr ""
+msgstr "Keringés a térkép körül"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Pan the View"
-msgstr ""
+msgstr "Nézet pásztázása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Passages this conversation was split into for search. Longer conversations produce more."
-msgstr ""
+msgstr "Azok a szövegrészek, amelyekre a beszélgetést a kereséshez felosztották. A hosszabb beszélgetésekből több keletkezik."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Places conversations by meaning, with a local model."
-msgstr ""
+msgstr "Helyi modellel jelentés szerint rendezi el a beszélgetéseket."
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Placing conversations"
-msgstr ""
+msgstr "Beszélgetések elhelyezése"
 
 #: src/renderer/components/knowledge-graph/use-graph-view.ts
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Projektek"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Ran for"
-msgstr ""
+msgstr "Futási idő"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Reading conversations"
-msgstr ""
+msgstr "Beszélgetések olvasása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Reading the index"
-msgstr ""
+msgstr "Az index olvasása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Recency"
-msgstr ""
+msgstr "Frissesség"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "Region"
-msgstr ""
+msgstr "Régió"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Region detail"
-msgstr ""
+msgstr "Régiók részletessége"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Region labels"
-msgstr ""
+msgstr "Régiócímkék"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Region of the map"
-msgstr ""
+msgstr "A térkép régiója"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Regions"
-msgstr ""
+msgstr "Régiók"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Reset view"
-msgstr ""
+msgstr "Nézet visszaállítása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Right Drag"
-msgstr ""
+msgstr "Jobb gombos húzás"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Scroll"
-msgstr ""
+msgstr "Görgetés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Searching \"{query}\""
-msgstr ""
+msgstr "Keresés: „{query}”"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Send"
-msgstr ""
+msgstr "Küldés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Show"
-msgstr ""
+msgstr "Megjelenítés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Show {label}"
-msgstr ""
+msgstr "{label} megjelenítése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Show all {rowCount}"
-msgstr ""
+msgstr "Összes ({rowCount}) megjelenítése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
+#, fuzzy
 msgid "Show fewer"
-msgstr ""
+msgstr "Kevesebb megjelenítése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Show the camera keys"
-msgstr ""
+msgstr "Kamerabillentyűk megjelenítése"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Similarity links"
-msgstr ""
+msgstr "Hasonlósági kapcsolatok"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Size on disk"
-msgstr ""
+msgstr "Méret a lemezen"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Status"
-msgstr ""
+msgstr "Állapot"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
+#, fuzzy
 msgid "Stop exploring this neighbourhood"
-msgstr ""
+msgstr "Kilépés a környezet felfedezéséből"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "Feladatok"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "Beágyazott feladatok"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "The agent didn't answer. {reason}"
-msgstr ""
+msgstr "Az ügynök nem válaszolt. {reason}"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable."
-msgstr ""
+msgstr "Az ügynök átiratfájlja már nem létezik, de az indexelt szöveg és a beágyazásai továbbra is megvannak és kereshetők."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index."
-msgstr ""
+msgstr "A térkép azon területe, ahol ez a beszélgetés található. Nevét azok a kifejezések adják, amelyek az itteni beszélgetéseket megkülönböztetik az index többi részétől."
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "The background sweep has not reached these conversations yet."
-msgstr ""
+msgstr "A háttérben futó feldolgozás még nem jutott el ezekhez a beszélgetésekhez."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "The default: regions of roughly 10 to 26 conversations"
-msgstr ""
+msgstr "Alapértelmezett: nagyjából 10–26 beszélgetésből álló régiók"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "The map needs a GPU"
-msgstr ""
+msgstr "A térképhez GPU szükséges"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "This conversation has no session record."
-msgstr ""
+msgstr "Ehhez a beszélgetéshez nincs munkamenet-rekord."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
+#, fuzzy
 msgid "This conversation links to nothing else in the index"
-msgstr ""
+msgstr "Ez a beszélgetés semmi máshoz nem kapcsolódik az indexben"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "This machine could not provide a 3D drawing context, so the map cannot be drawn. Coverage and search still work."
-msgstr ""
+msgstr "Ez a gép nem tudott 3D rajzolási környezetet biztosítani, ezért a térkép nem jeleníthető meg. A lefedettség és a keresés továbbra is működik."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Time spent"
-msgstr ""
+msgstr "Eltöltött idő"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Titles"
-msgstr ""
+msgstr "Címek"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Topic"
-msgstr ""
+msgstr "Téma"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
+#, fuzzy
 msgid "Transcript gone"
-msgstr ""
+msgstr "Az átirat eltűnt"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
+#, fuzzy
 msgid "Try again"
-msgstr ""
+msgstr "Újrapróbálkozás"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Turn it on in Settings > Knowledge Graph, in the main window."
-msgstr ""
+msgstr "Kapcsolja be a főablakban: Beállítások > Tudásgráf."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "under a minute"
-msgstr ""
+msgstr "egy percen belül"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
+#, fuzzy
 msgid "Untitled conversation"
-msgstr ""
+msgstr "Névtelen beszélgetés"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "Warm is recent, cool is old - shows where your attention has moved"
-msgstr ""
+msgstr "Meleg a friss, hideg a régi – megmutatja, merre mozdult a figyelme"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
+#, fuzzy
 msgid "What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end"
-msgstr ""
+msgstr "Mennyibe került a beszélgetés futtatása: a meleg és élénk drágát, a mély indigó olcsót jelent. A rögzített költség nélküli beszélgetések az olcsó végén jelennek meg"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
+#, fuzzy
 msgid "Which projects the map shows and a question is asked across. Starts on the open project."
-msgstr ""
+msgstr "Mely projekteket mutatja a térkép, és melyekben fut a kérdés. Kezdetben a megnyitott projekt."
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
+#, fuzzy
 msgid "Zoom In and Out"
-msgstr ""
+msgstr "Nagyítás és kicsinyítés"

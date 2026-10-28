@@ -8,449 +8,557 @@ msgstr ""
 "Language: it\n"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "\"{doneTaskTitle}\""
-msgstr ""
+msgstr "\"{doneTaskTitle}\""
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in {targetName}."
-msgstr ""
+msgstr "\"{movedTaskTitle}\" ora è in {targetName}."
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in column."
-msgstr ""
+msgstr "\"{movedTaskTitle}\" ora è nella colonna."
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "\"{taskTitle}\""
-msgstr ""
+msgstr "\"{taskTitle}\""
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
-msgstr ""
+msgstr "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} elemento} many {Backlog, {backlogItemCountText} elementi} other {Backlog, {backlogItemCountText} elementi}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# background shell ({shellIds})} other {# background shells ({shellIds})}}"
-msgstr ""
+msgstr "{count, plural, one {# shell in background ({shellIds})} many {# di shell in background ({shellIds})} other {# shell in background ({shellIds})}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# background shell} other {# background shells}}"
-msgstr ""
+msgstr "{count, plural, one {# shell in background} many {# di shell in background} other {# shell in background}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# subagent active} other {# subagents active}}"
-msgstr ""
+msgstr "{count, plural, one {# subagente attivo} many {# di subagenti attivi} other {# subagenti attivi}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
-msgstr ""
+msgstr "{count, plural, one {# strumento in esecuzione} many {# di strumenti in esecuzione} other {# strumenti in esecuzione}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
-msgstr ""
+msgstr "{runningWorkflowCount, plural, one {Workflow, # in esecuzione} many {Workflow, # in esecuzione} other {Workflow, # in esecuzione}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {enterCount} all'ingresso, {exitCount} all'uscita} many {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {exitCount} all'uscita} other {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {exitCount} all'uscita}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {enterCount} all'ingresso, {turnEndCount} a fine turno, {exitCount} all'uscita} many {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {turnEndCount} a fine turno, {exitCount} all'uscita} other {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {turnEndCount} a fine turno, {exitCount} all'uscita}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {enterCount} all'ingresso, {turnEndCount} a fine turno} many {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {turnEndCount} a fine turno} other {Qui vengono eseguite # automazioni: {enterCount} all'ingresso, {turnEndCount} a fine turno}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {enterCount} all'ingresso} many {Qui vengono eseguite # automazioni: {enterCount} all'ingresso} other {Qui vengono eseguite # automazioni: {enterCount} all'ingresso}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {exitCount} all'uscita} many {Qui vengono eseguite # automazioni: {exitCount} all'uscita} other {Qui vengono eseguite # automazioni: {exitCount} all'uscita}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {turnEndCount} a fine turno, {exitCount} all'uscita} many {Qui vengono eseguite # automazioni: {turnEndCount} a fine turno, {exitCount} all'uscita} other {Qui vengono eseguite # automazioni: {turnEndCount} a fine turno, {exitCount} all'uscita}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
+#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
-msgstr ""
+msgstr "{total, plural, one {Qui viene eseguita # automazione: {turnEndCount} a fine turno} many {Qui vengono eseguite # automazioni: {turnEndCount} a fine turno} other {Qui vengono eseguite # automazioni: {turnEndCount} a fine turno}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file will be lost} other {{fileCountText} uncommitted files will be lost}}"
-msgstr ""
+msgstr "{uncommittedFileCount, plural, one {{fileCountText} file non sottoposto a commit andrà perso} many {{fileCountText} file non sottoposti a commit andranno persi} other {{fileCountText} file non sottoposti a commit andranno persi}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file} other {{fileCountText} uncommitted files}}"
-msgstr ""
+msgstr "{uncommittedFileCount, plural, one {{fileCountText} file non sottoposto a commit} many {{fileCountText} file non sottoposti a commit} other {{fileCountText} file non sottoposti a commit}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} commit exists only on the local branch and will be lost when the branch is deleted} other {{commitCountText} commits exist only on the local branch and will be lost when the branch is deleted}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, one {{commitCountText} commit esiste solo nel ramo locale e andrà perso quando il ramo verrà eliminato} many {{commitCountText} commit esistono solo nel ramo locale e andranno persi quando il ramo verrà eliminato} other {{commitCountText} commit esistono solo nel ramo locale e andranno persi quando il ramo verrà eliminato}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} unpushed commit} other {{commitCountText} unpushed commits}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, one {{commitCountText} commit non inviato} many {{commitCountText} commit non inviati} other {{commitCountText} commit non inviati}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "{unpushedCommitCount, plural, one {<0>{commitCountText} commit exists only on branch <1>{displayBranch}</1> and will be lost when the branch is deleted</0>} other {<2>{commitCountText} commits exist only on branch <3>{displayBranch}</3> and will be lost when the branch is deleted</2>}}"
-msgstr ""
+msgstr "{unpushedCommitCount, plural, one {<0>{commitCountText} commit esiste solo nel ramo <1>{displayBranch}</1> e andrà perso quando il ramo verrà eliminato</0>} many {<2>{commitCountText} commit esistono solo nel ramo <3>{displayBranch}</3> e andranno persi quando il ramo verrà eliminato</2>} other {<2>{commitCountText} commit esistono solo nel ramo <3>{displayBranch}</3> e andranno persi quando il ramo verrà eliminato</2>}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "{workflowCount, plural, one {Workflows, # workflow} other {Workflows, # workflows}}"
-msgstr ""
+msgstr "{workflowCount, plural, one {Workflow, # workflow} many {Workflow, # workflow} other {Workflow, # workflow}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Add column"
-msgstr ""
+msgstr "Aggiungi colonna"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Add task"
-msgstr ""
+msgstr "Aggiungi task"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Always apply automatically"
-msgstr ""
+msgstr "Applica sempre automaticamente"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Apply"
-msgstr ""
+msgstr "Applica"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Archive"
-msgstr ""
+msgstr "Archivia"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Automations paused"
-msgstr ""
+msgstr "Automazioni in pausa"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Awaiting permission for {duration}"
-msgstr ""
+msgstr "In attesa di autorizzazione da {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Backlog"
-msgstr ""
+msgstr "Backlog"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Backlog"
-msgstr ""
+msgstr "Backlog"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "Bacheca"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Board configuration changed"
-msgstr ""
+msgstr "Configurazione della bacheca modificata"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be deleted"
-msgstr ""
+msgstr "Il ramo <0>{displayBranch}</0> verrà eliminato"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be kept"
-msgstr ""
+msgstr "Il ramo <0>{displayBranch}</0> verrà mantenuto"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Browser running"
-msgstr ""
+msgstr "Browser in esecuzione"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Browser running for the agent. Close it from the task menu to free memory."
-msgstr ""
+msgstr "Browser in esecuzione per l'agente. Chiudilo dal menu dell'attività per liberare memoria."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Annulla"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json for \"{projectName}\". Apply the updated board configuration? This will switch to that project."
-msgstr ""
+msgstr "Rilevate modifiche in kangentic.json per \"{projectName}\". Applicare la configurazione aggiornata della bacheca? Verrà aperto quel progetto."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json for \"Unknown project\". Apply the updated board configuration? This will switch to that project."
-msgstr ""
+msgstr "Rilevate modifiche in kangentic.json per \"Progetto sconosciuto\". Applicare la configurazione aggiornata della bacheca? Verrà aperto quel progetto."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
-msgstr ""
+msgstr "Rilevate modifiche in kangentic.json. Applicare la configurazione aggiornata della bacheca?"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr ""
+msgstr "Le automazioni delle colonne non vengono eseguite per questa attività e il relativo flusso di lavoro non la sposta. Riprendile dal menu della scheda."
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
+#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
-msgstr ""
+msgstr "Le automazioni delle colonne non vengono eseguite per questa attività. Riprendile dal menu della scheda."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Completed ({archivedTotalCount})"
-msgstr ""
+msgstr "Completate ({archivedTotalCount})"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Elimina"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Delete completed task"
-msgstr ""
+msgstr "Elimina attività completata"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "Elimina attività"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "Ignora"
 
 #: src/renderer/components/board/KanbanBoard.tsx
+#, fuzzy
 msgid "Dismiss warning"
-msgstr ""
+msgstr "Ignora avviso"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "Trascina per riordinare"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Drop here to complete"
-msgstr ""
+msgstr "Rilascia qui per completare"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Edit"
-msgstr ""
+msgstr "Modifica"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Edit {columnName} column"
-msgstr ""
+msgstr "Modifica colonna {columnName}"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
-msgstr ""
+msgstr "Inattivo"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Idle for {duration}"
-msgstr ""
+msgstr "Inattivo da {duration}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
-msgstr ""
+msgstr "Se questa attività viene ripresa, l'albero di lavoro verrà ricreato dall'ultimo commit del ramo."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Keep Working"
-msgstr ""
+msgstr "Continua a lavorare"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Local worktree will be deleted"
-msgstr ""
+msgstr "L'albero di lavoro locale verrà eliminato"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Move"
-msgstr ""
+msgstr "Sposta"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Sposta in"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Move to Done?"
-msgstr ""
+msgstr "Spostare in Completate?"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "New Task"
-msgstr ""
+msgstr "Nuova attività"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "New workflow"
-msgstr ""
+msgstr "Nuovo workflow"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "No completed tasks yet"
-msgstr ""
+msgstr "Nessuna attività completata"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Open"
-msgstr ""
+msgstr "Apri"
 
 #: src/renderer/components/board/workflow-menu-items.tsx
+#, fuzzy
 msgid "Open workflow"
-msgstr ""
+msgstr "Apri workflow"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Pause automations"
-msgstr ""
+msgstr "Sospendi automazioni"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "Sospendi sessione"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Paused"
-msgstr ""
+msgstr "In pausa"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Queued..."
-msgstr ""
+msgstr "In coda..."
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Removed from team config"
-msgstr ""
+msgstr "Rimossa dalla configurazione del team"
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Removed from team config. Move tasks to continue."
-msgstr ""
+msgstr "Rimossa dalla configurazione del team. Sposta le attività per continuare."
 
 #: src/renderer/components/board/Swimlane.tsx
+#, fuzzy
 msgid "Reorder {columnName} column"
-msgstr ""
+msgstr "Riordina colonna {columnName}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reset"
-msgstr ""
+msgstr "Reimposta"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Reset task?"
-msgstr ""
+msgstr "Reimpostare l'attività?"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will delete its worktree and destroy its session history."
-msgstr ""
+msgstr "La reimpostazione di <0>\"{taskTitle}\"</0> eliminerà il relativo albero di lavoro e la cronologia della sessione."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will destroy its session history."
-msgstr ""
+msgstr "La reimpostazione di <0>\"{taskTitle}\"</0> eliminerà la cronologia della sessione."
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgid "Restore to"
-msgstr ""
+msgstr "Ripristina in"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Resume automations"
-msgstr ""
+msgstr "Riprendi automazioni"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "Riprendi sessione"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Ripresa dell'agente..."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgctxt "Workflow status"
 msgid "Running"
-msgstr ""
+msgstr "In esecuzione"
 
 #: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
 msgid "Running {toolName}"
-msgstr ""
+msgstr "Esecuzione di {toolName}"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Search backlog..."
-msgstr ""
+msgstr "Cerca nel backlog..."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Search board..."
-msgstr ""
+msgstr "Cerca nella bacheca..."
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "Send to Backlog"
-msgstr ""
+msgstr "Sposta nel Backlog"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Sent to backlog"
-msgstr ""
+msgstr "Inviata al backlog"
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Session history will be kept"
-msgstr ""
+msgstr "La cronologia della sessione verrà mantenuta"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "Mostra modifiche"
 
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Avvio dell'agente..."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "Superseded by {workflowTitle}"
-msgstr ""
+msgstr "Sostituito da {workflowTitle}"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Task #{displayId}"
-msgstr ""
+msgstr "Attività #{displayId}"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Task archived"
-msgstr ""
+msgstr "Attività archiviata"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
+#, fuzzy
 msgid "Task ID copied"
-msgstr ""
+msgstr "ID attività copiato"
 
 #: src/renderer/components/board/TaskCard.tsx
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "Attività spostata"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Thinking"
-msgstr ""
+msgstr "Ragionamento in corso"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "Questa azione non può essere annullata."
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "This will move \"{taskTitle}\" to the backlog and clean up its session and worktree."
-msgstr ""
+msgstr "\"{taskTitle}\" verrà spostato nel backlog e la relativa sessione e l'albero di lavoro verranno ripuliti."
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
+#, fuzzy
 msgid "This will permanently delete \"{taskTitle}\" and its session data."
-msgstr ""
+msgstr "Verranno eliminati definitivamente \"{taskTitle}\" e i relativi dati di sessione."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "Verranno eliminati definitivamente l'attività, la relativa cronologia della sessione e l'eventuale albero di lavoro associato."
 
 #: src/renderer/components/board/BoardDialogs.tsx
+#, fuzzy
 msgid "Unable to verify pending changes. There may be unsaved work."
-msgstr ""
+msgstr "Impossibile verificare le modifiche in sospeso. Potrebbe esserci lavoro non salvato."
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "View"
-msgstr ""
+msgstr "Vista"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
+#, fuzzy
 msgid "View all"
-msgstr ""
+msgstr "Visualizza tutto"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "Visualizza conversazione"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "Workflow"
 
 #: src/renderer/components/board/ViewToggle.tsx
+#, fuzzy
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
-msgstr ""
+msgstr "Workflow, {workflowCount, plural, one {# workflow} many {# workflow} other {# workflow}}, {runningWorkflowCount, plural, one {# in esecuzione} many {# in esecuzione} other {# in esecuzione}}"
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
+#, fuzzy
 msgid "You can move it back to the board later."
-msgstr ""
+msgstr "Potrai riportarlo sulla board in seguito."

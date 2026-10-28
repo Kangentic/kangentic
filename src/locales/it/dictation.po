@@ -8,46 +8,57 @@ msgstr ""
 "Language: it\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Cancella"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Clear and start over"
-msgstr ""
+msgstr "Cancella e ricomincia"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr ""
+msgstr "La dettatura è disattivata nei campi password"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
-msgstr ""
+msgstr "Inserimento..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Listening"
-msgstr ""
+msgstr "In ascolto"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "No terminal or input focused"
-msgstr ""
+msgstr "Nessun terminale o campo di input attivo"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
-msgstr ""
+msgstr "Preparazione modello... {downloadPercent}%"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to insert"
-msgstr ""
+msgstr "Rilascia per inserire"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to send"
-msgstr ""
+msgstr "Rilascia per inviare"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Sending..."
-msgstr ""
+msgstr "Invio..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Still sending the last one"
-msgstr ""
+msgstr "Invio del precedente ancora in corso"

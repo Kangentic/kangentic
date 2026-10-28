@@ -8,2607 +8,3232 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "{blurb}. Opens the docs page."
-msgstr ""
+msgstr "{blurb}。開啟文件頁面。"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
-msgstr ""
+msgstr "{comboName} 已被您的作業系統或其他應用程式使用，請選擇其他組合。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "{conflictComboCount, plural, one {Conflict detected} other {Conflicts detected}}"
-msgstr ""
+msgstr "{conflictComboCount, plural, other {偵測到衝突}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{count, plural, other {# 個檔案}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}"
-msgstr ""
+msgstr "{count} / {finished}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}, {skipped} skipped"
-msgstr ""
+msgstr "{count} / {finished}，已略過 {skipped} 個"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName} - {accuracyLabel} ({sizeMb} MB)"
-msgstr ""
+msgstr "{displayName} - {accuracyLabel} ({sizeMb} MB)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "{displayName} execution"
-msgstr ""
+msgstr "{displayName} 執行"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} not found - click to re-detect"
-msgstr ""
+msgstr "找不到 {displayName} - 按一下以重新偵測"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} path"
-msgstr ""
+msgstr "{displayName} 路徑"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB"
-msgstr ""
+msgstr "{displayName}，{approxSizeMb} MB"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB, {activeBackend}"
-msgstr ""
+msgstr "{displayName}，{approxSizeMb} MB，{activeBackend}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {percent}%"
-msgstr ""
+msgstr "{displayName}，{percent}%"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {sizeMb} MB"
-msgstr ""
+msgstr "{displayName}，{sizeMb} MB"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
-msgstr ""
+msgstr "{hours, plural, other {剩餘 # 小時}}"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "{label}, always on"
-msgstr ""
+msgstr "{label}，一律開啟"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {# min left} other {# min left}}"
-msgstr ""
+msgstr "{minutes, plural, other {剩餘 # 分鐘}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Checks each open PR about every # minute; off, it checks only when you open the project.} other {Checks each open PR about every # minutes; off, it checks only when you open the project.}}"
-msgstr ""
+msgstr "{minutes, plural, other {大約每 # 分鐘檢查一次各個開啟中的 PR；關閉時，僅在開啟專案時檢查。}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Fetches every # minute so behind counts stay current; creating a worktree always fetches first.} other {Fetches every # minutes so behind counts stay current; creating a worktree always fetches first.}}"
-msgstr ""
+msgstr "{minutes, plural, other {每 # 分鐘擷取一次，讓落後計數保持最新；建立工作樹前一律會先擷取。}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {retrying in # min} other {retrying in # min}}"
-msgstr ""
+msgstr "{minutes, plural, other {# 分鐘後重試}}"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{percent}%, {displayName}"
-msgstr ""
+msgstr "{percent}%，{displayName}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{percent}%, {timeLeft}"
-msgstr ""
+msgstr "{percent}%，{timeLeft}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{releaseBufferMs} ms"
-msgstr ""
+msgstr "{releaseBufferMs} 毫秒"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{toWrite, plural, other {# 個工作}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A call failed"
-msgstr ""
+msgstr "有一次呼叫失敗"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
-msgstr ""
+msgstr "顯示各工作階段活動狀態與最近轉換的浮動面板，也會寫入 .kangentic/debug。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
-msgstr ""
+msgstr "預設集會為您選擇即時和精修模型。自訂則可讓您自行選擇。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "A relay you run"
-msgstr ""
+msgstr "自行架設的轉送伺服器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A sentence or two per Done task, so questions find it."
-msgstr ""
+msgstr "每個已完成任務的一兩句摘要，方便提問時找到。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A sentence or two per Done task, written in the background from its title, description, files and commits."
-msgstr ""
+msgstr "在背景根據每個已完成工作的標題、描述、檔案和提交，撰寫一兩句摘要。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small model answers as well and faster, but invents more details in task summaries."
-msgstr ""
+msgstr "小型模型回答得一樣好且更快，但在任務摘要中會捏造較多細節。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
-msgstr ""
+msgstr "小型快速模型通常足以讀取一則回覆並回答是或否。"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "關於 {label}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Activity engine debug overlay"
-msgstr ""
+msgstr "活動引擎偵錯覆疊"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Add shortcut"
-msgstr ""
+msgstr "新增捷徑"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
-msgstr ""
+msgstr "執行中伺服器的位址 (例如 http://10.0.0.5:4096)"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Advanced"
-msgstr ""
+msgstr "進階"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "代理程式"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "代理程式作用中"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "代理程式作用時間"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Agent Browser"
-msgstr ""
+msgstr "代理程式瀏覽器"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Agent CLI"
-msgstr ""
+msgstr "代理程式 CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent CLI version"
-msgstr ""
+msgstr "代理程式 CLI 版本"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent crash"
-msgstr ""
+msgstr "代理程式當機"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "代理程式預設值"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "代理程式閒置"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Agent session starts, exit codes, and duration"
-msgstr ""
+msgstr "代理程式工作階段啟動、結束代碼與持續時間"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "All"
-msgstr ""
+msgstr "全部"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow eval"
-msgstr ""
+msgstr "允許 eval"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow interaction"
-msgstr ""
+msgstr "允許互動"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow navigation"
-msgstr ""
+msgstr "允許瀏覽"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow unsafe operations"
-msgstr ""
+msgstr "允許不安全的操作"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Already default"
-msgstr ""
+msgstr "已是預設值"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept."
-msgstr ""
+msgstr "除了一律保留的錯誤與警告外，也將 info、debug 和 log 輸出儲存到 .kangentic/logs。"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Alt+F4 closes the window and is reserved by your OS."
-msgstr ""
+msgstr "Alt+F4 用於關閉視窗，已由您的作業系統保留。"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "Always on while the index is on"
-msgstr ""
+msgstr "索引開啟時一律開啟"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Amount of detail shown on task cards"
-msgstr ""
+msgstr "任務卡片上顯示的詳細程度"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "an unbound key"
-msgstr ""
+msgstr "未繫結的按鍵"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Analytics"
-msgstr ""
+msgstr "分析"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "between agent names"
 msgid "and"
-msgstr ""
+msgstr "和"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgctxt "between two links"
 msgid "and"
-msgstr ""
+msgstr "和"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Animations"
-msgstr ""
+msgstr "動畫"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Anonymous analytics and data collection policy"
-msgstr ""
+msgstr "匿名分析與資料收集政策"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Anonymous analytics only. No personal data collected."
-msgstr ""
+msgstr "僅收集匿名分析資料，不收集個人資料。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "API key (optional)"
-msgstr ""
+msgstr "API 金鑰 (選用)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
-msgstr ""
+msgstr "應用程式當機與錯誤 (堆疊追蹤已移除應用程式碼中的電腦特定路徑)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App launches, platform, and architecture"
-msgstr ""
+msgstr "應用程式啟動次數、平台與架構"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Appearance"
-msgstr ""
+msgstr "外觀"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in both the header bar and kebab menu"
-msgstr ""
+msgstr "同時顯示於標題列與更多選單"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail header bar only"
-msgstr ""
+msgstr "僅顯示於工作詳細資料標題列"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail kebab menu only"
-msgstr ""
+msgstr "僅顯示於工作詳細資料更多選單"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Applies after a restart, and does not change agent output or terminal text."
-msgstr ""
+msgstr "重新啟動後生效，且不會變更代理程式輸出或終端機文字。"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Applies to all projects"
-msgstr ""
+msgstr "套用至所有專案"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
-msgstr ""
+msgstr "偵測到 kangentic.json 變更時立即套用，而不詢問確認。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Ask us anything about what Kangentic collects."
-msgstr ""
+msgstr "有關 Kangentic 收集內容的任何問題，歡迎詢問我們。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Authentication"
-msgstr ""
+msgstr "驗證"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgctxt "acceleration"
 msgid "Auto"
-msgstr ""
+msgstr "自動"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-apply board config changes"
-msgstr ""
+msgstr "自動套用看板設定變更"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-cleanup"
-msgstr ""
+msgstr "自動清理"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Auto-detect"
-msgstr ""
+msgstr "自動偵測"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-fetch remote"
-msgstr ""
+msgstr "自動擷取遠端"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-focus idle sessions"
-msgstr ""
+msgstr "自動聚焦閒置工作階段"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-refresh PRs"
-msgstr ""
+msgstr "自動重新整理 PR"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-resume agents on restart"
-msgstr ""
+msgstr "重新啟動時自動恢復代理程式"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-submit"
-msgstr ""
+msgstr "自動送出"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
-msgstr ""
+msgstr "自動將底部面板切換至閒置的工作階段。無論如何，閒置的分頁都會保持醒目提示。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automation agent"
-msgstr ""
+msgstr "自動化代理程式"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "背景"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Bar"
-msgstr ""
+msgstr "直線"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Basic accuracy"
-msgstr ""
+msgstr "基本準確度"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Behavior"
-msgstr ""
+msgstr "行為"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Best accuracy"
-msgstr ""
+msgstr "最佳準確度"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Block"
-msgstr ""
+msgstr "區塊"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "看板"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Board layout"
-msgstr ""
+msgstr "看板版面配置"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Both"
-msgstr ""
+msgstr "兩者"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Both"
-msgstr ""
+msgstr "兩者"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Branch"
-msgstr ""
+msgstr "分支"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Branches"
-msgstr ""
+msgstr "分支"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "瀏覽器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser automation"
-msgstr ""
+msgstr "瀏覽器自動化"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data"
-msgstr ""
+msgstr "瀏覽器資料"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data cleared"
-msgstr ""
+msgstr "已清除瀏覽器資料"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser pane"
-msgstr ""
+msgstr "瀏覽器窗格"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "取消"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card density"
-msgstr ""
+msgstr "卡片密度"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card preview"
-msgstr ""
+msgstr "卡片預覽"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "卡片"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change background"
-msgstr ""
+msgstr "變更背景"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change cursor"
-msgstr ""
+msgstr "變更游標"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change foreground"
-msgstr ""
+msgstr "變更前景"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "變更"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "正在檢查..."
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose a model"
-msgstr ""
+msgstr "選擇模型"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose an agent"
-msgstr ""
+msgstr "選擇代理程式"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Claude 5h / weekly quota bars"
-msgstr ""
+msgstr "Claude 5 小時 / 每週配額列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Clear browser data"
-msgstr ""
+msgstr "清除瀏覽器資料"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear browser data?"
-msgstr ""
+msgstr "要清除瀏覽器資料嗎？"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear data"
-msgstr ""
+msgstr "清除資料"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clearing..."
-msgstr ""
+msgstr "正在清除..."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CLI path"
-msgstr ""
+msgstr "CLI 路徑"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
-msgstr ""
+msgstr "按一下任務視窗外的空白處即可關閉視窗。控制項、任務卡片和執行中的終端機在第一次按一下時仍會照常回應。代理程式會持續執行，並在您重新開啟任務時重新連結。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click, type and drag. Off is read-only."
-msgstr ""
+msgstr "按一下、輸入和拖曳。關閉時為唯讀。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Clicking outside never closes a task window"
-msgstr ""
+msgstr "點擊外部時一律不關閉工作視窗"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Close on outside click"
-msgstr ""
+msgstr "按一下外部時關閉"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Close settings"
-msgstr ""
+msgstr "關閉設定"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes a task window only when it is the only one open"
-msgstr ""
+msgstr "僅在只開啟一個工作視窗時將其關閉"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes every open task window"
-msgstr ""
+msgstr "關閉所有開啟的工作視窗"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes the focused task window"
-msgstr ""
+msgstr "關閉焦點所在的工作視窗"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Closing now will discard your edits to the workflow agent prompt."
-msgstr ""
+msgstr "現在關閉將捨棄您對工作流程代理程式提示的編輯。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud endpoint"
-msgstr ""
+msgstr "雲端端點"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription API key"
-msgstr ""
+msgstr "雲端轉錄 API 金鑰"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription endpoint"
-msgstr ""
+msgstr "雲端轉錄端點"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription model"
-msgstr ""
+msgstr "雲端轉錄模型"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+Q quits the app and is reserved by macOS."
-msgstr ""
+msgstr "Cmd+Q 用於結束應用程式，已由 macOS 保留。"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+W is reserved by macOS for closing windows."
-msgstr ""
+msgstr "Cmd+W 已由 macOS 保留，用於關閉視窗。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Collapse unchanged regions"
-msgstr ""
+msgstr "摺疊未變更的區域"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Colors"
-msgstr ""
+msgstr "色彩"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Column width"
-msgstr ""
+msgstr "欄寬"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Column width and which panels show around the board."
-msgstr ""
+msgstr "欄寬及看板周圍顯示的面板。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Comfortable"
-msgstr ""
+msgstr "寬鬆"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Command"
-msgstr ""
+msgstr "命令"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "提交"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "已索引的提交"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Compact"
-msgstr ""
+msgstr "緊湊"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Config sync"
-msgstr ""
+msgstr "設定同步"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Conflict"
-msgstr ""
+msgstr "衝突"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Connect a phone over an end-to-end encrypted relay."
-msgstr ""
+msgstr "透過端對端加密的轉送伺服器連接手機。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connected"
-msgstr ""
+msgstr "已連線"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Connected"
-msgstr ""
+msgstr "已連線"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "正在連線…"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Context bar"
-msgstr ""
+msgstr "內容列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Context window"
-msgstr ""
+msgstr "內容視窗"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "對話"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "已嵌入的對話"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
-msgstr ""
+msgstr "所有專案中的對話、工作、提交、摘要和原始碼都會重建。{rebuildAsk, plural, other {以較早模型撰寫的 # 份摘要將會重寫}}，背景約需 {rewriteCalls, plural, other {# 次呼叫}}。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the embedded browser keeps."
-msgstr ""
+msgstr "內嵌瀏覽器保留的 Cookie 和儲存空間。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copied"
-msgstr ""
+msgstr "已複製"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "已複製！"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "verb"
 msgid "Copy"
-msgstr ""
+msgstr "複製"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "將「{loginCommand}」複製到剪貼簿"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Copy files"
-msgstr ""
+msgstr "複製檔案"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copy pairing link"
-msgstr ""
+msgstr "複製配對連結"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste and interrupt inside a terminal."
-msgstr ""
+msgstr "在終端機中複製、貼上及中斷。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "費用"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Could not start pairing."
-msgstr ""
+msgstr "無法開始配對。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Couldn't clear browser data"
-msgstr ""
+msgstr "無法清除瀏覽器資料"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "無法重新啟動"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save base branch"
-msgstr ""
+msgstr "無法儲存基底分支"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Couldn't save shortcuts"
-msgstr ""
+msgstr "無法儲存捷徑"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Count merge bypass as ready"
-msgstr ""
+msgstr "將合併略過視為就緒"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Crash and error reports go to Sentry so bugs can be diagnosed and fixed. Stack traces are recorded with machine-specific paths removed from app code; no task content, code, or personal data is attached."
-msgstr ""
+msgstr "當機與錯誤報告會傳送至 Sentry，以便診斷並修正錯誤。記錄的堆疊追蹤已移除應用程式碼中的電腦特定路徑，且不附加任何任務內容、程式碼或個人資料。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Crash reports"
-msgstr ""
+msgstr "當機報告"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CSS font-family for the terminal"
-msgstr ""
+msgstr "終端機的 CSS font-family"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cumulative tool invocations"
-msgstr ""
+msgstr "累計工具叫用次數"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Cursor"
-msgstr ""
+msgstr "游標"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cursor style"
-msgstr ""
+msgstr "游標樣式"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "dictation mode"
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom commands accessible from the task detail dialog"
-msgstr ""
+msgstr "可從任務詳細資料對話方塊使用的自訂命令"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Custom commands in the task window's header and menu."
-msgstr ""
+msgstr "工作視窗標題列與選單中的自訂命令。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom relay address"
-msgstr ""
+msgstr "自訂中繼位址"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Customize the terminal background, foreground, and cursor color"
-msgstr ""
+msgstr "自訂終端機的背景、前景和游標色彩"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Dark"
-msgstr ""
+msgstr "深色"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Dark, when the system is dark"
-msgstr ""
+msgstr "系統為深色時使用深色"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Debug overlays and logs for diagnosing sessions."
-msgstr ""
+msgstr "用於診斷工作階段的偵錯覆疊與記錄。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Debug tools in development builds."
-msgstr ""
+msgstr "開發組建中的偵錯工具。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Default"
-msgstr ""
+msgstr "預設"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Default"
-msgstr ""
+msgstr "預設"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default base branch"
-msgstr ""
+msgstr "預設基底分支"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default browser pane URL"
-msgstr ""
+msgstr "預設瀏覽器窗格 URL"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default diff scope"
-msgstr ""
+msgstr "預設差異範圍"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
-msgstr ""
+msgstr "變更面板中 Git 檔案差異的預設版面配置：分割 (並排) 或內嵌 (整合)。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default URL"
-msgstr ""
+msgstr "預設 URL"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Description"
-msgstr ""
+msgstr "描述"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Desktop"
-msgstr ""
+msgstr "桌面"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Detected"
-msgstr ""
+msgstr "已偵測到"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Detected shell name"
-msgstr ""
+msgstr "偵測到的 Shell 名稱"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev inspection bridge"
-msgstr ""
+msgstr "開發檢查橋接"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev triggers"
-msgstr ""
+msgstr "開發觸發器"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Developer"
-msgstr ""
+msgstr "開發人員"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Diagnostics"
-msgstr ""
+msgstr "診斷"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Dictation"
-msgstr ""
+msgstr "聽寫"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again."
-msgstr ""
+msgstr "聽寫因重複當機而停止 ({workerError})。請重新啟動 Kangentic 再試一次。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes. Restart Kangentic to try again."
-msgstr ""
+msgstr "聽寫因重複當機而停止。請重新啟動 Kangentic 再試一次。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Diff view"
-msgstr ""
+msgstr "差異檢視"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "捨棄"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "要捨棄未儲存的變更嗎?"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Disconnected"
-msgstr ""
+msgstr "已中斷連線"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Display"
-msgstr ""
+msgstr "顯示位置"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Display language"
-msgstr ""
+msgstr "顯示語言"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Download failed"
-msgstr ""
+msgstr "下載失敗"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Downloading"
-msgstr ""
+msgstr "正在下載"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
-msgstr ""
+msgstr "每個代理程式工作階段都會取得一個本機 MCP 伺服器，並自行探索這些工具。代理程式建立的任務會顯示在看板上，並跳出通知。"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Editors"
-msgstr ""
+msgstr "編輯器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "推理強度"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Elapsed time"
-msgstr ""
+msgstr "經過時間"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Embed a Browser pane in task windows that agents can open."
-msgstr ""
+msgstr "在任務視窗中嵌入代理可開啟的瀏覽器窗格。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Enter path manually"
-msgstr ""
+msgstr "手動輸入路徑"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Environment variables that turn telemetry off."
-msgstr ""
+msgstr "用於關閉遙測的環境變數。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Events"
-msgstr ""
+msgstr "事件"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on."
-msgstr ""
+msgstr "每次當機都會將含來源對應堆疊的紀錄寫入 .kangentic/logs/crashes；此功能一律開啟。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Every hotkey is at its default"
-msgstr ""
+msgstr "所有快速鍵皆為預設值"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Execution"
-msgstr ""
+msgstr "執行"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand"
-msgstr ""
+msgstr "展開"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand the prompt"
-msgstr ""
+msgstr "展開提示"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Extension"
-msgstr ""
+msgstr "副檔名"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Failed"
-msgstr ""
+msgstr "失敗"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Fair accuracy"
-msgstr ""
+msgstr "普通準確度"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "File list"
-msgstr ""
+msgstr "檔案清單"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "File paths, project names, or code"
-msgstr ""
+msgstr "檔案路徑、專案名稱或程式碼"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "File sort"
-msgstr ""
+msgstr "檔案排序"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Files & Terminal"
-msgstr ""
+msgstr "檔案與終端機"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files copied into each new worktree, such as .env."
-msgstr ""
+msgstr "複製到每個新工作樹的檔案，例如 .env。"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Files to copy into a worktree"
-msgstr ""
+msgstr "要複製到工作樹的檔案"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Finds your work by meaning and answers questions."
-msgstr ""
+msgstr "依語意尋找你的工作並回答問題。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Flat file list"
-msgstr ""
+msgstr "平面檔案清單"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Focused"
-msgstr ""
+msgstr "焦點視窗"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Fold away large unchanged spans so a big file shows only the changed hunks with a little context."
-msgstr ""
+msgstr "摺疊大段未變更的範圍，讓大型檔案只顯示已變更的區塊及少量上下文。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "此專案指向的磁碟資料夾。將其移至新位置後，所有任務、歷程記錄和工作樹都會一併移動。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Follow system appearance"
-msgstr ""
+msgstr "跟隨系統外觀"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font family"
-msgstr ""
+msgstr "字型系列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font size"
-msgstr ""
+msgstr "字型大小"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Foreground"
-msgstr ""
+msgstr "前景"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
-msgstr ""
+msgstr "轉送加密流量，絕不持有你的金鑰。"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "一般"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Git"
-msgstr ""
+msgstr "Git"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Git changes"
-msgstr ""
+msgstr "Git 變更"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Give agents tools to work with your board."
-msgstr ""
+msgstr "提供代理操作看板的工具。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Gives tasks the option to run in their own git worktree."
-msgstr ""
+msgstr "讓任務可選擇在自己的 git 工作樹中執行。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Good accuracy"
-msgstr ""
+msgstr "良好準確度"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Graphics acceleration"
-msgstr ""
+msgstr "圖形加速"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Hardware rendering and motion across the whole app."
-msgstr ""
+msgstr "整個應用程式的硬體轉譯與動畫效果。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hardware rendering for the app window and terminals."
-msgstr ""
+msgstr "為應用程式視窗與終端機使用硬體轉譯。"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Header"
-msgstr ""
+msgstr "標題列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hide whitespace-only changes in the diff to filter reformatting noise."
-msgstr ""
+msgstr "在差異中隱藏僅空白字元的變更，以過濾重新格式化造成的雜訊。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "High accuracy"
-msgstr ""
+msgstr "高準確度"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
-msgstr ""
+msgstr "較高的投入程度回答較慢，但有助於跨多個任務的計數；摘要一律使用代理程式的預設值。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
-msgstr ""
+msgstr "按住按鍵說話，即可對終端機或文字欄位輸入語音。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
-msgstr ""
+msgstr "按住以錄音；放開以插入轉錄文字。可在快速鍵中重新繫結。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys"
-msgstr ""
+msgstr "快速鍵"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys that work anywhere in the app."
-msgstr ""
+msgstr "在應用程式中任何位置皆可使用的快速鍵。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hover a tile to try it on the whole app, click to keep it."
-msgstr ""
+msgstr "將游標移到圖塊上即可在整個應用程式中試用，按一下即可保留。"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "How changes to the shared board config are applied."
-msgstr ""
+msgstr "共用看板設定的變更套用方式。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "How it works"
-msgstr ""
+msgstr "運作方式"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How linked PRs are kept up to date."
-msgstr ""
+msgstr "已連結 PR 如何保持最新狀態。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long an agent waits on you before the idle timer pauses it."
-msgstr ""
+msgstr "代理程式等候您多久後，閒置計時器會將其暫停。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long toasts remain visible"
-msgstr ""
+msgstr "快顯通知的顯示時間長度"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts stay up and how many stack at once."
-msgstr ""
+msgstr "快顯通知的顯示時間長度及同時堆疊的數量。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How many agents run at once and what happens when idle."
-msgstr ""
+msgstr "同時執行的代理程式數量，以及閒置時的處理方式。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "How much each task card shows on the board."
-msgstr ""
+msgstr "每張工作卡片在看板上顯示的內容多寡。"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How task windows close and where they reopen."
-msgstr ""
+msgstr "工作視窗的關閉方式及重新開啟的位置。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the agent handles tool approvals"
-msgstr ""
+msgstr "代理程式處理工具核准的方式"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the changed files are sorted and grouped."
-msgstr ""
+msgstr "變更檔案的排序與分組方式。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension."
-msgstr ""
+msgstr "變更面板排序檔案的方式：依名稱、依狀態 (新增 / 修改 / 刪除)、依大小 (變更最多者優先) 或依副檔名。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the Changes panel shows a file's diff."
-msgstr ""
+msgstr "變更面板顯示檔案差異的方式。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How the relay works"
-msgstr ""
+msgstr "轉送伺服器的運作方式"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How to install and pair"
-msgstr ""
+msgstr "如何安裝與配對"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "圖示"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "忽略空白字元"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header and its menu"
-msgstr ""
+msgstr "顯示於工作視窗標題列及其選單"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header only"
-msgstr ""
+msgstr "僅顯示於工作視窗標題列"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window menu only"
-msgstr ""
+msgstr "僅顯示於工作視窗選單"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "In use by another app"
-msgstr ""
+msgstr "已被其他應用程式使用"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "索引"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Indexing and the local model that finds by meaning live in the <0>Knowledge Graph</0> tab, and run on your device with no API key. When you ask a question, the agent you choose there receives it with the board's task list, the conversation passages and code found for it, and the chat so far. To write a task summary, it receives that task's title, description, commits, changed files and closing messages."
-msgstr ""
+msgstr "索引功能與依語意搜尋的本機模型位於 <0>知識圖譜</0> 索引標籤，在您的裝置上執行，無需 API 金鑰。當您提出問題時，您在該處選擇的代理程式會收到問題，以及看板的任務清單、為其找到的對話段落與程式碼，和目前為止的聊天內容。撰寫任務摘要時，代理程式會收到該任務的標題、描述、提交、變更的檔案與結束訊息。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff view mode"
 msgid "Inline"
-msgstr ""
+msgstr "內嵌"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "窄版時內嵌顯示"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Input / output totals"
-msgstr ""
+msgstr "輸入 / 輸出總計"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inspection bridge"
-msgstr ""
+msgstr "檢查橋接器"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Installing the app, pairing a phone, and push notifications."
-msgstr ""
+msgstr "安裝 App、配對手機及推播通知。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Judges conditions and workflow steps, and names tasks."
-msgstr ""
+msgstr "判斷條件與工作流程步驟，並為任務命名。"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Kangentic could not write its settings file."
-msgstr ""
+msgstr "Kangentic 無法寫入其設定檔。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic Mobile"
-msgstr ""
+msgstr "Kangentic 行動版"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
-msgstr ""
+msgstr "Kangentic 將重新啟動以套用此設定。執行中的代理程式會暫停，並於重新啟動後繼續執行。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Kangentic runs {wslAgentList} from WSL."
-msgstr ""
+msgstr "Kangentic 會從 WSL 執行 {wslAgentList}。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic turned this off after repeated failures."
-msgstr ""
+msgstr "Kangentic 因多次失敗已將此功能關閉。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Kangentic-operated relay"
-msgstr ""
+msgstr "Kangentic 營運的轉送伺服器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
-msgstr ""
+msgstr "放開後繼續短暫擷取，以免最後一個字被截斷。"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "繼續編輯"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for a task's Browser pane."
-msgstr ""
+msgstr "工作瀏覽器窗格的按鍵。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for an open task window."
-msgstr ""
+msgstr "已開啟工作視窗的按鍵。"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Changes panel and its diff."
-msgstr ""
+msgstr "變更面板及其差異檢視的按鍵。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "知識圖譜"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Label"
-msgstr ""
+msgstr "標籤"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Language"
-msgstr ""
+msgstr "語言"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Latest"
-msgstr ""
+msgstr "最新"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Launch options"
-msgstr ""
+msgstr "啟動選項"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "版面配置"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Leave blank if the server does not require credentials"
-msgstr ""
+msgstr "若伺服器不需要認證，請保留空白"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Browser pane."
-msgstr ""
+msgstr "讓代理程式操控瀏覽器窗格。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
-msgstr ""
+msgstr "允許 devtools 工具在轉譯器中執行 JavaScript、注入活動事件，以及傳送原始終端機輸入。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "License"
-msgstr ""
+msgstr "授權"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Light"
-msgstr ""
+msgstr "淺色"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Light, when the system is light"
-msgstr ""
+msgstr "系統為淺色時使用淺色"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Limit how many agents can run at the same time"
-msgstr ""
+msgstr "限制可同時執行的代理程式數量"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link node_modules"
-msgstr ""
+msgstr "連結 node_modules"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model"
-msgstr ""
+msgstr "即時模型"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model downloaded"
-msgstr ""
+msgstr "即時模型已下載"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Local"
-msgstr ""
+msgstr "本機"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Local"
-msgstr ""
+msgstr "本機"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Local model"
-msgstr ""
+msgstr "本機模型"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
-msgstr ""
+msgstr "將每個 IPC 呼叫記錄至 .kangentic/logs，並遮蔽會變更狀態的通道；預設僅在 /preview 中開啟。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max concurrent sessions"
-msgstr ""
+msgstr "最大並行工作階段數"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max visible toasts"
-msgstr ""
+msgstr "最多可見通知數"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Maximum simultaneous toasts on screen"
-msgstr ""
+msgstr "畫面上同時顯示的通知上限"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP connection"
-msgstr ""
+msgstr "MCP 連線"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP server"
-msgstr ""
+msgstr "MCP 伺服器"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "MCP Server"
-msgstr ""
+msgstr "MCP 伺服器"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Menu"
-msgstr ""
+msgstr "選單"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Minutes idle"
-msgstr ""
+msgstr "閒置分鐘數"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mobile bridge"
-msgstr ""
+msgstr "行動裝置橋接"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Mobile Devices"
-msgstr ""
+msgstr "行動裝置"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Mode"
-msgstr ""
+msgstr "模式"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "模型"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Model (optional, e.g. whisper-1)"
-msgstr ""
+msgstr "模型 (選用，例如 whisper-1)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model acceleration"
-msgstr ""
+msgstr "模型加速"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "未設定欄或任務覆寫時，新工作階段使用的模型"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Move..."
-msgstr ""
+msgstr "移動..."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Moving between task windows and arranging them."
-msgstr ""
+msgstr "在工作視窗之間移動並排列視窗。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Name"
-msgstr ""
+msgstr "名稱"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Narrow"
-msgstr ""
+msgstr "窄"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs a model"
-msgstr ""
+msgstr "需要模型"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs a supported agent"
-msgstr ""
+msgstr "需要支援的代理程式"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs an agent"
-msgstr ""
+msgstr "需要代理程式"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs indexing"
-msgstr ""
+msgstr "需要建立索引"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs the Knowledge Graph"
-msgstr ""
+msgstr "需要知識圖譜"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
-msgstr ""
+msgstr "沒有相機？請複製連結並貼到 App 中。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No devices paired yet."
-msgstr ""
+msgstr "尚未配對任何裝置。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "No Done tasks yet"
-msgstr ""
+msgstr "尚無已完成的工作"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "No key detected. It may be reserved by your OS or another app."
-msgstr ""
+msgstr "未偵測到按鍵，可能已被您的作業系統或其他應用程式保留。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No response"
-msgstr ""
+msgstr "沒有回應"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "No settings found for “{query}”"
-msgstr ""
+msgstr "找不到符合「{query}」的設定"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "No shortcuts configured. Add one below or choose a preset."
-msgstr ""
+msgstr "尚未設定捷徑。請在下方新增，或選擇預設集。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "No WSL support"
-msgstr ""
+msgstr "不支援 WSL"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "no dictation model"
 msgid "None"
-msgstr ""
+msgstr "無"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not found"
-msgstr ""
+msgstr "找不到"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "未登入"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "尚未建立索引"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Nothing committed yet"
-msgstr ""
+msgstr "尚無任何提交"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Notifications"
-msgstr ""
+msgstr "通知"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Off"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Off"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "release buffer"
 msgid "Off"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Offline"
-msgstr ""
+msgstr "離線"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost"
-msgstr ""
+msgstr "僅限 localhost"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost and private hosts, never public sites."
-msgstr ""
+msgstr "僅限 localhost 與私人主機，絕不包含公開網站。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Only the final clip is sent. The live preview stays on this machine."
-msgstr ""
+msgstr "只會傳送最終片段。即時預覽會保留在這部電腦上。"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Only yours, in kangentic.local.json"
-msgstr ""
+msgstr "僅限自己，儲存於 kangentic.local.json"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open other URLs. Off keeps agents on the page you loaded."
-msgstr ""
+msgstr "開啟其他 URL。關閉時代理只會停留在你載入的頁面。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open the surfaces a dev session cannot reach on its own."
-msgstr ""
+msgstr "開啟開發工作階段無法自行到達的介面。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine."
-msgstr ""
+msgstr "與 OpenAI 相容的 /v1/audio/transcriptions 端點，用於產生最終文字，在精修模型設為雲端端點時使用。僅傳送最終片段；即時預覽保留在本機。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Opting out"
-msgstr ""
+msgstr "選擇退出"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Optional startup features this agent CLI can turn off"
-msgstr ""
+msgstr "此代理 CLI 可關閉的選用啟動功能"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Other"
-msgstr ""
+msgstr "其他"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pair a device"
-msgstr ""
+msgstr "配對裝置"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired {pairedDate}"
-msgstr ""
+msgstr "配對於 {pairedDate}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired: {confirmedDeviceName}"
-msgstr ""
+msgstr "已配對：{confirmedDeviceName}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pairing QR code"
-msgstr ""
+msgstr "配對 QR 碼"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Password"
-msgstr ""
+msgstr "密碼"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
-msgstr ""
+msgstr "此專案任務在伺服器上的路徑。留空則使用伺服器本身的預設目錄"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr ""
+msgstr "暫停任何已等候你達此分鐘數的代理，命令終端機中的代理除外。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Pausing agents"
-msgstr ""
+msgstr "暫停代理"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Performance"
-msgstr ""
+msgstr "效能"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "權限"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Persistent console logs"
-msgstr ""
+msgstr "持久保存主控台記錄"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Personal"
-msgstr ""
+msgstr "個人"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Personal shortcut in kangentic.local.json"
-msgstr ""
+msgstr "個人捷徑，儲存於 kangentic.local.json"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones"
-msgstr ""
+msgstr "手機"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones paired to this desktop, identified by key fingerprint."
-msgstr ""
+msgstr "與此桌面配對的手機，以金鑰指紋識別。"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Pick a theme, or follow the system with a light and dark pair."
-msgstr ""
+msgstr "選擇佈景主題，或以一組淺色與深色主題跟隨系統。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "計畫已完成"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
-msgstr ""
+msgstr "規劃每個工作流程。選定代理前不會啟動任何流程。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Post-worktree script"
-msgstr ""
+msgstr "工作樹建立後指令碼"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Presets"
-msgstr ""
+msgstr "預設集"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey"
-msgstr ""
+msgstr "請按下快速鍵"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel."
-msgstr ""
+msgstr "請按下快速鍵，或同時按住一或多個滑鼠按鈕 (中鍵/側鍵) 後放開。按 Esc 取消。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Press Enter after inserting, or leave the text for you to review and send."
-msgstr ""
+msgstr "插入後按下 Enter，或保留文字讓你檢閱後再送出。"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press the new hotkey or mouse button. Escape to cancel."
-msgstr ""
+msgstr "請按下新的快速鍵或滑鼠按鈕。按 Escape 取消。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Preview while you speak: streaming is instant, chunked is accurate."
-msgstr ""
+msgstr "說話時預覽：串流即時呈現，分段則較準確。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Privacy"
-msgstr ""
+msgstr "隱私權"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr ""
+msgstr "剖析主處理程序，並在事件迴圈報告中列出停滯時最耗時的函式；啟用時會耗用 CPU。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Progress bar"
-msgstr ""
+msgstr "進度列"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "專案"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "Project"
-msgstr ""
+msgstr "專案"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr ""
+msgstr "工作沒有個別覆寫時使用的專案預設 URL。首次在瀏覽器窗格中瀏覽時會自動儲存。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Project defaults"
-msgstr ""
+msgstr "專案預設值"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project location"
-msgstr ""
+msgstr "專案位置"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Pull requests"
-msgstr ""
+msgstr "提取要求"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Push-to-talk"
-msgstr ""
+msgstr "按住說話"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Push-to-talk and the other dictation keys."
-msgstr ""
+msgstr "按住說話及其他聽寫按鍵。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Questions"
-msgstr ""
+msgstr "問題"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "速率限制"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Re-detect agent"
-msgstr ""
+msgstr "重新偵測代理程式"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable"
-msgstr ""
+msgstr "可連線"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable, {relayLatencyMs} ms"
-msgstr ""
+msgstr "可連線，{relayLatencyMs} 毫秒"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Reads every source again, in every project."
-msgstr ""
+msgstr "重新讀取所有專案中的每個來源。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Reasoning effort used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "未設定欄或工作覆寫時，新工作階段使用的推理強度"
 
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind"
-msgstr ""
+msgstr "重新繫結"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Rebind any hotkey. Conflicts and taken combos are flagged."
-msgstr ""
+msgstr "重新繫結任何快速鍵。衝突和已占用的組合會加上標示。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind in the Hotkeys settings"
-msgstr ""
+msgstr "在快速鍵設定中重新綁定"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rebind keyboard hotkeys"
-msgstr ""
+msgstr "重新繫結鍵盤快速鍵"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild"
-msgstr ""
+msgstr "重建"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild didn't start"
-msgstr ""
+msgstr "重建未啟動"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild everything?"
-msgstr ""
+msgstr "要重建全部內容嗎？"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild the index"
-msgstr ""
+msgstr "重建索引"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuilding..."
-msgstr ""
+msgstr "正在重建..."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Recent"
-msgstr ""
+msgstr "近期"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reconnecting…"
-msgstr ""
+msgstr "正在重新連線…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Record IPC traffic"
-msgstr ""
+msgstr "記錄 IPC 流量"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model"
-msgstr ""
+msgstr "精修模型"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model downloaded"
-msgstr ""
+msgstr "精修模型已下載"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refines the live draft into the accurate result on release. None keeps the live text as-is."
-msgstr ""
+msgstr "放開時將即時草稿精修為準確結果。選擇「無」則保留即時文字原樣。"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay"
-msgstr ""
+msgstr "轉送伺服器"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address"
-msgstr ""
+msgstr "轉送伺服器位址"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address, the Kangentic-operated relay"
-msgstr ""
+msgstr "轉送伺服器位址，Kangentic 營運的轉送伺服器"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay v{relayVersion}"
-msgstr ""
+msgstr "轉送伺服器 v{relayVersion}"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Release buffer"
-msgstr ""
+msgstr "放開後緩衝"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the browser pane to apply."
-msgstr ""
+msgstr "重新載入瀏覽器窗格以套用。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remember window size and position between launches"
-msgstr ""
+msgstr "在每次啟動之間記住視窗大小與位置"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Remote"
-msgstr ""
+msgstr "遠端"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "移除"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remove a task's worktree when the task completes."
-msgstr ""
+msgstr "工作完成時移除其工作樹。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "重新命名"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns."
-msgstr ""
+msgstr "即使選取了並排顯示，窄的差異窗格仍以內嵌 (整合) 方式呈現，而不擠成兩欄。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Rendering"
-msgstr ""
+msgstr "轉譯"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all"
-msgstr ""
+msgstr "全部重設"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all hotkeys?"
-msgstr ""
+msgstr "要重設所有快速鍵嗎？"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Reset to default"
-msgstr ""
+msgstr "重設為預設值"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "重新啟動 Kangentic 以套用變更。"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart now"
-msgstr ""
+msgstr "立即重新啟動"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart with graphics acceleration?"
-msgstr ""
+msgstr "要重新啟動並啟用圖形加速嗎？"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart without graphics acceleration?"
-msgstr ""
+msgstr "要重新啟動並停用圖形加速嗎？"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Restore every hotkey to its default"
-msgstr ""
+msgstr "將所有快速鍵還原為預設值"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Restore window position"
-msgstr ""
+msgstr "還原視窗位置"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine."
-msgstr ""
+msgstr "繼續上次關閉專案時正在執行的代理程式工作階段。若同時繼續多個工作階段會拖慢電腦，請關閉此選項。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke"
-msgstr ""
+msgstr "撤銷"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect."
-msgstr ""
+msgstr "要撤銷「{revokeTargetName}」({revokeTargetFingerprint}) 嗎？該裝置將立即失去存取權，必須重新配對才能再次連線。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke device"
-msgstr ""
+msgstr "撤銷裝置"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
-msgstr ""
+msgstr "請在終端機中執行 <0>{loginCommand}</0> 以進行驗證。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run any JavaScript in the page, with its cookies."
-msgstr ""
+msgstr "在頁面中以其 Cookie 執行任意 JavaScript。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run this agent locally, or attach to a server you run elsewhere"
-msgstr ""
+msgstr "在本機執行此代理程式，或連結至您在其他地方執行的伺服器"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
-msgstr ""
+msgstr "在建立工作樹後執行。在 Windows 上透過 cmd.exe 執行，因此僅限 POSIX 的語法將無法沿用。"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Runs on this machine unless you choose a cloud refinement."
-msgstr ""
+msgstr "除非選擇雲端精修，否則會在本機上執行。"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "儲存"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Save name"
-msgstr ""
+msgstr "儲存名稱"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Saved URLs (per-task overrides and the project default) are kept."
-msgstr ""
+msgstr "已儲存的 URL (個別任務覆寫和專案預設值) 會保留。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Scan a QR code with the Kangentic mobile app to pair a new phone."
-msgstr ""
+msgstr "使用 Kangentic 行動應用程式掃描 QR 代碼以配對新手機。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Scan this code with the Kangentic app on your phone."
-msgstr ""
+msgstr "請用手機上的 Kangentic 應用程式掃描此條碼。"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Scope"
-msgstr ""
+msgstr "範圍"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Search model downloaded"
-msgstr ""
+msgstr "搜尋模型已下載"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Search quality"
-msgstr ""
+msgstr "搜尋品質"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Search settings..."
-msgstr ""
+msgstr "搜尋設定..."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Secure storage is unavailable on this system, so a device identity cannot be created."
-msgstr ""
+msgstr "此系統無法使用安全儲存空間，因此無法建立裝置身分。"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Select display language"
-msgstr ""
+msgstr "選取顯示語言"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Server URL"
-msgstr ""
+msgstr "伺服器 URL"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Server working directory"
-msgstr ""
+msgstr "伺服器工作目錄"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth."
-msgstr ""
+msgstr "在無驗證的 localhost 連接埠上，向開發人員工具 MCP 工具提供螢幕擷取畫面、輸入、DOM 與狀態查詢。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "工作階段 API 費用"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "工作階段"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
-msgstr ""
+msgstr "將 <0>KANGENTIC_TELEMETRY=0</0> 設為環境變數，即可停用所有遙測 (分析與錯誤報告)。設定 <1>KANGENTIC_ERROR_REPORTING=0</1> 則僅停用錯誤報告，並保留匿名分析。"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Setting not saved"
-msgstr ""
+msgstr "設定未儲存"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "設定"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with team via kangentic.json"
-msgstr ""
+msgstr "透過 kangentic.json 與團隊共用"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with the team in kangentic.json"
-msgstr ""
+msgstr "透過 kangentic.json 與團隊共用"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell"
-msgstr ""
+msgstr "Shell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell name"
-msgstr ""
+msgstr "Shell 名稱"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shortcuts"
-msgstr ""
+msgstr "捷徑"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show changed files as a flat list of full paths instead of a nested directory tree."
-msgstr ""
+msgstr "將變更的檔案顯示為完整路徑的平面清單，而非巢狀目錄樹。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show each task's #N number on its card"
-msgstr ""
+msgstr "在卡片上顯示每個工作的 #N 編號"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the status bar at the bottom of the window"
-msgstr ""
+msgstr "在視窗底部顯示狀態列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the terminal panel below the board"
-msgstr ""
+msgstr "在看板下方顯示終端機面板"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr ""
+msgstr "若您的管理員略過權限可越過必要審查合併 PR，則將其顯示為就緒，但絕不會越過失敗的檢查。"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "並排"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "since {sinceTime}"
-msgstr ""
+msgstr "自 {sinceTime} 起"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Single"
-msgstr ""
+msgstr "單一"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Size"
-msgstr ""
+msgstr "大小"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
-msgstr ""
+msgstr "將長行自動換到下一列，而非水平捲動差異。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Source code"
-msgstr ""
+msgstr "原始程式碼"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Source code embedded"
-msgstr ""
+msgstr "原始碼已嵌入"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Spawn stalled"
-msgstr ""
+msgstr "啟動停滯"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Staged"
-msgstr ""
+msgstr "已暫存"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stall profiler"
-msgstr ""
+msgstr "停滯分析工具"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Status"
-msgstr ""
+msgstr "狀態"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Status bar"
-msgstr ""
+msgstr "狀態列"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop leftover processes"
-msgstr ""
+msgstr "停止殘留處理程序"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
-msgstr ""
+msgstr "當工作完成、退回待辦、遭刪除，或其命令終端機結束時，停止代理程式在其資料夾中留下仍在執行的項目。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries rewritten"
-msgstr ""
+msgstr "摘要已重寫"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries written"
-msgstr ""
+msgstr "摘要已撰寫"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
-msgstr ""
+msgstr "將根目錄的 node_modules 以符號連結連到每個工作樹，以省去重新安裝；工作區存放庫應關閉此選項。"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "System"
-msgstr ""
+msgstr "系統"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "任務"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task and project creation counts"
-msgstr ""
+msgstr "任務與專案建立數量"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Task detail"
-msgstr ""
+msgstr "工作詳細資料"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "任務摘要"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task titles, descriptions, or any user-generated content"
-msgstr ""
+msgstr "任務標題、描述或任何使用者產生的內容"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "工作"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "已嵌入的工作"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Team"
-msgstr ""
+msgstr "團隊"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "終端機"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal cursor appearance"
-msgstr ""
+msgstr "終端機游標外觀"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Terminal may intercept"
-msgstr ""
+msgstr "終端機可能攔截"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal panel"
-msgstr ""
+msgstr "終端機面板"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal shell used for agent sessions"
-msgstr ""
+msgstr "代理程式工作階段使用的終端機 Shell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal text size in pixels"
-msgstr ""
+msgstr "終端機文字大小 (像素)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Test connection"
-msgstr ""
+msgstr "測試連線"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "The agent, model and permissions new sessions start with."
-msgstr ""
+msgstr "新工作階段啟動時使用的代理程式、模型和權限。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's newest message"
-msgstr ""
+msgstr "代理程式的最新訊息"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's recent messages, one line each"
-msgstr ""
+msgstr "代理程式的近期訊息，每則一行"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The branch new worktrees start from."
-msgstr ""
+msgstr "新工作樹的起始分支。"
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "The change was not written."
-msgstr ""
+msgstr "變更未寫入。"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
-msgstr ""
+msgstr "預設分支的原始碼和文件，並保持最新；測試、資料檔案及超過 256 KB 的檔案會略過。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The first message it gets for a new workflow."
-msgstr ""
+msgstr "新工作流程時它收到的第一則訊息。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "The Kangentic relay"
-msgstr ""
+msgstr "Kangentic 轉送伺服器"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr ""
+msgstr "知識圖譜及其讀取的索引。套用至所有專案"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "The language of menus, settings and dialogs."
-msgstr ""
+msgstr "選單、設定和對話方塊所使用的語言。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The language you speak. The models adapt to your choice."
-msgstr ""
+msgstr "您使用的語言。模型會依您的選擇調整。"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches."
-msgstr ""
+msgstr "本機模型無法使用 - 顯示關鍵字相符結果。"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches. ({workerError})"
-msgstr ""
+msgstr "本機模型無法使用 - 顯示關鍵字相符結果。({workerError})"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The local model that finds by meaning and draws the map; changing it re-indexes in the background."
-msgstr ""
+msgstr "依語意搜尋並繪製地圖的本機模型；變更後會在背景重新建立索引。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The model it plans with. Required when the agent takes one."
-msgstr ""
+msgstr "用於規劃的模型。代理程式支援時為必填。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live."
-msgstr ""
+msgstr "手機配套應用程式，可查看代理程式、回應提示及檢閱差異。連結至其文件，內含安裝說明。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The project's code and docs, so answers can explain it."
-msgstr ""
+msgstr "專案的程式碼和文件，讓回答能加以說明。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The self-hosted relay to dial when Relay is set to Custom."
-msgstr ""
+msgstr "中繼設為自訂時要連線的自架中繼伺服器。"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "The shell, font, cursor and colors every terminal uses."
-msgstr ""
+msgstr "所有終端機使用的 Shell、字型、游標和色彩。"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The task's description"
-msgstr ""
+msgstr "工作的描述"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Theme"
-msgstr ""
+msgstr "佈景主題"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
-msgstr ""
+msgstr "此快速鍵為固定，無法重新綁定"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "This project's path to the agent CLI (auto-detected if empty)"
-msgstr ""
+msgstr "此專案的代理程式 CLI 路徑 (留空則自動偵測)"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "This restores every hotkey to its default. Your custom bindings will be removed."
-msgstr ""
+msgstr "這會將所有快速鍵還原為預設值，並移除您的自訂繫結。"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "這會清除所有任務和專案中內嵌瀏覽器窗格的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。您將登出所有網站。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticket numbers"
-msgstr ""
+msgstr "工作編號"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticking session duration"
-msgstr ""
+msgstr "持續計時的工作階段時間長度"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Toast"
-msgstr ""
+msgstr "快顯通知"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Toast auto-dismiss"
-msgstr ""
+msgstr "快顯通知自動關閉"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Toasts"
-msgstr ""
+msgstr "快顯通知"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Token counts"
-msgstr ""
+msgstr "Token 數"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "工具呼叫"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Transcription"
-msgstr ""
+msgstr "轉錄"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Transition and motion effects."
-msgstr ""
+msgstr "轉場與動態效果。"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Try a different search term"
-msgstr ""
+msgstr "請嘗試其他搜尋字詞"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Underline"
-msgstr ""
+msgstr "底線"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Unreachable"
-msgstr ""
+msgstr "無法連線"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's own level."
-msgstr ""
+msgstr "未設定時以代理程式本身的層級執行。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's recommended level."
-msgstr ""
+msgstr "未設定時以代理程式建議的層級執行。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usage analytics are powered by Aptabase, a privacy-first platform. No cookies. IP addresses are used for geographic lookup only, then discarded. A single anonymous, non-reversible install id counts unique installs; it contains no personal data. GDPR-compliant by design."
-msgstr ""
+msgstr "使用分析由隱私優先的平台 Aptabase 提供。不使用 Cookie。IP 位址僅用於地理位置查詢，之後即予捨棄。單一匿名且不可逆的安裝 ID 用於計算不重複安裝數，其中不含個人資料。設計上即符合 GDPR。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Usage bar and percentage"
-msgstr ""
+msgstr "使用量列與百分比"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}."
-msgstr ""
+msgstr "請使用 {TERMINAL_FONT_SIZE_MIN} 到 {TERMINAL_FONT_SIZE_MAX}。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Use one theme when the system is light and another when it is dark."
-msgstr ""
+msgstr "系統為淺色時使用一個佈景主題，深色時使用另一個。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Used / total tokens"
-msgstr ""
+msgstr "已用 / 總 Token 數"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Username"
-msgstr ""
+msgstr "使用者名稱"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usernames, emails, or any personally identifiable information"
-msgstr ""
+msgstr "使用者名稱、電子郵件或任何個人識別資訊"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable - showing keyword matches. ({vecError})"
-msgstr ""
+msgstr "向量搜尋無法使用 - 顯示關鍵字相符結果。({vecError})"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable on this platform - showing keyword matches."
-msgstr ""
+msgstr "此平台不支援向量搜尋 - 顯示關鍵字相符結果。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Version"
-msgstr ""
+msgstr "版本"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Voice dictation"
-msgstr ""
+msgstr "語音聽寫"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Waiting for your phone…"
-msgstr ""
+msgstr "正在等候您的手機…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What each card shows under its title: the agent's latest message, its recent messages, or the task description."
-msgstr ""
+msgstr "每張卡片標題下方顯示的內容：代理程式的最新訊息、近期訊息或工作描述。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What Quick Find and the Knowledge Graph search."
-msgstr ""
+msgstr "快速尋找與知識圖譜的搜尋範圍。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What runs on this device, and what goes to the agent you choose."
-msgstr ""
+msgstr "哪些內容在此裝置上執行，哪些內容會傳送給您選擇的代理程式。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we collect"
-msgstr ""
+msgstr "我們收集的內容"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we don't collect"
-msgstr ""
+msgstr "我們不收集的內容"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a plan finishes and the task auto-moves"
-msgstr ""
+msgstr "計畫完成且工作自動移動時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a running workflow cannot move a task on by itself"
-msgstr ""
+msgstr "執行中的工作流程無法自行推進工作時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a task spawn waits too long on the git queue while preparing"
-msgstr ""
+msgstr "工作產生在準備期間於 git 佇列等候過久時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent finishes its turn or needs permission"
-msgstr ""
+msgstr "代理程式完成其回合或需要權限時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."
-msgstr ""
+msgstr "代理程式工作階段意外結束時。桌面通知僅在錯誤結束時發出；快顯通知也涵蓋正常結束。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When every task in a workflow reaches Done"
-msgstr ""
+msgstr "工作流程中的每個工作都到達「完成」時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When idle"
-msgstr ""
+msgstr "閒置時"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
-msgstr ""
+msgstr "Kangentic 何時暫停正在等候您回應的代理程式。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low"
-msgstr ""
+msgstr "記憶體不足時"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr ""
+msgstr "記憶體不足時，每分鐘暫停一個等候你最久的代理程式，直到有足夠空間。"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Where each kind of alert shows up."
-msgstr ""
+msgstr "各類警示的顯示位置。"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Where new work starts, and how current it stays."
-msgstr ""
+msgstr "新工作的起點，以及如何保持最新。"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Where the agent's command-line tool runs, and how it starts."
-msgstr ""
+msgstr "代理程式命令列工具的執行位置及啟動方式。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Where the local model runs. Auto uses the GPU when there is one."
-msgstr ""
+msgstr "本機模型的執行位置。「自動」會在有 GPU 時使用 GPU。"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Where this project lives on disk."
-msgstr ""
+msgstr "此專案在磁碟上的位置。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
-msgstr ""
+msgstr "代理程式能否連線至 MCP 伺服器，包括此處及 CLI 路徑所指向的任何 WSL 發行版。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr ""
+msgstr "由哪個代理程式回答條件並命名工作與命令終端機；選定之前不會執行任何動作。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers your questions and writes the task summaries."
-msgstr ""
+msgstr "由哪個代理程式回答你的問題並撰寫工作摘要。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent CLI to use for new sessions"
-msgstr ""
+msgstr "新工作階段要使用的代理程式 CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
-msgstr ""
+msgstr "在工作流程檢視的左側窗格中，由哪個代理程式規劃各工作流程。選定之前不會啟動任何工作流程代理程式。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
-msgstr ""
+msgstr "新開啟的變更面板要顯示哪些變更：工作中 (未認可的編輯)、已暫存 (索引)，或整個分支與其基底的比較。"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Which features get used, as daily counts (never their content)"
-msgstr ""
+msgstr "使用了哪些功能，以每日次數計算 (絕不包含其內容)"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Which stats show in the bar under a task's terminal."
-msgstr ""
+msgstr "工作終端機下方列中顯示的統計資料。"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Wide"
-msgstr ""
+msgstr "寬"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Width of board columns"
-msgstr ""
+msgstr "看板欄的寬度"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Windows"
-msgstr ""
+msgstr "Windows"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgctxt "task windows"
 msgid "Windows"
-msgstr ""
+msgstr "視窗"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr ""
+msgstr "清除內嵌瀏覽器的 Cookie、localStorage、IndexedDB、Service Worker 及 HTTP/驗證快取。已儲存的 URL 會保留。"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "工作流程代理程式"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Workflow agent prompt"
-msgstr ""
+msgstr "工作流程代理程式提示"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "工作流程已完成"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "工作流程已停滯"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "工作流程"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Working"
-msgstr ""
+msgstr "工作區"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Worktree init script"
-msgstr ""
+msgstr "工作樹初始化指令碼"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Worktrees"
-msgstr ""
+msgstr "工作樹"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "長行自動換行"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
-msgstr ""
+msgstr "請寫信至 <0>{PRIVACY_CONTACT_EMAIL}</0>。"
 
 #. placeholder {0}: agent.cliTarget.distro
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "WSL: {0}"
-msgstr ""
+msgstr "WSL：{0}"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
+#, fuzzy
 msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."
-msgstr ""
+msgstr "作業系統和其他應用程式可能會先佔用快速鍵。若某個快速鍵在此沒有作用，請改用其他組合。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
-msgstr ""
+msgstr "您的手機也會顯示此代碼。請在手機上確認以完成配對。"

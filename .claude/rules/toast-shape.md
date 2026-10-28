@@ -13,7 +13,8 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
 ## The rule
 
 - **Every toast has a `title` and a body (`message`).** The title says what happened in a few
-  words; the body gives the task, the place or the detail, as one sentence that fits one line at
+  words (a translated title that runs past the 380px card wraps to a second line instead of
+  being cut off); the body gives the task, the place or the detail, as one sentence that fits one line at
   the card's 380px width. Only a task or file name may make it wrap. A reason main or the error
   wrote may follow as a second sentence (`asSentence`). A failure's title says what did not
   happen, most often "Couldn't ..." ("Couldn't resume session", "Automation failed"), and its body

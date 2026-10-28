@@ -8,190 +8,236 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{name}\""
-msgstr ""
+msgstr "“{name}”"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "\"{search}\""
-msgstr ""
+msgstr "“{search}”"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (needs you)} other {# Command Terminals running (needs you)}}"
-msgstr ""
+msgstr "{count, plural, other {# 个命令终端正在运行（需要你处理）}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (resting)} other {# Command Terminals running (resting)}}"
-msgstr ""
+msgstr "{count, plural, other {# 个命令终端正在运行（空闲）}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{count, plural, one {# Command Terminal running (working)} other {# Command Terminals running (working)}}"
-msgstr ""
+msgstr "{count, plural, other {# 个命令终端正在运行（工作中）}}"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
-msgstr ""
+msgstr "{groupProjectCount, plural, other {其中的 # 个项目将变为未分组。}}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle"
-msgstr ""
+msgstr "{idleCount} 个空闲"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{idleCount} idle, {thinkingCount} thinking"
-msgstr ""
+msgstr "{idleCount} 个空闲，{thinkingCount} 个思考中"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (needs you)"
-msgstr ""
+msgstr "{projectName}，命令终端运行中（需要你处理）"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (resting)"
-msgstr ""
+msgstr "{projectName}，命令终端运行中（空闲）"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "{projectName}, Command Terminals running (working)"
-msgstr ""
+msgstr "{projectName}，命令终端运行中（工作中）"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "{projectName}: {label}"
-msgstr ""
+msgstr "{projectName}：{label}"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
+#, fuzzy
 msgid "{thinkingCount} thinking"
-msgstr ""
+msgstr "{thinkingCount} 个思考中"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Add project"
-msgstr ""
+msgstr "添加项目"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Are you sure you want to delete <0>\"{projectName}\"</0>?"
-msgstr ""
+msgstr "确定要删除<0>“{projectName}”</0>吗？"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "清除搜索"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+#, fuzzy
 msgid "Click to open"
-msgstr ""
+msgstr "单击以打开"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "删除"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Group"
-msgstr ""
+msgstr "删除分组"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete group <0>\"{groupName}\"</0>?"
-msgstr ""
+msgstr "删除分组<0>“{groupName}”</0>？"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Delete Project"
-msgstr ""
+msgstr "删除项目"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Group name"
-msgstr ""
+msgstr "分组名称"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Group options (or right-click)"
-msgstr ""
+msgstr "分组选项（或右键单击）"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Hide sidebar"
-msgstr ""
+msgstr "隐藏侧边栏"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "More options"
-msgstr ""
+msgstr "更多选项"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "More project actions"
-msgstr ""
+msgstr "更多项目操作"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move down"
-msgstr ""
+msgstr "下移"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "移动到"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
+#, fuzzy
 msgid "Move up"
-msgstr ""
+msgstr "上移"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarBackgroundMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "New group"
-msgstr ""
+msgstr "新建分组"
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "New project"
-msgstr ""
+msgstr "新建项目"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects match"
-msgstr ""
+msgstr "没有匹配的项目"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "No projects yet"
-msgstr ""
+msgstr "暂无项目"
 
 #: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
+#, fuzzy
 msgid "Open folder as project"
-msgstr ""
+msgstr "将文件夹作为项目打开"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Open in Explorer"
-msgstr ""
+msgstr "在资源管理器中打开"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectListItem.tsx
+#, fuzzy
 msgid "Open menu for {projectName}"
-msgstr ""
+msgstr "打开 {projectName} 的菜单"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupHeader.tsx
+#, fuzzy
 msgid "Open menu for group {groupName}"
-msgstr ""
+msgstr "打开分组 {groupName} 的菜单"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Project deleted"
-msgstr ""
+msgstr "项目已删除"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Project Settings"
-msgstr ""
+msgstr "项目设置"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "项目"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Remove from group"
-msgstr ""
+msgstr "从分组中移除"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "重命名"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Search projects..."
-msgstr ""
+msgstr "搜索项目..."
 
 #: src/renderer/components/sidebar/CollapsedRail.tsx
+#, fuzzy
 msgid "Show sidebar"
-msgstr ""
+msgstr "显示侧边栏"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
-msgstr ""
+msgstr "这会将项目从 Kangentic 中移除，但不会删除磁盘上的任何文件。"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
+#, fuzzy
 msgid "Use Add project below to open a folder"
-msgstr ""
+msgstr "使用下方的“添加项目”打开文件夹"

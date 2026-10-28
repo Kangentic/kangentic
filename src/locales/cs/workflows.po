@@ -8,662 +8,820 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is now in {targetName}."
-msgstr ""
+msgstr "„{taskTitle}“ je nyní v: {targetName}."
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": {reason}"
-msgstr ""
+msgstr "„{taskTitle}“: {reason}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{blockedCount} blocked"
-msgstr ""
+msgstr "Blokováno: {blockedCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{doneCount} of {taskCount}"
-msgstr ""
+msgstr "{doneCount} z {taskCount}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{doneCount} of {taskCount} done"
-msgstr ""
+msgstr "Hotovo {doneCount} z {taskCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{idleTasks} idle"
-msgstr ""
+msgstr "Nečinné: {idleTasks}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{inProgressCount} in progress"
-msgstr ""
+msgstr "Probíhá: {inProgressCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "{name}, {countText}"
-msgstr ""
+msgstr "{name}, {countText}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{progress}."
-msgstr ""
+msgstr "{progress}."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{progress}. {counts}."
-msgstr ""
+msgstr "{progress}. {counts}."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{queuedCount} queued"
-msgstr ""
+msgstr "Ve frontě: {queuedCount}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: done"
-msgstr ""
+msgstr "{stopName}: hotovo"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: next"
-msgstr ""
+msgstr "{stopName}: další"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "{stopName}: now"
-msgstr ""
+msgstr "{stopName}: probíhá"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, one {# úloha} few {# úlohy} many {# úlohy} other {# úloh}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Creates # task. It starts automatically.} other {Creates # tasks. They start automatically in the order this workflow sets.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Vytvoří # úkol. Spustí se automaticky.} few {Vytvoří # úkoly. Spustí se automaticky v pořadí určeném tímto pracovním postupem.} many {Vytvoří # úkolu. Spustí se automaticky v pořadí určeném tímto pracovním postupem.} other {Vytvoří # úkolů. Spustí se automaticky v pořadí určeném tímto pracovním postupem.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Deletes its # planned task and the agent conversation. Nothing else changes.} other {Deletes its # planned tasks and the agent conversation. Nothing else changes.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Odstraní jeho # plánovaný úkol a konverzaci agenta. Nic jiného se nezmění.} few {Odstraní jeho # plánované úkoly a konverzaci agenta. Nic jiného se nezmění.} many {Odstraní jeho # plánovaného úkolu a konverzaci agenta. Nic jiného se nezmění.} other {Odstraní jeho # plánovaných úkolů a konverzaci agenta. Nic jiného se nezmění.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
-msgstr ""
+msgstr "{unfinished, plural, =0 {Jeho úkoly jsou dokončené a zůstanou na svém místě. Konverzace agenta se odstraní.} one {Jeho # nedokončený úkol zůstane na svém místě jako běžný úkol. Konverzace agenta se odstraní.} few {Jeho # nedokončené úkoly zůstanou na svém místě jako běžné úkoly. Konverzace agenta se odstraní.} many {Jeho # nedokončeného úkolu zůstane na svém místě jako běžné úkoly. Konverzace agenta se odstraní.} other {Jeho # nedokončených úkolů zůstane na svém místě jako běžné úkoly. Konverzace agenta se odstraní.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr ""
+msgstr "{unfinished, plural, one {Zůstane pozastavený, dokud ho neobnovíte.} few {Zůstanou pozastavené, dokud je neobnovíte.} many {Zůstanou pozastavené, dokud je neobnovíte.} other {Zůstanou pozastavené, dokud je neobnovíte.}}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "{workflowTitle} is complete."
-msgstr ""
+msgstr "{workflowTitle} – dokončeno."
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "#{displayId}: {reason}"
-msgstr ""
+msgstr "#{displayId}: {reason}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "task activity"
 msgid "Active"
-msgstr ""
+msgstr "Aktivní"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Add a task to this workflow"
-msgstr ""
+msgstr "Přidat úlohu do tohoto pracovního postupu"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Add blocker"
-msgstr ""
+msgstr "Přidat blokující úkol"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Add task"
-msgstr ""
+msgstr "Přidat úlohu"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "Agent je aktivní"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "Agent je nečinný"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent idle, last message {lastMessageTime}"
-msgstr ""
+msgstr "Agent je nečinný, poslední zpráva {lastMessageTime}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Agent paused"
-msgstr ""
+msgstr "Agent je pozastaven"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Another project"
-msgstr ""
+msgstr "Jiný projekt"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Approve this task's plans for you. Questions the agent asks still wait."
-msgstr ""
+msgstr "Schvaluje plány tohoto úkolu za vás. Otázky agenta dál čekají."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Ask for changes"
-msgstr ""
+msgstr "Požádat o změny"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Auto layout"
-msgstr ""
+msgstr "Automatické rozložení"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
-msgstr ""
+msgstr "Automatické"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Blocked by"
-msgstr ""
+msgstr "Blokováno"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Blocking"
-msgstr ""
+msgstr "Blokuje"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Zrušit"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Choose a workflow agent"
-msgstr ""
+msgstr "Vyberte agenta pracovních postupů"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Close workflow panel"
-msgstr ""
+msgstr "Zavřít panel pracovního postupu"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Collapse agent"
-msgstr ""
+msgstr "Sbalit agenta"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgctxt "stand-in for a column name"
 msgid "column"
-msgstr ""
+msgstr "sloupec"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Columns on its board"
-msgstr ""
+msgstr "Sloupce na jeho nástěnce"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Columns on the {boardName} board"
-msgstr ""
+msgstr "Sloupce na nástěnce {boardName}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Complete"
-msgstr ""
+msgstr "Dokončeno"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "Úlohu se nepodařilo odstranit"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "Úlohu nelze přesunout"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Create your first workflow"
-msgstr ""
+msgstr "Vytvořte svůj první pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Odstranit"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Delete {workflowTitle}?"
-msgstr ""
+msgstr "Odstranit {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Deletes the agent conversation. Nothing else changes."
-msgstr ""
+msgstr "Odstraní konverzaci agenta. Nic jiného se nezmění."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "Zavřít"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "Done"
-msgstr ""
+msgstr "Hotovo"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Drag to resize"
-msgstr ""
+msgstr "Přetažením změníte velikost"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Edit Task"
-msgstr ""
+msgstr "Upravit úlohu"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Every route ends in {name}"
-msgstr ""
+msgstr "Každá trasa končí v {name}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Every route starts in {name}"
-msgstr ""
+msgstr "Každá trasa začíná v {name}"
 
 #: src/renderer/components/workflows/LazyWorkflowsView.tsx
+#, fuzzy
 msgid "Failed to load the workflows"
-msgstr ""
+msgstr "Nepodařilo se načíst pracovní postupy"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Fit every card in view"
-msgstr ""
+msgstr "Zobrazit všechny karty"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Fit view"
-msgstr ""
+msgstr "Přizpůsobit zobrazení"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgctxt "canvas link port"
 msgid "Handle"
-msgstr ""
+msgstr "Úchyt"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "task activity"
 msgid "Idle"
-msgstr ""
+msgstr "Nečinný"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Include {stepName}"
-msgstr ""
+msgstr "Zahrnout {stepName}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "It exists only in this workflow, so it is gone for good."
-msgstr ""
+msgstr "Existuje jen v tomto pracovním postupu, takže bude nenávratně odstraněn."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It plans your workflows, and starts when you ask for changes."
-msgstr ""
+msgstr "Plánuje vaše pracovní postupy a spustí se, když požádáte o změny."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It plans your workflows, and starts when you close Settings."
-msgstr ""
+msgstr "Plánuje vaše pracovní postupy a spustí se, když zavřete Nastavení."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "It starts when you close Settings."
-msgstr ""
+msgstr "Spustí se, když zavřete Nastavení."
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "It stays where it is, as an ordinary task."
-msgstr ""
+msgstr "Zůstane na svém místě jako běžný úkol."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "stand-in for a project name"
 msgid "its board"
-msgstr ""
+msgstr "jeho nástěnka"
 
 #. Stands in for a column name inside "has reached ..."
 #: src/renderer/components/workflows/workflow-graph.ts
+#, fuzzy
 msgid "its column"
-msgstr ""
+msgstr "svého sloupce"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Linked tasks that run through your board on their own."
-msgstr ""
+msgstr "Propojené úlohy, které samy procházejí vaší nástěnkou."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Loading..."
-msgstr ""
+msgstr "Načítání..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Make this task wait for another"
-msgstr ""
+msgstr "Nechat tento úkol čekat na jiný"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
-msgstr ""
+msgstr "Ruční"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Moved selected node {direction, select, left {left} right {right} up {up} down {down} other {}}. New position, x: {x}, y: {y}"
-msgstr ""
+msgstr "{direction, select, left {Vybraný uzel přesunut doleva. Nová pozice, x: {x}, y: {y}} right {Vybraný uzel přesunut doprava. Nová pozice, x: {x}, y: {y}} up {Vybraný uzel přesunut nahoru. Nová pozice, x: {x}, y: {y}} down {Vybraný uzel přesunut dolů. Nová pozice, x: {x}, y: {y}} other {Vybraný uzel přesunut. Nová pozice, x: {x}, y: {y}}}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "New workflow"
-msgstr ""
+msgstr "Nový pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "No card has been moved"
-msgstr ""
+msgstr "Žádná karta nebyla přesunuta"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "No conversation yet"
-msgstr ""
+msgstr "Zatím žádná konverzace"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "No task matches the search."
-msgstr ""
+msgstr "Hledání neodpovídá žádný úkol."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "No tasks yet."
-msgstr ""
+msgstr "Zatím žádné úkoly."
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "No workflow to start"
-msgstr ""
+msgstr "Žádný pracovní postup ke spuštění"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "No workflows"
-msgstr ""
+msgstr "Žádné pracovní postupy"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Not started"
-msgstr ""
+msgstr "Nezahájeno"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Nothing planned yet"
-msgstr ""
+msgstr "Zatím nic naplánováno"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open on {otherBoardName}"
-msgstr ""
+msgstr "Otevřít v: {otherBoardName}"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Open on board"
-msgstr ""
+msgstr "Otevřít na tabuli"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "Otevřít Nastavení"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open task"
-msgstr ""
+msgstr "Otevřít úkol"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open the main window to see the workflow."
-msgstr ""
+msgstr "Pracovní postup zobrazíte v hlavním okně."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Open workflow"
-msgstr ""
+msgstr "Otevřít pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Or right-click a task and choose New workflow."
-msgstr ""
+msgstr "Nebo klikněte pravým tlačítkem na úlohu a zvolte Nový pracovní postup."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "Pozastavit relaci"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
-msgstr ""
+msgstr "Pozastaveno"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Paused {pausedTime}"
-msgstr ""
+msgstr "Pozastaveno {pausedTime}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Plan approval"
-msgstr ""
+msgstr "Schvalování plánu"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Press enter or space to select a node. Press escape to cancel."
-msgstr ""
+msgstr "Stisknutím klávesy Enter nebo mezerníku vyberte uzel. Stisknutím klávesy Escape akci zrušíte."
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
+#, fuzzy
 msgid "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel."
-msgstr ""
+msgstr "Stisknutím klávesy Enter nebo mezerníku vyberte uzel. Poté můžete uzel přesouvat pomocí šipek. Stisknutím klávesy Escape akci zrušíte."
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Press Start and the tasks run automatically in order until complete."
-msgstr ""
+msgstr "Stiskněte Spustit a úlohy poběží automaticky v pořadí až do dokončení."
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Put moved cards back in the automatic layout"
-msgstr ""
+msgstr "Vrátit přesunuté karty do automatického rozložení"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
+#, fuzzy
 msgid "Release on a task to make it wait for {blockerLabel}"
-msgstr ""
+msgstr "Pusťte na úlohu, aby čekala na {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowTaskNode.tsx
+#, fuzzy
 msgid "Release to make {blockedLabel} wait for {blockerLabel}"
-msgstr ""
+msgstr "Pusťte a {blockedLabel} bude čekat na {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "Odebrat"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Remove {label} from {workflowTitle}?"
-msgstr ""
+msgstr "Odebrat {label} z {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Remove #{displayId} from its workflow first."
-msgstr ""
+msgstr "Nejprve odeberte #{displayId} z jejího pracovního postupu."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Remove link"
-msgstr ""
+msgstr "Odebrat propojení"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Přejmenovat"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Rename workflow"
-msgstr ""
+msgstr "Přejmenovat pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resize the workflow agent"
-msgstr ""
+msgstr "Změnit velikost agenta pracovních postupů"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "automations"
 msgid "Resume"
-msgstr ""
+msgstr "Obnovit"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
-msgstr ""
+msgstr "Pokračovat"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Resume automations"
-msgstr ""
+msgstr "Obnovit automatizace"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "Obnovit relaci"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Resume workflow"
-msgstr ""
+msgstr "Pokračovat v pracovním postupu"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Obnovování agenta..."
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Review the plan, and click a task to change its route or blockers."
-msgstr ""
+msgstr "Zkontrolujte plán a kliknutím na úlohu změňte její trasu nebo blokující úlohy."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "workflow section"
 msgid "Route"
-msgstr ""
+msgstr "Trasa"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Route step refused"
-msgstr ""
+msgstr "Směrování kroku bylo odmítnuto"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Run order"
-msgstr ""
+msgstr "Pořadí spuštění"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgctxt "workflow state"
 msgid "Running"
-msgstr ""
+msgstr "Spuštěno"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Running. Pause workflow"
-msgstr ""
+msgstr "Spuštěno. Pozastavit pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "Uložit"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Select this task"
-msgstr ""
+msgstr "Vybrat tento úkol"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Show the workflow agent"
-msgstr ""
+msgstr "Zobrazit agenta pracovních postupů"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Skip {stepName}"
-msgstr ""
+msgstr "Přeskočit {stepName}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "Stalled"
-msgstr ""
+msgstr "Zablokováno"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "Stalled on {stalledCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{stalledCount, plural, one {Zaseknuto u # úlohy} few {Zaseknuto u # úloh} many {Zaseknuto u # úlohy} other {Zaseknuto u # úloh}}"
 
 #: src/renderer/components/workflows/workflow-text.ts
+#, fuzzy
 msgid "Stalled on #{displayId}"
-msgstr ""
+msgstr "Zaseknuto u #{displayId}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
+#, fuzzy
 msgid "Stalled: {reason}"
-msgstr ""
+msgstr "Zablokováno: {reason}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgctxt "workflow action"
 msgid "Start"
-msgstr ""
+msgstr "Spustit"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Start {workflowTitle}?"
-msgstr ""
+msgstr "Spustit {workflowTitle}?"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Start this workflow"
-msgstr ""
+msgstr "Spustit tento pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "Start workflow"
-msgstr ""
+msgstr "Spustit pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Spouštění agenta..."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Starting the workflow agent..."
-msgstr ""
+msgstr "Spouštění agenta pracovních postupů..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Take this task out of the workflow"
-msgstr ""
+msgstr "Vyřadit tento úkol z pracovního postupu"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Task {sourceTaskLabel} moves to Done."
-msgstr ""
+msgstr "Úkol {sourceTaskLabel} se přesune do sloupce Hotovo."
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "Úloha přesunuta"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Tell the workflow agent what to build, and it plans the tasks."
-msgstr ""
+msgstr "Řekněte agentovi pracovního postupu, co má vytvořit, a on naplánuje úlohy."
 
 #: src/renderer/components/workflows/workflow-graph.ts
+#, fuzzy
 msgid "That task is no longer in this workflow."
-msgstr ""
+msgstr "Tato úloha už v tomto pracovním postupu není."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "The earlier conversation could not be resumed, so the agent started a new one."
-msgstr ""
+msgstr "Předchozí konverzaci nebylo možné obnovit, proto agent zahájil novou."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "The workflow agent has not seen this plan"
-msgstr ""
+msgstr "Agent pracovních postupů tento plán neviděl"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "The workflow this task is in could not be loaded."
-msgstr ""
+msgstr "Pracovní postup tohoto úkolu nelze načíst."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "The workflow this task was in no longer exists."
-msgstr ""
+msgstr "Pracovní postup, ve kterém byl tento úkol, již neexistuje."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "This task is no longer in {workflowTitle}."
-msgstr ""
+msgstr "Tento úkol již není v pracovním postupu {workflowTitle}."
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "This task is not in a workflow."
-msgstr ""
+msgstr "Tento úkol není v žádném pracovním postupu."
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
+#, fuzzy
 msgid "This workflow has no tasks yet."
-msgstr ""
+msgstr "Tento pracovní postup zatím nemá žádné úkoly."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "To Do"
-msgstr ""
+msgstr "K provedení"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "Zobrazit konverzaci"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Waiting for a free agent slot..."
-msgstr ""
+msgstr "Čekání na volný slot agenta..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "Waiting for you"
-msgstr ""
+msgstr "Čeká na vás"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
+#, fuzzy
 msgid "Workflow"
-msgstr ""
+msgstr "Pracovní postup"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "Agent pracovních postupů"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent chosen"
-msgstr ""
+msgstr "Agent pracovních postupů vybrán"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgid "Workflow agent is waiting for you"
-msgstr ""
+msgstr "Agent pracovních postupů na vás čeká"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
+#, fuzzy
 msgid "Workflow agent is working"
-msgstr ""
+msgstr "Agent pracovních postupů pracuje"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
 msgid "Workflow name"
-msgstr ""
+msgstr "Název pracovního postupu"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "Pracovní postupy"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
+#, fuzzy
 msgctxt "agent pane state"
 msgid "Working"
-msgstr ""
+msgstr "Pracuje"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
+#, fuzzy
 msgid "You approve this task's plans."
-msgstr ""
+msgstr "Plány tohoto úkolu schvalujete vy."

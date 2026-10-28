@@ -995,9 +995,10 @@ test.describe('ImportPopover - collapse scoped to its mount site', () => {
     await page.locator('[data-testid="backlog-view"]').waitFor({ state: 'visible', timeout: 10000 });
 
     // The app's own floor (`minWidth: 900`, src/main/index.ts). The mock's
-    // default sidebar width is 224px, leaving the toolbar row well under the
-    // backlog branch's 920px filterControl threshold (toolbar-collapse.ts), so
-    // the toolbar's own Import Tasks trigger goes icon-only here.
+    // default sidebar width is 224px, leaving the toolbar row far short of the
+    // width the backlog branch needs to keep its filter controls' labels
+    // (toolbar-collapse.ts), so the toolbar's own Import Tasks trigger goes
+    // icon-only here.
     await page.setViewportSize({ width: 900, height: 600 });
 
     // A freshly created project has no backlog items, so BOTH mount sites are

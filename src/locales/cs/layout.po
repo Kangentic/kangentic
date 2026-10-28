@@ -8,262 +8,327 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(dev)"
-msgstr ""
+msgstr "(vývoj)"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(worktree)"
-msgstr ""
+msgstr "(pracovní strom)"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeSessions, plural, one {# agents} other {# agents}}"
-msgstr ""
+msgstr "{activeSessions, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeTasks, plural, one {{activeTasksText} tasks} other {{activeTasksText} tasks}}"
-msgstr ""
+msgstr "{activeTasks, plural, one {{activeTasksText} úloha} few {{activeTasksText} úlohy} many {{activeTasksText} úlohy} other {{activeTasksText} úloh}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {Show all # agent} other {Show all # agents}}"
-msgstr ""
+msgstr "{agentCount, plural, one {Zobrazit # agenta} few {Zobrazit všechny # agenty} many {Zobrazit všech # agenta} other {Zobrazit všech # agentů}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{agentName} not found"
-msgstr ""
+msgstr "{agentName} nenalezen"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{foundAgentCount, plural, one {# agent} other {# agents}}"
-msgstr ""
+msgstr "{foundAgentCount, plural, one {# agent} few {# agenti} many {# agenta} other {# agentů}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{queued, plural, one {# queued} other {# queued}}"
-msgstr ""
+msgstr "{queued, plural, one {# ve frontě} few {# ve frontě} many {# ve frontě} other {# ve frontě}}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
-msgstr ""
+msgstr "{unreadAnnouncements, plural, one {# nepřečtené} few {# nepřečtené} many {# nepřečtené} other {# nepřečtených}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
-msgstr ""
+msgstr "<0>Nalezeno</0><1>{gitFact}</1><2>a</2><3><4>{agentFact}</4></3>"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "Monitor agentů"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents"
-msgstr ""
+msgstr "Agenti"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents run inside your repo, so they pick up the instructions and config already there"
-msgstr ""
+msgstr "Agenti běží uvnitř vašeho úložiště, takže převezmou instrukce a konfiguraci, které tam už jsou"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Announcements"
-msgstr ""
+msgstr "Oznámení"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Check again for git and agent CLIs"
-msgstr ""
+msgstr "Znovu zkontrolovat git a CLI agentů"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking your setup"
-msgstr ""
+msgstr "Kontrola nastavení"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "Probíhá kontrola..."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Zavřít"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Příkazový terminál"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "Zkopírováno!"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "Kopírovat „{loginCommand}“ do schránky"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy <0>{loginCommand}</0>"
-msgstr ""
+msgstr "Zkopírovat <0>{loginCommand}</0>"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Copy message"
-msgstr ""
+msgstr "Kopírovat zprávu"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Core"
-msgstr ""
+msgstr "Základ"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "Zavřít"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Each task runs on its own branch, so two agents never edit the same files"
-msgstr ""
+msgstr "Každá úloha běží ve vlastní větvi, takže dva agenti nikdy neupravují stejné soubory"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus agent monitor window"
-msgstr ""
+msgstr "Přepnout na okno monitoru agentů"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus Knowledge Graph window"
-msgstr ""
+msgstr "Přepnout na okno grafu znalostí"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus usage stats window"
-msgstr ""
+msgstr "Přepnout na okno statistik využití"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work."
-msgstr ""
+msgstr "Git {gitVersion} je starší než doporučená verze {minimumGitVersion} – pracovní stromy nemusí fungovat."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "Skrýt příkazový terminál"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Hide setup"
-msgstr ""
+msgstr "Skrýt nastavení"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install"
-msgstr ""
+msgstr "Nainstalovat"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git and one agent CLI to run tasks."
-msgstr ""
+msgstr "Pro spouštění úloh nainstalujte git a jedno CLI agenta."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git to run tasks."
-msgstr ""
+msgstr "Pro spouštění úloh nainstalujte git."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install one agent CLI to run tasks."
-msgstr ""
+msgstr "Pro spouštění úloh nainstalujte jedno CLI agenta."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Installed"
-msgstr ""
+msgstr "Nainstalováno"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Isolates every task"
-msgstr ""
+msgstr "Izoluje každou úlohu"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Kanban for AI coding agents"
-msgstr ""
+msgstr "Kanban pro AI agenty pro kódování"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Graf znalostí"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Maximize"
-msgstr ""
+msgstr "Maximalizovat"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Message copied"
-msgstr ""
+msgstr "Zpráva zkopírována"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Minimize"
-msgstr ""
+msgstr "Minimalizovat"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not installed"
-msgstr ""
+msgstr "Nenainstalováno"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "Nepřihlášeno"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Open a project"
-msgstr ""
+msgstr "Otevřít projekt"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Pair a phone"
-msgstr ""
+msgstr "Spárovat telefon"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Quick Find"
-msgstr ""
+msgstr "Rychlé hledání"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Read the setup guide"
-msgstr ""
+msgstr "Přečíst průvodce nastavením"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Reads your project's setup"
-msgstr ""
+msgstr "Načte nastavení projektu"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Refresh"
-msgstr ""
+msgstr "Obnovit"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Runs real terminals"
-msgstr ""
+msgstr "Spouští skutečné terminály"
 
 #: src/renderer/components/layout/AppLayout.tsx
+#, fuzzy
 msgid "Select a project from the sidebar"
-msgstr ""
+msgstr "Vyberte projekt na postranním panelu"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "Nastavení"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Show setup"
-msgstr ""
+msgstr "Zobrazit nastavení"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Sign in to {signedOutAgentName} to run tasks."
-msgstr ""
+msgstr "Pro spouštění úloh se přihlaste do {signedOutAgentName}."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Update available"
-msgstr ""
+msgstr "Je k dispozici aktualizace"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Usage Stats"
-msgstr ""
+msgstr "Statistiky využití"
 
 #: src/renderer/components/layout/StatusBar.tsx
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{appVersion}"
-msgstr ""
+msgstr "v{appVersion}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{version}"
-msgstr ""
+msgstr "v{version}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Version {pendingVersion} is ready to install"
-msgstr ""
+msgstr "Verze {pendingVersion} je připravena k instalaci"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Watch an agent work and type back to steer it"
-msgstr ""
+msgstr "Sledujte práci agenta a odpovídejte mu, abyste ho usměrnili"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "What's new in v{appVersion}"
-msgstr ""
+msgstr "Novinky ve verzi {appVersion}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "When you open a project"
-msgstr ""
+msgstr "Když otevřete projekt"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "You can look around now and install an agent later."
-msgstr ""
+msgstr "Můžete se zatím rozhlédnout a agenta nainstalovat později."

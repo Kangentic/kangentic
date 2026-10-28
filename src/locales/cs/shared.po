@@ -8,53 +8,66 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "{waitedCalls, plural, one {How long each tool ran. Leaves out the # call that waited for your answer or approval.} other {How long each tool ran. Leaves out the # calls that waited for your answer or approval.}}"
-msgstr ""
+msgstr "{waitedCalls, plural, one {Jak dlouho běžel každý nástroj. Nezahrnuje # volání, které čekalo na vaši odpověď nebo schválení.} few {Jak dlouho běžel každý nástroj. Nezahrnuje # volání, která čekala na vaši odpověď nebo schválení.} many {Jak dlouho běžel každý nástroj. Nezahrnuje # volání, která čekala na vaši odpověď nebo schválení.} other {Jak dlouho běžel každý nástroj. Nezahrnuje # volání, která čekala na vaši odpověď nebo schválení.}}"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Average run time of the calls Time counts."
-msgstr ""
+msgstr "Průměrná doba běhu volání započítaných ve sloupci Čas."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Avg"
-msgstr ""
+msgstr "Prům."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "Volání"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Cena"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted."
-msgstr ""
+msgstr "Odhadovaný počet tokenů, které výstup tohoto nástroje přidal do hlavní konverzace. Nejde o účtované tokeny; volání subagentů se nezapočítávají."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "Selhalo"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "How long each tool ran."
-msgstr ""
+msgstr "Jak dlouho běžel každý nástroj."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "In"
-msgstr ""
+msgstr "Vstup"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Out"
-msgstr ""
+msgstr "Výstup"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Time"
-msgstr ""
+msgstr "Čas"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "Tokeny"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "Nástroj"

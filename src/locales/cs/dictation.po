@@ -8,46 +8,57 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Vymazat"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Clear and start over"
-msgstr ""
+msgstr "Vymazat a začít znovu"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr ""
+msgstr "V polích pro heslo je diktování vypnuté"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
-msgstr ""
+msgstr "Vkládání..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Listening"
-msgstr ""
+msgstr "Poslouchám"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "No terminal or input focused"
-msgstr ""
+msgstr "Není aktivní terminál ani vstupní pole"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
-msgstr ""
+msgstr "Příprava modelu... {downloadPercent} %"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to insert"
-msgstr ""
+msgstr "Pusťte pro vložení"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to send"
-msgstr ""
+msgstr "Pusťte pro odeslání"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Sending..."
-msgstr ""
+msgstr "Odesílání..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Still sending the last one"
-msgstr ""
+msgstr "Stále se odesílá předchozí"

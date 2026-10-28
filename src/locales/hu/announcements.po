@@ -8,25 +8,31 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+#, fuzzy
 msgid "Announcements"
-msgstr ""
+msgstr "Közlemények"
 
 #: src/renderer/components/announcements/AnnouncementDialog.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Bezárás"
 
 #: src/renderer/components/announcements/AnnouncementBanner.tsx
+#, fuzzy
 msgid "Dismiss announcement"
-msgstr ""
+msgstr "Közlemény elvetése"
 
 #: src/renderer/components/announcements/AnnouncementBanner.tsx
+#, fuzzy
 msgid "Learn more"
-msgstr ""
+msgstr "További információ"
 
 #: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+#, fuzzy
 msgid "No announcements yet. Product news shows up here as it is published."
-msgstr ""
+msgstr "Még nincsenek közlemények. A termékhírek itt jelennek meg, amint megjelennek."
 
 #: src/renderer/components/announcements/AnnouncementDialog.tsx
+#, fuzzy
 msgid "QR code: {linkLabel}"
-msgstr ""
+msgstr "QR-kód: {linkLabel}"

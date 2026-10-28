@@ -8,39 +8,47 @@ msgstr ""
 "Language: ja\n"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Cancel"
-msgstr ""
+msgstr "キャンセル"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change and restart"
-msgstr ""
+msgstr "変更して再起動"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change the display language to {language}?"
-msgstr ""
+msgstr "表示言語を{language}に変更しますか?"
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "再起動できませんでした"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Kangentic restarts to change the language."
-msgstr ""
+msgstr "言語を変更するために Kangentic を再起動します。"
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "変更を適用するには Kangentic を再起動してください。"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Restart now"
-msgstr ""
+msgstr "今すぐ再起動"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Switch to {language}?"
-msgstr ""
+msgstr "{language}に切り替えますか?"

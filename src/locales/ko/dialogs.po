@@ -8,2771 +8,3421 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "\"{fileName}\" 파일이 10MB 제한을 초과합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "\"{name}\" will be removed when you save."
-msgstr ""
+msgstr "저장하면 \"{name}\"이(가) 제거됩니다."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{oversizedFileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "\"{oversizedFileName}\" 파일이 10MB 제한을 초과합니다."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "\"{relocatedName}\" now points at {relocatedPath}."
-msgstr ""
+msgstr "이제 \"{relocatedName}\"이(가) {relocatedPath}을(를) 가리킵니다."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is in {openBoardLaneName}."
-msgstr ""
+msgstr "\"{taskTitle}\" 작업이 {openBoardLaneName}에 있습니다."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is now in {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\"이(가) 이제 {columnName}에 있습니다."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is on the board."
-msgstr ""
+msgstr "\"{taskTitle}\" 작업이 보드에 추가되었습니다."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "({deleteFailureCount} failed)"
-msgstr ""
+msgstr "({deleteFailureCount}개 실패)"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr ""
+msgstr "{agentCount, plural, other {메모리 확보를 위해 에이전트 #개가 일시 중지됨}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr ""
+msgstr "{agentCount, plural, other {재개할 때까지 일시 중지 상태가 유지됩니다.}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
-msgstr ""
+msgstr "기본 분기보다 {ahead}개 앞섬, {behind}개 뒤처짐"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "{automationCount, plural, one {# automation runs here} other {# automations run here}}"
-msgstr ""
+msgstr "{automationCount, plural, other {여기서 자동화 #개 실행}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
-msgstr ""
+msgstr "{totalPixels, plural, other {픽셀 #개 중 {changedCount}개 다름}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "{columnName}, {triggerPhrase}"
-msgstr ""
+msgstr "{columnName}, {triggerPhrase}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: added {addedCount, plural, one {# automation} other {# automations}}"
-msgstr ""
+msgstr "{addedCount, plural, other {{columnName}: 자동화 #개 추가됨}}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: edited automations"
-msgstr ""
+msgstr "{columnName}: 자동화 편집됨"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: removed {removedCount, plural, one {# automation} other {# automations}}"
-msgstr ""
+msgstr "{removedCount, plural, other {{columnName}: 자동화 #개 제거됨}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
-msgstr ""
+msgstr "{commitCount, plural, other {이 작업의 커밋 #개}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
-msgstr ""
+msgstr "{commitCount, plural, other {이 분기의 커밋 #개}}"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "{contextLabel} context window"
-msgstr ""
+msgstr "{contextLabel} 컨텍스트 창"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
-msgstr ""
+msgstr "{count, plural, other {도구별 도구 호출 #회}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{fileCount, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{fileCount, plural, other {파일 #개}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{filesChanged, plural, one {# file changed} other {# files changed}}"
-msgstr ""
+msgstr "{filesChanged, plural, other {#개 파일 변경됨}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{filesChanged, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{filesChanged, plural, other {#개 파일}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{filteredCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{filteredCount, plural, other {작업 #개}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{filteredCount} of {archivedTotalCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{archivedTotalCount, plural, other {작업 #개 중 {filteredCount}개}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{leadingParts} and {lastPart}"
-msgstr ""
+msgstr "{leadingParts} 및 {lastPart}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{linesAdded, plural, one {# line added} other {# lines added}}"
-msgstr ""
+msgstr "{linesAdded, plural, other {#줄 추가됨}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
-msgstr ""
+msgstr "{linesRemoved, plural, other {#줄 삭제됨}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
-msgstr ""
+msgstr "{maxInstances, plural, other {파일 diff 창이 #개 열려 있습니다. 다른 창을 열려면 하나를 닫으세요.}}"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "{name} enabled"
-msgstr ""
+msgstr "{name} 사용"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "{newer} available"
-msgstr ""
+msgstr "{newer} 사용 가능"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "{newerModelLabel} available"
-msgstr ""
+msgstr "{newerModelLabel} 사용 가능"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{nextFileCombo} - next changed file"
-msgstr ""
+msgstr "{nextFileCombo} - 다음 변경된 파일"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "{oldPath} to {newPath}"
-msgstr ""
+msgstr "{oldPath}에서 {newPath}(으)로"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
-msgstr ""
+msgstr "{pattern}: {rule}(예: {sample})."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{pattern}: {rule}."
-msgstr ""
+msgstr "{pattern}: {rule}."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "{percent}% of pixels changed"
-msgstr ""
+msgstr "픽셀의 {percent}% 변경됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "{pillLabel}: {reason}"
-msgstr ""
+msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{position} of {total}"
-msgstr ""
+msgstr "{position}/{total}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{reason} Saved {savedBeforeFailing} before failing."
-msgstr ""
+msgstr "{reason} 실패 전 완료된 작업: {savedBeforeFailing}."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
-msgstr ""
+msgstr "{rule}<0>(예: {sample})</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr ""
+msgstr "{maxConcurrent, plural, other {에이전트 슬롯 {runningCount} / #개 사용 중}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedTotal, plural, other {열 #개}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {Delete # completed task} other {Delete # completed tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, other {완료된 작업 #개 삭제}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {Delete # task} other {Delete # tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, other {작업 #개 삭제}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # task, its session history, and any associated worktrees.} other {This will permanently delete # tasks, their session history, and any associated worktrees.}}"
-msgstr ""
+msgstr "{selectedCount, plural, other {작업 #개와 해당 세션 기록 및 연결된 모든 작업 트리가 영구적으로 삭제됩니다.}}"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+#, fuzzy
 msgid "{selectedCount} selected"
-msgstr ""
+msgstr "{selectedCount}개 선택됨"
 
 #. The Board saved toast: the saved changes as one clause, ended as a sentence.
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{sentence}."
-msgstr ""
+msgstr "{sentence}."
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "{shownCount} of {totalCount}"
-msgstr ""
+msgstr "{shownCount}/{totalCount}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{startedText} to {endedText}"
-msgstr ""
+msgstr "{startedText} ~ {endedText}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{statusLabel}: {filePath}"
-msgstr ""
+msgstr "{statusLabel}: {filePath}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "{subagentName} subagent"
-msgstr ""
+msgstr "{subagentName} 서브에이전트"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{surfaceHeaderAhead} ahead, {surfaceHeaderBehind} behind base branch"
-msgstr ""
+msgstr "기본 분기보다 {surfaceHeaderAhead}개 앞섬, {surfaceHeaderBehind}개 뒤처짐"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Move or delete its task first.} other {Move or delete all # tasks first.}}"
-msgstr ""
+msgstr "{taskCount, plural, other {먼저 작업 #개를 모두 이동하거나 삭제하세요.}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{tokenCountText} tokens"
-msgstr ""
+msgstr "토큰 {tokenCountText}개"
 
 #: src/renderer/components/dialogs/completed-tasks/tooltip.ts
+#, fuzzy
 msgid "{toolCallCount, plural, one {# tool call} other {# tool calls}}"
-msgstr ""
+msgstr "{toolCallCount, plural, other {도구 호출 #회}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{totalCostText} total cost"
-msgstr ""
+msgstr "총비용 {totalCostText}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{totalFilesChanged, plural, one {# file changed} other {# files changed}}"
-msgstr ""
+msgstr "{totalFilesChanged, plural, other {파일 #개 변경됨}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {# files marked viewed}}"
-msgstr ""
+msgstr "{fileCount, plural, other {파일 #개 중 {viewedCount}개 확인됨}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
-msgstr ""
+msgstr "{fileCount, plural, other {파일 #개 중 {viewedCount}개 확인함}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "A narrow pane renders inline"
-msgstr ""
+msgstr "좁은 창에서는 인라인으로 표시됨"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "A profile named \"{trimmed}\" already exists."
-msgstr ""
+msgstr "이름이 \"{trimmed}\"인 프로필이 이미 있습니다."
 
 #: src/renderer/components/dialogs/board-manager/form-layout.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "{label} 정보"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Action"
-msgstr ""
+msgstr "동작"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Add automation"
-msgstr ""
+msgstr "자동화 추가"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Add column"
-msgstr ""
+msgstr "열 추가"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Added"
-msgstr ""
+msgstr "추가됨"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "After"
-msgstr ""
+msgstr "변경 후"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "After image opacity"
-msgstr ""
+msgstr "변경 후 이미지 불투명도"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "After Plan Mode"
-msgstr ""
+msgstr "계획 모드 후"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "After, faded"
-msgstr ""
+msgstr "변경 후, 흐리게"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "에이전트"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Agent"
-msgstr ""
+msgstr "에이전트"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview group"
 msgid "Agent"
-msgstr ""
+msgstr "에이전트"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "에이전트 기본값"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Agent evaluation"
-msgstr ""
+msgstr "에이전트 평가"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Agent Override"
-msgstr ""
+msgstr "에이전트 재정의"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Agent runtime"
-msgstr ""
+msgstr "에이전트 실행 시간"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Agent runtime"
-msgstr ""
+msgstr "에이전트 실행 시간"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Agent: {agentOverrideLabel}"
-msgstr ""
+msgstr "에이전트: {agentOverrideLabel}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "All columns"
-msgstr ""
+msgstr "모든 열"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "All tests pass"
-msgstr ""
+msgstr "모든 테스트 통과"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Already up to date"
-msgstr ""
+msgstr "이미 최신 상태임"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Already used on this column."
-msgstr ""
+msgstr "이 열에서 이미 사용 중입니다."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "An alternate set of per-column agent, model, and effort settings"
-msgstr ""
+msgstr "열별 에이전트, 모델, 노력 수준 설정의 대체 세트"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Another column uses this icon"
-msgstr ""
+msgstr "다른 열에서 이 아이콘을 사용 중입니다"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Approve each plan for you. Questions the agent asks still wait."
-msgstr ""
+msgstr "계획을 자동으로 승인합니다. 에이전트의 질문은 계속 응답을 기다립니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Archive"
-msgstr ""
+msgstr "보관"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Archived"
-msgstr ""
+msgstr "보관됨"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
-msgstr ""
+msgstr "자동"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Automation needs a name"
-msgstr ""
+msgstr "자동화 이름이 필요합니다"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "Automations"
-msgstr ""
+msgstr "자동화"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Automations are shared by every profile. Switch to Default to edit them."
-msgstr ""
+msgstr "자동화는 모든 프로필에서 공유됩니다. 편집하려면 기본값으로 전환하세요."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Automations changed on:"
-msgstr ""
+msgstr "자동화가 변경된 열:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedAutomationColumns, plural, other {열 #개의 자동화}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to all changes"
-msgstr ""
+msgstr "모든 변경 사항으로 돌아가기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Branch"
-msgstr ""
+msgstr "분기로 돌아가기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Staged"
-msgstr ""
+msgstr "스테이징됨으로 돌아가기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Working"
-msgstr ""
+msgstr "작업 중으로 돌아가기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Background calls"
-msgstr ""
+msgstr "백그라운드 호출"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
+#, fuzzy
 msgid "Base branch"
-msgstr ""
+msgstr "기준 분기"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Base branch: {displayBranch}"
-msgstr ""
+msgstr "기준 분기: {displayBranch}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Base: {baseBranch}"
-msgstr ""
+msgstr "기준: {baseBranch}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Based on {baseLabel}, not the project default"
-msgstr ""
+msgstr "{baseLabel} 기반, 프로젝트 기본값 아님"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Based on {baseLabel}, the project default"
-msgstr ""
+msgstr "{baseLabel} 기반, 프로젝트 기본값"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Before"
-msgstr ""
+msgstr "변경 전"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "binary"
-msgstr ""
+msgstr "바이너리"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Binary file - cannot display diff"
-msgstr ""
+msgstr "바이너리 파일 - diff를 표시할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Blame is unavailable for this file"
-msgstr ""
+msgstr "이 파일에는 Blame을 사용할 수 없습니다"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Board Profile changes will also be discarded."
-msgstr ""
+msgstr "보드 프로필 변경 사항도 삭제됩니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Board saved"
-msgstr ""
+msgstr "보드 저장됨"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
+#, fuzzy
 msgid "Branch"
-msgstr ""
+msgstr "분기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Branch"
-msgstr ""
+msgstr "분기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cache read"
-msgstr ""
+msgstr "캐시 읽기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cache write"
-msgstr ""
+msgstr "캐시 쓰기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Call"
-msgstr ""
+msgstr "호출"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Can't fast-forward"
-msgstr ""
+msgstr "빨리 감기할 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Can't remove \"{name}\""
-msgstr ""
+msgstr "\"{name}\"을(를) 제거할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Can't update from {baseBranch}"
-msgstr ""
+msgstr "{baseBranch}에서 업데이트할 수 없음"
 
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 #: src/renderer/components/dialogs/DialogFooterActions.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "취소"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Change in Settings"
-msgstr ""
+msgstr "설정에서 변경"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Changed pixels"
-msgstr ""
+msgstr "변경된 픽셀"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Changes"
-msgstr ""
+msgstr "변경 사항"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Changes"
-msgstr ""
+msgstr "변경 사항"
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "Changes - #{displayId} {taskTitle}"
-msgstr ""
+msgstr "변경 사항 - #{displayId} {taskTitle}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "Changes are open in their own window"
-msgstr ""
+msgstr "변경 사항이 별도 창에 열려 있습니다"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Choose icon"
-msgstr ""
+msgstr "아이콘 선택"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Choose Icon"
-msgstr ""
+msgstr "아이콘 선택"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Choose icon: {chosenIconName}"
-msgstr ""
+msgstr "아이콘 선택: {chosenIconName}"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Clear"
-msgstr ""
+msgstr "지우기"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Close"
-msgstr ""
+msgstr "닫기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Close browser"
-msgstr ""
+msgstr "브라우저 닫기"
 
 #: src/renderer/components/dialogs/BaseDialog.tsx
+#, fuzzy
 msgid "Close dialog"
-msgstr ""
+msgstr "대화 상자 닫기"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Close dropdown"
-msgstr ""
+msgstr "드롭다운 닫기"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
-msgstr ""
+msgstr "지금 닫으면 이 새 작업과 저장되지 않은 변경 사항이 삭제됩니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Closing now will discard unsaved changes in:"
-msgstr ""
+msgstr "지금 닫으면 다음 항목의 저장되지 않은 변경 사항이 삭제됩니다:"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard your changes to this task."
-msgstr ""
+msgstr "지금 닫으면 이 작업의 변경 사항이 삭제됩니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Collapse all"
-msgstr ""
+msgstr "모두 축소"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Collapse history"
-msgstr ""
+msgstr "기록 접기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Collapse to split view"
-msgstr ""
+msgstr "분할 보기로 축소"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Collapse unchanged"
-msgstr ""
+msgstr "변경되지 않은 영역 접기"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color"
-msgstr ""
+msgstr "색상"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color {presetColor}"
-msgstr ""
+msgstr "색상 {presetColor}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color {presetColor} (selected)"
-msgstr ""
+msgstr "색상 {presetColor}(선택됨)"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column name fallback"
 msgid "column"
-msgstr ""
+msgstr "열"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgctxt "unnamed column fallback"
 msgid "column"
-msgstr ""
+msgstr "열"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Column"
-msgstr ""
+msgstr "열"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Column"
-msgstr ""
+msgstr "열"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column Manager"
-msgstr ""
+msgstr "열 관리자"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column name"
-msgstr ""
+msgstr "열 이름"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column needs a name"
-msgstr ""
+msgstr "열 이름이 필요합니다"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column order changes will also be discarded."
-msgstr ""
+msgstr "열 순서 변경 사항도 삭제됩니다."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Column Settings"
-msgstr ""
+msgstr "열 설정"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Columns"
-msgstr ""
+msgstr "열"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr ""
+msgstr "이 열에 별도 세션을 지정하지 않으면 열들은 작업의 기본 대화를 공유합니다. 격리된 세션은 진입할 때마다 새로 시작되므로 코드 리뷰처럼 이전 작업을 이어받지 않아야 하는 단계에 적합합니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Commands"
-msgstr ""
+msgstr "명령"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
+#, fuzzy
 msgid "Commit graph"
-msgstr ""
+msgstr "커밋 그래프"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "커밋"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Compactions"
-msgstr ""
+msgstr "압축"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Compare every column's settings side by side"
-msgstr ""
+msgstr "모든 열의 설정을 나란히 비교"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Comparing pixels"
-msgstr ""
+msgstr "픽셀 비교 중"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Completed"
-msgstr ""
+msgstr "완료 시간"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Completed"
-msgstr ""
+msgstr "완료됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "Completed task"
-msgstr ""
+msgstr "완료된 작업"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Completed Tasks ({archivedTotalCount})"
-msgstr ""
+msgstr "완료된 작업({archivedTotalCount})"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Condition"
-msgstr ""
+msgstr "조건"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Condition check"
-msgstr ""
+msgstr "조건 확인"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Condition kind"
-msgstr ""
+msgstr "조건 종류"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Condition: {condition}"
-msgstr ""
+msgstr "조건: {condition}"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
+#, fuzzy
 msgid "Confirm"
-msgstr ""
+msgstr "확인"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Conversation"
-msgstr ""
+msgstr "대화"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Conversation"
-msgstr ""
+msgstr "대화"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Copied"
-msgstr ""
+msgstr "복사됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Copy conversation ID"
-msgstr ""
+msgstr "대화 ID 복사"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Copy existing"
-msgstr ""
+msgstr "기존 항목 복사"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Copy isolated conversation ID"
-msgstr ""
+msgstr "격리된 대화 ID 복사"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Copy path"
-msgstr ""
+msgstr "경로 복사"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Copy task ID"
-msgstr ""
+msgstr "작업 ID 복사"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cost"
-msgstr ""
+msgstr "비용"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Cost"
-msgstr ""
+msgstr "비용"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Could not compare pixels"
-msgstr ""
+msgstr "픽셀을 비교할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Could not read"
-msgstr ""
+msgstr "읽을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Could not read this image"
-msgstr ""
+msgstr "이 이미지를 읽을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "Could not read this task's record"
-msgstr ""
+msgstr "이 작업의 기록을 읽을 수 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "Couldn't add \"{filename}\""
-msgstr ""
+msgstr "\"{filename}\"을(를) 추가할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't archive task"
-msgstr ""
+msgstr "작업을 보관할 수 없음"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Couldn't compress image"
-msgstr ""
+msgstr "이미지를 압축할 수 없음"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't create task"
-msgstr ""
+msgstr "작업을 만들 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\""
-msgstr ""
+msgstr "\"{deletedColumnName}\"을(를) 삭제할 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\": {reasonText}"
-msgstr ""
+msgstr "\"{deletedColumnName}\"을(를) 삭제할 수 없음: {reasonText}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Couldn't fetch {baseBranch}"
-msgstr ""
+msgstr "{baseBranch}을(를) 가져올 수 없음"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgid "Couldn't open \"{filename}\""
-msgstr ""
+msgstr "\"{filename}\"을(를) 열 수 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Couldn't open file diff"
-msgstr ""
+msgstr "파일 diff를 열 수 없음"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Couldn't relocate project"
-msgstr ""
+msgstr "프로젝트 위치를 변경할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "Couldn't remove attachment"
-msgstr ""
+msgstr "첨부 파일을 제거할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't reset session"
-msgstr ""
+msgstr "세션을 초기화할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Couldn't resolve PR"
-msgstr ""
+msgstr "PR을 확인할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't run {commandName}"
-msgstr ""
+msgstr "{commandName}을(를) 실행할 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save"
-msgstr ""
+msgstr "저장할 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\""
-msgstr ""
+msgstr "\"{columnName}\"의 자동화를 저장할 수 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\": {reasonText}"
-msgstr ""
+msgstr "\"{columnName}\"의 자동화를 저장할 수 없음: {reasonText}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save profiles"
-msgstr ""
+msgstr "프로필을 저장할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't save task"
-msgstr ""
+msgstr "작업을 저장할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't send to backlog"
-msgstr ""
+msgstr "백로그로 보낼 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't switch branch"
-msgstr ""
+msgstr "분기를 전환할 수 없음"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Create"
-msgstr ""
+msgstr "만들기"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "created {savedCreates, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedCreates, plural, other {열 #개 생성}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Custom color"
-msgstr ""
+msgstr "사용자 지정 색"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board overview value"
 msgid "Default"
-msgstr ""
+msgstr "기본값"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board profile"
 msgid "Default"
-msgstr ""
+msgstr "기본값"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgctxt "placeholder"
 msgid "Default"
-msgstr ""
+msgstr "기본값"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgctxt "profile option"
 msgid "Default"
-msgstr ""
+msgstr "기본값"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Default ({iconRoleName})"
-msgstr ""
+msgstr "기본값({iconRoleName})"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Delete"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Delete {name}"
-msgstr ""
+msgstr "{name} 삭제"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Delete completed task"
-msgstr ""
+msgstr "완료된 작업 삭제"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "작업 삭제"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Delete this profile"
-msgstr ""
+msgstr "이 프로필 삭제"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Deleted"
-msgstr ""
+msgstr "삭제됨"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "deleted {savedDeletes, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedDeletes, plural, other {열 #개 삭제}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Deleting {deleteCompleted} of {deleteTotal}"
-msgstr ""
+msgstr "{deleteTotal}개 중 {deleteCompleted}개 삭제 중"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Description"
-msgstr ""
+msgstr "설명"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Description"
-msgstr ""
+msgstr "설명"
 
 #: src/renderer/components/dialogs/task-detail/changes/CommitSelectionBar.tsx
+#, fuzzy
 msgid "Deselect commit"
-msgstr ""
+msgstr "커밋 선택 해제"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Diff"
-msgstr ""
+msgstr "차이"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Diff scope"
-msgstr ""
+msgstr "Diff 범위"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "저장되지 않은 변경 사항을 삭제할까요?"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
+#, fuzzy
 msgid "Don't ask again"
-msgstr ""
+msgstr "다시 묻지 않음"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Done"
-msgstr ""
+msgstr "완료"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "Done"
-msgstr ""
+msgstr "완료"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Double-click to reset"
-msgstr ""
+msgstr "두 번 클릭하여 초기화"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "드래그하여 순서 변경"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Drag to resize"
-msgstr ""
+msgstr "드래그하여 크기 조정"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Drag to reveal the new image"
-msgstr ""
+msgstr "드래그하여 새 이미지 표시"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Drop files here"
-msgstr ""
+msgstr "여기에 파일 놓기"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Duplicate profile"
-msgstr ""
+msgstr "프로필 복제"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Duplicate this profile"
-msgstr ""
+msgstr "이 프로필 복제"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "e.g. Simple or Complex"
-msgstr ""
+msgstr "예: 단순 또는 복잡"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Each column applies its own settings as the task moves."
-msgstr ""
+msgstr "작업이 이동하면 각 열이 자체 설정을 적용합니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Edit"
-msgstr ""
+msgstr "편집"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Edit {name}"
-msgstr ""
+msgstr "{name} 편집"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Edit agent defaults in Settings"
-msgstr ""
+msgstr "설정에서 에이전트 기본값 편집"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Edit automation"
-msgstr ""
+msgstr "자동화 편집"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Edit profiles in Edit Columns"
-msgstr ""
+msgstr "열 편집에서 프로필 편집"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "노력 수준"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Effort"
-msgstr ""
+msgstr "추론 강도"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Effort"
-msgstr ""
+msgstr "추론 강도"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Elapsed"
-msgstr ""
+msgstr "경과 시간"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Ended"
-msgstr ""
+msgstr "종료"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Ended"
-msgstr ""
+msgstr "종료됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Error"
-msgstr ""
+msgstr "오류"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Exited ({exitCode})"
-msgstr ""
+msgstr "종료됨({exitCode})"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Expand all"
-msgstr ""
+msgstr "모두 확장"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Expand changes"
-msgstr ""
+msgstr "변경 사항 확장"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Expand history"
-msgstr ""
+msgstr "기록 펼치기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Extension"
-msgstr ""
+msgstr "확장자"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Fade between the two images"
-msgstr ""
+msgstr "두 이미지 간 페이드 전환"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Failed to load diff"
-msgstr ""
+msgstr "diff를 불러오지 못함"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load diff viewer"
-msgstr ""
+msgstr "diff 뷰어를 불러오지 못했습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "변경 사항 패널을 로드하지 못했습니다"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Fast-forwarded {commitCount, plural, one {# commit} other {# commits}}."
-msgstr ""
+msgstr "{commitCount, plural, other {커밋 #개를 빨리 감기했습니다.}}"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "File"
-msgstr ""
+msgstr "파일"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "File too large"
-msgstr ""
+msgstr "파일이 너무 큼"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Files"
-msgstr ""
+msgstr "파일"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Files changed"
-msgstr ""
+msgstr "변경된 파일"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Filter files..."
-msgstr ""
+msgstr "파일 필터..."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Flat list"
-msgstr ""
+msgstr "단순 목록"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Frequency"
-msgstr ""
+msgstr "빈도"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Fresh input"
-msgstr ""
+msgstr "새 입력"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "From session totals"
-msgstr ""
+msgstr "세션 합계 기준"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "일반"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Generate title"
-msgstr ""
+msgstr "제목 생성"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Git could not reach origin."
-msgstr ""
+msgstr "Git이 origin에 연결할 수 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Git LFS pointer"
-msgstr ""
+msgstr "Git LFS 포인터"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Hand off context when the agent changes"
-msgstr ""
+msgstr "에이전트가 바뀌면 컨텍스트 전달"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Handoff"
-msgstr ""
+msgstr "인계"
 
 #: src/renderer/components/dialogs/task-detail/HandoffTimeline.tsx
+#, fuzzy
 msgid "Handoff Chain"
-msgstr ""
+msgstr "핸드오프 체인"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Hex color value"
-msgstr ""
+msgstr "16진수 색 값"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide browser"
-msgstr ""
+msgstr "브라우저 숨기기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide changes"
-msgstr ""
+msgstr "변경 내용 숨기기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide description"
-msgstr ""
+msgstr "설명 숨기기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide workflow"
-msgstr ""
+msgstr "워크플로 숨기기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Highlight the pixels that changed"
-msgstr ""
+msgstr "변경된 픽셀 강조 표시"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "History"
-msgstr ""
+msgstr "기록"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "History: {historyFileName}"
-msgstr ""
+msgstr "기록: {historyFileName}"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "How many times it can run on a task."
-msgstr ""
+msgstr "작업 하나에서 실행할 수 있는 횟수입니다."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "How this task runs"
-msgstr ""
+msgstr "이 작업의 실행 방식"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "아이콘"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Icons failed to load. Restart Kangentic to try again."
-msgstr ""
+msgstr "아이콘을 불러오지 못했습니다. Kangentic을 다시 시작한 후 다시 시도하세요."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "If it was moved or renamed, locate the new folder to keep all tasks and board history."
-msgstr ""
+msgstr "폴더를 이동했거나 이름을 바꾼 경우 새 폴더를 찾아 모든 작업과 보드 기록을 유지하세요."
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "공백 무시"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Image"
-msgstr ""
+msgstr "이미지"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Image comparison"
-msgstr ""
+msgstr "이미지 비교"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Image preview"
-msgstr ""
+msgstr "이미지 미리 보기"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Image sent at lower quality"
-msgstr ""
+msgstr "이미지를 낮은 화질로 보냄"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "Indexing is off, so no commits are linked"
-msgstr ""
+msgstr "인덱싱이 꺼져 있어 연결된 커밋이 없습니다"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Inherits every column's settings from {sourceName}."
-msgstr ""
+msgstr "{sourceName}의 모든 열 설정을 상속합니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Inline"
-msgstr ""
+msgstr "인라인"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "좁을 때 인라인"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Input with cache"
-msgstr ""
+msgstr "캐시 포함 입력"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "session target"
 msgid "Isolated"
-msgstr ""
+msgstr "격리"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "It was still large after compression."
-msgstr ""
+msgstr "압축 후에도 크기가 여전히 큽니다."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "JSON File"
-msgstr ""
+msgstr "JSON 파일"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Jupyter Notebook"
-msgstr ""
+msgstr "Jupyter Notebook"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "계속 편집"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Kept alive until you close it"
-msgstr ""
+msgstr "닫을 때까지 유지됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Knowledge Graph indexing is off"
-msgstr ""
+msgstr "Knowledge Graph 인덱싱이 꺼져 있음"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+#, fuzzy
 msgid "Labels"
-msgstr ""
+msgstr "레이블"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Last message"
-msgstr ""
+msgstr "마지막 메시지"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Later"
-msgstr ""
+msgstr "나중에"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Lines"
-msgstr ""
+msgstr "줄"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Link PR"
-msgstr ""
+msgstr "PR 연결"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Loading branches..."
-msgstr ""
+msgstr "분기 불러오는 중..."
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Loading icons"
-msgstr ""
+msgstr "아이콘 불러오는 중"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Locate Folder..."
-msgstr ""
+msgstr "폴더 찾기..."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "session target"
 msgid "Main"
-msgstr ""
+msgstr "메인"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr ""
+msgstr "메인은 작업의 대화를 이어 가고, 격리는 진입할 때마다 새로 시작합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
-msgstr ""
+msgstr "수동"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Mark as not viewed"
-msgstr ""
+msgstr "확인 안 함으로 표시"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Mark as viewed"
-msgstr ""
+msgstr "확인함으로 표시"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr ""
+msgstr "에이전트의 마지막 줄과 대소문자 및 문장 부호를 무시하고 비교하며, *를 와일드카드로 사용합니다."
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
+#, fuzzy
 msgid "Maximize dialog"
-msgstr ""
+msgstr "대화 상자 최대화"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Maximum runs"
-msgstr ""
+msgstr "최대 실행 횟수"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "모델"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Model"
-msgstr ""
+msgstr "모델"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Model"
-msgstr ""
+msgstr "모델"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Models and tokens"
-msgstr ""
+msgstr "모델 및 토큰"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Modified"
-msgstr ""
+msgstr "수정됨"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "이동"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name"
-msgstr ""
+msgstr "이름"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Name"
-msgstr ""
+msgstr "이름"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name it before saving."
-msgstr ""
+msgstr "저장하기 전에 이름을 지정하세요."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Name terminal"
-msgstr ""
+msgstr "터미널 이름 지정"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
-msgstr ""
+msgstr "이름, 설명, 색, 아이콘은 모든 프로필에서 공유됩니다. 편집하려면 기본값으로 전환하세요."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Needs both images"
-msgstr ""
+msgstr "두 이미지가 모두 필요함"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "New automation"
-msgstr ""
+msgstr "새 자동화"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "New profile"
-msgstr ""
+msgstr "새 프로필"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "New Task"
-msgstr ""
+msgstr "새 작업"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Next change"
-msgstr ""
+msgstr "다음 변경 사항"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Next column"
-msgstr ""
+msgstr "다음 열"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "No active session"
-msgstr ""
+msgstr "활성 세션 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "No active session. Drag this task into a column that starts an agent."
-msgstr ""
+msgstr "활성 세션이 없습니다. 에이전트를 시작하는 열로 이 작업을 끌어 놓으세요."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "No agent CLI detected yet"
-msgstr ""
+msgstr "아직 감지된 에이전트 CLI 없음"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "No agent runs on record"
-msgstr ""
+msgstr "기록된 에이전트 실행 없음"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "No branches found"
-msgstr ""
+msgstr "분기를 찾을 수 없음"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "No branches match \"{query}\""
-msgstr ""
+msgstr "\"{query}\"와(과) 일치하는 분기 없음"
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "No changes on this branch"
-msgstr ""
+msgstr "이 분기에 변경 사항이 없습니다"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "no changes to save"
-msgstr ""
+msgstr "저장할 변경 사항 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No changes vs {baseLabel}"
-msgstr ""
+msgstr "{baseLabel} 대비 변경 사항 없음"
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+#, fuzzy
 msgid "No commands or skills found"
-msgstr ""
+msgstr "명령 또는 스킬을 찾을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "No commits for this task"
-msgstr ""
+msgstr "이 작업의 커밋이 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "No commits on this branch yet."
-msgstr ""
+msgstr "이 분기에 아직 커밋이 없습니다."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "No completed tasks yet"
-msgstr ""
+msgstr "완료된 작업이 아직 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No conversation history for this task yet"
-msgstr ""
+msgstr "이 작업에 대한 대화 기록이 아직 없음"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+#, fuzzy
 msgid "No conversation yet"
-msgstr ""
+msgstr "아직 대화 없음"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "No description"
-msgstr ""
+msgstr "설명 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No files changed"
-msgstr ""
+msgstr "변경된 파일 없음"
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
+#, fuzzy
 msgid "No fonts match \"{typedFilter}\""
-msgstr ""
+msgstr "\"{typedFilter}\"와(과) 일치하는 글꼴 없음"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "No git history available."
-msgstr ""
+msgstr "사용 가능한 git 기록이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "No history found"
-msgstr ""
+msgstr "기록 없음"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "No icons match \"{query}\""
-msgstr ""
+msgstr "\"{query}\"과(와) 일치하는 아이콘이 없습니다"
 
 #: src/renderer/components/dialogs/Combobox.tsx
+#, fuzzy
 msgid "No matches"
-msgstr ""
+msgstr "일치하는 항목 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "No matching files"
-msgstr ""
+msgstr "일치하는 파일 없음"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "No models match \"{filterText}\""
-msgstr ""
+msgstr "\"{filterText}\"와(과) 일치하는 모델 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No origin remote"
-msgstr ""
+msgstr "origin 원격 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "No pixel changes"
-msgstr ""
+msgstr "픽셀 변경 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No PR found"
-msgstr ""
+msgstr "PR을 찾을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No PR resolver"
-msgstr ""
+msgstr "PR 확인 도구 없음"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "No profiles yet - create one in Edit Columns"
-msgstr ""
+msgstr "프로필 없음 - 열 편집에서 만드세요"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No staged changes"
-msgstr ""
+msgstr "스테이징된 변경 사항 없음"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "No tasks match \"{searchQuery}\""
-msgstr ""
+msgstr "\"{searchQuery}\"과(와) 일치하는 작업이 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No uncommitted changes"
-msgstr ""
+msgstr "커밋되지 않은 변경 사항 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "None"
-msgstr ""
+msgstr "없음"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgctxt "icon option"
 msgid "None"
-msgstr ""
+msgstr "없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "None is available for this repository."
-msgstr ""
+msgstr "이 리포지토리에 사용할 수 있는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Not image data"
-msgstr ""
+msgstr "이미지 데이터가 아님"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Not offered on this trigger."
-msgstr ""
+msgstr "이 트리거에서는 사용할 수 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "not readable"
-msgstr ""
+msgstr "읽을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Not readable"
-msgstr ""
+msgstr "읽을 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing matches branch \"{searchedBranch}\"."
-msgstr ""
+msgstr "\"{searchedBranch}\" 분기와 일치하는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Nothing matches that."
-msgstr ""
+msgstr "일치하는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing matches this task."
-msgstr ""
+msgstr "이 작업과 일치하는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing new on {baseBranch}."
-msgstr ""
+msgstr "{baseBranch}에 새 항목이 없습니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
-msgstr ""
+msgstr "{terminalName}에서 턴이 끝날 때 실행되는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Nothing runs when a task enters {columnName}."
-msgstr ""
+msgstr "작업이 {columnName}에 들어갈 때 실행되는 항목이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing to search by"
-msgstr ""
+msgstr "검색 기준 없음"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On enter"
-msgstr ""
+msgstr "진입 시"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On exit"
-msgstr ""
+msgstr "나갈 때"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "On exit, this column's automations share {exitBudgetSeconds, plural, one {# second} other {# seconds}} in total. Put longer work on enter."
-msgstr ""
+msgstr "{exitBudgetSeconds, plural, other {나갈 때 이 열의 자동화는 총 #초를 함께 사용합니다. 오래 걸리는 작업은 들어올 때 실행하세요.}}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On turn end"
-msgstr ""
+msgstr "턴 종료 시"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
-msgstr ""
+msgstr "에이전트 CLI가 하나만 감지됨 - 선택하려면 다른 CLI를 설치하세요"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
-msgstr ""
+msgstr "레이블만 변경됩니다. 이 프로필을 사용 중인 작업은 그대로 유지됩니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "pull request state"
 msgid "open"
-msgstr ""
+msgstr "열림"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Open {shortHash} on {providerName}"
-msgstr ""
+msgstr "{providerName}에서 {shortHash} 열기"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Open dropdown"
-msgstr ""
+msgstr "드롭다운 열기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open Folder"
-msgstr ""
+msgstr "폴더 열기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Open in editor"
-msgstr ""
+msgstr "편집기에서 열기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "새 창에서 열기"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Open on {providerName}"
-msgstr ""
+msgstr "{providerName}에서 열기"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "Open PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber} 열기"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "Open PR #{prNumber} ({prLabel})"
-msgstr ""
+msgstr "PR #{prNumber} 열기({prLabel})"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open project folder"
-msgstr ""
+msgstr "프로젝트 폴더 열기"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Open settings"
-msgstr ""
+msgstr "설정 열기"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "설정 열기"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Open that board to edit its profiles"
-msgstr ""
+msgstr "프로필을 편집하려면 해당 보드를 여세요"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open worktree"
-msgstr ""
+msgstr "작업 트리 열기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open Worktree"
-msgstr ""
+msgstr "작업 트리 열기"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open worktree folder"
-msgstr ""
+msgstr "작업 트리 폴더 열기"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Opens this part of the conversation"
-msgstr ""
+msgstr "대화의 이 부분 열기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Outcome"
-msgstr ""
+msgstr "결과"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Output"
-msgstr ""
+msgstr "출력"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Overlay"
-msgstr ""
+msgstr "오버레이"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Overview"
-msgstr ""
+msgstr "개요"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Page kept"
-msgstr ""
+msgstr "페이지 유지됨"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Path copied"
-msgstr ""
+msgstr "경로 복사됨"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "세션 일시 중지"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Pausing agent..."
-msgstr ""
+msgstr "에이전트 일시 중지 중..."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "PDF Document"
-msgstr ""
+msgstr "PDF 문서"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Permission"
-msgstr ""
+msgstr "권한"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "권한"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Permissions"
-msgstr ""
+msgstr "권한"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Permissions"
-msgstr ""
+msgstr "권한"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Pinned for the whole task, ignoring column settings."
-msgstr ""
+msgstr "열 설정을 무시하고 작업 전체에 고정됩니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Plan approval"
-msgstr ""
+msgstr "계획 승인"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Plan approval is shared by every profile. Switch to Default to change it."
-msgstr ""
+msgstr "계획 승인은 모든 프로필에서 공유됩니다. 변경하려면 기본값으로 전환하세요."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Pop out of tiling"
-msgstr ""
+msgstr "타일 배치에서 분리"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Position {queuePosition} of {queueTotal}"
-msgstr ""
+msgstr "{queueTotal}개 중 {queuePosition}번째"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "PR #{prNumber} ({prLabel})"
-msgstr ""
+msgstr "PR #{prNumber}({prLabel})"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "PR host unreachable"
-msgstr ""
+msgstr "PR 호스트에 연결할 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "PR linked"
-msgstr ""
+msgstr "PR 연결됨"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Preview image"
-msgstr ""
+msgstr "이미지 미리 보기"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Preview rendered markdown"
-msgstr ""
+msgstr "렌더링된 마크다운 미리 보기"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Previews stop at {previewLimit} per image"
-msgstr ""
+msgstr "미리 보기는 이미지당 {previewLimit}까지 표시됨"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Previous change"
-msgstr ""
+msgstr "이전 변경 사항"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+#, fuzzy
 msgid "Priority"
-msgstr ""
+msgstr "우선순위"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Profile"
-msgstr ""
+msgstr "프로필"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgctxt "placement option"
 msgid "Project"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Project Folder Not Found"
-msgstr ""
+msgstr "프로젝트 폴더를 찾을 수 없음"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Project relocated"
-msgstr ""
+msgstr "프로젝트 위치 변경됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Pull request"
-msgstr ""
+msgstr "끌어오기 요청"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Pull Request"
-msgstr ""
+msgstr "끌어오기 요청"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Queued (click to pause)"
-msgstr ""
+msgstr "대기 중(클릭하여 일시 중지)"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Ran"
-msgstr ""
+msgstr "실행됨"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Rebase or merge it in the session instead."
-msgstr ""
+msgstr "대신 세션에서 리베이스하거나 병합하세요."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Refresh PR"
-msgstr ""
+msgstr "PR 새로 고침"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Removal staged"
-msgstr ""
+msgstr "제거 예정"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "제거"
 
 #: src/renderer/components/dialogs/AttachmentChipStrip.tsx
+#, fuzzy
 msgid "Remove {filename}"
-msgstr ""
+msgstr "{filename} 제거"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove column"
-msgstr ""
+msgstr "열 제거"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove column \"{removeTargetName}\""
-msgstr ""
+msgstr "\"{removeTargetName}\" 열 제거"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Removed profile"
-msgstr ""
+msgstr "제거된 프로필"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "이름 바꾸기"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Rename profile"
-msgstr ""
+msgstr "프로필 이름 바꾸기"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Rename this profile"
-msgstr ""
+msgstr "이 프로필 이름 바꾸기"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Renamed"
-msgstr ""
+msgstr "이름 변경됨"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Reorder {name}"
-msgstr ""
+msgstr "{name} 순서 변경"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset"
-msgstr ""
+msgstr "재설정"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Reset session"
-msgstr ""
+msgstr "세션 초기화"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to agent default"
-msgstr ""
+msgstr "에이전트 기본값으로 재설정"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to project default"
-msgstr ""
+msgstr "프로젝트 기본값으로 재설정"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to project setting"
-msgstr ""
+msgstr "프로젝트 설정으로 재설정"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Resize file list"
-msgstr ""
+msgstr "파일 목록 크기 조정"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Resize history"
-msgstr ""
+msgstr "기록 크기 조정"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Restart to update"
-msgstr ""
+msgstr "다시 시작하여 업데이트"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Restore"
-msgstr ""
+msgstr "복원"
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
+#, fuzzy
 msgid "Restore dialog"
-msgstr ""
+msgstr "대화 상자 복원"
 
 #: src/renderer/components/dialogs/completed-tasks/RestorePopover.tsx
+#, fuzzy
 msgid "Restore to"
-msgstr ""
+msgstr "복원 위치"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "Restore to board"
-msgstr ""
+msgstr "보드로 복원"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Resume"
-msgstr ""
+msgstr "재개"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "Resume {taskTitle}"
-msgstr ""
+msgstr "{taskTitle} 재개"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "세션 재개"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Resuming"
-msgstr ""
+msgstr "재개 중"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "에이전트 재개 중..."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "Retry"
-msgstr ""
+msgstr "다시 시도"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Reveal in file manager"
-msgstr ""
+msgstr "파일 관리자에서 표시"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgctxt "completed task card"
 msgid "Route"
-msgstr ""
+msgstr "경로"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Run in a new worktree"
-msgstr ""
+msgstr "새 작업 트리에서 실행"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Run in the project folder"
-msgstr ""
+msgstr "프로젝트 폴더에서 실행"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Running"
-msgstr ""
+msgstr "실행 중"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "completed task card"
 msgid "Runs"
-msgstr ""
+msgstr "실행"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Runs only when this holds."
-msgstr ""
+msgstr "이 조건을 충족할 때만 실행됩니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Runtime"
-msgstr ""
+msgstr "실행 시간"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Same-agent moves (e.g. Claude to Claude) resume natively via the agent's own session id and ignore this setting."
-msgstr ""
+msgstr "같은 에이전트 간 이동(예: Claude에서 Claude로)은 에이전트 자체 세션 ID로 기본 재개되며 이 설정을 무시합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Save"
-msgstr ""
+msgstr "저장"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Save stopped partway"
-msgstr ""
+msgstr "저장이 중간에 중단됨"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved {savedUpdates, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedUpdates, plural, other {열 #개 저장함}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved automations"
-msgstr ""
+msgstr "자동화 저장함"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved profiles"
-msgstr ""
+msgstr "프로필 저장함"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Search automations"
-msgstr ""
+msgstr "자동화 검색"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Search branches..."
-msgstr ""
+msgstr "분기 검색..."
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+#, fuzzy
 msgid "Search commands & skills..."
-msgstr ""
+msgstr "명령 및 스킬 검색..."
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Search icons..."
-msgstr ""
+msgstr "아이콘 검색..."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Search tasks..."
-msgstr ""
+msgstr "작업 검색..."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Select a commit to see its changes"
-msgstr ""
+msgstr "변경 사항을 보려면 커밋을 선택하세요"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Select a file to view changes"
-msgstr ""
+msgstr "변경 사항을 보려면 파일을 선택하세요"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Send to Backlog"
-msgstr ""
+msgstr "백로그로 보내기"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Sending the original instead."
-msgstr ""
+msgstr "대신 원본을 보냅니다."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Sent to backlog"
-msgstr ""
+msgstr "백로그로 보냄"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board manager field"
 msgid "Session"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Session"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Session"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Session could not be resumed."
-msgstr ""
+msgstr "세션을 재개할 수 없습니다."
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+#, fuzzy
 msgid "Session may be expired"
-msgstr ""
+msgstr "세션이 만료되었을 수 있음"
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+#, fuzzy
 msgid "Session may need to be re-created"
-msgstr ""
+msgstr "세션을 다시 만들어야 할 수 있음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Sessions don't run in {roleName} columns, so {label} doesn't apply."
-msgstr ""
+msgstr "{roleName} 열에서는 세션이 실행되지 않으므로 {label}이(가) 적용되지 않습니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Sessions don't run in {terminalName} columns."
-msgstr ""
+msgstr "{terminalName} 열에서는 세션이 실행되지 않습니다."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Set up an Automation agent"
-msgstr ""
+msgstr "자동화 에이전트 설정"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Share the task's conversation with the other columns."
-msgstr ""
+msgstr "작업의 대화를 다른 열과 공유합니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show {fileName} in Changes"
-msgstr ""
+msgstr "변경 사항에서 {fileName} 보기"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show {shortSha} in Changes"
-msgstr ""
+msgstr "변경 사항에서 {shortSha} 보기"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show all"
-msgstr ""
+msgstr "모두 표시"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Show all {callCount}"
-msgstr ""
+msgstr "{callCount}개 모두 표시"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Show blame"
-msgstr ""
+msgstr "Blame 표시"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show browser"
-msgstr ""
+msgstr "브라우저 표시"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "변경 내용 표시"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show description"
-msgstr ""
+msgstr "설명 표시"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Show diff"
-msgstr ""
+msgstr "diff 표시"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Show less"
-msgstr ""
+msgstr "간단히 표시"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Show text diff"
-msgstr ""
+msgstr "텍스트 diff 표시"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show workflow"
-msgstr ""
+msgstr "워크플로 표시"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgid "Showing it in the file manager instead."
-msgstr ""
+msgstr "대신 파일 관리자에서 표시합니다."
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Showing latest {commitCount, plural, one {# commit} other {# commits}}."
-msgstr ""
+msgstr "{commitCount, plural, other {최근 커밋 #개를 표시합니다.}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Showing the latest {commitCount, plural, one {# commit} other {# commits}}"
-msgstr ""
+msgstr "{commitCount, plural, other {최근 커밋 #개 표시 중}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "나란히"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Size"
-msgstr ""
+msgstr "크기"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Skipped"
-msgstr ""
+msgstr "건너뜀"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Slider"
-msgstr ""
+msgstr "슬라이더"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Slider position"
-msgstr ""
+msgstr "슬라이더 위치"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by extension"
-msgstr ""
+msgstr "정렬: 확장자순"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by name"
-msgstr ""
+msgstr "정렬: 이름순"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by size"
-msgstr ""
+msgstr "정렬: 크기순"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by status"
-msgstr ""
+msgstr "정렬: 상태순"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Stacked"
-msgstr ""
+msgstr "위아래로"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Staged"
-msgstr ""
+msgstr "스테이징됨"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Start"
-msgstr ""
+msgstr "시작"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start a clean conversation on every entry."
-msgstr ""
+msgstr "진입할 때마다 새 대화를 시작합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent automatically when a task enters this column."
-msgstr ""
+msgstr "작업이 이 열에 들어오면 에이전트를 자동으로 시작합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent here"
-msgstr ""
+msgstr "여기서 에이전트 시작"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent here is off."
-msgstr ""
+msgstr "여기서 에이전트 시작이 꺼져 있습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Started"
-msgstr ""
+msgstr "시작"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Started"
-msgstr ""
+msgstr "시작"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "에이전트 시작 중..."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Starts automatically when a slot opens up"
-msgstr ""
+msgstr "슬롯이 비면 자동으로 시작됩니다"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
-msgstr ""
+msgstr "사용자가 작업을 이동하거나 작업이 완료에서 벗어나면 다시 시작되며, 에이전트나 자동화가 다른 곳으로 이동할 때는 다시 시작되지 않습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Status"
-msgstr ""
+msgstr "상태"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "leftover section"
 msgid "Still running"
-msgstr ""
+msgstr "아직 실행 중"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process action"
 msgid "Stop"
-msgstr ""
+msgstr "중지"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Stop {label}"
-msgstr ""
+msgstr "{label} 중지"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "leftover section"
 msgid "Stopped"
-msgstr ""
+msgstr "중지됨"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Stopped"
-msgstr ""
+msgstr "중지됨"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Stopping"
-msgstr ""
+msgstr "중지 중"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Stopping leftover processes is off, so these kept running."
-msgstr ""
+msgstr "남은 프로세스 중지가 꺼져 있어 이 프로세스가 계속 실행되었습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Summary"
-msgstr ""
+msgstr "요약"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Summary pending"
-msgstr ""
+msgstr "요약 대기 중"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Switch to flat list"
-msgstr ""
+msgstr "단순 목록으로 전환"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Switch to tree"
-msgstr ""
+msgstr "트리로 전환"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task archived"
-msgstr ""
+msgstr "작업 보관됨"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Task created"
-msgstr ""
+msgstr "작업 생성됨"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task deleted"
-msgstr ""
+msgstr "작업 삭제됨"
 
 #: src/renderer/components/dialogs/task-detail/useCopyDisplayId.ts
+#, fuzzy
 msgid "Task ID copied"
-msgstr ""
+msgstr "작업 ID가 복사됨"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "작업 이동됨"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Task summaries are off"
-msgstr ""
+msgstr "작업 요약이 꺼져 있음"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Task summary"
-msgstr ""
+msgstr "작업 요약"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Task title"
-msgstr ""
+msgstr "작업 제목"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Text File"
-msgstr ""
+msgstr "텍스트 파일"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Text match"
-msgstr ""
+msgstr "텍스트 일치"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "The agent CLI this task runs on"
-msgstr ""
+msgstr "이 작업을 실행할 에이전트 CLI"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "The folder could not be used."
-msgstr ""
+msgstr "폴더를 사용할 수 없습니다."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "The folder for <0>\"{projectName}\"</0> no longer exists:"
-msgstr ""
+msgstr "<0>\"{projectName}\"</0>의 폴더가 더 이상 존재하지 않습니다:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
-msgstr ""
+msgstr "새 에이전트는 작업 설명에서 시작하는 대신 이전 에이전트의 대화를 이어받습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "The PR host returned an error."
-msgstr ""
+msgstr "PR 호스트에서 오류를 반환했습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "The task's changes could not be read"
-msgstr ""
+msgstr "작업의 변경 사항을 읽을 수 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
+#, fuzzy
 msgid "The task's changes could not be read."
-msgstr ""
+msgstr "작업의 변경 사항을 읽을 수 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "The window could not be created."
-msgstr ""
+msgstr "창을 만들 수 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "The worktree has uncommitted changes."
-msgstr ""
+msgstr "작업 트리에 커밋되지 않은 변경 내용이 있습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "There is no remote to fetch {baseBranch} from."
-msgstr ""
+msgstr "{baseBranch}을(를) 가져올 원격이 없습니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "These columns are staged for removal and will be kept:"
-msgstr ""
+msgstr "다음 열은 제거 예정이었으며 유지됩니다:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "These columns are staged for removal. Discarding keeps them:"
-msgstr ""
+msgstr "다음 열은 제거 예정입니다. 취소하면 유지됩니다:"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "이 작업은 실행 취소할 수 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "This commit changed no files"
-msgstr ""
+msgstr "이 커밋에서 변경된 파일 없음"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
-msgstr ""
+msgstr "이제 열 설정에서 처리됩니다. 열 설정을 사용하려면 이 항목을 제거하세요."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "This task has no branch, commit or PR number yet."
-msgstr ""
+msgstr "이 작업에는 아직 분기, 커밋 또는 PR 번호가 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
+#, fuzzy
 msgid "This task has no conversation history"
-msgstr ""
+msgstr "이 작업에는 대화 기록이 없습니다"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+#, fuzzy
 msgid "This task has no conversation history."
-msgstr ""
+msgstr "이 작업에는 대화 기록이 없습니다."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "This task is archived. It does not appear on the board."
-msgstr ""
+msgstr "이 작업은 보관되었습니다. 보드에 표시되지 않습니다."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "This task's commits are not in this clone"
-msgstr ""
+msgstr "이 작업의 커밋이 이 클론에 없습니다"
 
 #: src/renderer/components/dialogs/board-manager/AutomationTypePicker.tsx
+#, fuzzy
 msgid "This type is retired and cannot be chosen."
-msgstr ""
+msgstr "이 유형은 지원이 종료되어 선택할 수 없습니다."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "작업, 해당 세션 기록 및 연결된 작업 트리가 영구적으로 삭제됩니다."
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Title"
-msgstr ""
+msgstr "제목"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "To Do"
-msgstr ""
+msgstr "할 일"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle browser"
-msgstr ""
+msgstr "브라우저 전환"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle changes"
-msgstr ""
+msgstr "변경 내용 전환"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle workflow"
-msgstr ""
+msgstr "워크플로 전환"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tokens"
-msgstr ""
+msgstr "토큰"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Too large to preview"
-msgstr ""
+msgstr "너무 커서 미리 볼 수 없음"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tool calls"
-msgstr ""
+msgstr "도구 호출"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tools"
-msgstr ""
+msgstr "도구"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "table total row"
 msgid "Total"
-msgstr ""
+msgstr "합계"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Tree view"
-msgstr ""
+msgstr "트리 보기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Tree view only"
-msgstr ""
+msgstr "트리 보기 전용"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Trigger"
-msgstr ""
+msgstr "트리거"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Try again in a moment."
-msgstr ""
+msgstr "잠시 후 다시 시도하세요."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
-msgstr ""
+msgstr "{label}을(를) 사용하려면 에이전트 섹션에서 \"여기서 에이전트 시작\"을 켜세요."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Turns"
-msgstr ""
+msgstr "턴"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Type"
-msgstr ""
+msgstr "유형"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Under 0.1% of pixels changed"
-msgstr ""
+msgstr "픽셀의 0.1% 미만 변경됨"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Unsaved"
-msgstr ""
+msgstr "저장 안 됨"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "unsaved changes"
-msgstr ""
+msgstr "저장되지 않은 변경 사항"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Untitled"
-msgstr ""
+msgstr "제목 없음"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Untitled column"
-msgstr ""
+msgstr "제목 없는 열"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "Untitled task"
-msgstr ""
+msgstr "제목 없는 작업"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Untracked"
-msgstr ""
+msgstr "추적되지 않음"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Update from base"
-msgstr ""
+msgstr "기준에서 업데이트"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Update from base failed"
-msgstr ""
+msgstr "기준에서 업데이트 실패"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Updated from {baseBranch}"
-msgstr ""
+msgstr "{baseBranch}에서 업데이트됨"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "updated the column order"
-msgstr ""
+msgstr "열 순서 업데이트함"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Usage"
-msgstr ""
+msgstr "사용량"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Version {updateVersion} is ready to install"
-msgstr ""
+msgstr "버전 {updateVersion}을(를) 설치할 준비가 되었습니다"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "대화 보기"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "View details"
-msgstr ""
+msgstr "세부 정보 보기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "View history"
-msgstr ""
+msgstr "기록 보기"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "View options"
-msgstr ""
+msgstr "보기 옵션"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "View PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber} 보기"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Waiting in queue"
-msgstr ""
+msgstr "대기열에서 대기 중"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
-msgstr ""
+msgstr "작업이 이 열에 들어올 때, 여기서 에이전트가 턴을 마칠 때마다, 그리고 열을 나갈 때 이 순서대로 실행되는 항목입니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "What is this column for?"
-msgstr ""
+msgstr "이 열의 용도는 무엇인가요?"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What it does."
-msgstr ""
+msgstr "수행할 동작입니다."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What runs. Each type brings its own fields."
-msgstr ""
+msgstr "실행할 항목입니다. 유형마다 고유한 필드가 있습니다."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What starts it."
-msgstr ""
+msgstr "시작 조건입니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
-msgstr ""
+msgstr "작업이 이 열에 들어올 때 할당된 에이전트가 이전 열에서 실행된 에이전트와 다르면, Kangentic은 이전 세션의 대화 기록을 첫 메시지로 주입합니다. 따라서 새 에이전트는 작업 설명만으로 시작하는 대신 전체 컨텍스트를 가지고 이어서 작업합니다."
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Where the agent runs"
-msgstr ""
+msgstr "에이전트 실행 위치"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Where the task goes when the agent exits Plan mode."
-msgstr ""
+msgstr "에이전트가 Plan 모드를 종료할 때 작업이 이동할 위치입니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
-msgstr ""
+msgstr "각 계획을 직접 승인할지 Kangentic이 승인할지 선택합니다. 워크플로 작업에서 개별적으로 재정의할 수 있습니다."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "Wildcard examples"
-msgstr ""
+msgstr "와일드카드 예시"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "Wildcard examples. {rows}"
-msgstr ""
+msgstr "와일드카드 예시. {rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Window limit reached"
-msgstr ""
+msgstr "창 개수 제한에 도달함"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Workflow step"
-msgstr ""
+msgstr "워크플로 단계"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Working"
-msgstr ""
+msgstr "작업 중"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Working..."
-msgstr ""
+msgstr "작업 중..."
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgctxt "placement option"
 msgid "Worktree"
-msgstr ""
+msgstr "작업 트리"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "긴 줄 바꿈"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Write summary"
-msgstr ""
+msgstr "요약 작성"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "XML File"
-msgstr ""
+msgstr "XML 파일"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "You approve each plan in the agent's terminal."
-msgstr ""
+msgstr "에이전트의 터미널에서 각 계획을 직접 승인합니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Your Board Profile changes will be discarded."
-msgstr ""
+msgstr "보드 프로필 변경 사항이 취소됩니다."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Your column order changes will be discarded."
-msgstr ""
+msgstr "열 순서 변경 사항이 취소됩니다."

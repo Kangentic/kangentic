@@ -8,280 +8,349 @@ msgstr ""
 "Language: de\n"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{cachedTokenText} cached (system) · {conversationTokenText} conversation"
-msgstr ""
+msgstr "{cachedTokenText} zwischengespeichert (System) · {conversationTokenText} Konversation"
 
 #: src/renderer/components/terminal/ContextBarPopover.tsx
+#, fuzzy
 msgid "{contextLabel} context window"
-msgstr ""
+msgstr "Kontextfenster: {contextLabel}"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{pct}% context"
-msgstr ""
+msgstr "{pct} % Kontext"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{remainingPercent}% remaining"
-msgstr ""
+msgstr "{remainingPercent} % verbleibend"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "{toolName} interrupted"
-msgstr ""
+msgstr "{toolName} unterbrochen"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Activity"
-msgstr ""
+msgstr "Aktivität"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "Aktive Agent-Zeit"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "All"
-msgstr ""
+msgstr "Alle"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
-msgstr ""
+msgstr "Board-Profil – Agent, Modell und Aufwand pro Spalte, denen diese Aufgabe folgt"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Click to change effort"
-msgstr ""
+msgstr "Klicken, um den Aufwand zu ändern"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Click to change model"
-msgstr ""
+msgstr "Klicken, um das Modell zu ändern"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Collapse terminal panel"
-msgstr ""
+msgstr "Terminalbereich einklappen"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Compacting context..."
-msgstr ""
+msgstr "Kontext wird komprimiert..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Config changed"
-msgstr ""
+msgstr "Konfiguration geändert"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Context tokens used / total window size"
-msgstr ""
+msgstr "Verwendete Kontext-Tokens / gesamte Fenstergröße"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Custom"
-msgstr ""
+msgstr "Benutzerdefiniert"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgctxt "Default value"
 msgid "Default"
-msgstr ""
+msgstr "Standard"
 
 #: src/renderer/components/terminal/FileDropOverlay.tsx
+#, fuzzy
 msgid "Drop files to insert path"
-msgstr ""
+msgstr "Dateien ablegen, um Pfad einzufügen"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Each column's own settings"
-msgstr ""
+msgstr "Eigene Einstellungen jeder Spalte"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Aufwand"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Elapsed session time"
-msgstr ""
+msgstr "Verstrichene Sitzungszeit"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Expand terminal panel"
-msgstr ""
+msgstr "Terminalbereich ausklappen"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Idle (no activity detected)"
-msgstr ""
+msgstr "Inaktiv (keine Aktivität erkannt)"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Idle (waiting for input)"
-msgstr ""
+msgstr "Inaktiv (wartet auf Eingabe)"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Input / output tokens"
-msgstr ""
+msgstr "Eingabe-/Ausgabe-Tokens"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Isolated session"
-msgstr ""
+msgstr "Isolierte Sitzung"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modell"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Model done"
-msgstr ""
+msgstr "Modell fertig"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "No active sessions. Drag a task into a column that starts an agent."
-msgstr ""
+msgstr "Keine aktiven Sitzungen. Ziehen Sie eine Aufgabe in eine Spalte, die einen Agenten startet."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "No activity yet for {filteredLabel}..."
-msgstr ""
+msgstr "Noch keine Aktivität für {filteredLabel}..."
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+#, fuzzy
 msgid "No tool calls yet"
-msgstr ""
+msgstr "Noch keine Tool-Aufrufe"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Notice"
-msgstr ""
+msgstr "Hinweis"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Plan approved automatically"
-msgstr ""
+msgstr "Plan automatisch genehmigt"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Profile - applies from the next column"
-msgstr ""
+msgstr "Profil – gilt ab der nächsten Spalte"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Profile unavailable"
-msgstr ""
+msgstr "Profil nicht verfügbar"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "Ratenlimits"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets {resetMoment}"
-msgstr ""
+msgstr "Wird {resetMoment} zurückgesetzt"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets in {duration}"
-msgstr ""
+msgstr "Wird in {duration} zurückgesetzt"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets now"
-msgstr ""
+msgstr "Wird jetzt zurückgesetzt"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Agent wird fortgesetzt..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Retrying"
-msgstr ""
+msgstr "Neuer Versuch"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Selecting tool..."
-msgstr ""
+msgstr "Tool wird ausgewählt..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Service error"
-msgstr ""
+msgstr "Dienstfehler"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "API-Kosten der Sitzung"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Session ended"
-msgstr ""
+msgstr "Sitzung beendet"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Session started"
-msgstr ""
+msgstr "Sitzung gestartet"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Agent wird gestartet..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Subagent"
-msgstr ""
+msgstr "Subagent"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Subagent done"
-msgstr ""
+msgstr "Subagent fertig"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Task done"
-msgstr ""
+msgstr "Aufgabe erledigt"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Teammate idle"
-msgstr ""
+msgstr "Teammitglied inaktiv"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Thinking..."
-msgstr ""
+msgstr "Denkt nach..."
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "This agent does not support changing the effort level from Kangentic"
-msgstr ""
+msgstr "Dieser Agent unterstützt das Ändern des Aufwands über Kangentic nicht"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "This agent does not support changing the model from Kangentic"
-msgstr ""
+msgstr "Dieser Agent unterstützt das Ändern des Modells über Kangentic nicht"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "Tool"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "Tool-Aufrufe"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Tool calls across every run of this session"
-msgstr ""
+msgstr "Tool-Aufrufe über alle Durchläufe dieser Sitzung"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Tool calls: {toolCallCountText}"
-msgstr ""
+msgstr "Tool-Aufrufe: {toolCallCountText}"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Updated {timeAgo}"
-msgstr ""
+msgstr "Aktualisiert {timeAgo}"
 
 #: src/renderer/components/terminal/ContextBarPopover.tsx
+#, fuzzy
 msgid "Use column default <0>({swimlaneDefaultText})</0>"
-msgstr ""
+msgstr "Spaltenstandard verwenden <0>({swimlaneDefaultText})</0>"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "v{taskAgentVersionNumber}"
-msgstr ""
+msgstr "v{taskAgentVersionNumber}"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Waiting for agent activity..."
-msgstr ""
+msgstr "Warte auf Agent-Aktivität..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Waiting for input"
-msgstr ""
+msgstr "Warte auf Eingabe"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing the model this session was started with. Click to change."
-msgstr ""
+msgstr "Warten auf Rückmeldung des Agents. Angezeigt wird das Modell, mit dem diese Sitzung gestartet wurde. Zum Ändern klicken."
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing the model this session was started with. This agent does not support changing it from Kangentic."
-msgstr ""
+msgstr "Warten auf Rückmeldung des Agents. Angezeigt wird das Modell, mit dem diese Sitzung gestartet wurde. Dieser Agent unterstützt das Ändern über Kangentic nicht."
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing your configured default. Click to change."
-msgstr ""
+msgstr "Warten auf Rückmeldung des Agents. Angezeigt wird Ihr konfigurierter Standard. Zum Ändern klicken."
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing your configured default. This agent does not support changing it from Kangentic."
-msgstr ""
+msgstr "Warten auf Rückmeldung des Agents. Angezeigt wird Ihr konfigurierter Standard. Dieser Agent unterstützt das Ändern über Kangentic nicht."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Worktree"
-msgstr ""
+msgstr "Worktree"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Worktree removed"
-msgstr ""
+msgstr "Worktree entfernt"

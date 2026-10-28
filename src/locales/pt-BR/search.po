@@ -8,105 +8,131 @@ msgstr ""
 "Language: pt-BR\n"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "{matchCount, plural, one {# match} other {# matches}}"
-msgstr ""
+msgstr "{matchCount, plural, one {# correspondência} many {# de correspondências} other {# correspondências}}"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "Todos os projetos"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "archived"
-msgstr ""
+msgstr "arquivado"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Ask the Knowledge Graph: <0>\"{question}\"</0>"
-msgstr ""
+msgstr "Perguntar ao Grafo de Conhecimento: <0>\"{question}\"</0>"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Backlog"
-msgstr ""
+msgstr "Backlog"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Close search"
-msgstr ""
+msgstr "Fechar pesquisa"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "Conversas"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "History"
-msgstr ""
+msgstr "Histórico"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Matched by meaning"
-msgstr ""
+msgstr "Correspondência por significado"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in any project."
-msgstr ""
+msgstr "Nenhuma correspondência de palavra-chave em nenhum projeto."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in this project."
-msgstr ""
+msgstr "Nenhuma correspondência de palavra-chave neste projeto."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the active terminal"
-msgstr ""
+msgstr "Abre o terminal ativo"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the conversation history"
-msgstr ""
+msgstr "Abre o histórico da conversa"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Projetos"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search across tasks, backlog, conversations, session events, and projects."
-msgstr ""
+msgstr "Pesquise em tarefas, backlog, conversas, eventos de sessão e projetos."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search failed"
-msgstr ""
+msgstr "Falha na pesquisa"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search tasks, backlog, conversations, session events, projects..."
-msgstr ""
+msgstr "Pesquisar tarefas, backlog, conversas, eventos de sessão, projetos..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Searching..."
-msgstr ""
+msgstr "Pesquisando..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Session events"
-msgstr ""
+msgstr "Eventos de sessão"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "System"
-msgstr ""
+msgstr "Sistema"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "Tarefas"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "Terminal"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "This project"
-msgstr ""
+msgstr "Este projeto"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "Ferramenta"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Type to find by title, description, or tool call."
-msgstr ""
+msgstr "Digite para buscar por título, descrição ou chamada de ferramenta."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "You"
-msgstr ""
+msgstr "Você"

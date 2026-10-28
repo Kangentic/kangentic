@@ -8,2771 +8,3421 @@ msgstr ""
 "Language: es\n"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "\"{fileName}\" supera el límite de 10 MB."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "\"{name}\" will be removed when you save."
-msgstr ""
+msgstr "\"{name}\" se quitará al guardar."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{oversizedFileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "«{oversizedFileName}» supera el límite de 10 MB."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "\"{relocatedName}\" now points at {relocatedPath}."
-msgstr ""
+msgstr "\"{relocatedName}\" ahora apunta a {relocatedPath}."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is in {openBoardLaneName}."
-msgstr ""
+msgstr "«{taskTitle}» está en {openBoardLaneName}."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is now in {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\" ahora está en {columnName}."
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is on the board."
-msgstr ""
+msgstr "«{taskTitle}» está en el tablero."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "({deleteFailureCount} failed)"
-msgstr ""
+msgstr "({deleteFailureCount} con error)"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr ""
+msgstr "{agentCount, plural, one {Agente pausado para liberar memoria} many {# de agentes pausados para liberar memoria} other {# agentes pausados para liberar memoria}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr ""
+msgstr "{agentCount, plural, one {Permanece en pausa hasta que lo reanude.} many {Permanecen en pausa hasta que los reanude.} other {Permanecen en pausa hasta que los reanude.}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
-msgstr ""
+msgstr "{ahead} por delante, {behind} por detrás de la rama base"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "{automationCount, plural, one {# automation runs here} other {# automations run here}}"
-msgstr ""
+msgstr "{automationCount, plural, one {# automatización se ejecuta aquí} many {# de automatizaciones se ejecutan aquí} other {# automatizaciones se ejecutan aquí}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
-msgstr ""
+msgstr "{totalPixels, plural, one {{changedCount} de # píxel difiere} many {{changedCount} de # de píxeles difieren} other {{changedCount} de # píxeles difieren}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "{columnName}, {triggerPhrase}"
-msgstr ""
+msgstr "{columnName}, {triggerPhrase}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: added {addedCount, plural, one {# automation} other {# automations}}"
-msgstr ""
+msgstr "{addedCount, plural, one {{columnName}: # automatización añadida} many {{columnName}: # de automatizaciones añadidas} other {{columnName}: # automatizaciones añadidas}}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: edited automations"
-msgstr ""
+msgstr "{columnName}: automatizaciones editadas"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
+#, fuzzy
 msgid "{columnName}: removed {removedCount, plural, one {# automation} other {# automations}}"
-msgstr ""
+msgstr "{removedCount, plural, one {{columnName}: # automatización eliminada} many {{columnName}: # de automatizaciones eliminadas} other {{columnName}: # automatizaciones eliminadas}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
-msgstr ""
+msgstr "{commitCount, plural, one {# commit para esta tarea} many {# de commits para esta tarea} other {# commits para esta tarea}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
-msgstr ""
+msgstr "{commitCount, plural, one {# commit en esta rama} many {# de commits en esta rama} other {# commits en esta rama}}"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "{contextLabel} context window"
-msgstr ""
+msgstr "Ventana de contexto de {contextLabel}"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
-msgstr ""
+msgstr "{count, plural, one {# llamada a herramienta, por herramienta} many {# de llamadas a herramientas, por herramienta} other {# llamadas a herramientas, por herramienta}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{fileCount, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{fileCount, plural, one {# archivo} many {# de archivos} other {# archivos}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{filesChanged, plural, one {# file changed} other {# files changed}}"
-msgstr ""
+msgstr "{filesChanged, plural, one {# archivo modificado} many {# archivos modificados} other {# archivos modificados}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{filesChanged, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{filesChanged, plural, one {# archivo} many {# archivos} other {# archivos}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{filteredCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{filteredCount, plural, one {# tarea} many {# de tareas} other {# tareas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{filteredCount} of {archivedTotalCount, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{archivedTotalCount, plural, one {{filteredCount} de # tarea} many {{filteredCount} de # de tareas} other {{filteredCount} de # tareas}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{leadingParts} and {lastPart}"
-msgstr ""
+msgstr "{leadingParts} y {lastPart}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{linesAdded, plural, one {# line added} other {# lines added}}"
-msgstr ""
+msgstr "{linesAdded, plural, one {# línea añadida} many {# líneas añadidas} other {# líneas añadidas}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
-msgstr ""
+msgstr "{linesRemoved, plural, one {# línea eliminada} many {# líneas eliminadas} other {# líneas eliminadas}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
-msgstr ""
+msgstr "{maxInstances, plural, one {Hay # ventana de diff de archivo abierta. Ciérrela para abrir otra.} many {Hay # de ventanas de diff de archivo abiertas. Cierre una para abrir otra.} other {Hay # ventanas de diff de archivo abiertas. Cierre una para abrir otra.}}"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "{name} enabled"
-msgstr ""
+msgstr "{name} habilitada"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "{newer} available"
-msgstr ""
+msgstr "{newer} disponible"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "{newerModelLabel} available"
-msgstr ""
+msgstr "{newerModelLabel} disponible"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{nextFileCombo} - next changed file"
-msgstr ""
+msgstr "{nextFileCombo} - siguiente archivo modificado"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "{oldPath} to {newPath}"
-msgstr ""
+msgstr "{oldPath} a {newPath}"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
-msgstr ""
+msgstr "{pattern}: {rule}, como en {sample}."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{pattern}: {rule}."
-msgstr ""
+msgstr "{pattern}: {rule}."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "{percent}% of pixels changed"
-msgstr ""
+msgstr "Cambió el {percent}% de los píxeles"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "{pillLabel}: {reason}"
-msgstr ""
+msgstr "{pillLabel}: {reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{position} of {total}"
-msgstr ""
+msgstr "{position} de {total}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{reason} Saved {savedBeforeFailing} before failing."
-msgstr ""
+msgstr "{reason} Se guardó lo siguiente antes del error: {savedBeforeFailing}."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
-msgstr ""
+msgstr "{rule}<0>, como en {sample}</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr ""
+msgstr "{maxConcurrent, plural, one {{runningCount} / # espacio de agente en uso} many {{runningCount} / # espacios de agente en uso} other {{runningCount} / # espacios de agente en uso}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedTotal, plural, one {# columna} many {# de columnas} other {# columnas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {Delete # completed task} other {Delete # completed tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Eliminar # tarea completada} many {Eliminar # de tareas completadas} other {Eliminar # tareas completadas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {Delete # task} other {Delete # tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Eliminar # tarea} many {Eliminar # de tareas} other {Eliminar # tareas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # task, its session history, and any associated worktrees.} other {This will permanently delete # tasks, their session history, and any associated worktrees.}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Se eliminará permanentemente # tarea, su historial de sesiones y los árboles de trabajo asociados.} many {Se eliminarán permanentemente # de tareas, su historial de sesiones y los árboles de trabajo asociados.} other {Se eliminarán permanentemente # tareas, su historial de sesiones y los árboles de trabajo asociados.}}"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+#, fuzzy
 msgid "{selectedCount} selected"
-msgstr ""
+msgstr "{selectedCount} seleccionadas"
 
 #. The Board saved toast: the saved changes as one clause, ended as a sentence.
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{sentence}."
-msgstr ""
+msgstr "{sentence}."
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "{shownCount} of {totalCount}"
-msgstr ""
+msgstr "{shownCount} de {totalCount}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "{startedText} to {endedText}"
-msgstr ""
+msgstr "{startedText} a {endedText}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{statusLabel}: {filePath}"
-msgstr ""
+msgstr "{statusLabel}: {filePath}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "{subagentName} subagent"
-msgstr ""
+msgstr "Subagente {subagentName}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{surfaceHeaderAhead} ahead, {surfaceHeaderBehind} behind base branch"
-msgstr ""
+msgstr "{surfaceHeaderAhead} por delante, {surfaceHeaderBehind} por detrás de la rama base"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {Move or delete its task first.} other {Move or delete all # tasks first.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Primero mueve o elimina su tarea.} many {Primero mueve o elimina sus # de tareas.} other {Primero mueve o elimina sus # tareas.}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{tokenCountText} tokens"
-msgstr ""
+msgstr "{tokenCountText} tokens"
 
 #: src/renderer/components/dialogs/completed-tasks/tooltip.ts
+#, fuzzy
 msgid "{toolCallCount, plural, one {# tool call} other {# tool calls}}"
-msgstr ""
+msgstr "{toolCallCount, plural, one {# llamada a herramienta} many {# de llamadas a herramientas} other {# llamadas a herramientas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{totalCostText} total cost"
-msgstr ""
+msgstr "{totalCostText} de costo total"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "{totalFilesChanged, plural, one {# file changed} other {# files changed}}"
-msgstr ""
+msgstr "{totalFilesChanged, plural, one {# archivo modificado} many {# de archivos modificados} other {# archivos modificados}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {# files marked viewed}}"
-msgstr ""
+msgstr "{fileCount, plural, one {{viewedCount} de # archivo marcado como visto} many {{viewedCount} de # de archivos marcados como vistos} other {{viewedCount} de # archivos marcados como vistos}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
-msgstr ""
+msgstr "{fileCount, plural, one {{viewedCount} de # archivo visto} many {{viewedCount} de # de archivos vistos} other {{viewedCount} de # archivos vistos}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "A narrow pane renders inline"
-msgstr ""
+msgstr "Un panel estrecho se muestra en línea"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "A profile named \"{trimmed}\" already exists."
-msgstr ""
+msgstr "Ya existe un perfil llamado \"{trimmed}\"."
 
 #: src/renderer/components/dialogs/board-manager/form-layout.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "Acerca de {label}"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Action"
-msgstr ""
+msgstr "Acción"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Add automation"
-msgstr ""
+msgstr "Agregar automatización"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Add column"
-msgstr ""
+msgstr "Agregar columna"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Added"
-msgstr ""
+msgstr "Agregado"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "After"
-msgstr ""
+msgstr "Después"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "After image opacity"
-msgstr ""
+msgstr "Opacidad de la imagen posterior"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "After Plan Mode"
-msgstr ""
+msgstr "Después del modo Plan"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "After, faded"
-msgstr ""
+msgstr "Después, atenuada"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview group"
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "Agente predeterminado"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Agent evaluation"
-msgstr ""
+msgstr "Evaluación del agente"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Agent Override"
-msgstr ""
+msgstr "Anulación de agente"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Agent runtime"
-msgstr ""
+msgstr "Tiempo del agente"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Agent runtime"
-msgstr ""
+msgstr "Tiempo de ejecución del agente"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Agent: {agentOverrideLabel}"
-msgstr ""
+msgstr "Agente: {agentOverrideLabel}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "All columns"
-msgstr ""
+msgstr "Todas las columnas"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "All tests pass"
-msgstr ""
+msgstr "Todas las pruebas pasan"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Already up to date"
-msgstr ""
+msgstr "Ya está actualizado"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Already used on this column."
-msgstr ""
+msgstr "Ya se usa en esta columna."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "An alternate set of per-column agent, model, and effort settings"
-msgstr ""
+msgstr "Un conjunto alternativo de ajustes de agente, modelo y esfuerzo por columna"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Another column uses this icon"
-msgstr ""
+msgstr "Otra columna usa este icono"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Approve each plan for you. Questions the agent asks still wait."
-msgstr ""
+msgstr "Aprueba cada plan por ti. Las preguntas del agente siguen en espera."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Archive"
-msgstr ""
+msgstr "Archivar"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Archived"
-msgstr ""
+msgstr "Archivada"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
-msgstr ""
+msgstr "Automática"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Automation needs a name"
-msgstr ""
+msgstr "La automatización necesita un nombre"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "Automations"
-msgstr ""
+msgstr "Automatizaciones"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Automations are shared by every profile. Switch to Default to edit them."
-msgstr ""
+msgstr "Las automatizaciones son compartidas por todos los perfiles. Cambie a Predeterminado para editarlas."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Automations changed on:"
-msgstr ""
+msgstr "Automatizaciones modificadas en:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedAutomationColumns, plural, one {automatizaciones en # columna} many {automatizaciones en # de columnas} other {automatizaciones en # columnas}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to all changes"
-msgstr ""
+msgstr "Volver a todos los cambios"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Branch"
-msgstr ""
+msgstr "Volver a Rama"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Staged"
-msgstr ""
+msgstr "Volver a Preparados"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Back to Working"
-msgstr ""
+msgstr "Volver a Trabajo"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Background calls"
-msgstr ""
+msgstr "Llamadas en segundo plano"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
+#, fuzzy
 msgid "Base branch"
-msgstr ""
+msgstr "Rama base"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Base branch: {displayBranch}"
-msgstr ""
+msgstr "Rama base: {displayBranch}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Base: {baseBranch}"
-msgstr ""
+msgstr "Base: {baseBranch}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Based on {baseLabel}, not the project default"
-msgstr ""
+msgstr "Basado en {baseLabel}, no el predeterminado del proyecto"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Based on {baseLabel}, the project default"
-msgstr ""
+msgstr "Basado en {baseLabel}, el predeterminado del proyecto"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Before"
-msgstr ""
+msgstr "Antes"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "binary"
-msgstr ""
+msgstr "binario"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Binary file - cannot display diff"
-msgstr ""
+msgstr "Archivo binario: no se puede mostrar la diferencia"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Blame is unavailable for this file"
-msgstr ""
+msgstr "La autoría no está disponible para este archivo"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Board Profile changes will also be discarded."
-msgstr ""
+msgstr "También se descartarán los cambios del perfil del tablero."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Board saved"
-msgstr ""
+msgstr "Tablero guardado"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
+#, fuzzy
 msgid "Branch"
-msgstr ""
+msgstr "Rama"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Branch"
-msgstr ""
+msgstr "Rama"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cache read"
-msgstr ""
+msgstr "Lectura de caché"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cache write"
-msgstr ""
+msgstr "Escritura de caché"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Call"
-msgstr ""
+msgstr "Llamada"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Can't fast-forward"
-msgstr ""
+msgstr "No se puede avanzar rápidamente"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Can't remove \"{name}\""
-msgstr ""
+msgstr "No se puede quitar \"{name}\""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Can't update from {baseBranch}"
-msgstr ""
+msgstr "No se puede actualizar desde {baseBranch}"
 
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 #: src/renderer/components/dialogs/DialogFooterActions.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Cancelar"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Change in Settings"
-msgstr ""
+msgstr "Cambiar en Configuración"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Changed pixels"
-msgstr ""
+msgstr "Píxeles cambiados"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Changes"
-msgstr ""
+msgstr "Cambios"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Changes"
-msgstr ""
+msgstr "Cambios"
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "Changes - #{displayId} {taskTitle}"
-msgstr ""
+msgstr "Cambios - #{displayId} {taskTitle}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "Changes are open in their own window"
-msgstr ""
+msgstr "Los cambios están abiertos en su propia ventana"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Choose icon"
-msgstr ""
+msgstr "Elegir icono"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Choose Icon"
-msgstr ""
+msgstr "Elegir icono"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Choose icon: {chosenIconName}"
-msgstr ""
+msgstr "Elegir icono: {chosenIconName}"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Clear"
-msgstr ""
+msgstr "Borrar"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Close"
-msgstr ""
+msgstr "Cerrar"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Close browser"
-msgstr ""
+msgstr "Cerrar navegador"
 
 #: src/renderer/components/dialogs/BaseDialog.tsx
+#, fuzzy
 msgid "Close dialog"
-msgstr ""
+msgstr "Cerrar cuadro de diálogo"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Close dropdown"
-msgstr ""
+msgstr "Cerrar lista desplegable"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
-msgstr ""
+msgstr "Si cierras ahora, se descartarán esta nueva tarea y sus cambios sin guardar."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Closing now will discard unsaved changes in:"
-msgstr ""
+msgstr "Si cierras ahora, se descartarán los cambios sin guardar en:"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard your changes to this task."
-msgstr ""
+msgstr "Si cierras ahora, se descartarán los cambios de esta tarea."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Collapse all"
-msgstr ""
+msgstr "Contraer todo"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Collapse history"
-msgstr ""
+msgstr "Contraer historial"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Collapse to split view"
-msgstr ""
+msgstr "Contraer a vista dividida"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Collapse unchanged"
-msgstr ""
+msgstr "Contraer sin cambios"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color"
-msgstr ""
+msgstr "Color"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color {presetColor}"
-msgstr ""
+msgstr "Color {presetColor}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Color {presetColor} (selected)"
-msgstr ""
+msgstr "Color {presetColor} (seleccionado)"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column name fallback"
 msgid "column"
-msgstr ""
+msgstr "columna"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgctxt "unnamed column fallback"
 msgid "column"
-msgstr ""
+msgstr "columna"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Column"
-msgstr ""
+msgstr "Columna"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Column"
-msgstr ""
+msgstr "Columna"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column Manager"
-msgstr ""
+msgstr "Administrador de columnas"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column name"
-msgstr ""
+msgstr "Nombre de la columna"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column needs a name"
-msgstr ""
+msgstr "La columna necesita un nombre"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Column order changes will also be discarded."
-msgstr ""
+msgstr "También se descartarán los cambios en el orden de las columnas."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Column Settings"
-msgstr ""
+msgstr "Ajustes de columna"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Columns"
-msgstr ""
+msgstr "Columnas"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr ""
+msgstr "Las columnas comparten la conversación principal de la tarea, a menos que le des a esta una propia. Una sesión aislada empieza desde cero en cada entrada, lo que conviene para una revisión de código o cualquier pasada que no deba heredar el trabajo anterior."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Commands"
-msgstr ""
+msgstr "Comandos"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
+#, fuzzy
 msgid "Commit graph"
-msgstr ""
+msgstr "Gráfico de commits"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "Commits"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Compactions"
-msgstr ""
+msgstr "Compactaciones"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Compare every column's settings side by side"
-msgstr ""
+msgstr "Comparar la configuración de todas las columnas"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Comparing pixels"
-msgstr ""
+msgstr "Comparando píxeles"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Completed"
-msgstr ""
+msgstr "Completada"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Completed"
-msgstr ""
+msgstr "Completada"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "Completed task"
-msgstr ""
+msgstr "Tarea completada"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Completed Tasks ({archivedTotalCount})"
-msgstr ""
+msgstr "Tareas completadas ({archivedTotalCount})"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Condition"
-msgstr ""
+msgstr "Condición"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Condition check"
-msgstr ""
+msgstr "Comprobación de condición"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Condition kind"
-msgstr ""
+msgstr "Tipo de condición"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Condition: {condition}"
-msgstr ""
+msgstr "Condición: {condition}"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
+#, fuzzy
 msgid "Confirm"
-msgstr ""
+msgstr "Confirmar"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Conversation"
-msgstr ""
+msgstr "Conversación"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Conversation"
-msgstr ""
+msgstr "Conversación"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Copied"
-msgstr ""
+msgstr "Copiado"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Copy conversation ID"
-msgstr ""
+msgstr "Copiar ID de conversación"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Copy existing"
-msgstr ""
+msgstr "Copiar existente"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Copy isolated conversation ID"
-msgstr ""
+msgstr "Copiar ID de conversación aislada"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Copy path"
-msgstr ""
+msgstr "Copiar ruta"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Copy task ID"
-msgstr ""
+msgstr "Copiar ID de tarea"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Cost"
-msgstr ""
+msgstr "Costo"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Cost"
-msgstr ""
+msgstr "Costo"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Could not compare pixels"
-msgstr ""
+msgstr "No se pudieron comparar los píxeles"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Could not read"
-msgstr ""
+msgstr "No se pudo leer"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Could not read this image"
-msgstr ""
+msgstr "No se pudo leer esta imagen"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "Could not read this task's record"
-msgstr ""
+msgstr "No se pudo leer el registro de esta tarea"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "Couldn't add \"{filename}\""
-msgstr ""
+msgstr "No se pudo agregar \"{filename}\""
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't archive task"
-msgstr ""
+msgstr "No se pudo archivar la tarea"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Couldn't compress image"
-msgstr ""
+msgstr "No se pudo comprimir la imagen"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't create task"
-msgstr ""
+msgstr "No se pudo crear la tarea"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\""
-msgstr ""
+msgstr "No se pudo eliminar \"{deletedColumnName}\""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\": {reasonText}"
-msgstr ""
+msgstr "No se pudo eliminar \"{deletedColumnName}\": {reasonText}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Couldn't fetch {baseBranch}"
-msgstr ""
+msgstr "No se pudo obtener {baseBranch}"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgid "Couldn't open \"{filename}\""
-msgstr ""
+msgstr "No se pudo abrir \"{filename}\""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Couldn't open file diff"
-msgstr ""
+msgstr "No se pudo abrir el diff del archivo"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Couldn't relocate project"
-msgstr ""
+msgstr "No se pudo reubicar el proyecto"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "Couldn't remove attachment"
-msgstr ""
+msgstr "No se pudo quitar el archivo adjunto"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't reset session"
-msgstr ""
+msgstr "No se pudo restablecer la sesión"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Couldn't resolve PR"
-msgstr ""
+msgstr "No se pudo resolver la PR"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't run {commandName}"
-msgstr ""
+msgstr "No se pudo ejecutar {commandName}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save"
-msgstr ""
+msgstr "No se pudo guardar"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\""
-msgstr ""
+msgstr "No se pudieron guardar las automatizaciones de \"{columnName}\""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\": {reasonText}"
-msgstr ""
+msgstr "No se pudieron guardar las automatizaciones de \"{columnName}\": {reasonText}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Couldn't save profiles"
-msgstr ""
+msgstr "No se pudieron guardar los perfiles"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't save task"
-msgstr ""
+msgstr "No se pudo guardar la tarea"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't send to backlog"
-msgstr ""
+msgstr "No se pudo enviar al backlog"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Couldn't switch branch"
-msgstr ""
+msgstr "No se pudo cambiar de rama"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Create"
-msgstr ""
+msgstr "Crear"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "created {savedCreates, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedCreates, plural, one {# columna creada} many {# de columnas creadas} other {# columnas creadas}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Custom color"
-msgstr ""
+msgstr "Color personalizado"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board overview value"
 msgid "Default"
-msgstr ""
+msgstr "Predeterminado"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board profile"
 msgid "Default"
-msgstr ""
+msgstr "Predeterminado"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgctxt "placeholder"
 msgid "Default"
-msgstr ""
+msgstr "Predeterminado"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgctxt "profile option"
 msgid "Default"
-msgstr ""
+msgstr "Predeterminado"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Default ({iconRoleName})"
-msgstr ""
+msgstr "Predeterminado ({iconRoleName})"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Eliminar"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Delete"
-msgstr ""
+msgstr "Eliminar"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Delete {name}"
-msgstr ""
+msgstr "Eliminar {name}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Delete completed task"
-msgstr ""
+msgstr "Eliminar tarea completada"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "Eliminar tarea"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Delete this profile"
-msgstr ""
+msgstr "Eliminar este perfil"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Deleted"
-msgstr ""
+msgstr "Eliminado"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "deleted {savedDeletes, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedDeletes, plural, one {# columna eliminada} many {# de columnas eliminadas} other {# columnas eliminadas}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Deleting {deleteCompleted} of {deleteTotal}"
-msgstr ""
+msgstr "Eliminando {deleteCompleted} de {deleteTotal}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Description"
-msgstr ""
+msgstr "Descripción"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Description"
-msgstr ""
+msgstr "Descripción"
 
 #: src/renderer/components/dialogs/task-detail/changes/CommitSelectionBar.tsx
+#, fuzzy
 msgid "Deselect commit"
-msgstr ""
+msgstr "Deseleccionar commit"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Diff"
-msgstr ""
+msgstr "Diferencias"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Diff scope"
-msgstr ""
+msgstr "Ámbito de diferencias"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Descartar"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "¿Descartar los cambios no guardados?"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
+#, fuzzy
 msgid "Don't ask again"
-msgstr ""
+msgstr "No volver a preguntar"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Done"
-msgstr ""
+msgstr "Listo"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "Done"
-msgstr ""
+msgstr "Hecho"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Double-click to reset"
-msgstr ""
+msgstr "Doble clic para restablecer"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "Arrastre para reordenar"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Drag to resize"
-msgstr ""
+msgstr "Arrastrar para cambiar el tamaño"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Drag to reveal the new image"
-msgstr ""
+msgstr "Arrastre para mostrar la nueva imagen"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Drop files here"
-msgstr ""
+msgstr "Suelta los archivos aquí"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Duplicate profile"
-msgstr ""
+msgstr "Duplicar perfil"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Duplicate this profile"
-msgstr ""
+msgstr "Duplicar este perfil"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "e.g. Simple or Complex"
-msgstr ""
+msgstr "p. ej., Simple o Complejo"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Each column applies its own settings as the task moves."
-msgstr ""
+msgstr "Cada columna aplica sus propios ajustes a medida que avanza la tarea."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Edit"
-msgstr ""
+msgstr "Editar"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Edit {name}"
-msgstr ""
+msgstr "Editar {name}"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Edit agent defaults in Settings"
-msgstr ""
+msgstr "Editar valores predeterminados del agente en Configuración"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Edit automation"
-msgstr ""
+msgstr "Editar automatización"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Edit profiles in Edit Columns"
-msgstr ""
+msgstr "Editar perfiles en Editar columnas"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Esfuerzo"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Effort"
-msgstr ""
+msgstr "Esfuerzo"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Effort"
-msgstr ""
+msgstr "Esfuerzo"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Elapsed"
-msgstr ""
+msgstr "Transcurrido"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Ended"
-msgstr ""
+msgstr "Finalizada"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Ended"
-msgstr ""
+msgstr "Finalizado"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Error"
-msgstr ""
+msgstr "Error"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Exited ({exitCode})"
-msgstr ""
+msgstr "Salió ({exitCode})"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Expand all"
-msgstr ""
+msgstr "Expandir todo"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Expand changes"
-msgstr ""
+msgstr "Expandir cambios"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Expand history"
-msgstr ""
+msgstr "Expandir historial"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Extension"
-msgstr ""
+msgstr "Extensión"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Fade between the two images"
-msgstr ""
+msgstr "Fundido entre las dos imágenes"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Failed to load diff"
-msgstr ""
+msgstr "No se pudo cargar el diff"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load diff viewer"
-msgstr ""
+msgstr "No se pudo cargar el visor de diferencias"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "No se pudo cargar el panel Cambios"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Fast-forwarded {commitCount, plural, one {# commit} other {# commits}}."
-msgstr ""
+msgstr "{commitCount, plural, one {Avance rápido de # commit.} many {Avance rápido de # de commits.} other {Avance rápido de # commits.}}"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "File"
-msgstr ""
+msgstr "Archivo"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
+#, fuzzy
 msgid "File too large"
-msgstr ""
+msgstr "Archivo demasiado grande"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Files"
-msgstr ""
+msgstr "Archivos"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Files changed"
-msgstr ""
+msgstr "Archivos modificados"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Filter files..."
-msgstr ""
+msgstr "Filtrar archivos..."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Flat list"
-msgstr ""
+msgstr "Lista plana"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Frequency"
-msgstr ""
+msgstr "Frecuencia"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Fresh input"
-msgstr ""
+msgstr "Entrada nueva"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "From session totals"
-msgstr ""
+msgstr "De los totales de la sesión"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "General"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Generate title"
-msgstr ""
+msgstr "Generar título"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Git could not reach origin."
-msgstr ""
+msgstr "Git no pudo conectar con origin."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Git LFS pointer"
-msgstr ""
+msgstr "Puntero de Git LFS"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Hand off context when the agent changes"
-msgstr ""
+msgstr "Transferir el contexto cuando cambie el agente"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Handoff"
-msgstr ""
+msgstr "Traspaso"
 
 #: src/renderer/components/dialogs/task-detail/HandoffTimeline.tsx
+#, fuzzy
 msgid "Handoff Chain"
-msgstr ""
+msgstr "Cadena de traspasos"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Hex color value"
-msgstr ""
+msgstr "Valor de color hexadecimal"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide browser"
-msgstr ""
+msgstr "Ocultar navegador"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide changes"
-msgstr ""
+msgstr "Ocultar cambios"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide description"
-msgstr ""
+msgstr "Ocultar descripción"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Hide workflow"
-msgstr ""
+msgstr "Ocultar flujo de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Highlight the pixels that changed"
-msgstr ""
+msgstr "Resaltar los píxeles que cambiaron"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "History"
-msgstr ""
+msgstr "Historial"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "History: {historyFileName}"
-msgstr ""
+msgstr "Historial: {historyFileName}"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "How many times it can run on a task."
-msgstr ""
+msgstr "Cuántas veces puede ejecutarse en una tarea."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "How this task runs"
-msgstr ""
+msgstr "Cómo se ejecuta esta tarea"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "Icono"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Icons failed to load. Restart Kangentic to try again."
-msgstr ""
+msgstr "No se pudieron cargar los iconos. Reinicie Kangentic para volver a intentarlo."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "If it was moved or renamed, locate the new folder to keep all tasks and board history."
-msgstr ""
+msgstr "Si se movió o se cambió de nombre, localice la nueva carpeta para conservar todas las tareas y el historial del tablero."
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "Ignorar espacios en blanco"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Image"
-msgstr ""
+msgstr "Imagen"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Image comparison"
-msgstr ""
+msgstr "Comparación de imágenes"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Image preview"
-msgstr ""
+msgstr "Vista previa de imagen"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Image sent at lower quality"
-msgstr ""
+msgstr "Imagen enviada con menor calidad"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "Indexing is off, so no commits are linked"
-msgstr ""
+msgstr "La indexación está desactivada, así que no hay commits vinculados"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Inherits every column's settings from {sourceName}."
-msgstr ""
+msgstr "Hereda la configuración de todas las columnas de {sourceName}."
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Inline"
-msgstr ""
+msgstr "En línea"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "En línea si es estrecho"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Input with cache"
-msgstr ""
+msgstr "Entrada con caché"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "session target"
 msgid "Isolated"
-msgstr ""
+msgstr "Aislada"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "It was still large after compression."
-msgstr ""
+msgstr "Seguía siendo grande tras la compresión."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "JSON File"
-msgstr ""
+msgstr "Archivo JSON"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Jupyter Notebook"
-msgstr ""
+msgstr "Cuaderno de Jupyter"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Seguir editando"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Kept alive until you close it"
-msgstr ""
+msgstr "Se mantiene activa hasta que la cierres"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Knowledge Graph indexing is off"
-msgstr ""
+msgstr "La indexación del Knowledge Graph está desactivada"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+#, fuzzy
 msgid "Labels"
-msgstr ""
+msgstr "Etiquetas"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Last message"
-msgstr ""
+msgstr "Último mensaje"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Later"
-msgstr ""
+msgstr "Más tarde"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Lines"
-msgstr ""
+msgstr "Líneas"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Link PR"
-msgstr ""
+msgstr "Vincular PR"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Loading branches..."
-msgstr ""
+msgstr "Cargando ramas..."
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Loading icons"
-msgstr ""
+msgstr "Cargando iconos"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Locate Folder..."
-msgstr ""
+msgstr "Localizar carpeta..."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "session target"
 msgid "Main"
-msgstr ""
+msgstr "Principal"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr ""
+msgstr "Principal continúa la conversación de la tarea y Aislada empieza desde cero en cada entrada."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
-msgstr ""
+msgstr "Manual"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Mark as not viewed"
-msgstr ""
+msgstr "Marcar como no visto"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Mark as viewed"
-msgstr ""
+msgstr "Marcar como visto"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr ""
+msgstr "Coincide con la última línea del agente, sin distinguir mayúsculas ni puntuación, con * como comodín."
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
+#, fuzzy
 msgid "Maximize dialog"
-msgstr ""
+msgstr "Maximizar cuadro de diálogo"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Maximum runs"
-msgstr ""
+msgstr "Máximo de ejecuciones"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modelo"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Model"
-msgstr ""
+msgstr "Modelo"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Model"
-msgstr ""
+msgstr "Modelo"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Models and tokens"
-msgstr ""
+msgstr "Modelos y tokens"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Modified"
-msgstr ""
+msgstr "Modificado"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Mover a"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name"
-msgstr ""
+msgstr "Nombre"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Name"
-msgstr ""
+msgstr "Nombre"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name it before saving."
-msgstr ""
+msgstr "Asígnele un nombre antes de guardar."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Name terminal"
-msgstr ""
+msgstr "Nombrar terminal"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
-msgstr ""
+msgstr "El nombre, la descripción, el color y el icono son comunes a todos los perfiles. Cambie a Predeterminado para editarlos."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Needs both images"
-msgstr ""
+msgstr "Requiere ambas imágenes"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "New automation"
-msgstr ""
+msgstr "Nueva automatización"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "New profile"
-msgstr ""
+msgstr "Nuevo perfil"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "New Task"
-msgstr ""
+msgstr "Nueva tarea"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Next change"
-msgstr ""
+msgstr "Cambio siguiente"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Next column"
-msgstr ""
+msgstr "Columna siguiente"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "No active session"
-msgstr ""
+msgstr "No hay ninguna sesión activa"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "No active session. Drag this task into a column that starts an agent."
-msgstr ""
+msgstr "No hay ninguna sesión activa. Arrastra esta tarea a una columna que inicie un agente."
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "No agent CLI detected yet"
-msgstr ""
+msgstr "Aún no se ha detectado ninguna CLI de agente"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "No agent runs on record"
-msgstr ""
+msgstr "No hay ejecuciones de agente registradas"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "No branches found"
-msgstr ""
+msgstr "No se encontraron ramas"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "No branches match \"{query}\""
-msgstr ""
+msgstr "Ninguna rama coincide con \"{query}\""
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
+#, fuzzy
 msgid "No changes on this branch"
-msgstr ""
+msgstr "No hay cambios en esta rama"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "no changes to save"
-msgstr ""
+msgstr "no hay cambios que guardar"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No changes vs {baseLabel}"
-msgstr ""
+msgstr "Sin cambios respecto a {baseLabel}"
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+#, fuzzy
 msgid "No commands or skills found"
-msgstr ""
+msgstr "No se encontraron comandos ni habilidades"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "No commits for this task"
-msgstr ""
+msgstr "No hay commits para esta tarea"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "No commits on this branch yet."
-msgstr ""
+msgstr "Aún no hay commits en esta rama."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "No completed tasks yet"
-msgstr ""
+msgstr "Aún no hay tareas completadas"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No conversation history for this task yet"
-msgstr ""
+msgstr "Aún no hay historial de conversación para esta tarea"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+#, fuzzy
 msgid "No conversation yet"
-msgstr ""
+msgstr "Aún no hay conversación"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgid "No description"
-msgstr ""
+msgstr "Sin descripción"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No files changed"
-msgstr ""
+msgstr "No hay archivos modificados"
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
+#, fuzzy
 msgid "No fonts match \"{typedFilter}\""
-msgstr ""
+msgstr "Ninguna fuente coincide con \"{typedFilter}\""
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "No git history available."
-msgstr ""
+msgstr "No hay historial de git disponible."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "No history found"
-msgstr ""
+msgstr "No se encontró historial"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "No icons match \"{query}\""
-msgstr ""
+msgstr "Ningún icono coincide con \"{query}\""
 
 #: src/renderer/components/dialogs/Combobox.tsx
+#, fuzzy
 msgid "No matches"
-msgstr ""
+msgstr "Sin coincidencias"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "No matching files"
-msgstr ""
+msgstr "No hay archivos coincidentes"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "No models match \"{filterText}\""
-msgstr ""
+msgstr "Ningún modelo coincide con \"{filterText}\""
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No origin remote"
-msgstr ""
+msgstr "No hay remoto origin"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "No pixel changes"
-msgstr ""
+msgstr "Sin cambios de píxeles"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No PR found"
-msgstr ""
+msgstr "No se encontró ninguna PR"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "No PR resolver"
-msgstr ""
+msgstr "No hay resolutor de PR"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "No profiles yet - create one in Edit Columns"
-msgstr ""
+msgstr "Aún no hay perfiles: cree uno en Editar columnas"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No staged changes"
-msgstr ""
+msgstr "No hay cambios preparados"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "No tasks match \"{searchQuery}\""
-msgstr ""
+msgstr "Ninguna tarea coincide con \"{searchQuery}\""
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "No uncommitted changes"
-msgstr ""
+msgstr "No hay cambios sin confirmar"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "None"
-msgstr ""
+msgstr "Ninguno"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgctxt "icon option"
 msgid "None"
-msgstr ""
+msgstr "Ninguno"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "None is available for this repository."
-msgstr ""
+msgstr "No hay ninguno disponible para este repositorio."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Not image data"
-msgstr ""
+msgstr "No son datos de imagen"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Not offered on this trigger."
-msgstr ""
+msgstr "No disponible para este desencadenador."
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "not readable"
-msgstr ""
+msgstr "no legible"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Not readable"
-msgstr ""
+msgstr "No legible"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing matches branch \"{searchedBranch}\"."
-msgstr ""
+msgstr "Nada coincide con la rama \"{searchedBranch}\"."
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Nothing matches that."
-msgstr ""
+msgstr "No hay coincidencias."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing matches this task."
-msgstr ""
+msgstr "Nada coincide con esta tarea."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing new on {baseBranch}."
-msgstr ""
+msgstr "No hay nada nuevo en {baseBranch}."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
-msgstr ""
+msgstr "No se ejecuta nada al final de un turno en {terminalName}."
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Nothing runs when a task enters {columnName}."
-msgstr ""
+msgstr "No se ejecuta nada cuando una tarea entra en {columnName}."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Nothing to search by"
-msgstr ""
+msgstr "No hay nada por lo que buscar"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On enter"
-msgstr ""
+msgstr "Al entrar"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On exit"
-msgstr ""
+msgstr "Al salir"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "On exit, this column's automations share {exitBudgetSeconds, plural, one {# second} other {# seconds}} in total. Put longer work on enter."
-msgstr ""
+msgstr "{exitBudgetSeconds, plural, one {Al salir, las automatizaciones de esta columna comparten # segundo en total. Coloque el trabajo más largo al entrar.} many {Al salir, las automatizaciones de esta columna comparten # de segundos en total. Coloque el trabajo más largo al entrar.} other {Al salir, las automatizaciones de esta columna comparten # segundos en total. Coloque el trabajo más largo al entrar.}}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "On turn end"
-msgstr ""
+msgstr "Al final del turno"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
-msgstr ""
+msgstr "Solo se detectó una CLI de agente: instale otra para poder elegir"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
-msgstr ""
+msgstr "Solo cambia la etiqueta. Las tareas que ya usan este perfil lo conservan."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgctxt "pull request state"
 msgid "open"
-msgstr ""
+msgstr "abierta"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Open {shortHash} on {providerName}"
-msgstr ""
+msgstr "Abrir {shortHash} en {providerName}"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
+#, fuzzy
 msgid "Open dropdown"
-msgstr ""
+msgstr "Abrir lista desplegable"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open Folder"
-msgstr ""
+msgstr "Abrir carpeta"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Open in editor"
-msgstr ""
+msgstr "Abrir en el editor"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "Abrir en una ventana nueva"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Open on {providerName}"
-msgstr ""
+msgstr "Abrir en {providerName}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "Open PR #{prNumber}"
-msgstr ""
+msgstr "Abrir PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "Open PR #{prNumber} ({prLabel})"
-msgstr ""
+msgstr "Abrir PR #{prNumber} ({prLabel})"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open project folder"
-msgstr ""
+msgstr "Abrir carpeta del proyecto"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Open settings"
-msgstr ""
+msgstr "Abrir configuración"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Open Settings"
-msgstr ""
+msgstr "Abrir Configuración"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Open that board to edit its profiles"
-msgstr ""
+msgstr "Abra ese tablero para editar sus perfiles"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open worktree"
-msgstr ""
+msgstr "Abrir árbol de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open Worktree"
-msgstr ""
+msgstr "Abrir árbol de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Open worktree folder"
-msgstr ""
+msgstr "Abrir carpeta del árbol de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
+#, fuzzy
 msgid "Opens this part of the conversation"
-msgstr ""
+msgstr "Abre esta parte de la conversación"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Outcome"
-msgstr ""
+msgstr "Resultado"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Output"
-msgstr ""
+msgstr "Salida"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Overlay"
-msgstr ""
+msgstr "Superposición"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
+#, fuzzy
 msgid "Overview"
-msgstr ""
+msgstr "Resumen"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Page kept"
-msgstr ""
+msgstr "Página conservada"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Path copied"
-msgstr ""
+msgstr "Ruta copiada"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Pause session"
-msgstr ""
+msgstr "Pausar sesión"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Pausing agent..."
-msgstr ""
+msgstr "Pausando agente..."
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "PDF Document"
-msgstr ""
+msgstr "Documento PDF"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Permission"
-msgstr ""
+msgstr "Permiso"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "Permisos"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Permissions"
-msgstr ""
+msgstr "Permisos"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Permissions"
-msgstr ""
+msgstr "Permisos"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Pinned for the whole task, ignoring column settings."
-msgstr ""
+msgstr "Fijado para toda la tarea, ignorando los ajustes de columna."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Plan approval"
-msgstr ""
+msgstr "Aprobación de planes"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Plan approval is shared by every profile. Switch to Default to change it."
-msgstr ""
+msgstr "La aprobación del plan es común a todos los perfiles. Cambie a Predeterminado para modificarla."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Pop out of tiling"
-msgstr ""
+msgstr "Sacar del mosaico"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Position {queuePosition} of {queueTotal}"
-msgstr ""
+msgstr "Posición {queuePosition} de {queueTotal}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgid "PR #{prNumber} ({prLabel})"
-msgstr ""
+msgstr "PR #{prNumber} ({prLabel})"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "PR host unreachable"
-msgstr ""
+msgstr "Host de PR inaccesible"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "PR linked"
-msgstr ""
+msgstr "PR vinculada"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Preview image"
-msgstr ""
+msgstr "Vista previa de la imagen"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Preview rendered markdown"
-msgstr ""
+msgstr "Vista previa del Markdown renderizado"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Previews stop at {previewLimit} per image"
-msgstr ""
+msgstr "Las vistas previas se limitan a {previewLimit} por imagen"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Previous change"
-msgstr ""
+msgstr "Cambio anterior"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
+#, fuzzy
 msgid "Priority"
-msgstr ""
+msgstr "Prioridad"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Profile"
-msgstr ""
+msgstr "Perfil"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgctxt "placement option"
 msgid "Project"
-msgstr ""
+msgstr "Proyecto"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Project Folder Not Found"
-msgstr ""
+msgstr "No se encontró la carpeta del proyecto"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "Project relocated"
-msgstr ""
+msgstr "Proyecto reubicado"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Pull request"
-msgstr ""
+msgstr "Pull request"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Pull Request"
-msgstr ""
+msgstr "Pull request"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Queued (click to pause)"
-msgstr ""
+msgstr "En cola (haz clic para pausar)"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Ran"
-msgstr ""
+msgstr "Ejecutada"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Rebase or merge it in the session instead."
-msgstr ""
+msgstr "Haz rebase o merge en la sesión en su lugar."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Refresh PR"
-msgstr ""
+msgstr "Actualizar PR"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Removal staged"
-msgstr ""
+msgstr "Eliminación pendiente"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "Quitar"
 
 #: src/renderer/components/dialogs/AttachmentChipStrip.tsx
+#, fuzzy
 msgid "Remove {filename}"
-msgstr ""
+msgstr "Quitar {filename}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove column"
-msgstr ""
+msgstr "Eliminar columna"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Remove column \"{removeTargetName}\""
-msgstr ""
+msgstr "Eliminar columna \"{removeTargetName}\""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "Removed profile"
-msgstr ""
+msgstr "Perfil eliminado"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Cambiar nombre"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
+#, fuzzy
 msgid "Rename profile"
-msgstr ""
+msgstr "Cambiar nombre del perfil"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
+#, fuzzy
 msgid "Rename this profile"
-msgstr ""
+msgstr "Cambiar nombre de este perfil"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Renamed"
-msgstr ""
+msgstr "Renombrado"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Reorder {name}"
-msgstr ""
+msgstr "Reordenar {name}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset"
-msgstr ""
+msgstr "Restablecer"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Reset session"
-msgstr ""
+msgstr "Restablecer sesión"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to agent default"
-msgstr ""
+msgstr "Restablecer al valor predeterminado del agente"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to project default"
-msgstr ""
+msgstr "Restablecer al valor predeterminado del proyecto"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Reset to project setting"
-msgstr ""
+msgstr "Restablecer a la configuración del proyecto"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Resize file list"
-msgstr ""
+msgstr "Cambiar tamaño de la lista de archivos"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Resize history"
-msgstr ""
+msgstr "Cambiar tamaño del historial"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Restart to update"
-msgstr ""
+msgstr "Reiniciar para actualizar"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Restore"
-msgstr ""
+msgstr "Restaurar"
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
+#, fuzzy
 msgid "Restore dialog"
-msgstr ""
+msgstr "Restaurar cuadro de diálogo"
 
 #: src/renderer/components/dialogs/completed-tasks/RestorePopover.tsx
+#, fuzzy
 msgid "Restore to"
-msgstr ""
+msgstr "Restaurar en"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "Restore to board"
-msgstr ""
+msgstr "Restaurar en el tablero"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task action"
 msgid "Resume"
-msgstr ""
+msgstr "Reanudar"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "Resume {taskTitle}"
-msgstr ""
+msgstr "Reanudar {taskTitle}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Resume session"
-msgstr ""
+msgstr "Reanudar sesión"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Resuming"
-msgstr ""
+msgstr "Reanudando"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Reanudando agente..."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "Retry"
-msgstr ""
+msgstr "Reintentar"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Reveal in file manager"
-msgstr ""
+msgstr "Mostrar en el administrador de archivos"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgctxt "completed task card"
 msgid "Route"
-msgstr ""
+msgstr "Recorrido"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Run in a new worktree"
-msgstr ""
+msgstr "Ejecutar en un nuevo árbol de trabajo"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Run in the project folder"
-msgstr ""
+msgstr "Ejecutar en la carpeta del proyecto"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgctxt "task status"
 msgid "Running"
-msgstr ""
+msgstr "En ejecución"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "completed task card"
 msgid "Runs"
-msgstr ""
+msgstr "Ejecuciones"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Runs only when this holds."
-msgstr ""
+msgstr "Solo se ejecuta cuando esto se cumple."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Runtime"
-msgstr ""
+msgstr "Duración"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Same-agent moves (e.g. Claude to Claude) resume natively via the agent's own session id and ignore this setting."
-msgstr ""
+msgstr "Los movimientos con el mismo agente (p. ej., de Claude a Claude) se reanudan de forma nativa mediante el id. de sesión del propio agente e ignoran esta configuración."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Save"
-msgstr ""
+msgstr "Guardar"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Save stopped partway"
-msgstr ""
+msgstr "El guardado se detuvo a medias"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved {savedUpdates, plural, one {# column} other {# columns}}"
-msgstr ""
+msgstr "{savedUpdates, plural, one {se guardó # columna} many {se guardaron # de columnas} other {se guardaron # columnas}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved automations"
-msgstr ""
+msgstr "se guardaron las automatizaciones"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "saved profiles"
-msgstr ""
+msgstr "se guardaron los perfiles"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
+#, fuzzy
 msgid "Search automations"
-msgstr ""
+msgstr "Buscar automatizaciones"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
+#, fuzzy
 msgid "Search branches..."
-msgstr ""
+msgstr "Buscar ramas..."
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
+#, fuzzy
 msgid "Search commands & skills..."
-msgstr ""
+msgstr "Buscar comandos y habilidades..."
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
+#, fuzzy
 msgid "Search icons..."
-msgstr ""
+msgstr "Buscar iconos..."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "Search tasks..."
-msgstr ""
+msgstr "Buscar tareas..."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Select a commit to see its changes"
-msgstr ""
+msgstr "Seleccione un commit para ver sus cambios"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Select a file to view changes"
-msgstr ""
+msgstr "Seleccione un archivo para ver los cambios"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Send to Backlog"
-msgstr ""
+msgstr "Enviar al Backlog"
 
 #: src/renderer/components/dialogs/image-compress.ts
+#, fuzzy
 msgid "Sending the original instead."
-msgstr ""
+msgstr "Se enviará la original en su lugar."
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Sent to backlog"
-msgstr ""
+msgstr "Enviada al backlog"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "board manager field"
 msgid "Session"
-msgstr ""
+msgstr "Sesión"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Session"
-msgstr ""
+msgstr "Sesión"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Session"
-msgstr ""
+msgstr "Sesión"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Session could not be resumed."
-msgstr ""
+msgstr "No se pudo reanudar la sesión."
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+#, fuzzy
 msgid "Session may be expired"
-msgstr ""
+msgstr "Puede que la sesión haya caducado"
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
+#, fuzzy
 msgid "Session may need to be re-created"
-msgstr ""
+msgstr "Puede que sea necesario volver a crear la sesión"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Sessions don't run in {roleName} columns, so {label} doesn't apply."
-msgstr ""
+msgstr "Las sesiones no se ejecutan en columnas {roleName}, así que {label} no se aplica."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Sessions don't run in {terminalName} columns."
-msgstr ""
+msgstr "Las sesiones no se ejecutan en columnas {terminalName}."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Set up an Automation agent"
-msgstr ""
+msgstr "Configurar un agente de automatización"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Share the task's conversation with the other columns."
-msgstr ""
+msgstr "Compartir la conversación de la tarea con las demás columnas."
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show {fileName} in Changes"
-msgstr ""
+msgstr "Mostrar {fileName} en Cambios"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show {shortSha} in Changes"
-msgstr ""
+msgstr "Mostrar {shortSha} en Cambios"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Show all"
-msgstr ""
+msgstr "Mostrar todo"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Show all {callCount}"
-msgstr ""
+msgstr "Mostrar las {callCount}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Show blame"
-msgstr ""
+msgstr "Mostrar autoría"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show browser"
-msgstr ""
+msgstr "Mostrar navegador"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "Mostrar cambios"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show description"
-msgstr ""
+msgstr "Mostrar descripción"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Show diff"
-msgstr ""
+msgstr "Mostrar diferencias"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Show less"
-msgstr ""
+msgstr "Mostrar menos"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
+#, fuzzy
 msgid "Show text diff"
-msgstr ""
+msgstr "Mostrar diferencias de texto"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Show workflow"
-msgstr ""
+msgstr "Mostrar flujo de trabajo"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgid "Showing it in the file manager instead."
-msgstr ""
+msgstr "Se mostrará en el administrador de archivos."
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
+#, fuzzy
 msgid "Showing latest {commitCount, plural, one {# commit} other {# commits}}."
-msgstr ""
+msgstr "{commitCount, plural, one {Mostrando el último # commit.} many {Mostrando los últimos # de commits.} other {Mostrando los últimos # commits.}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
+#, fuzzy
 msgid "Showing the latest {commitCount, plural, one {# commit} other {# commits}}"
-msgstr ""
+msgstr "{commitCount, plural, one {Mostrando el último # commit} many {Mostrando los últimos # de commits} other {Mostrando los últimos # commits}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "En paralelo"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Size"
-msgstr ""
+msgstr "Tamaño"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "call outcome"
 msgid "Skipped"
-msgstr ""
+msgstr "Omitida"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Slider"
-msgstr ""
+msgstr "Deslizador"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Slider position"
-msgstr ""
+msgstr "Posición del deslizador"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by extension"
-msgstr ""
+msgstr "Ordenar: por extensión"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by name"
-msgstr ""
+msgstr "Ordenar: por nombre"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by size"
-msgstr ""
+msgstr "Ordenar: por tamaño"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Sort: by status"
-msgstr ""
+msgstr "Ordenar: por estado"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgctxt "image compare mode"
 msgid "Stacked"
-msgstr ""
+msgstr "Apilado"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Staged"
-msgstr ""
+msgstr "Preparado"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgctxt "board overview column header"
 msgid "Start"
-msgstr ""
+msgstr "Inicio"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start a clean conversation on every entry."
-msgstr ""
+msgstr "Iniciar una conversación nueva en cada entrada."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent automatically when a task enters this column."
-msgstr ""
+msgstr "Iniciar un agente automáticamente cuando una tarea entra en esta columna."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent here"
-msgstr ""
+msgstr "Iniciar un agente aquí"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Start an agent here is off."
-msgstr ""
+msgstr "Iniciar un agente aquí está desactivado."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Started"
-msgstr ""
+msgstr "Inicio"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
+#, fuzzy
 msgctxt "completed task metric"
 msgid "Started"
-msgstr ""
+msgstr "Iniciada"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Iniciando agente..."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Starts automatically when a slot opens up"
-msgstr ""
+msgstr "Se inicia automáticamente cuando se libera un espacio"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
-msgstr ""
+msgstr "Se reinicia cuando usted mueve la tarea o esta sale de Hecho, no cuando un agente o una automatización la mueve a otro lugar."
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Status"
-msgstr ""
+msgstr "Estado"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "leftover section"
 msgid "Still running"
-msgstr ""
+msgstr "Aún en ejecución"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process action"
 msgid "Stop"
-msgstr ""
+msgstr "Detener"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Stop {label}"
-msgstr ""
+msgstr "Detener {label}"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "leftover section"
 msgid "Stopped"
-msgstr ""
+msgstr "Detenidos"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Stopped"
-msgstr ""
+msgstr "Detenido"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgctxt "process state"
 msgid "Stopping"
-msgstr ""
+msgstr "Deteniendo"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
+#, fuzzy
 msgid "Stopping leftover processes is off, so these kept running."
-msgstr ""
+msgstr "Detener procesos sobrantes está desactivado, así que estos siguieron en ejecución."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Summary"
-msgstr ""
+msgstr "Resumen"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Summary pending"
-msgstr ""
+msgstr "Resumen pendiente"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Switch to flat list"
-msgstr ""
+msgstr "Cambiar a lista plana"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Switch to tree"
-msgstr ""
+msgstr "Cambiar a árbol"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task archived"
-msgstr ""
+msgstr "Tarea archivada"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
+#, fuzzy
 msgid "Task created"
-msgstr ""
+msgstr "Tarea creada"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task deleted"
-msgstr ""
+msgstr "Tarea eliminada"
 
 #: src/renderer/components/dialogs/task-detail/useCopyDisplayId.ts
+#, fuzzy
 msgid "Task ID copied"
-msgstr ""
+msgstr "ID de tarea copiado"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
+#, fuzzy
 msgid "Task moved"
-msgstr ""
+msgstr "Tarea movida"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Task summaries are off"
-msgstr ""
+msgstr "Los resúmenes de tareas están desactivados"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
+#, fuzzy
 msgid "Task summary"
-msgstr ""
+msgstr "Resumen de la tarea"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
+#, fuzzy
 msgid "Task title"
-msgstr ""
+msgstr "Título de la tarea"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "Text File"
-msgstr ""
+msgstr "Archivo de texto"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Text match"
-msgstr ""
+msgstr "Coincidencia de texto"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
+#, fuzzy
 msgid "The agent CLI this task runs on"
-msgstr ""
+msgstr "La CLI de agente en la que se ejecuta esta tarea"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "The folder could not be used."
-msgstr ""
+msgstr "No se pudo usar la carpeta."
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
+#, fuzzy
 msgid "The folder for <0>\"{projectName}\"</0> no longer exists:"
-msgstr ""
+msgstr "La carpeta de <0>\"{projectName}\"</0> ya no existe:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
-msgstr ""
+msgstr "El nuevo agente retoma la conversación del agente anterior en lugar de empezar desde la descripción de la tarea."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "The PR host returned an error."
-msgstr ""
+msgstr "El host de PR devolvió un error."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
+#, fuzzy
 msgid "The task's changes could not be read"
-msgstr ""
+msgstr "No se pudieron leer los cambios de la tarea"
 
 #: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
+#, fuzzy
 msgid "The task's changes could not be read."
-msgstr ""
+msgstr "No se pudieron leer los cambios de la tarea."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "The window could not be created."
-msgstr ""
+msgstr "No se pudo crear la ventana."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "The worktree has uncommitted changes."
-msgstr ""
+msgstr "El árbol de trabajo tiene cambios sin confirmar."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "There is no remote to fetch {baseBranch} from."
-msgstr ""
+msgstr "No hay ningún remoto del que obtener {baseBranch}."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "These columns are staged for removal and will be kept:"
-msgstr ""
+msgstr "Estas columnas están pendientes de eliminación y se conservarán:"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "These columns are staged for removal. Discarding keeps them:"
-msgstr ""
+msgstr "Estas columnas están pendientes de eliminación. Al descartar, se conservan:"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "Esta acción no se puede deshacer."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "This commit changed no files"
-msgstr ""
+msgstr "Este commit no modificó ningún archivo"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
-msgstr ""
+msgstr "Ahora esto se gestiona en la configuración de la columna. Quítelo para usarla."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "This task has no branch, commit or PR number yet."
-msgstr ""
+msgstr "Esta tarea aún no tiene rama, commit ni número de PR."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
+#, fuzzy
 msgid "This task has no conversation history"
-msgstr ""
+msgstr "Esta tarea no tiene historial de conversación"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
+#, fuzzy
 msgid "This task has no conversation history."
-msgstr ""
+msgstr "Esta tarea no tiene historial de conversación."
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "This task is archived. It does not appear on the board."
-msgstr ""
+msgstr "Esta tarea está archivada. No aparece en el tablero."
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
+#, fuzzy
 msgid "This task's commits are not in this clone"
-msgstr ""
+msgstr "Los commits de esta tarea no están en este clon"
 
 #: src/renderer/components/dialogs/board-manager/AutomationTypePicker.tsx
+#, fuzzy
 msgid "This type is retired and cannot be chosen."
-msgstr ""
+msgstr "Este tipo está retirado y no se puede elegir."
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "Se eliminarán de forma permanente la tarea, su historial de sesión y cualquier árbol de trabajo asociado."
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Title"
-msgstr ""
+msgstr "Título"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgctxt "column role"
 msgid "To Do"
-msgstr ""
+msgstr "Por hacer"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle browser"
-msgstr ""
+msgstr "Alternar navegador"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle changes"
-msgstr ""
+msgstr "Alternar cambios"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Toggle workflow"
-msgstr ""
+msgstr "Alternar flujo de trabajo"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tokens"
-msgstr ""
+msgstr "Tokens"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Too large to preview"
-msgstr ""
+msgstr "Demasiado grande para la vista previa"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tool calls"
-msgstr ""
+msgstr "Llamadas a herramientas"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Tools"
-msgstr ""
+msgstr "Herramientas"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "table total row"
 msgid "Total"
-msgstr ""
+msgstr "Total"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Tree view"
-msgstr ""
+msgstr "Vista de árbol"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "Tree view only"
-msgstr ""
+msgstr "Solo vista de árbol"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Trigger"
-msgstr ""
+msgstr "Desencadenador"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Try again in a moment."
-msgstr ""
+msgstr "Inténtalo de nuevo en un momento."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
-msgstr ""
+msgstr "Activa \"Iniciar un agente aquí\" en la sección Agente para habilitar {label}."
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Turns"
-msgstr ""
+msgstr "Turnos"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "Type"
-msgstr ""
+msgstr "Tipo"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
+#, fuzzy
 msgid "Under 0.1% of pixels changed"
-msgstr ""
+msgstr "Cambió menos del 0,1% de los píxeles"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "Unsaved"
-msgstr ""
+msgstr "Sin guardar"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#, fuzzy
 msgid "unsaved changes"
-msgstr ""
+msgstr "cambios sin guardar"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Untitled"
-msgstr ""
+msgstr "Sin título"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Untitled column"
-msgstr ""
+msgstr "Columna sin título"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
+#, fuzzy
 msgid "Untitled task"
-msgstr ""
+msgstr "Tarea sin título"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
+#, fuzzy
 msgctxt "file status"
 msgid "Untracked"
-msgstr ""
+msgstr "Sin seguimiento"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Update from base"
-msgstr ""
+msgstr "Actualizar desde la base"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Update from base failed"
-msgstr ""
+msgstr "Error al actualizar desde la base"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Updated from {baseBranch}"
-msgstr ""
+msgstr "Actualizado desde {baseBranch}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "updated the column order"
-msgstr ""
+msgstr "se actualizó el orden de las columnas"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
+#, fuzzy
 msgctxt "tab"
 msgid "Usage"
-msgstr ""
+msgstr "Uso"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
+#, fuzzy
 msgid "Version {updateVersion} is ready to install"
-msgstr ""
+msgstr "La versión {updateVersion} está lista para instalarse"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "View conversation"
-msgstr ""
+msgstr "Ver conversación"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
+#, fuzzy
 msgid "View details"
-msgstr ""
+msgstr "Ver detalles"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgid "View history"
-msgstr ""
+msgstr "Ver historial"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "View options"
-msgstr ""
+msgstr "Opciones de vista"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "View PR #{prNumber}"
-msgstr ""
+msgstr "Ver PR n.º {prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+#, fuzzy
 msgid "Waiting in queue"
-msgstr ""
+msgstr "En espera en la cola"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
+#, fuzzy
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
-msgstr ""
+msgstr "Qué ocurre cuando una tarea entra en esta columna, cada vez que su agente termina un turno aquí y cuando sale, en este orden."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "What is this column for?"
-msgstr ""
+msgstr "¿Para qué sirve esta columna?"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What it does."
-msgstr ""
+msgstr "Lo que hace."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What runs. Each type brings its own fields."
-msgstr ""
+msgstr "Lo que se ejecuta. Cada tipo tiene sus propios campos."
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
+#, fuzzy
 msgid "What starts it."
-msgstr ""
+msgstr "Lo que la inicia."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
-msgstr ""
+msgstr "Cuando una tarea entra en esta columna y el agente asignado es distinto del que se ejecutó en la columna anterior, Kangentic inserta la transcripción de la sesión anterior como primer mensaje, de modo que el nuevo agente continúa con todo el contexto en lugar de empezar solo desde la descripción de la tarea."
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgid "Where the agent runs"
-msgstr ""
+msgstr "Dónde se ejecuta el agente"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Where the task goes when the agent exits Plan mode."
-msgstr ""
+msgstr "Adónde va la tarea cuando el agente sale del modo Plan."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
-msgstr ""
+msgstr "Si apruebas tú cada plan o lo hace Kangentic. Una tarea de flujo de trabajo puede anularlo para sí misma."
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "Wildcard examples"
-msgstr ""
+msgstr "Ejemplos de comodines"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
+#, fuzzy
 msgid "Wildcard examples. {rows}"
-msgstr ""
+msgstr "Ejemplos de comodines. {rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#, fuzzy
 msgid "Window limit reached"
-msgstr ""
+msgstr "Se alcanzó el límite de ventanas"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Workflow step"
-msgstr ""
+msgstr "Paso del flujo de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
+#, fuzzy
 msgctxt "git area"
 msgid "Working"
-msgstr ""
+msgstr "De trabajo"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
+#, fuzzy
 msgid "Working..."
-msgstr ""
+msgstr "Trabajando..."
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
+#, fuzzy
 msgctxt "placement option"
 msgid "Worktree"
-msgstr ""
+msgstr "Árbol de trabajo"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "Ajustar líneas largas"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
+#, fuzzy
 msgid "Write summary"
-msgstr ""
+msgstr "Escribir resumen"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
+#, fuzzy
 msgctxt "file type"
 msgid "XML File"
-msgstr ""
+msgstr "Archivo XML"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "You approve each plan in the agent's terminal."
-msgstr ""
+msgstr "Apruebas cada plan en el terminal del agente."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Your Board Profile changes will be discarded."
-msgstr ""
+msgstr "Se descartarán los cambios del perfil de tablero."
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
+#, fuzzy
 msgid "Your column order changes will be discarded."
-msgstr ""
+msgstr "Se descartarán los cambios en el orden de las columnas."

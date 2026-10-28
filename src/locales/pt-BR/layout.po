@@ -8,262 +8,327 @@ msgstr ""
 "Language: pt-BR\n"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(dev)"
-msgstr ""
+msgstr "(dev)"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(worktree)"
-msgstr ""
+msgstr "(árvore de trabalho)"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeSessions, plural, one {# agents} other {# agents}}"
-msgstr ""
+msgstr "{activeSessions, plural, one {# agente} many {# de agentes} other {# agentes}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeTasks, plural, one {{activeTasksText} tasks} other {{activeTasksText} tasks}}"
-msgstr ""
+msgstr "{activeTasks, plural, one {{activeTasksText} tarefa} many {{activeTasksText} de tarefas} other {{activeTasksText} tarefas}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {Show all # agent} other {Show all # agents}}"
-msgstr ""
+msgstr "{agentCount, plural, one {Mostrar # agente} many {Mostrar todos os # de agentes} other {Mostrar todos os # agentes}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{agentName} not found"
-msgstr ""
+msgstr "{agentName} não encontrado"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{foundAgentCount, plural, one {# agent} other {# agents}}"
-msgstr ""
+msgstr "{foundAgentCount, plural, one {# agente} many {# de agentes} other {# agentes}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{queued, plural, one {# queued} other {# queued}}"
-msgstr ""
+msgstr "{queued, plural, one {# na fila} many {# na fila} other {# na fila}}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
-msgstr ""
+msgstr "{unreadAnnouncements, plural, one {# não lido} many {# não lidos} other {# não lidos}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
-msgstr ""
+msgstr "<0>Encontrados</0><1>{gitFact}</1><2>e</2><3><4>{agentFact}</4></3>"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "Monitor de agentes"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents"
-msgstr ""
+msgstr "Agentes"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents run inside your repo, so they pick up the instructions and config already there"
-msgstr ""
+msgstr "Os agentes rodam dentro do seu repositório, então aproveitam as instruções e configurações que já estão lá"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Announcements"
-msgstr ""
+msgstr "Anúncios"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Check again for git and agent CLIs"
-msgstr ""
+msgstr "Verificar novamente o git e as CLIs de agentes"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking your setup"
-msgstr ""
+msgstr "Verificando sua configuração"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "Verificando..."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Fechar"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Terminal de comandos"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "Copiado!"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "Copiar \"{loginCommand}\" para a área de transferência"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy <0>{loginCommand}</0>"
-msgstr ""
+msgstr "Copiar <0>{loginCommand}</0>"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Copy message"
-msgstr ""
+msgstr "Copiar mensagem"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Core"
-msgstr ""
+msgstr "Essenciais"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "Dispensar"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Each task runs on its own branch, so two agents never edit the same files"
-msgstr ""
+msgstr "Cada tarefa roda em sua própria branch, então dois agentes nunca editam os mesmos arquivos"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus agent monitor window"
-msgstr ""
+msgstr "Focar janela do monitor de agentes"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus Knowledge Graph window"
-msgstr ""
+msgstr "Focar janela do Grafo de conhecimento"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus usage stats window"
-msgstr ""
+msgstr "Focar janela de estatísticas de uso"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work."
-msgstr ""
+msgstr "O Git {gitVersion} é mais antigo que a versão recomendada {minimumGitVersion} - as árvores de trabalho podem não funcionar."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "Ocultar terminal de comandos"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Hide setup"
-msgstr ""
+msgstr "Ocultar configuração"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install"
-msgstr ""
+msgstr "Instalar"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git and one agent CLI to run tasks."
-msgstr ""
+msgstr "Instale o git e uma CLI de agente para executar tarefas."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git to run tasks."
-msgstr ""
+msgstr "Instale o git para executar tarefas."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install one agent CLI to run tasks."
-msgstr ""
+msgstr "Instale uma CLI de agente para executar tarefas."
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Installed"
-msgstr ""
+msgstr "Instalado"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Isolates every task"
-msgstr ""
+msgstr "Isola cada tarefa"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Kanban for AI coding agents"
-msgstr ""
+msgstr "Kanban para agentes de codificação com IA"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Grafo de conhecimento"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Maximize"
-msgstr ""
+msgstr "Maximizar"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Message copied"
-msgstr ""
+msgstr "Mensagem copiada"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Minimize"
-msgstr ""
+msgstr "Minimizar"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not installed"
-msgstr ""
+msgstr "Não instalado"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "Não conectado"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Open a project"
-msgstr ""
+msgstr "Abrir um projeto"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Pair a phone"
-msgstr ""
+msgstr "Parear um celular"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Quick Find"
-msgstr ""
+msgstr "Quick Find"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Read the setup guide"
-msgstr ""
+msgstr "Ler o guia de configuração"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Reads your project's setup"
-msgstr ""
+msgstr "Lê a configuração do seu projeto"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Refresh"
-msgstr ""
+msgstr "Atualizar"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Runs real terminals"
-msgstr ""
+msgstr "Executa terminais reais"
 
 #: src/renderer/components/layout/AppLayout.tsx
+#, fuzzy
 msgid "Select a project from the sidebar"
-msgstr ""
+msgstr "Selecione um projeto na barra lateral"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "Configurações"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Show setup"
-msgstr ""
+msgstr "Mostrar configuração"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Sign in to {signedOutAgentName} to run tasks."
-msgstr ""
+msgstr "Entre no {signedOutAgentName} para executar tarefas."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Update available"
-msgstr ""
+msgstr "Atualização disponível"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Usage Stats"
-msgstr ""
+msgstr "Estatísticas de uso"
 
 #: src/renderer/components/layout/StatusBar.tsx
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{appVersion}"
-msgstr ""
+msgstr "v{appVersion}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{version}"
-msgstr ""
+msgstr "v{version}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Version {pendingVersion} is ready to install"
-msgstr ""
+msgstr "A versão {pendingVersion} está pronta para instalar"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Watch an agent work and type back to steer it"
-msgstr ""
+msgstr "Acompanhe um agente trabalhando e responda para orientá-lo"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "What's new in v{appVersion}"
-msgstr ""
+msgstr "Novidades da v{appVersion}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "When you open a project"
-msgstr ""
+msgstr "Ao abrir um projeto"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "You can look around now and install an agent later."
-msgstr ""
+msgstr "Você pode explorar agora e instalar um agente depois."

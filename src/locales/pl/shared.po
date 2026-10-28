@@ -8,53 +8,66 @@ msgstr ""
 "Language: pl\n"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "{waitedCalls, plural, one {How long each tool ran. Leaves out the # call that waited for your answer or approval.} other {How long each tool ran. Leaves out the # calls that waited for your answer or approval.}}"
-msgstr ""
+msgstr "{waitedCalls, plural, one {Czas działania każdego narzędzia. Pomija # wywołanie, które czekało na Twoją odpowiedź lub zatwierdzenie.} few {Czas działania każdego narzędzia. Pomija # wywołania, które czekały na Twoją odpowiedź lub zatwierdzenie.} many {Czas działania każdego narzędzia. Pomija # wywołań, które czekały na Twoją odpowiedź lub zatwierdzenie.} other {Czas działania każdego narzędzia. Pomija # wywołania, które czekały na Twoją odpowiedź lub zatwierdzenie.}}"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Average run time of the calls Time counts."
-msgstr ""
+msgstr "Średni czas wykonania wywołań uwzględnionych w kolumnie Czas."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Avg"
-msgstr ""
+msgstr "Śr."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "Wywołania"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Koszt"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted."
-msgstr ""
+msgstr "Szacunkowa liczba tokenów, które wynik tego narzędzia dodał do głównej konwersacji. Nie są to tokeny rozliczane; wywołania subagentów nie są liczone."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "Nieudane"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "How long each tool ran."
-msgstr ""
+msgstr "Czas działania każdego narzędzia."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "In"
-msgstr ""
+msgstr "Wej."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Out"
-msgstr ""
+msgstr "Wyj."
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Time"
-msgstr ""
+msgstr "Czas"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "Tokeny"
 
 #: src/renderer/components/shared/ByToolTable.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "Narzędzie"

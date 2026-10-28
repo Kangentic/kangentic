@@ -24,7 +24,7 @@ interface ToolbarSearchFilterProps {
   labelFilters: Set<string>;
   onToggleLabel: (label: string) => void;
   onClearFilters: () => void;
-  /** The container-query pair that sheds the Filter button's text. See toolbar-collapse.ts. */
+  /** The class pair that sheds the Filter button's text at the toolbar's first step. See toolbar-collapse.ts. */
   filterCollapse?: ToolbarControlCollapse;
 }
 
@@ -83,9 +83,11 @@ export function ToolbarSearchFilter({
 
   return (
     // `flex-1 min-w-0` makes the search the child that gives when the toolbar row
-    // narrows, so the action button never has to. See toolbar-collapse.ts.
+    // narrows, so the action button never has to. `data-toolbar-search`
+    // (TOOLBAR_SEARCH_ATTRIBUTE) marks the box the row's measurement holds at
+    // zero width. See toolbar-collapse.ts.
     <div className="flex items-center gap-2 flex-1 min-w-0">
-      <div className="relative flex-1 min-w-0 max-w-[21rem]">
+      <div className="relative flex-1 min-w-0 max-w-[21rem]" data-toolbar-search="">
         <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-disabled" />
         <input
           ref={searchInputRef}

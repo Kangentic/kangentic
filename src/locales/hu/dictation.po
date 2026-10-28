@@ -8,46 +8,57 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Törlés"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Clear and start over"
-msgstr ""
+msgstr "Törlés és újrakezdés"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr ""
+msgstr "A diktálás jelszómezőkben ki van kapcsolva"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
-msgstr ""
+msgstr "Beszúrás..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Listening"
-msgstr ""
+msgstr "Figyelés"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "No terminal or input focused"
-msgstr ""
+msgstr "Nincs fókuszban terminál vagy beviteli mező"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
-msgstr ""
+msgstr "Modell előkészítése... {downloadPercent}%"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to insert"
-msgstr ""
+msgstr "Engedje el a beszúráshoz"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to send"
-msgstr ""
+msgstr "Engedje el a küldéshez"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Sending..."
-msgstr ""
+msgstr "Küldés..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Still sending the last one"
-msgstr ""
+msgstr "Az előző küldése még folyamatban"

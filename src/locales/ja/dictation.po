@@ -8,46 +8,57 @@ msgstr ""
 "Language: ja\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "クリア"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Clear and start over"
-msgstr ""
+msgstr "クリアしてやり直す"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr ""
+msgstr "パスワード欄では音声入力は無効です"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
-msgstr ""
+msgstr "挿入中..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Listening"
-msgstr ""
+msgstr "聞き取り中"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "No terminal or input focused"
-msgstr ""
+msgstr "ターミナルや入力欄にフォーカスがありません"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
-msgstr ""
+msgstr "モデルを準備中... {downloadPercent}%"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to insert"
-msgstr ""
+msgstr "離すと挿入"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to send"
-msgstr ""
+msgstr "離すと送信"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Sending..."
-msgstr ""
+msgstr "送信中..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Still sending the last one"
-msgstr ""
+msgstr "前回の内容を送信中です"

@@ -8,262 +8,327 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(dev)"
-msgstr ""
+msgstr "(開發)"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "(worktree)"
-msgstr ""
+msgstr "(工作樹)"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeSessions, plural, one {# agents} other {# agents}}"
-msgstr ""
+msgstr "{activeSessions, plural, other {# 個代理程式}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{activeTasks, plural, one {{activeTasksText} tasks} other {{activeTasksText} tasks}}"
-msgstr ""
+msgstr "{activeTasks, plural, other {{activeTasksText} 個工作}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{agentCount, plural, one {Show all # agent} other {Show all # agents}}"
-msgstr ""
+msgstr "{agentCount, plural, other {顯示全部 # 個代理程式}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{agentName} not found"
-msgstr ""
+msgstr "找不到 {agentName}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "{foundAgentCount, plural, one {# agent} other {# agents}}"
-msgstr ""
+msgstr "{foundAgentCount, plural, other {# 個代理程式}}"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "{queued, plural, one {# queued} other {# queued}}"
-msgstr ""
+msgstr "{queued, plural, other {# 個已排入佇列}}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "{unreadAnnouncements, plural, one {# unread} other {# unread}}"
-msgstr ""
+msgstr "{unreadAnnouncements, plural, other {# 則未讀}}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "<0>Found</0><1>{gitFact}</1><2>and</2><3><4>{agentFact}</4></3>"
-msgstr ""
+msgstr "<0>已找到</0><1>{gitFact}</1><2>和</2><3><4>{agentFact}</4></3>"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "代理程式監視器"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents"
-msgstr ""
+msgstr "代理程式"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Agents run inside your repo, so they pick up the instructions and config already there"
-msgstr ""
+msgstr "代理程式在您的存放庫內執行，因此會沿用其中既有的指示與設定"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Announcements"
-msgstr ""
+msgstr "公告"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Check again for git and agent CLIs"
-msgstr ""
+msgstr "重新檢查 git 與代理程式 CLI"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking your setup"
-msgstr ""
+msgstr "正在檢查您的設定"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "正在檢查..."
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "命令終端機"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "已複製！"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "將「{loginCommand}」複製到剪貼簿"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Copy <0>{loginCommand}</0>"
-msgstr ""
+msgstr "複製 <0>{loginCommand}</0>"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Copy message"
-msgstr ""
+msgstr "複製訊息"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Core"
-msgstr ""
+msgstr "核心"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Dismiss"
-msgstr ""
+msgstr "關閉"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Each task runs on its own branch, so two agents never edit the same files"
-msgstr ""
+msgstr "每個工作都在各自的分支上執行，因此兩個代理程式絕不會編輯相同檔案"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus agent monitor window"
-msgstr ""
+msgstr "聚焦代理程式監視器視窗"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus Knowledge Graph window"
-msgstr ""
+msgstr "聚焦知識圖譜視窗"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Focus usage stats window"
-msgstr ""
+msgstr "聚焦使用統計視窗"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Git {gitVersion} is older than the recommended {minimumGitVersion} - worktrees may not work."
-msgstr ""
+msgstr "Git {gitVersion} 比建議的 {minimumGitVersion} 舊，工作樹可能無法運作。"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "隱藏命令終端機"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Hide setup"
-msgstr ""
+msgstr "隱藏設定"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install"
-msgstr ""
+msgstr "安裝"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git and one agent CLI to run tasks."
-msgstr ""
+msgstr "請安裝 git 和一個代理程式 CLI 以執行工作。"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install git to run tasks."
-msgstr ""
+msgstr "請安裝 git 以執行工作。"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Install one agent CLI to run tasks."
-msgstr ""
+msgstr "請安裝一個代理程式 CLI 以執行工作。"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Installed"
-msgstr ""
+msgstr "已安裝"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Isolates every task"
-msgstr ""
+msgstr "隔離每個工作"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Kanban for AI coding agents"
-msgstr ""
+msgstr "AI 程式碼代理程式的看板"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "知識圖譜"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Maximize"
-msgstr ""
+msgstr "最大化"
 
 #: src/renderer/components/layout/ToastItem.tsx
+#, fuzzy
 msgid "Message copied"
-msgstr ""
+msgstr "已複製訊息"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Minimize"
-msgstr ""
+msgstr "最小化"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not installed"
-msgstr ""
+msgstr "未安裝"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "未登入"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Open a project"
-msgstr ""
+msgstr "開啟專案"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Pair a phone"
-msgstr ""
+msgstr "配對手機"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Quick Find"
-msgstr ""
+msgstr "快速尋找"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Read the setup guide"
-msgstr ""
+msgstr "閱讀設定指南"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Reads your project's setup"
-msgstr ""
+msgstr "讀取專案的設定"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Refresh"
-msgstr ""
+msgstr "重新整理"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Runs real terminals"
-msgstr ""
+msgstr "執行真正的終端機"
 
 #: src/renderer/components/layout/AppLayout.tsx
+#, fuzzy
 msgid "Select a project from the sidebar"
-msgstr ""
+msgstr "從側邊欄選取專案"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "設定"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Show setup"
-msgstr ""
+msgstr "顯示設定"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Sign in to {signedOutAgentName} to run tasks."
-msgstr ""
+msgstr "登入 {signedOutAgentName} 以執行任務。"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Update available"
-msgstr ""
+msgstr "有可用的更新"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Usage Stats"
-msgstr ""
+msgstr "使用統計"
 
 #: src/renderer/components/layout/StatusBar.tsx
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{appVersion}"
-msgstr ""
+msgstr "v{appVersion}"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "v{version}"
-msgstr ""
+msgstr "v{version}"
 
 #: src/renderer/components/layout/TitleBar.tsx
+#, fuzzy
 msgid "Version {pendingVersion} is ready to install"
-msgstr ""
+msgstr "版本 {pendingVersion} 已可安裝"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "Watch an agent work and type back to steer it"
-msgstr ""
+msgstr "觀看代理程式運作，並輸入回覆來引導它"
 
 #: src/renderer/components/layout/StatusBar.tsx
+#, fuzzy
 msgid "What's new in v{appVersion}"
-msgstr ""
+msgstr "v{appVersion} 的新功能"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "When you open a project"
-msgstr ""
+msgstr "當您開啟專案時"
 
 #: src/renderer/components/layout/WelcomeScreen.tsx
+#, fuzzy
 msgid "You can look around now and install an agent later."
-msgstr ""
+msgstr "您可以先四處看看，稍後再安裝代理程式。"

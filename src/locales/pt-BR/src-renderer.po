@@ -8,1442 +8,1799 @@ msgstr ""
 "Language: pt-BR\n"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" failed against the task's current state."
-msgstr ""
+msgstr "\"{automationName}\" falhou no estado atual da tarefa."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "\"{automationName}\" falhou em {columnName}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
-msgstr ""
+msgstr "\"{automationName}\" ainda está em execução no estado atual da tarefa."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" succeeded against the task's current state."
-msgstr ""
+msgstr "\"{automationName}\" teve êxito no estado atual da tarefa."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" was interrupted against the task's current state."
-msgstr ""
+msgstr "\"{automationName}\" foi interrompida no estado atual da tarefa."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{automationName}\" was skipped against the task's current state."
-msgstr ""
+msgstr "\"{automationName}\" foi ignorada no estado atual da tarefa."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "\"{projectName}\" is now at {projectPath}."
-msgstr ""
+msgstr "\"{projectName}\" agora está em {projectPath}."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{swimlaneName}\""
-msgstr ""
+msgstr "\"{swimlaneName}\""
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{taskTitle}\""
-msgstr ""
+msgstr "\"{taskTitle}\""
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
-msgstr ""
+msgstr "\"{taskTitle}\" não executou {command}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" exited with code {exitCode}."
-msgstr ""
+msgstr "\"{taskTitle}\" encerrou com o código {exitCode}."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "\"{taskTitle}\" in {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\" em {columnName}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is {phase}."
-msgstr ""
+msgstr "\"{taskTitle}\" está {phase}."
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is archived."
-msgstr ""
+msgstr "\"{taskTitle}\" foi arquivada."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr ""
+msgstr "\"{taskTitle}\" está pedindo para executar uma ferramenta."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is back in {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\" voltou para {columnName}."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is back on the board."
-msgstr ""
+msgstr "\"{taskTitle}\" voltou para o quadro."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is running."
-msgstr ""
+msgstr "\"{taskTitle}\" está em execução."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" is waiting on the git queue."
-msgstr ""
+msgstr "\"{taskTitle}\" está aguardando na fila do git."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "\"{taskTitle}\" is waiting on you."
-msgstr ""
+msgstr "\"{taskTitle}\" está aguardando você."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and cleared your unsent text."
-msgstr ""
+msgstr "\"{taskTitle}\" executou {command} e limpou seu texto não enviado."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and interrupted the agent mid-task."
-msgstr ""
+msgstr "\"{taskTitle}\" executou {command} e interrompeu o agente no meio da tarefa."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\" executou {command} e reiniciou a sessão para entregá-lo."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, cleared your unsent text and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\" executou {command}, limpou seu texto não enviado e reiniciou a sessão para entregá-lo."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, interrupted the agent mid-task and restarted the session to deliver it."
-msgstr ""
+msgstr "\"{taskTitle}\" executou {command}, interrompeu o agente no meio da tarefa e reiniciou a sessão para entregá-lo."
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "\"{taskTitle}\" replaces the placeholder title."
-msgstr ""
+msgstr "\"{taskTitle}\" substitui o título provisório."
 
 #: src/renderer/lib/conversation-expired.ts
+#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its conversation from {lastActive} expired."
-msgstr ""
+msgstr "\"{taskTitle}\" recomeçou do zero porque sua conversa de {lastActive} expirou."
 
 #: src/renderer/lib/conversation-expired.ts
+#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its last conversation expired."
-msgstr ""
+msgstr "\"{taskTitle}\" recomeçou do zero porque sua última conversa expirou."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" ficou sem atividade por # minuto.} many {\"{taskTitle}\" ficou sem atividade por # minutos.} other {\"{taskTitle}\" ficou sem atividade por # minutos.}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
-msgstr ""
+msgstr "{amount, plural, one {{projectName}, aguardou # dia} many {{projectName}, aguardou # de dias} other {{projectName}, aguardou # dias}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, one {{projectName}, aguardou # hora} many {{projectName}, aguardou # de horas} other {{projectName}, aguardou # horas}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, one {{projectName}, aguardou # minuto} many {{projectName}, aguardou # de minutos} other {{projectName}, aguardou # minutos}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # day} other {waited # days}}"
-msgstr ""
+msgstr "{amount, plural, one {aguardou # dia} many {aguardou # de dias} other {aguardou # dias}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
-msgstr ""
+msgstr "{amount, plural, one {Aguardou # dia} many {Aguardou # de dias} other {Aguardou # dias}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, one {aguardou # hora} many {aguardou # de horas} other {aguardou # horas}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
-msgstr ""
+msgstr "{amount, plural, one {Aguardou # hora} many {Aguardou # de horas} other {Aguardou # horas}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, one {aguardou # minuto} many {aguardou # de minutos} other {aguardou # minutos}}"
 
 #: src/renderer/lib/paused-for-memory.ts
+#, fuzzy
 msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
-msgstr ""
+msgstr "{amount, plural, one {Aguardou # minuto} many {Aguardou # de minutos} other {Aguardou # minutos}}"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{basePill} will be checked out in the project folder"
-msgstr ""
+msgstr "Será feito checkout de {basePill} na pasta do projeto"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} exists and will be checked out in a new worktree"
-msgstr ""
+msgstr "{branchPill} existe e será feito checkout em uma nova árvore de trabalho"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} exists and will be checked out in the project folder"
-msgstr ""
+msgstr "{branchPill} existe e será feito checkout na pasta do projeto"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} will be created from {basePill} in a new worktree"
-msgstr ""
+msgstr "{branchPill} será criada a partir de {basePill} em uma nova árvore de trabalho"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
-msgstr ""
+msgstr "{branchPill} será criada a partir de {basePill} na pasta do projeto"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr ""
+msgstr "{count, plural, =1 {Agente ocioso pausado} one {# agente ocioso pausado} many {# de agentes ociosos pausados} other {# agentes ociosos pausados}}"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr ""
+msgstr "{count, plural, =1 {O Kangentic o pausou para liberar memória.} one {O Kangentic os pausou para liberar memória.} many {O Kangentic os pausou para liberar memória.} other {O Kangentic os pausou para liberar memória.}}"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
-msgstr ""
+msgstr "{count, plural, one {Não foi possível pausar # agente} many {Não foi possível pausar # de agentes} other {Não foi possível pausar # agentes}}"
 
 #: src/renderer/components/TemplateTextField.tsx
+#, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
-msgstr ""
+msgstr "{count, plural, one {Variável desconhecida: {variableNames}. Ela será enviada como está.} many {Variáveis desconhecidas: {variableNames}. Elas serão enviadas como estão.} other {Variáveis desconhecidas: {variableNames}. Elas serão enviadas como estão.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
-msgstr ""
+msgstr "{failedCount, plural, one {Não foi possível interromper # processo de \"{taskTitle}\", e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}} many {Não foi possível interromper # processos de \"{taskTitle}\", e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}} other {Não foi possível interromper # processos de \"{taskTitle}\", e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\".} other {Couldn't stop # processes from \"{taskTitle}\".}}"
-msgstr ""
+msgstr "{failedCount, plural, one {Não foi possível interromper # processo de \"{taskTitle}\".} many {Não foi possível interromper # processos de \"{taskTitle}\".} other {Não foi possível interromper # processos de \"{taskTitle}\".}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
-msgstr ""
+msgstr "{failedCount, plural, one {Não foi possível interromper # processo de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}, e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}} many {Não foi possível interromper # processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}, e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}} other {Não foi possível interromper # processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}, e {keptCount, plural, one {mais # ainda está em execução.} many {mais # ainda estão em execução.} other {mais # ainda estão em execução.}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}.} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}.}}"
-msgstr ""
+msgstr "{failedCount, plural, one {Não foi possível interromper # processo de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}.} many {Não foi possível interromper # processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}.} other {Não foi possível interromper # processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}}.}}"
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{hours}h {minutes}m"
-msgstr ""
+msgstr "{hours}h {minutes}min"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{interruptedCount, plural, one {# automation didn't finish before Kangentic closed.} other {# automations didn't finish before Kangentic closed.}}"
-msgstr ""
+msgstr "{interruptedCount, plural, one {# automação não terminou antes de o Kangentic fechar.} many {# automações não terminaram antes de o Kangentic fechar.} other {# automações não terminaram antes de o Kangentic fechar.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{interruptedCount, plural, one {Automation interrupted} other {Automations interrupted}}"
-msgstr ""
+msgstr "{interruptedCount, plural, one {Automação interrompida} many {Automações interrompidas} other {Automações interrompidas}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{keptCount, plural, one {# process from \"{taskTitle}\" is still running.} other {# processes from \"{taskTitle}\" are still running.}}"
-msgstr ""
+msgstr "{keptCount, plural, one {# processo de \"{taskTitle}\" ainda está em execução.} many {# processos de \"{taskTitle}\" ainda estão em execução.} other {# processos de \"{taskTitle}\" ainda estão em execução.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{keptCount, plural, one {# process from {taskCount, plural, other {# tasks}} is still running.} other {# processes from {taskCount, plural, other {# tasks}} are still running.}}"
-msgstr ""
+msgstr "{keptCount, plural, one {# processo de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} ainda está em execução.} many {# processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} ainda estão em execução.} other {# processos de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} ainda estão em execução.}}"
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{minutes}m {seconds}s"
-msgstr ""
+msgstr "{minutes}min {seconds}s"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
-msgstr ""
+msgstr "{processCount, plural, one {\"{taskTitle}\" deixou # processo em execução.} many {\"{taskTitle}\" deixou # processos em execução.} other {\"{taskTitle}\" deixou # processos em execução.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
-msgstr ""
+msgstr "{processCount, plural, one {{taskCount, plural, one {# tarefa deixou} many {# tarefas deixaram} other {# tarefas deixaram}} # processo em execução.} many {{taskCount, plural, one {# tarefa deixou} many {# tarefas deixaram} other {# tarefas deixaram}} # processos em execução.} other {{taskCount, plural, one {# tarefa deixou} many {# tarefas deixaram} other {# tarefas deixaram}} # processos em execução.}}"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "{remaining} of memory reservations left."
-msgstr ""
+msgstr "Restam {remaining} de reservas de memória."
 
 #: src/renderer/utils/format-session.ts
+#, fuzzy
 msgid "{seconds}s"
-msgstr ""
+msgstr "{seconds}s"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{sessionIdShort} exited with code {exitCode}."
-msgstr ""
+msgstr "{sessionIdShort} encerrou com o código {exitCode}."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "{sessionIdShort} is asking to run a tool."
-msgstr ""
+msgstr "{sessionIdShort} está pedindo para executar uma ferramenta."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "{sessionIdShort} is waiting on you."
-msgstr ""
+msgstr "{sessionIdShort} está aguardando você."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{sessionIdShort} was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "{timeoutMinutes, plural, one {{sessionIdShort} ficou sem atividade por # minuto.} many {{sessionIdShort} ficou sem atividade por # minutos.} other {{sessionIdShort} ficou sem atividade por # minutos.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from \"{taskTitle}\".} other {Stopped # leftover processes from \"{taskTitle}\".}}"
-msgstr ""
+msgstr "{stoppedCount, plural, one {# processo remanescente de \"{taskTitle}\" foi interrompido.} many {# processos remanescentes de \"{taskTitle}\" foram interrompidos.} other {# processos remanescentes de \"{taskTitle}\" foram interrompidos.}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from {taskCount, plural, other {# tasks}}.} other {Stopped # leftover processes from {taskCount, plural, other {# tasks}}.}}"
-msgstr ""
+msgstr "{stoppedCount, plural, one {# processo remanescente de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} foi interrompido.} many {# processos remanescentes de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} foram interrompidos.} other {# processos remanescentes de {taskCount, plural, one {# tarefa} many {# tarefas} other {# tarefas}} foram interrompidos.}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task is back in {columnName}.} other {# tasks are back in {columnName}.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {# tarefa voltou para {columnName}.} many {# de tarefas voltaram para {columnName}.} other {# tarefas voltaram para {columnName}.}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{taskCount, plural, one {# task is back on the board.} other {# tasks are back on the board.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {# tarefa voltou para o quadro.} many {# de tarefas voltaram para o quadro.} other {# tarefas voltaram para o quadro.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "{taskCount, plural, one {The task of \"{workflowTitle}\" is in Done.} other {All # tasks of \"{workflowTitle}\" are in Done.}}"
-msgstr ""
+msgstr "{taskCount, plural, one {A tarefa de \"{workflowTitle}\" está em Concluído.} many {Todas as # tarefas de \"{workflowTitle}\" estão em Concluído.} other {Todas as # tarefas de \"{workflowTitle}\" estão em Concluído.}}"
 
 #: src/renderer/components/ColumnPicker.tsx
+#, fuzzy
 msgid "{value} (not on this board)"
-msgstr ""
+msgstr "{value} (não está neste quadro)"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
-msgstr ""
+msgstr "{worktreeCount, plural, one {Não foi possível limpar {failedCount} de # árvore de trabalho.} many {Não foi possível limpar {failedCount} de # de árvores de trabalho.} other {Não foi possível limpar {failedCount} de # árvores de trabalho.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "A project"
-msgstr ""
+msgstr "Um projeto"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
-msgstr ""
+msgstr "Um servidor tmux. Interrompê-lo encerra todas as suas sessões do tmux."
 
 #: src/renderer/components/KebabMenu.tsx
+#, fuzzy
 msgid "Actions"
-msgstr ""
+msgstr "Ações"
 
 #: src/renderer/utils/agent-display-name.ts
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Agent didn't start"
-msgstr ""
+msgstr "O agente não iniciou"
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "Agent finished"
-msgstr ""
+msgstr "Agente concluído"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Agent paused"
-msgstr ""
+msgstr "Agente pausado"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Agent resumed"
-msgstr ""
+msgstr "Agente retomado"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Agent started"
-msgstr ""
+msgstr "Agente iniciado"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Almost no memory reservations left."
-msgstr ""
+msgstr "Quase não restam reservas de memória."
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "An unexpected error occurred."
-msgstr ""
+msgstr "Ocorreu um erro inesperado."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Auto-generated branch will be created from {basePill} in a new worktree"
-msgstr ""
+msgstr "Uma branch gerada automaticamente será criada a partir de {basePill} em uma nova árvore de trabalho"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Automation failed"
-msgstr ""
+msgstr "Falha na automação"
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Back Click"
-msgstr ""
+msgstr "Clique em voltar"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Back to writing markdown"
-msgstr ""
+msgstr "Voltar a escrever em markdown"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Base branch not refreshed"
-msgstr ""
+msgstr "Branch base não atualizado"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "blocked"
-msgstr ""
+msgstr "bloqueado"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "Can't move To Do"
-msgstr ""
+msgstr "Não é possível mover A fazer"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Change not saved to disk"
-msgstr ""
+msgstr "Alteração não salva no disco"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Choose a project folder"
-msgstr ""
+msgstr "Escolha uma pasta de projeto"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Choose folder"
-msgstr ""
+msgstr "Escolher pasta"
 
 #: src/renderer/components/MultiSelectDropdown.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Limpar"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Clear all filters"
-msgstr ""
+msgstr "Limpar todos os filtros"
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
+#, fuzzy
 msgid "Clear search"
-msgstr ""
+msgstr "Limpar pesquisa"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr ""
+msgstr "Clique para ordenar - Shift+Clique adiciona uma ordenação secundária"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Fechar"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #: src/renderer/window-manager/components/WindowTitleBar.tsx
+#, fuzzy
 msgid "Close window"
-msgstr ""
+msgstr "Fechar janela"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "closed"
-msgstr ""
+msgstr "fechado"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Closing now will discard your unsaved edits to this task."
-msgstr ""
+msgstr "Fechar agora descartará suas edições não salvas nesta tarefa."
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Column changed by agent"
-msgstr ""
+msgstr "Coluna alterada pelo agente"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Command didn't run"
-msgstr ""
+msgstr "Comando não executado"
 
 #: src/renderer/utils/shell-display-name.ts
+#, fuzzy
 msgid "Command Prompt"
-msgstr ""
+msgstr "Prompt de Comando"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Command ran"
-msgstr ""
+msgstr "Comando executado"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Command terminal"
-msgstr ""
+msgstr "Terminal de comandos"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "conflicts"
-msgstr ""
+msgstr "conflitos"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Conversation moved"
-msgstr ""
+msgstr "Conversa movida"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Copy conversation"
-msgstr ""
+msgstr "Copiar conversa"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Copy conversation as Markdown"
-msgstr ""
+msgstr "Copiar conversa como Markdown"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Copy task ID"
-msgstr ""
+msgstr "Copiar ID da tarefa"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Copying <0>{copiedEntries}</0> of <1>{totalEntries}</1>..."
-msgstr ""
+msgstr "Copiando <0>{copiedEntries}</0> de <1>{totalEntries}</1>..."
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't add project"
-msgstr ""
+msgstr "Não foi possível adicionar o projeto"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't add the task"
-msgstr ""
+msgstr "Não foi possível adicionar a tarefa"
 
 #: src/renderer/stores/board-store/board-config-slice.ts
+#, fuzzy
 msgid "Couldn't apply kangentic.json"
-msgstr ""
+msgstr "Não foi possível aplicar o kangentic.json"
 
 #: src/renderer/stores/board-store/task-slice.ts
 #: src/renderer/stores/session-store/transient-session-slice.ts
+#, fuzzy
 msgid "Couldn't apply model or effort"
-msgstr ""
+msgstr "Não foi possível aplicar o modelo ou o esforço"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't change plan approval"
-msgstr ""
+msgstr "Não foi possível alterar a aprovação do plano"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't change the route"
-msgstr ""
+msgstr "Não foi possível alterar a rota"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "Couldn't complete task"
-msgstr ""
+msgstr "Não foi possível concluir a tarefa"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't create the workflow"
-msgstr ""
+msgstr "Não foi possível criar o fluxo de trabalho"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "Não foi possível excluir a tarefa"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't delete tasks"
-msgstr ""
+msgstr "Não foi possível excluir as tarefas"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't delete the workflow"
-msgstr ""
+msgstr "Não foi possível excluir o fluxo de trabalho"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Couldn't generate title"
-msgstr ""
+msgstr "Não foi possível gerar o título"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't link the tasks"
-msgstr ""
+msgstr "Não foi possível vincular as tarefas"
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+#, fuzzy
 msgid "Couldn't load the terminals for this window."
-msgstr ""
+msgstr "Não foi possível carregar os terminais desta janela."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Couldn't move project"
-msgstr ""
+msgstr "Não foi possível mover o projeto"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "Não foi possível mover a tarefa"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Couldn't open project"
-msgstr ""
+msgstr "Não foi possível abrir o projeto"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't open that folder"
-msgstr ""
+msgstr "Não foi possível abrir essa pasta"
 
 #: src/renderer/utils/task-automations.ts
+#, fuzzy
 msgid "Couldn't pause automations"
-msgstr ""
+msgstr "Não foi possível pausar as automações"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Couldn't pause session"
-msgstr ""
+msgstr "Não foi possível pausar a sessão"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't pause the workflow"
-msgstr ""
+msgstr "Não foi possível pausar o fluxo de trabalho"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't pause the workflow agent"
-msgstr ""
+msgstr "Não foi possível pausar o agente do fluxo de trabalho"
 
 #: src/renderer/stores/backlog-store.ts
+#, fuzzy
 msgid "Couldn't promote tasks"
-msgstr ""
+msgstr "Não foi possível promover as tarefas"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Couldn't reach the MCP server"
-msgstr ""
+msgstr "Não foi possível acessar o servidor MCP"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Couldn't read that folder"
-msgstr ""
+msgstr "Não foi possível ler essa pasta"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't remove the link"
-msgstr ""
+msgstr "Não foi possível remover o vínculo"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't remove the task"
-msgstr ""
+msgstr "Não foi possível remover a tarefa"
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "Couldn't rename task"
-msgstr ""
+msgstr "Não foi possível renomear a tarefa"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't rename the workflow"
-msgstr ""
+msgstr "Não foi possível renomear o fluxo de trabalho"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
+#, fuzzy
 msgid "Couldn't reorder columns"
-msgstr ""
+msgstr "Não foi possível reordenar as colunas"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Couldn't reorder task"
-msgstr ""
+msgstr "Não foi possível reordenar a tarefa"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't restore task"
-msgstr ""
+msgstr "Não foi possível restaurar a tarefa"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Couldn't restore tasks"
-msgstr ""
+msgstr "Não foi possível restaurar as tarefas"
 
 #: src/renderer/utils/task-automations.ts
+#, fuzzy
 msgid "Couldn't resume automations"
-msgstr ""
+msgstr "Não foi possível retomar as automações"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Couldn't resume session"
-msgstr ""
+msgstr "Não foi possível retomar a sessão"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't resume the workflow"
-msgstr ""
+msgstr "Não foi possível retomar o fluxo de trabalho"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't resume the workflow agent"
-msgstr ""
+msgstr "Não foi possível retomar o agente do fluxo de trabalho"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Couldn't run again"
-msgstr ""
+msgstr "Não foi possível executar novamente"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
+#, fuzzy
 msgid "Couldn't save profiles"
-msgstr ""
+msgstr "Não foi possível salvar os perfis"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't save the layout"
-msgstr ""
+msgstr "Não foi possível salvar o layout"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't save the task"
-msgstr ""
+msgstr "Não foi possível salvar a tarefa"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't start the workflow"
-msgstr ""
+msgstr "Não foi possível iniciar o fluxo de trabalho"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Couldn't start the workflow agent"
-msgstr ""
+msgstr "Não foi possível iniciar o agente do fluxo de trabalho"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Couldn't stop it. Try again, or close it yourself."
-msgstr ""
+msgstr "Não foi possível interrompê-lo. Tente novamente ou feche-o manualmente."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Couldn't stop processes"
-msgstr ""
+msgstr "Não foi possível interromper os processos"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Delete"
-msgstr ""
+msgstr "Excluir"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Delete task"
-msgstr ""
+msgstr "Excluir tarefa"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Describe the task for the agent..."
-msgstr ""
+msgstr "Descreva a tarefa para o agente..."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation could not start: {reason}"
-msgstr ""
+msgstr "Não foi possível iniciar o ditado: {reason}"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation could not start."
-msgstr ""
+msgstr "Não foi possível iniciar o ditado."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed to start"
-msgstr ""
+msgstr "Falha ao iniciar o ditado"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed: {reason}"
-msgstr ""
+msgstr "Falha no ditado: {reason}"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Dictation failed."
-msgstr ""
+msgstr "Falha no ditado."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Descartar"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "Descartar alterações não salvas?"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+#, fuzzy
 msgid "Download didn't finish"
-msgstr ""
+msgstr "O download não foi concluído"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
+#, fuzzy
 msgid "Downloaded"
-msgstr ""
+msgstr "Download concluído"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "draft"
-msgstr ""
+msgstr "rascunho"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "Drag failed"
-msgstr ""
+msgstr "Falha ao arrastar"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "Drag to reorder"
-msgstr ""
+msgstr "Arraste para reordenar"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Edit Task"
-msgstr ""
+msgstr "Editar tarefa"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Enable"
-msgstr ""
+msgstr "Habilitar"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Enable worktree?"
-msgstr ""
+msgstr "Habilitar árvore de trabalho?"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load the {panelLabel}"
-msgstr ""
+msgstr "Falha ao carregar {panelLabel}"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "Falha ao carregar o painel Alterações"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "Failed to load the Command Terminal"
-msgstr ""
+msgstr "Falha ao carregar o Terminal de Comandos"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "Failed to load the Conversation"
-msgstr ""
+msgstr "Falha ao carregar a Conversa"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+#, fuzzy
 msgid "Failed to load the File diff"
-msgstr ""
+msgstr "Falha ao carregar o diff do arquivo"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgid "Failed to load the panel"
-msgstr ""
+msgstr "Falha ao carregar o painel"
 
 #: src/renderer/components/NumberStepper.tsx
+#, fuzzy
 msgid "Fewer: {ariaLabel}"
-msgstr ""
+msgstr "Menos: {ariaLabel}"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "File search unavailable."
-msgstr ""
+msgstr "Pesquisa de arquivos indisponível."
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
+#, fuzzy
 msgid "Filter"
-msgstr ""
+msgstr "Filtrar"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Float this window out of the tiled layout"
-msgstr ""
+msgstr "Destacar esta janela do layout em blocos"
 
 #: src/renderer/pop-out/PopOutButton.tsx
+#, fuzzy
 msgid "Focus detached window"
-msgstr ""
+msgstr "Focar janela destacada"
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Forward Click"
-msgstr ""
+msgstr "Clique em avançar"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "From:"
-msgstr ""
+msgstr "De:"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Generate a title from the description"
-msgstr ""
+msgstr "Gerar um título a partir da descrição"
 
 #: src/renderer/components/NameFromPromptButton.tsx
+#, fuzzy
 msgid "Generating a title"
-msgstr ""
+msgstr "Gerando um título"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Git setup failed"
-msgstr ""
+msgstr "Falha na configuração do Git"
 
 #: src/renderer/utils/gpu-notice.ts
+#, fuzzy
 msgid "Graphics acceleration off"
-msgstr ""
+msgstr "Aceleração gráfica desativada"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Has an open window."
-msgstr ""
+msgstr "Tem uma janela aberta."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Hide workflow"
-msgstr ""
+msgstr "Ocultar fluxo de trabalho"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Initializing..."
-msgstr ""
+msgstr "Inicializando..."
 
 #: src/renderer/hooks/useBranchSettings.ts
+#, fuzzy
 msgid "Invalid git branch name"
-msgstr ""
+msgstr "Nome de branch git inválido"
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Isolated"
-msgstr ""
+msgstr "Isolada"
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Isolated session"
-msgstr ""
+msgstr "Sessão isolada"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "It may have been moved or renamed."
-msgstr ""
+msgstr "Ela pode ter sido movida ou renomeada."
 
 #: src/renderer/components/IsolatedBadge.tsx
+#, fuzzy
 msgid "Its own context, separate from the main conversation"
-msgstr ""
+msgstr "Contexto próprio, separado da conversa principal"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Its record could not be found after refreshing the project list."
-msgstr ""
+msgstr "O registro dele não foi encontrado após atualizar a lista de projetos."
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Jump to start"
-msgstr ""
+msgstr "Ir para o início"
 
 #: src/renderer/lib/datetime.ts
+#, fuzzy
 msgid "just now"
-msgstr ""
+msgstr "agora mesmo"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "O Kangentic moverá a pasta no disco. Todas as tarefas, o histórico e as árvores de trabalho serão movidos junto."
 
 #: src/renderer/stores/board-store/board-config-slice.ts
+#, fuzzy
 msgid "kangentic.json warning"
-msgstr ""
+msgstr "Aviso do kangentic.json"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Continuar editando"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Labels"
-msgstr ""
+msgstr "Rótulos"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest"
-msgstr ""
+msgstr "Mais recente"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest {modelFamily}"
-msgstr ""
+msgstr "{modelFamily} mais recente"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Latest {modelFamily}, currently {currentModel}"
-msgstr ""
+msgstr "{modelFamily} mais recente, atualmente {currentModel}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Leftover processes"
-msgstr ""
+msgstr "Processos remanescentes"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Leftover processes stopped"
-msgstr ""
+msgstr "Processos remanescentes interrompidos"
 
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Low on memory"
-msgstr ""
+msgstr "Memória baixa"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
-msgstr ""
+msgstr "Faça um primeiro commit para que cada tarefa tenha sua própria árvore de trabalho."
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Maximize"
-msgstr ""
+msgstr "Maximizar"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr ""
+msgstr "Mesclagem bloqueada por revisões, verificações ou regras de branch, segundo a última atualização do PR"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Merge conflicts with the base branch as of the last PR refresh"
-msgstr ""
+msgstr "Conflitos de mesclagem com o branch base, segundo a última atualização do PR"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "merged"
-msgstr ""
+msgstr "mesclado"
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "Microphone access was denied. Enable it in your OS settings."
-msgstr ""
+msgstr "O acesso ao microfone foi negado. Habilite-o nas configurações do sistema operacional."
 
 #: src/renderer/utils/keybindings.ts
+#, fuzzy
 msgid "Middle Click"
-msgstr ""
+msgstr "Clique do meio"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
+#, fuzzy
 msgid "Minimize"
-msgstr ""
+msgstr "Minimizar"
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "Model change saved"
-msgstr ""
+msgstr "Alteração de modelo salva"
 
 #: src/renderer/components/NumberStepper.tsx
+#, fuzzy
 msgid "More: {ariaLabel}"
-msgstr ""
+msgstr "Mais: {ariaLabel}"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move <0>\"{pendingProjectName}\"</0> to a new folder?"
-msgstr ""
+msgstr "Mover <0>\"{pendingProjectName}\"</0> para uma nova pasta?"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move Folder"
-msgstr ""
+msgstr "Mover pasta"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Move Project Folder"
-msgstr ""
+msgstr "Mover pasta do projeto"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Moved \"{taskTitle}\" to {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\" movida para {columnName}."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Moved \"{taskTitle}\" to the next column."
-msgstr ""
+msgstr "\"{taskTitle}\" movida para a próxima coluna."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Moving project folder..."
-msgstr ""
+msgstr "Movendo a pasta do projeto..."
 
 #: src/renderer/utils/idle-toast.ts
+#, fuzzy
 msgid "Needs permission"
-msgstr ""
+msgstr "Requer permissão"
 
 #: src/renderer/lib/conversation-expired-toast.ts
+#, fuzzy
 msgid "New conversation"
-msgstr ""
+msgstr "Nova conversa"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "No active agent sessions."
-msgstr ""
+msgstr "Nenhuma sessão de agente ativa."
 
 #: src/renderer/pop-out/roots/PopOutBrowserRoot.tsx
+#, fuzzy
 msgid "No active session for this task"
-msgstr ""
+msgstr "Nenhuma sessão ativa para esta tarefa"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
+#, fuzzy
 msgid "No changes for this file"
-msgstr ""
+msgstr "Nenhuma alteração neste arquivo"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "No changes on this branch"
-msgstr ""
+msgstr "Nenhuma alteração neste branch"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "No commits yet"
-msgstr ""
+msgstr "Nenhum commit ainda"
 
 #: src/renderer/components/DataTable.tsx
+#, fuzzy
 msgid "No data"
-msgstr ""
+msgstr "Nenhum dado"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "No longer running."
-msgstr ""
+msgstr "Não está mais em execução."
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "No matching files or folders."
-msgstr ""
+msgstr "Nenhum arquivo ou pasta correspondente."
 
 #: src/renderer/hooks/useDictation.ts
+#, fuzzy
 msgid "No microphone is available."
-msgstr ""
+msgstr "Nenhum microfone disponível."
 
 #: src/renderer/stores/session-store/transient-session-slice.ts
+#, fuzzy
 msgid "No project is currently open"
-msgstr ""
+msgstr "Nenhum projeto aberto no momento"
 
 #: src/renderer/hooks/useCommandBar.ts
+#, fuzzy
 msgid "No project open"
-msgstr ""
+msgstr "Nenhum projeto aberto"
 
 #: src/renderer/lib/ipc-error.ts
+#, fuzzy
 msgid "No reason was given."
-msgstr ""
+msgstr "Nenhum motivo foi informado."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Not a git repository"
-msgstr ""
+msgstr "Não é um repositório git"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Nothing to preview"
-msgstr ""
+msgstr "Nada para visualizar"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Old folder not removed"
-msgstr ""
+msgstr "Pasta antiga não removida"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Older versions"
-msgstr ""
+msgstr "Versões anteriores"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "open"
-msgstr ""
+msgstr "aberto"
 
 #: src/renderer/hooks/useCommandBar.ts
+#, fuzzy
 msgid "Open a project first."
-msgstr ""
+msgstr "Abra um projeto primeiro."
 
 #: src/renderer/pop-out/PopOutButton.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "Abrir em nova janela"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "Open PR #{prNumber} in browser"
-msgstr ""
+msgstr "Abrir PR #{prNumber} no navegador"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "Open PR in browser"
-msgstr ""
+msgstr "Abrir PR no navegador"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Open settings"
-msgstr ""
+msgstr "Abrir configurações"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Open task"
-msgstr ""
+msgstr "Abrir tarefa"
 
 #: src/renderer/components/OptionalTag.tsx
+#, fuzzy
 msgid "Optional"
-msgstr ""
+msgstr "Opcional"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Other work uses it too. Stopping it can break that work."
-msgstr ""
+msgstr "Outros trabalhos também o usam. Interrompê-lo pode prejudicar esses trabalhos."
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Paste or drop files here"
-msgstr ""
+msgstr "Cole ou solte arquivos aqui"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Pick the folder that holds your code."
-msgstr ""
+msgstr "Selecione a pasta que contém seu código."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "Plano concluído"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Plan complete: {taskTitle}"
-msgstr ""
+msgstr "Plano concluído: {taskTitle}"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Pop out"
-msgstr ""
+msgstr "Destacar"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "PR"
-msgstr ""
+msgstr "PR"
 
 #: src/renderer/components/PrLink.tsx
+#, fuzzy
 msgid "PR #{prNumber}"
-msgstr ""
+msgstr "PR #{prNumber}"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Preview"
-msgstr ""
+msgstr "Visualizar"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Preview rendered markdown"
-msgstr ""
+msgstr "Visualizar markdown renderizado"
 
 #: src/renderer/components/FilterPopover.tsx
+#, fuzzy
 msgid "Priority"
-msgstr ""
+msgstr "Prioridade"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes from \"{taskTitle}\""
-msgstr ""
+msgstr "Processos de \"{taskTitle}\""
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes from {taskCount, plural, other {# tasks}}"
-msgstr ""
+msgstr "{taskCount, plural, one {Processos de # tarefa} many {Processos de # tarefas} other {Processos de # tarefas}}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Processes still running"
-msgstr ""
+msgstr "Processos ainda em execução"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Project moved"
-msgstr ""
+msgstr "Projeto movido"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "Project not available"
-msgstr ""
+msgstr "Projeto não disponível"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "queued"
-msgstr ""
+msgstr "na fila"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Ran again"
-msgstr ""
+msgstr "Executado novamente"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Ran in the project folder."
-msgstr ""
+msgstr "Era executado na pasta do projeto."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Ran in the worktree."
-msgstr ""
+msgstr "Era executado na árvore de trabalho."
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "ready"
-msgstr ""
+msgstr "pronto"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Ready to merge as of the last PR refresh"
-msgstr ""
+msgstr "Pronto para mesclar, segundo a última atualização do PR"
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "Reconnected"
-msgstr ""
+msgstr "Reconectado"
 
 #: src/renderer/components/ErrorBoundary.tsx
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reload"
-msgstr ""
+msgstr "Recarregar"
 
 #: src/renderer/components/LabelInput.tsx
+#, fuzzy
 msgid "Remove {label}"
-msgstr ""
+msgstr "Remover {label}"
 
 #: src/renderer/utils/gpu-notice.ts
+#, fuzzy
 msgid "Repeated failures shut down your last run."
-msgstr ""
+msgstr "Falhas repetidas encerraram sua última execução."
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Required checks or policies are queued as of the last PR refresh"
-msgstr ""
+msgstr "Verificações ou políticas obrigatórias estão na fila, segundo a última atualização do PR"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "Required checks or policies are running as of the last PR refresh"
-msgstr ""
+msgstr "Verificações ou políticas obrigatórias estão em execução, segundo a última atualização do PR"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Restart to update"
-msgstr ""
+msgstr "Reiniciar para atualizar"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume follows the conversation started by /clear."
-msgstr ""
+msgstr "A retomada segue a conversa iniciada por /clear."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "Retomando agente..."
 
 #: src/renderer/components/PanelErrorBoundary.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "Tentar novamente"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Review"
-msgstr ""
+msgstr "Revisar"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Run again"
-msgstr ""
+msgstr "Executar novamente"
 
 #: src/renderer/lib/pr-state.ts
+#, fuzzy
 msgid "running"
-msgstr ""
+msgstr "em execução"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Running agents are resuming."
-msgstr ""
+msgstr "Os agentes em execução estão sendo retomados."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs in the project folder"
-msgstr ""
+msgstr "Executa na pasta do projeto"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs in the project folder on {branchPill}"
-msgstr ""
+msgstr "Executa na pasta do projeto em {branchPill}"
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Runs in the project folder."
-msgstr ""
+msgstr "É executado na pasta do projeto."
 
 #: src/renderer/lib/leftover-processes.ts
+#, fuzzy
 msgid "Runs in the worktree."
-msgstr ""
+msgstr "É executado na árvore de trabalho."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "Runs on the remote server"
-msgstr ""
+msgstr "Executa no servidor remoto"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "Salvar"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Save changes before closing?"
-msgstr ""
+msgstr "Salvar alterações antes de fechar?"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "Searching files and folders..."
-msgstr ""
+msgstr "Pesquisando arquivos e pastas..."
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
+#, fuzzy
 msgid "Session"
-msgstr ""
+msgstr "Sessão"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Session ended"
-msgstr ""
+msgstr "Sessão encerrada"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "Configurações"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Show workflow"
-msgstr ""
+msgstr "Mostrar fluxo de trabalho"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Some worktrees remain"
-msgstr ""
+msgstr "Algumas árvores de trabalho permanecem"
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "Something went wrong"
-msgstr ""
+msgstr "Algo deu errado"
 
 #: src/renderer/utils/format-tokens.ts
+#, fuzzy
 msgid "Specific versions"
-msgstr ""
+msgstr "Versões específicas"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Started a git repo"
-msgstr ""
+msgstr "Repositório git iniciado"
 
 #: src/renderer/utils/task-progress.ts
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "Iniciando agente..."
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Still preparing"
-msgstr ""
+msgstr "Ainda em preparação"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Still preparing: {taskTitle}"
-msgstr ""
+msgstr "Ainda em preparação: {taskTitle}"
 
 #: src/renderer/stores/workflow-store.ts
+#, fuzzy
 msgid "Still running: {tasks}."
-msgstr ""
+msgstr "Ainda em execução: {tasks}."
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
+#, fuzzy
 msgid "Task completed"
-msgstr ""
+msgstr "Tarefa concluída"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task created by agent"
-msgstr ""
+msgstr "Tarefa criada pelo agente"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task deleted by agent"
-msgstr ""
+msgstr "Tarefa excluída pelo agente"
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "Task renamed"
-msgstr ""
+msgstr "Tarefa renomeada"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Task restored"
-msgstr ""
+msgstr "Tarefa restaurada"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
+#, fuzzy
 msgid "Task updated by agent"
-msgstr ""
+msgstr "Tarefa atualizada pelo agente"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
+#, fuzzy
 msgid "Tasks restored"
-msgstr ""
+msgstr "Tarefas restauradas"
 
 #: src/renderer/hooks/useAddProject.ts
+#, fuzzy
 msgid "Tasks will share one working tree in this folder."
-msgstr ""
+msgstr "As tarefas compartilharão uma única árvore de trabalho nesta pasta."
 
 #: src/renderer/components/TemplateVariablePicker.tsx
+#, fuzzy
 msgid "Template variable"
-msgstr ""
+msgstr "Variável de modelo"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Terminals restarted"
-msgstr ""
+msgstr "Terminais reiniciados"
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "The agent runs on a remote server"
-msgstr ""
+msgstr "O agente é executado em um servidor remoto"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "The automation did not start."
-msgstr ""
+msgstr "A automação não foi iniciada."
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "The list has been refreshed."
-msgstr ""
+msgstr "A lista foi atualizada."
 
 #: src/renderer/lib/knowledge-graph-support.ts
+#, fuzzy
 msgid "The local model does not run on {platformName}."
-msgstr ""
+msgstr "O modelo local não é executado em {platformName}."
 
 #: src/renderer/lib/auto-name-scheduler.ts
+#, fuzzy
 msgid "The new title was not saved."
-msgstr ""
+msgstr "O novo título não foi salvo."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "The original copy remains at {originalPath}."
-msgstr ""
+msgstr "A cópia original permanece em {originalPath}."
 
 #: src/renderer/utils/worktree-placement.tsx
+#, fuzzy
 msgid "The project folder is itself a git worktree"
-msgstr ""
+msgstr "A pasta do projeto já é uma árvore de trabalho git"
 
 #: src/renderer/stores/project-store.ts
+#, fuzzy
 msgid "The project list may be out of sync. Try again."
-msgstr ""
+msgstr "A lista de projetos pode estar dessincronizada. Tente novamente."
 
 #: src/renderer/stores/board-store/task-slice.ts
+#, fuzzy
 msgid "The running agent picks it up the next time it resumes."
-msgstr ""
+msgstr "O agente em execução aplicará a alteração na próxima vez que for retomado."
 
 #: src/renderer/utils/session-toggle.ts
+#, fuzzy
 msgid "The session was already running."
-msgstr ""
+msgstr "A sessão já estava em execução."
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
+#, fuzzy
 msgid "The task's changes could not be read"
-msgstr ""
+msgstr "Não foi possível ler as alterações da tarefa"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
-msgstr ""
+msgstr "Estas sessões de agente ativas serão interrompidas e retomadas automaticamente no novo local:"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "Esta ação não pode ser desfeita."
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
+#, fuzzy
 msgid "This project is no longer in Kangentic."
-msgstr ""
+msgstr "Este projeto não está mais no Kangentic."
 
 #: src/renderer/window-manager/components/WindowContent.tsx
+#, fuzzy
 msgid "This task is no longer available."
-msgstr ""
+msgstr "Esta tarefa não está mais disponível."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
-msgstr ""
+msgstr "Isso criará uma árvore de trabalho isolada para esta tarefa. Seu histórico de sessão será preservado e o agente continuará de onde parou na nova árvore de trabalho."
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr ""
+msgstr "Isso excluirá permanentemente a tarefa, seu histórico de sessão e qualquer árvore de trabalho associada."
 
 #: src/renderer/hooks/useBoardDragDrop.ts
+#, fuzzy
 msgid "To Do must stay the first column."
-msgstr ""
+msgstr "A fazer deve continuar sendo a primeira coluna."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "To:"
-msgstr ""
+msgstr "Para:"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Toggle workflow"
-msgstr ""
+msgstr "Alternar fluxo de trabalho"
 
 #: src/renderer/components/ErrorBoundary.tsx
+#, fuzzy
 msgid "Try again"
-msgstr ""
+msgstr "Tentar novamente"
 
 #: src/renderer/components/LabelInput.tsx
+#, fuzzy
 msgid "Type to add..."
-msgstr ""
+msgstr "Digite para adicionar..."
 
 #: src/renderer/hooks/useDescriptionMentions.ts
+#, fuzzy
 msgid "Type to search files and folders."
-msgstr ""
+msgstr "Digite para pesquisar arquivos e pastas."
 
 #: src/renderer/lib/knowledge-graph-support.ts
+#, fuzzy
 msgid "Unavailable"
-msgstr ""
+msgstr "Indisponível"
 
 #: src/renderer/utils/shell-display-name.ts
+#, fuzzy
 msgid "Unknown"
-msgstr ""
+msgstr "Desconhecido"
 
 #: src/renderer/lib/ipc-error.ts
+#, fuzzy
 msgid "Unknown error"
-msgstr ""
+msgstr "Erro desconhecido"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Update ready"
-msgstr ""
+msgstr "Atualização pronta"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Updates blocked"
-msgstr ""
+msgstr "Atualizações bloqueadas"
 
 #: src/renderer/stores/updater-store.ts
+#, fuzzy
 msgid "Version {version} is ready to install."
-msgstr ""
+msgstr "A versão {version} está pronta para ser instalada."
 
 #: src/renderer/hooks/useProjectRelocation.tsx
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "Agente de fluxo de trabalho"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "Fluxo de trabalho concluído"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow complete: {workflowTitle}"
-msgstr ""
+msgstr "Fluxo de trabalho concluído: {workflowTitle}"
 
 #: src/renderer/utils/workflow-refusal.ts
+#, fuzzy
 msgid "Workflow controls this task"
-msgstr ""
+msgstr "O fluxo de trabalho controla esta tarefa"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "Fluxo de trabalho parado"
 
 #: src/renderer/components/DescriptionEditor.tsx
+#, fuzzy
 msgid "Write"
-msgstr ""
+msgstr "Escrever"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
+#, fuzzy
 msgid "Your edits to this task are not saved."
-msgstr ""
+msgstr "Suas edições nesta tarefa não foram salvas."

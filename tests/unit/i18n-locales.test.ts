@@ -10,6 +10,8 @@ import { describe, it, expect, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import vm from 'node:vm';
+import { webcrypto } from 'node:crypto';
 import { msg } from '@lingui/core/runtime-macro';
 import {
   APP_LOCALES,
@@ -47,6 +49,17 @@ describe('the locale list', () => {
   it('ships English, and only languages it has a catalog for', () => {
     expect(SHIPPED_LOCALES).toContain('en');
     for (const locale of SHIPPED_LOCALES) expect(isAppLocale(locale)).toBe(true);
+  });
+
+  it("is what the UI mock ships when a spec seeds no list, so the web demo's picker offers what the app ships", async () => {
+    // Evaluated the way a page runs it (the recipe mock-electron-api-parity.test.ts uses).
+    const mockPath = path.resolve(__dirname, '../ui/mock-electron-api.js');
+    const windowObject: Record<string, unknown> = {};
+    windowObject.window = windowObject;
+    const sandbox = { window: windowObject, document: undefined, crypto: webcrypto, setTimeout, clearTimeout, console };
+    vm.runInNewContext(fs.readFileSync(mockPath, 'utf-8'), sandbox, { filename: mockPath, timeout: 5000 });
+    const electronApi = windowObject.electronAPI as { language: { getInfo: () => Promise<{ shippedLocales: string[] }> } };
+    expect((await electronApi.language.getInfo()).shippedLocales).toEqual([...SHIPPED_LOCALES]);
   });
 });
 
@@ -117,12 +130,11 @@ describe('computeLanguageSuggestion', () => {
     expect(computeLanguageSuggestion({ ...base, systemLanguages: ['ru-RU', 'en-US', 'de-DE'] })).toBeNull();
   });
 
-  it('offers nothing with the languages this build ships today, whatever the OS', () => {
-    expect(computeLanguageSuggestion({
-      systemLanguages: APP_LOCALES.filter((locale) => !SHIPPED_LOCALES.includes(locale)),
-      displayLanguage: undefined,
-      hasAnsweredLanguageSuggestion: false,
-    })).toBeNull();
+  it('offers the OS language from the list this build ships, regional variants included', () => {
+    const base = { displayLanguage: undefined, hasAnsweredLanguageSuggestion: false };
+    expect(computeLanguageSuggestion({ ...base, systemLanguages: ['de-DE'] })).toBe('de');
+    expect(computeLanguageSuggestion({ ...base, systemLanguages: ['pt-PT'] })).toBe('pt-BR');
+    expect(computeLanguageSuggestion({ ...base, systemLanguages: ['zh-HK'] })).toBe('zh-TW');
   });
 });
 

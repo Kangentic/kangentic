@@ -8,138 +8,171 @@ msgstr ""
 "Language: tr\n"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "{doneCount} of {stepCount} done"
-msgstr ""
+msgstr "{doneCount}/{stepCount} tamamlandı"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "{laneName} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager."
-msgstr ""
+msgstr "{laneName} sütunu, görevin başlığını ve açıklamasını istem olarak kullanarak ajan başlatacak şekilde önceden ayarlıdır. Her sütun ajan başlatabilir; bunu Pano yöneticisinde ayarlarsınız."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Add your first task"
-msgstr ""
+msgstr "İlk görevinizi ekleyin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Choose your defaults"
-msgstr ""
+msgstr "Varsayılanlarınızı seçin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Create a task"
-msgstr ""
+msgstr "Görev oluştur"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Done"
-msgstr ""
+msgstr "Bitti"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag a task into {laneName}"
-msgstr ""
+msgstr "Bir görevi {laneName} sütununa sürükleyin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag a task into a column that starts an agent"
-msgstr ""
+msgstr "Bir görevi ajan başlatan bir sütuna sürükleyin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag it to {laneName}"
-msgstr ""
+msgstr "Görevi {laneName} sütununa sürükleyin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Drag it to a column that starts an agent"
-msgstr ""
+msgstr "Görevi ajan başlatan bir sütuna sürükleyin"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Dropping a task in a column that starts an agent runs it."
-msgstr ""
+msgstr "Ajan başlatan bir sütuna bırakılan görev çalıştırılır."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Every task starts with these unless a column overrides them. Change any one and this step is done."
-msgstr ""
+msgstr "Bir sütun geçersiz kılmadıkça her görev bunlarla başlar. Herhangi birini değiştirdiğinizde bu adım tamamlanır."
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Finish"
-msgstr ""
+msgstr "Bitir"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Five steps to your first agent run. Take them in any order."
-msgstr ""
+msgstr "İlk agent çalıştırmanıza beş adım kaldı. Adımları istediğiniz sırayla tamamlayın."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Make the board yours"
-msgstr ""
+msgstr "Panoyu kendinize göre ayarlayın"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Next step"
-msgstr ""
+msgstr "Sonraki adım"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "No column starts an agent yet. Turn that on for a column in Board manager."
-msgstr ""
+msgstr "Henüz ajan başlatan bir sütun yok. Bunu Pano yöneticisinde bir sütun için açın."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Open the task"
-msgstr ""
+msgstr "Görevi açın"
 
 #: src/renderer/components/onboarding/OverseerMascot.tsx
+#, fuzzy
 msgid "Pixel-art Kangentic mascot"
-msgstr ""
+msgstr "Piksel sanat Kangentic maskotu"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Rename a column, or give it a different icon, color, or agent. Click any column header to open this again."
-msgstr ""
+msgstr "Bir sütunu yeniden adlandırın veya ona farklı bir simge, renk ya da ajan atayın. Bunu yeniden açmak için herhangi bir sütun başlığına tıklayın."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Rename columns, change their colors and icons, or add your own."
-msgstr ""
+msgstr "Sütunları yeniden adlandırın, renklerini ve simgelerini değiştirin veya kendi sütunlarınızı ekleyin."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Say what you want done in a sentence or two."
-msgstr ""
+msgstr "Ne yapılmasını istediğinizi bir iki cümleyle anlatın."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Set the agent, model, effort, or permission mode new tasks inherit."
-msgstr ""
+msgstr "Yeni görevlerin devralacağı ajanı, modeli, efor düzeyini veya izin modunu ayarlayın."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Set your defaults"
-msgstr ""
+msgstr "Varsayılanlarınızı ayarlayın"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Shape your board"
-msgstr ""
+msgstr "Panonuzu şekillendirin"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Skip for now"
-msgstr ""
+msgstr "Şimdilik atla"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgctxt "onboarding button"
 msgid "Start"
-msgstr ""
+msgstr "Başla"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgid "Step {stepNumber} of {stepCount}"
-msgstr ""
+msgstr "Adım {stepNumber}/{stepCount}"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
+#, fuzzy
 msgid "Stop showing me this step"
-msgstr ""
+msgstr "Bu adımı bana artık gösterme"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Tasks start from this button. An agent can also create them for you through Kangentic's MCP server."
-msgstr ""
+msgstr "Görevler bu düğmeyle başlar. Bir ajan da bunları Kangentic'in MCP sunucusu aracılığıyla sizin için oluşturabilir."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "This is where the run lives: the agent's terminal, its changes, and a prompt to steer it. Moves to later columns carry this same conversation along."
-msgstr ""
+msgstr "Çalıştırma burada yer alır: ajanın terminali, değişiklikleri ve onu yönlendirmek için bir istem. Sonraki sütunlara taşınan görev aynı konuşmayı sürdürür."
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
+#, fuzzy
 msgid "Watch the agent work, read its output, and steer it."
-msgstr ""
+msgstr "Ajanın çalışmasını izleyin, çıktısını okuyun ve onu yönlendirin."
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
+#, fuzzy
 msgid "Welcome to Kangentic"
-msgstr ""
+msgstr "Kangentic'e hoş geldiniz"

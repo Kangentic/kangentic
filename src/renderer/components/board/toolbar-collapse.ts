@@ -5,103 +5,217 @@
  * sidebar to the window (`useSidebarResize.ts` clamps only to [200, 400]), so at
  * the floor with a saved 400px sidebar the toolbar row gets
  * `900 - 400 - 1 (border) - 4 (resize handle) = 495px`. Its intrinsic width with
- * every label showing is 975px on the board branch and about 1100 on the backlog
- * branch, so the row has to give up roughly half its width and still leave a
- * usable search field.
- *
- * Driven by a CONTAINER query on the toolbar row rather than a viewport
- * breakpoint. The row's own box already has the sidebar subtracted, so the ladder
- * reads the space the row actually has and responds to a sidebar drag as well as
- * to a window resize. That is also the house pattern here (BoardManagerDialog,
- * MonitorBody, board-manager's form-layout); viewport breakpoints appear in three
- * stats files and nowhere else.
+ * every label showing is about 975px on the board branch and 1100 on the backlog
+ * branch in English, and more in German or Russian, so the row has to give up
+ * half its width or more and still leave a usable search field.
  *
  * The ladder, widest to floor:
  *
- *   full         everything at full, search at its 21rem cap
+ *   step 0       everything at full, search up to its 21rem cap
  *   step 1       Labels, Priorities, Filter and Import Tasks go icon-only
- *   step 2       Board / Backlog goes icon-only, keeping its count badge
+ *   step 2       Board / Backlog / Workflows go icon-only, keeping their counts
  *   step 3       Add column / New Task go icon-only, and the two dividers
  *                become gaps
  *
  * Nothing is hidden and nothing moves: an icon-only control is the same button in
- * the same place opening the same popover, with its text turned into a tooltip.
- * That is why there is no overflow menu here and why `useHeaderPillOverflow` (the
- * task-detail and Command Terminal header's priority-plus measurement hook) is not
- * reused: it hard-codes that header's gaps, its four outer sections and a title
- * floor this row has no title for, and three discrete on/off steps need no
- * measurement pass.
+ * the same place opening the same popover, with its text in a tooltip and its
+ * `aria-label`. That is why there is no overflow menu here.
  *
- * ## Why the two branches have different thresholds
+ * ## The row picks its step by measuring
  *
  * The search is the only child that flexes, and it has a max but no min, so it
  * absorbs every pixel the row is short until it is a slot rather than a field.
  * Nothing about that is visible in a "does the row clip" check: the row fits
- * perfectly the whole way down. Measured at the floor before these numbers were
- * set, the backlog search was 92px across at a collapsed sidebar with every label
- * still showing.
+ * perfectly the whole way down. So each step fires where the step before it would
+ * leave the search less than `TOOLBAR_SEARCH_ROOM_PX`.
  *
- * So each step fires where the CURRENT state would push the search below about
- * 140px (roughly eleven characters, which a one-to-three word board query lives
- * in), and the branches reach that at genuinely different widths: backlog
- * carries two actions where board carries one, New Task is wider than Add
- * column, and Workflows has none. Measured fixed cost of everything that is not
- * the search, in the row's content box (what the container query reads), with
- * the three-view switcher and the Backlog count badge showing:
+ * Where that happens depends on how wide the labels are, and that depends on the
+ * language. The ladder used to be container queries at fixed widths, measured on
+ * the English labels. In German, Russian or Hungarian the same widths left the
+ * search 44px across between two steps. So `useToolbarCollapseStep` measures
+ * instead, as `Tabs.tsx` does for its own row: it tries each step on the row,
+ * reads what everything but the search takes (the search held at zero width for
+ * the read, the whole pass inside one layout with no paint between), and keeps
+ * the four widths. A resize then only picks the least collapsed step whose width
+ * plus the room fits; a label, a count or the view changing measures again.
+ * `chooseCollapseStep` is that choice, and it is pure.
  *
- *   state              board   backlog   workflows
- *   full                 708       827         576
- *   after step 1         555       587         423
- *   after step 2         411       444         280
- *   after step 3         298       342           -
- *
- * Add 140, plus 26 for the count badge the Workflows segment carried when these
- * were measured, and round up, and you get the thresholds below. The Workflows
- * segment now carries one 18px slot: its count pill at rest, or the 16px working
- * mark in the pill's place while a workflow runs, never both. With its gap that
- * is 20px to 24px, so the thresholds keep their slack. The Backlog pill grew
- * about 2px over the 20px circle it replaced at two digits. Workflows has no
- * step 3: its dividers are the last thing to give, and they hold down to the
- * floor. Sharing one set would mean using the backlog's, which collapses the
- * board's filter labels about 120px of window earlier than it needs to.
+ * The room is what the fixed English widths left the search on the spec's seeded
+ * row (three backlog items and one workflow): about 151 to 154px at the first two
+ * steps and 168 at the last, so in English the first two steps land within a few
+ * pixels of those widths and the last fires about 16px narrower.
+ * `toolbar-narrow-window.spec.ts` sweeps the row and holds the search to its floor
+ * at every width.
  *
  * At the absolute floor (495px, a 400px sidebar at a 900px window, 463px of
- * content) the backlog search is at its narrowest with both counts showing:
- * 117.5px with a 21-item backlog, 119.5px with the mark in the count's place.
- * `toolbar-narrow-window.spec.ts` seeds both counts and holds it to its floor.
- * A 1000+ item backlog keeps all four digits there and leaves the search 105px.
- * That is a decision, not an oversight. Shortening the count to "1.2k" at that
- * one step would hide the number the pill exists to show. The spec holds that
- * case to its own, lower bound.
- * There is nothing left to give there; that is the width the dividers turn into
- * gaps, and the switcher's options tighten, to claw back for.
+ * content) the backlog search is at its narrowest with both counts showing,
+ * about 118px in English. A 1000+ item backlog keeps all four digits there and
+ * leaves the search about 105px. That is a decision, not an oversight.
+ * Shortening the count to "1.2k" at that one step would hide the number the pill
+ * exists to show. The spec holds that case to its own, lower bound.
  *
  * Every class string below is a COMPLETE literal. Tailwind scans source text for
- * class candidates, so a breakpoint composed from a variable at a call site would
- * never be generated.
- *
- * A collapsed control has no accessible name left, because `hidden` takes the
- * label out of the accessibility tree. Every call site therefore also carries
- * `aria-label` and `title`.
+ * class candidates, so a variant composed from a variable at a call site would
+ * never be generated. Each one keys off an attribute the hook's step sets on the
+ * row (`group/toolbar`), so the base classes are the full state and each variant
+ * is the collapsed one.
  */
+import { useLayoutEffect, useState, type RefObject } from 'react';
 
 /**
- * Marks the toolbar row as the container the classes below resolve against.
+ * The toolbar row's classes. `group/toolbar` is what the collapse variants below
+ * resolve against.
  *
- * Deliberately UNNAMED. There is no other `@container` between this row and any
- * of its controls, so the nearest container ancestor already is the row, and the
- * unnamed form is the one the rest of the codebase already compiles. If a nested
- * `@container` is ever introduced inside this row, these variants start resolving
- * against it instead, so that is a conscious break to make rather than a silent
- * one.
+ * `@container` is not there for container queries any more (no class here uses
+ * one). Its inline-size containment keeps the row's width independent of its
+ * content, so trying a step during the measurement cannot change the width the
+ * step is chosen for. It also makes the row a stacking context and the containing
+ * block for its in-flow popovers, which `toolbar-narrow-window.spec.ts` checks
+ * still open over the board.
  */
-export const TOOLBAR_ROW_CONTAINER_CLASS = '@container';
+export const TOOLBAR_ROW_CLASS = '@container group/toolbar';
+
+/** The ladder's four steps, 0 (everything at full) to 3 (everything icon-only). */
+export const TOOLBAR_COLLAPSE_STEP_COUNT = 4;
+
+/**
+ * The narrowest the search may get before the next step fires: roughly eleven
+ * characters, which a one-to-three word board query lives in, plus the slack the
+ * fixed English widths left it.
+ */
+export const TOOLBAR_SEARCH_ROOM_PX = 152;
+
+/** Marks the search field's box, the one child the measurement holds at zero width. */
+export const TOOLBAR_SEARCH_ATTRIBUTE = 'data-toolbar-search';
+
+/** The row's step as React rendered it, which a measurement puts back when it ends. */
+const COLLAPSE_STEP_ATTRIBUTE = 'data-collapse-step';
+
+/**
+ * The least collapsed step whose fixed width plus the search's room fits the
+ * row's content width, or the last step when none does. `costs[step]` is what
+ * everything but the search takes at that step.
+ */
+export function chooseCollapseStep(
+  costs: readonly number[],
+  available: number,
+  searchRoom: number = TOOLBAR_SEARCH_ROOM_PX,
+): number {
+  for (let step = 0; step < costs.length; step += 1) {
+    if (costs[step] + searchRoom <= available) return step;
+  }
+  return Math.max(0, costs.length - 1);
+}
+
+/**
+ * The row's attributes for one step: the step itself, and one presence attribute
+ * per rung that has collapsed, which the classes below key off.
+ */
+export function collapseStepAttributes(step: number): Record<`data-${string}`, string | undefined> {
+  return {
+    [COLLAPSE_STEP_ATTRIBUTE]: String(step),
+    'data-collapse-filters': step >= 1 ? '' : undefined,
+    'data-collapse-switcher': step >= 2 ? '' : undefined,
+    'data-collapse-primary': step >= 3 ? '' : undefined,
+  };
+}
+
+function applyStepAttributes(row: HTMLElement, step: number): void {
+  for (const [name, value] of Object.entries(collapseStepAttributes(step))) {
+    if (value === undefined) row.removeAttribute(name);
+    else row.setAttribute(name, value);
+  }
+}
+
+function horizontalPadding(element: HTMLElement): { left: number; right: number } {
+  const style = getComputedStyle(element);
+  return { left: parseFloat(style.paddingLeft) || 0, right: parseFloat(style.paddingRight) || 0 };
+}
+
+/**
+ * What everything but the search takes at each step, read on the row as it is
+ * rendered. The search box is held at zero width and its group at its content
+ * size, so the controls pack from the left and the last one's right edge is the
+ * width the step needs. Every write is undone before this returns.
+ */
+function measureStepCosts(row: HTMLElement): number[] {
+  const search = row.querySelector<HTMLElement>(`[${TOOLBAR_SEARCH_ATTRIBUTE}]`);
+  const searchGroup = search?.parentElement ?? null;
+  const contentLeft = row.getBoundingClientRect().left + horizontalPadding(row).left;
+  const costs: number[] = [];
+  if (search) search.style.flex = '0 0 0px';
+  if (searchGroup && searchGroup !== row) searchGroup.style.flex = 'none';
+  try {
+    for (let step = 0; step < TOOLBAR_COLLAPSE_STEP_COUNT; step += 1) {
+      applyStepAttributes(row, step);
+      const last = row.lastElementChild as HTMLElement | null;
+      if (!last) {
+        costs.push(0);
+        continue;
+      }
+      const marginRight = parseFloat(getComputedStyle(last).marginRight) || 0;
+      costs.push(Math.ceil(last.getBoundingClientRect().right + marginRight - contentLeft));
+    }
+  } finally {
+    if (search) search.style.flex = '';
+    if (searchGroup && searchGroup !== row) searchGroup.style.flex = '';
+  }
+  return costs;
+}
+
+/**
+ * The ladder step for the toolbar row `rowRef` points at. Render the row with
+ * `collapseStepAttributes(step)` and `TOOLBAR_ROW_CLASS`.
+ *
+ * It measures on mount and whenever the row's content changes (a label, a count,
+ * the view), and picks a step again whenever the row resizes. The step React
+ * rendered is put back on the row after every measurement, so the attributes stay
+ * React's.
+ */
+export function useToolbarCollapseStep(rowRef: RefObject<HTMLElement | null>): number {
+  const [step, setStep] = useState(0);
+
+  useLayoutEffect(() => {
+    const row = rowRef.current;
+    if (!row) return;
+    let costs: number[] | null = null;
+
+    const choose = (): void => {
+      if (!costs) return;
+      const padding = horizontalPadding(row);
+      setStep(chooseCollapseStep(costs, row.clientWidth - padding.left - padding.right));
+    };
+    const measure = (): void => {
+      const rendered = Number(row.getAttribute(COLLAPSE_STEP_ATTRIBUTE) ?? '0');
+      try {
+        costs = measureStepCosts(row);
+      } finally {
+        applyStepAttributes(row, rendered);
+      }
+      choose();
+    };
+
+    measure();
+    const resizeObserver = new ResizeObserver(choose);
+    resizeObserver.observe(row);
+    // Content only: the attributes a step sets are not watched, so a measurement
+    // never triggers another.
+    const mutationObserver = new MutationObserver(measure);
+    mutationObserver.observe(row, { childList: true, characterData: true, subtree: true });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+    };
+  }, [rowRef]);
+
+  return step;
+}
 
 /**
  * The pair of classes a collapsible toolbar control needs: one for the button
- * (square below the threshold, its own padding above it) and one for the label
- * span. A control that receives no pair renders at full width always, which is
- * what `ImportPopover`'s second mount site in `BacklogView`'s empty state wants.
+ * (square once collapsed, its own padding before) and one for the label span. A
+ * control that receives no pair renders at full width always, which is what
+ * `ImportPopover`'s second mount site in `BacklogView`'s empty state wants.
  */
 export interface ToolbarControlCollapse {
   button: string;
@@ -112,98 +226,66 @@ export interface ToolbarControlCollapse {
    * count). The icon-only square is a fixed 36px, and the icon, its gap and an
    * 18px pill do not fit in it, so the button sizes to its content instead,
    * keeping the 34px height the row is built on. At the floor that costs the
-   * search about 18px while a filter is active, which the old overlay on the
-   * button's corner did not.
+   * search about 18px while a filter is active.
    */
   buttonWithCount?: string;
 }
 
 /** Everything one branch of the toolbar needs to run the ladder. */
 export interface ToolbarCollapseClasses {
-  /** Labels, Priorities, Filter, and Import Tasks. */
+  /** Labels, Priorities, Filter, and Import Tasks. Collapse at step 1. */
   filterControl: ToolbarControlCollapse;
-  /** Board / Backlog. */
+  /** Board / Backlog / Workflows. Collapse at step 2. */
   viewSwitcherLabel: string;
   /**
    * The switcher's icon, which REPLACES the label rather than joining it, so it
-   * carries the inverse query. Its `h-5` restores the 20px content height the
-   * label's line box had, so the option keeps the padding-derived 34px the rest
-   * of the row is built on once the text goes. Without it the content is the
-   * 16px glyph, the option derives 30px instead, and the row reads ragged.
+   * shows only once the label goes. Its `h-5` restores the 20px content height
+   * the label's line box had, so the option keeps the padding-derived 34px the
+   * rest of the row is built on once the text goes. Without it the content is
+   * the 16px glyph, the option derives 30px instead, and the row reads ragged.
    */
   viewSwitcherIcon: string;
   /**
-   * The switcher's option padding and gap, on the same query as its label:
-   * 12px a side around a word, 4px around an icon alone (the control's own
-   * `tight` value), with 2px before a count pill or mark instead of 6. The
-   * three icon-only options and the two counts gave back 44px when measured,
-   * which at the floor is the difference between a backlog search field and a
-   * slot.
+   * The switcher's option padding and gap, on the same step as its label: 12px a
+   * side around a word, 4px around an icon alone (the control's own `tight`
+   * value), with 2px before a count pill or mark instead of 6. The three
+   * icon-only options and the two counts gave back 44px when measured, which at
+   * the floor is the difference between a backlog search field and a slot.
    */
   viewSwitcherSpacing: string;
-  /** Add column, or New Task. Last to give: a primary action's word is worth most. */
+  /** Add column, or New Task. Last to give, at step 3: a primary action's word is worth most. */
   primaryAction: ToolbarControlCollapse;
   /**
-   * The two group dividers. At the last step they become 8px of gap instead of a
-   * rule: with every control already an icon they are the only pixels left on the
-   * row carrying no function, and the 26px they give back is the difference
-   * between a backlog search field you can read and a slot you cannot.
+   * The two group dividers. At step 3 they become 8px of gap instead of a rule:
+   * with every control already an icon they are the only pixels left on the row
+   * carrying no function, and the 26px they give back is the difference between
+   * a backlog search field you can read and a slot you cannot.
    */
   divider: string;
 }
 
-export const BOARD_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
+/** The board and Workflows branches. Workflows has no primary action, so step 3 only turns its dividers into gaps. */
+export const TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
   filterControl: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[880px]:w-auto @[880px]:h-auto @[880px]:px-3',
-    label: 'hidden @[880px]:inline',
-    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[880px]:h-auto @[880px]:px-3',
+    button: 'shrink-0 justify-center px-3 group-data-[collapse-filters]/toolbar:w-9 group-data-[collapse-filters]/toolbar:h-[34px] group-data-[collapse-filters]/toolbar:px-0',
+    label: 'group-data-[collapse-filters]/toolbar:hidden',
+    buttonWithCount: 'shrink-0 justify-center px-3 group-data-[collapse-filters]/toolbar:h-[34px] group-data-[collapse-filters]/toolbar:px-2',
   },
-  viewSwitcherLabel: 'hidden @[730px]:inline',
-  viewSwitcherIcon: 'flex items-center h-5 @[730px]:hidden',
-  viewSwitcherSpacing: 'px-1 gap-0.5 @[730px]:px-3 @[730px]:gap-1.5',
+  viewSwitcherLabel: 'group-data-[collapse-switcher]/toolbar:hidden',
+  viewSwitcherIcon: 'hidden items-center h-5 group-data-[collapse-switcher]/toolbar:flex',
+  viewSwitcherSpacing: 'px-3 gap-1.5 group-data-[collapse-switcher]/toolbar:px-1 group-data-[collapse-switcher]/toolbar:gap-0.5',
   primaryAction: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[580px]:w-auto @[580px]:h-auto @[580px]:px-3',
-    label: 'hidden @[580px]:inline',
+    button: 'shrink-0 justify-center px-3 group-data-[collapse-primary]/toolbar:w-9 group-data-[collapse-primary]/toolbar:h-[34px] group-data-[collapse-primary]/toolbar:px-0',
+    label: 'group-data-[collapse-primary]/toolbar:hidden',
   },
-  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[580px]:w-px @[580px]:mx-2.5 @[580px]:bg-edge/50',
+  divider: 'h-5 shrink-0 w-px mx-2.5 bg-edge/50 group-data-[collapse-primary]/toolbar:w-0 group-data-[collapse-primary]/toolbar:mx-1 group-data-[collapse-primary]/toolbar:bg-transparent',
 };
 
+/** The backlog branch: the same ladder, with New Task keeping its own wider padding before it collapses. */
 export const BACKLOG_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
-  filterControl: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[1000px]:w-auto @[1000px]:h-auto @[1000px]:px-3',
-    label: 'hidden @[1000px]:inline',
-    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[1000px]:h-auto @[1000px]:px-3',
-  },
-  viewSwitcherLabel: 'hidden @[760px]:inline',
-  viewSwitcherIcon: 'flex items-center h-5 @[760px]:hidden',
-  viewSwitcherSpacing: 'px-1 gap-0.5 @[760px]:px-3 @[760px]:gap-1.5',
+  ...TOOLBAR_COLLAPSE,
   primaryAction: {
-    // `px-4`, not the board action's `px-3`: New Task keeps its own wider padding
-    // above the threshold.
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[610px]:w-auto @[610px]:h-auto @[610px]:px-4',
-    label: 'hidden @[610px]:inline',
+    button: 'shrink-0 justify-center px-4 group-data-[collapse-primary]/toolbar:w-9 group-data-[collapse-primary]/toolbar:h-[34px] group-data-[collapse-primary]/toolbar:px-0',
+    label: 'group-data-[collapse-primary]/toolbar:hidden',
   },
-  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[610px]:w-px @[610px]:mx-2.5 @[610px]:bg-edge/50',
-};
-
-/**
- * The Workflows branch: the board's own search and filter (the view shares
- * them) and no primary action, since the view's actions live in its own
- * header. So the dividers are the last thing to give.
- */
-export const WORKFLOWS_TOOLBAR_COLLAPSE: ToolbarCollapseClasses = {
-  filterControl: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[750px]:w-auto @[750px]:h-auto @[750px]:px-3',
-    label: 'hidden @[750px]:inline',
-    buttonWithCount: 'h-[34px] shrink-0 justify-center px-2 @[750px]:h-auto @[750px]:px-3',
-  },
-  viewSwitcherLabel: 'hidden @[590px]:inline',
-  viewSwitcherIcon: 'flex items-center h-5 @[590px]:hidden',
-  viewSwitcherSpacing: 'px-1 gap-0.5 @[590px]:px-3 @[590px]:gap-1.5',
-  // Unused: the view has no toolbar action. Kept so the branch has the same shape.
-  primaryAction: {
-    button: 'w-9 h-[34px] shrink-0 justify-center px-0 @[450px]:w-auto @[450px]:h-auto @[450px]:px-3',
-    label: 'hidden @[450px]:inline',
-  },
-  divider: 'h-5 shrink-0 w-0 mx-1 bg-transparent @[450px]:w-px @[450px]:mx-2.5 @[450px]:bg-edge/50',
 };

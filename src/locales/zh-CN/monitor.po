@@ -8,310 +8,383 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": {reason}"
-msgstr ""
+msgstr "“{taskTitle}”：{reason}"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "{finishedCount, plural, one {# recently finished} other {# recently finished}}"
-msgstr ""
+msgstr "{finishedCount, plural, other {# 个最近完成}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "{projectOptionCount, plural, one {{representableSelectionCount} of # project} other {{representableSelectionCount} of # projects}}"
-msgstr ""
+msgstr "{projectOptionCount, plural, other {{representableSelectionCount}/# 个项目}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "{totalSessionCount, plural, one {Filters are hiding {hiddenSessionCount} of # session} other {Filters are hiding {hiddenSessionCount} of # sessions}}"
-msgstr ""
+msgstr "{totalSessionCount, plural, other {筛选器隐藏了 # 个会话中的 {hiddenSessionCount} 个}}"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "{workingProjectCount, plural, one {across # project} other {across # projects}}"
-msgstr ""
+msgstr "{workingProjectCount, plural, other {分布于 # 个项目}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "<0>{visibleCount}</0>of<1>{totalSessionCount}</1>"
-msgstr ""
+msgstr "<0>{visibleCount}</0>/<1>{totalSessionCount}</1>"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Active"
-msgstr ""
+msgstr "活动"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "智能体"
 
 #: src/renderer/components/monitor/MonitorPage.tsx
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "代理监视器"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Agents actively running right now, across every project in view"
-msgstr ""
+msgstr "当前视图中所有项目里正在运行的代理"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Agents waiting on a response from you, across every project in view"
-msgstr ""
+msgstr "当前视图中所有项目里等待你回复的代理"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "所有项目"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Automations"
-msgstr ""
+msgstr "自动化"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Awaiting permission {when}"
-msgstr ""
+msgstr "等待权限 {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "卡片"
 
 #: src/renderer/components/monitor/MonitorPage.tsx
+#, fuzzy
 msgid "Close agent monitor"
-msgstr ""
+msgstr "关闭代理监视器"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Column"
-msgstr ""
+msgstr "列"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Context"
-msgstr ""
+msgstr "上下文"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't archive task"
-msgstr ""
+msgstr "无法归档任务"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "无法删除任务"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "无法移动任务"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't send task to backlog"
-msgstr ""
+msgstr "无法将任务移至待办列表"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "Default value"
 msgid "Default"
-msgstr ""
+msgstr "默认"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Doing now"
-msgstr ""
+msgstr "当前操作"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "推理强度"
 
 #: src/renderer/components/monitor/LazyMonitor.tsx
+#, fuzzy
 msgid "Failed to load the agent monitor"
-msgstr ""
+msgstr "无法加载代理监视器"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Filter sessions"
-msgstr ""
+msgstr "筛选会话"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorCard.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Finished"
-msgstr ""
+msgstr "已完成"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Finished {when}"
-msgstr ""
+msgstr "已完成 {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Group"
-msgstr ""
+msgstr "分组"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Group sessions by"
-msgstr ""
+msgstr "会话分组依据"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
-msgstr ""
+msgstr "空闲"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "last active {when}"
-msgstr ""
+msgstr "上次活动于 {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "布局"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "List"
-msgstr ""
+msgstr "列表"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Live only"
-msgstr ""
+msgstr "仅活动"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "longest since {when}"
-msgstr ""
+msgstr "最长自 {when} 起"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "模型"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Needs you"
-msgstr ""
+msgstr "需要处理"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Newest"
-msgstr ""
+msgstr "最新"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
+#, fuzzy
 msgid "No agents running"
-msgstr ""
+msgstr "没有正在运行的代理"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "No sessions match the current filters."
-msgstr ""
+msgstr "没有与当前筛选条件匹配的会话。"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Oldest"
-msgstr ""
+msgstr "最早"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "automations state"
 msgid "On"
-msgstr ""
+msgstr "开启"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Open {taskTitle}"
-msgstr ""
+msgstr "打开 {taskTitle}"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Open on board"
-msgstr ""
+msgstr "在看板上打开"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorCard.tsx
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Paused"
-msgstr ""
+msgstr "已暂停"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "automations state"
 msgid "Paused"
-msgstr ""
+msgstr "已暂停"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "paused or waiting to start"
-msgstr ""
+msgstr "已暂停或等待启动"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Permission"
-msgstr ""
+msgstr "权限"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Permission mode the session was spawned under"
-msgstr ""
+msgstr "会话启动时使用的权限模式"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "项目"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "项目"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Projects in view with at least one live session"
-msgstr ""
+msgstr "视图中至少有一个活动会话的项目"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Reasoning effort the session is running with"
-msgstr ""
+msgstr "会话当前使用的推理强度"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Recently finished"
-msgstr ""
+msgstr "最近完成"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Runtime"
-msgstr ""
+msgstr "运行时长"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
+#, fuzzy
 msgid "Sessions from every project appear here as soon as an agent starts."
-msgstr ""
+msgstr "代理启动后，所有项目的会话都会立即显示在此处。"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Sessions you paused, plus any queued waiting for a free slot"
-msgstr ""
+msgstr "你暂停的会话，以及排队等待空闲槽位的会话"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Show in project"
-msgstr ""
+msgstr "在项目中显示"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Show only sessions with a live agent, hiding paused and recently finished"
-msgstr ""
+msgstr "仅显示有活动代理的会话，隐藏已暂停和最近完成的会话"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Sort"
-msgstr ""
+msgstr "排序"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Sort sessions by"
-msgstr ""
+msgstr "会话排序依据"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Status"
-msgstr ""
+msgstr "状态"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Table"
-msgstr ""
+msgstr "表格"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 #: src/renderer/components/monitor/useMonitorDetailOwnership.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "任务"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "The workflow the task belongs to"
-msgstr ""
+msgstr "任务所属的工作流"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Waiting to start"
-msgstr ""
+msgstr "等待启动"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Whether the agent is working, waiting on you, paused, or finished"
-msgstr ""
+msgstr "代理是在工作、等待你操作、已暂停还是已完成"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Whether the column's automations run for the task"
-msgstr ""
+msgstr "该列的自动化是否对此任务运行"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "with a live session"
-msgstr ""
+msgstr "有活动会话"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Workflow"
-msgstr ""
+msgstr "工作流"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Working"
-msgstr ""
+msgstr "运行中"

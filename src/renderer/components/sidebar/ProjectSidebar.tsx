@@ -271,6 +271,7 @@ export function ProjectSidebar({ onToggleSidebar }: ProjectSidebarProps) {
                 onClick={onToggleSidebar}
                 className="p-1 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
                 aria-label={t`Hide sidebar`}
+                data-testid="sidebar-collapse-button"
               >
                 <ChevronsLeft size={16} />
               </button>

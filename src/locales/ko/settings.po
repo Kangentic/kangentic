@@ -8,2607 +8,3232 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "{blurb}. Opens the docs page."
-msgstr ""
+msgstr "{blurb}. 문서 페이지를 엽니다."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
-msgstr ""
+msgstr "{comboName}은(는) OS 또는 다른 앱에서 이미 사용 중입니다. 다른 키를 선택하세요."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "{conflictComboCount, plural, one {Conflict detected} other {Conflicts detected}}"
-msgstr ""
+msgstr "{conflictComboCount, plural, other {충돌 감지됨}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{count, plural, other {파일 #개}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}"
-msgstr ""
+msgstr "{finished}개 중 {count}개"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}, {skipped} skipped"
-msgstr ""
+msgstr "{finished}개 중 {count}개, {skipped}개 건너뜀"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName} - {accuracyLabel} ({sizeMb} MB)"
-msgstr ""
+msgstr "{displayName} - {accuracyLabel} ({sizeMb} MB)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "{displayName} execution"
-msgstr ""
+msgstr "{displayName} 실행"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} not found - click to re-detect"
-msgstr ""
+msgstr "{displayName}을(를) 찾을 수 없음 - 클릭하여 다시 감지"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} path"
-msgstr ""
+msgstr "{displayName} 경로"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb}MB"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB, {activeBackend}"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb}MB, {activeBackend}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {percent}%"
-msgstr ""
+msgstr "{displayName}, {percent}%"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {sizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {sizeMb} MB"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
-msgstr ""
+msgstr "{hours, plural, other {#시간 남음}}"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "{label}, always on"
-msgstr ""
+msgstr "{label}, 항상 켜짐"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {# min left} other {# min left}}"
-msgstr ""
+msgstr "{minutes, plural, other {#분 남음}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Checks each open PR about every # minute; off, it checks only when you open the project.} other {Checks each open PR about every # minutes; off, it checks only when you open the project.}}"
-msgstr ""
+msgstr "{minutes, plural, other {열린 각 PR을 약 #분마다 확인합니다. 끄면 프로젝트를 열 때만 확인합니다.}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Fetches every # minute so behind counts stay current; creating a worktree always fetches first.} other {Fetches every # minutes so behind counts stay current; creating a worktree always fetches first.}}"
-msgstr ""
+msgstr "{minutes, plural, other {뒤처진 커밋 수를 최신으로 유지하도록 #분마다 가져옵니다. 작업 트리를 만들 때는 항상 먼저 가져옵니다.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {retrying in # min} other {retrying in # min}}"
-msgstr ""
+msgstr "{minutes, plural, other {#분 후 다시 시도}}"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{percent}%, {displayName}"
-msgstr ""
+msgstr "{percent}%, {displayName}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{percent}%, {timeLeft}"
-msgstr ""
+msgstr "{percent}%, {timeLeft}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{releaseBufferMs} ms"
-msgstr ""
+msgstr "{releaseBufferMs}ms"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{toWrite, plural, other {작업 #개}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A call failed"
-msgstr ""
+msgstr "호출 실패"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
-msgstr ""
+msgstr "각 세션의 활동 상태와 최근 전환을 보여 주는 플로팅 패널로, .kangentic/debug에도 기록됩니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
-msgstr ""
+msgstr "프리셋은 라이브 모델과 보정 모델을 자동으로 선택합니다. 사용자 지정에서는 직접 선택할 수 있습니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "A relay you run"
-msgstr ""
+msgstr "직접 운영하는 릴레이"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A sentence or two per Done task, so questions find it."
-msgstr ""
+msgstr "완료된 작업마다 한두 문장으로 요약해 질문에서 찾을 수 있게 합니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A sentence or two per Done task, written in the background from its title, description, files and commits."
-msgstr ""
+msgstr "완료된 작업마다 제목, 설명, 파일 및 커밋을 바탕으로 백그라운드에서 작성되는 한두 문장의 요약입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small model answers as well and faster, but invents more details in task summaries."
-msgstr ""
+msgstr "작은 모델도 똑같이 잘, 더 빠르게 답하지만 작업 요약에서 세부 내용을 더 많이 지어냅니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
-msgstr ""
+msgstr "응답 하나를 읽고 예/아니요로 답하는 데는 보통 작고 빠른 모델로 충분합니다."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "{label} 정보"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Activity engine debug overlay"
-msgstr ""
+msgstr "활동 엔진 디버그 오버레이"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Add shortcut"
-msgstr ""
+msgstr "바로 가기 추가"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
-msgstr ""
+msgstr "실행 중인 서버의 주소(예: http://10.0.0.5:4096)"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Advanced"
-msgstr ""
+msgstr "고급"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "에이전트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "에이전트 활성"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "에이전트 활성 시간"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Agent Browser"
-msgstr ""
+msgstr "에이전트 브라우저"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Agent CLI"
-msgstr ""
+msgstr "에이전트 CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent CLI version"
-msgstr ""
+msgstr "에이전트 CLI 버전"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent crash"
-msgstr ""
+msgstr "에이전트 충돌"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "에이전트 기본값"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "에이전트 유휴"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Agent session starts, exit codes, and duration"
-msgstr ""
+msgstr "에이전트 세션 시작, 종료 코드 및 실행 시간"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "All"
-msgstr ""
+msgstr "모두"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow eval"
-msgstr ""
+msgstr "eval 허용"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow interaction"
-msgstr ""
+msgstr "상호 작용 허용"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow navigation"
-msgstr ""
+msgstr "탐색 허용"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow unsafe operations"
-msgstr ""
+msgstr "안전하지 않은 작업 허용"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Already default"
-msgstr ""
+msgstr "이미 기본값임"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept."
-msgstr ""
+msgstr "항상 보관되는 오류와 경고 외에 info, debug, log 출력도 .kangentic/logs에 저장합니다."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Alt+F4 closes the window and is reserved by your OS."
-msgstr ""
+msgstr "Alt+F4는 창을 닫는 키로 OS에서 예약되어 있습니다."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "Always on while the index is on"
-msgstr ""
+msgstr "인덱스가 켜져 있는 동안 항상 켜짐"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Amount of detail shown on task cards"
-msgstr ""
+msgstr "작업 카드에 표시할 세부 정보의 양"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "an unbound key"
-msgstr ""
+msgstr "할당되지 않은 키"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Analytics"
-msgstr ""
+msgstr "분석"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "between agent names"
 msgid "and"
-msgstr ""
+msgstr "및"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgctxt "between two links"
 msgid "and"
-msgstr ""
+msgstr "및"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Animations"
-msgstr ""
+msgstr "애니메이션"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Anonymous analytics and data collection policy"
-msgstr ""
+msgstr "익명 분석 및 데이터 수집 정책"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Anonymous analytics only. No personal data collected."
-msgstr ""
+msgstr "익명 분석만 수집합니다. 개인 데이터는 수집하지 않습니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "API key (optional)"
-msgstr ""
+msgstr "API 키(선택 사항)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
-msgstr ""
+msgstr "앱 충돌 및 오류(앱 코드에서 기기별 경로를 제거한 스택 추적)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App launches, platform, and architecture"
-msgstr ""
+msgstr "앱 실행, 플랫폼 및 아키텍처"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Appearance"
-msgstr ""
+msgstr "모양"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in both the header bar and kebab menu"
-msgstr ""
+msgstr "헤더 바와 케밥 메뉴 모두에 표시"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail header bar only"
-msgstr ""
+msgstr "작업 세부 정보 헤더 바에만 표시"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail kebab menu only"
-msgstr ""
+msgstr "작업 세부 정보 케밥 메뉴에만 표시"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Applies after a restart, and does not change agent output or terminal text."
-msgstr ""
+msgstr "다시 시작한 후에 적용되며, 에이전트 출력이나 터미널 텍스트는 바뀌지 않습니다."
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Applies to all projects"
-msgstr ""
+msgstr "모든 프로젝트에 적용"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
-msgstr ""
+msgstr "감지된 kangentic.json 변경 사항을 확인을 묻지 않고 즉시 적용합니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Ask us anything about what Kangentic collects."
-msgstr ""
+msgstr "Kangentic이 수집하는 항목에 대해 무엇이든 문의하세요."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Authentication"
-msgstr ""
+msgstr "인증"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgctxt "acceleration"
 msgid "Auto"
-msgstr ""
+msgstr "자동"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-apply board config changes"
-msgstr ""
+msgstr "보드 구성 변경 자동 적용"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-cleanup"
-msgstr ""
+msgstr "자동 정리"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Auto-detect"
-msgstr ""
+msgstr "자동 감지"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-fetch remote"
-msgstr ""
+msgstr "원격 자동 가져오기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-focus idle sessions"
-msgstr ""
+msgstr "유휴 세션 자동 포커스"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-refresh PRs"
-msgstr ""
+msgstr "PR 자동 새로 고침"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-resume agents on restart"
-msgstr ""
+msgstr "다시 시작 시 에이전트 자동 재개"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-submit"
-msgstr ""
+msgstr "자동 제출"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
-msgstr ""
+msgstr "하단 패널을 유휴 세션으로 자동 전환합니다. 유휴 탭은 어느 경우든 강조 표시됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automation agent"
-msgstr ""
+msgstr "자동화 에이전트"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "백그라운드"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Bar"
-msgstr ""
+msgstr "막대"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Basic accuracy"
-msgstr ""
+msgstr "기본 정확도"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Behavior"
-msgstr ""
+msgstr "동작"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Best accuracy"
-msgstr ""
+msgstr "최고 정확도"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Block"
-msgstr ""
+msgstr "블록"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "보드"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Board layout"
-msgstr ""
+msgstr "보드 레이아웃"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Both"
-msgstr ""
+msgstr "둘 다"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Both"
-msgstr ""
+msgstr "모두"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Branch"
-msgstr ""
+msgstr "분기"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Branches"
-msgstr ""
+msgstr "분기"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "브라우저"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser automation"
-msgstr ""
+msgstr "브라우저 자동화"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data"
-msgstr ""
+msgstr "브라우저 데이터"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data cleared"
-msgstr ""
+msgstr "브라우저 데이터를 삭제했습니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser pane"
-msgstr ""
+msgstr "브라우저 창"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "취소"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card density"
-msgstr ""
+msgstr "카드 밀도"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card preview"
-msgstr ""
+msgstr "카드 미리 보기"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "카드"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change background"
-msgstr ""
+msgstr "배경 변경"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change cursor"
-msgstr ""
+msgstr "커서 변경"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change foreground"
-msgstr ""
+msgstr "전경 변경"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "변경 사항"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "확인 중..."
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose a model"
-msgstr ""
+msgstr "모델 선택"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose an agent"
-msgstr ""
+msgstr "에이전트 선택"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Claude 5h / weekly quota bars"
-msgstr ""
+msgstr "Claude 5시간/주간 할당량 막대"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Clear browser data"
-msgstr ""
+msgstr "브라우저 데이터 지우기"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear browser data?"
-msgstr ""
+msgstr "브라우저 데이터를 삭제하시겠습니까?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear data"
-msgstr ""
+msgstr "데이터 삭제"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clearing..."
-msgstr ""
+msgstr "삭제 중..."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CLI path"
-msgstr ""
+msgstr "CLI 경로"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
-msgstr ""
+msgstr "작업 창 바깥의 빈 공간을 클릭하면 창이 닫힙니다. 컨트롤, 작업 카드, 실행 중인 터미널은 첫 클릭에도 그대로 동작합니다. 에이전트는 계속 실행되며 작업을 다시 열면 다시 연결됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click, type and drag. Off is read-only."
-msgstr ""
+msgstr "클릭, 입력, 드래그. 끄면 읽기 전용입니다."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Clicking outside never closes a task window"
-msgstr ""
+msgstr "바깥을 클릭해도 작업 창을 닫지 않습니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Close on outside click"
-msgstr ""
+msgstr "바깥 클릭 시 닫기"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Close settings"
-msgstr ""
+msgstr "설정 닫기"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes a task window only when it is the only one open"
-msgstr ""
+msgstr "작업 창이 하나만 열려 있을 때만 닫습니다"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes every open task window"
-msgstr ""
+msgstr "열려 있는 모든 작업 창을 닫습니다"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes the focused task window"
-msgstr ""
+msgstr "포커스된 작업 창을 닫습니다"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Closing now will discard your edits to the workflow agent prompt."
-msgstr ""
+msgstr "지금 닫으면 워크플로 에이전트 프롬프트의 편집 내용이 삭제됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud endpoint"
-msgstr ""
+msgstr "클라우드 엔드포인트"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription API key"
-msgstr ""
+msgstr "클라우드 음성 변환 API 키"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription endpoint"
-msgstr ""
+msgstr "클라우드 음성 변환 엔드포인트"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription model"
-msgstr ""
+msgstr "클라우드 음성 변환 모델"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+Q quits the app and is reserved by macOS."
-msgstr ""
+msgstr "Cmd+Q는 앱을 종료하는 키로 macOS에서 예약되어 있습니다."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+W is reserved by macOS for closing windows."
-msgstr ""
+msgstr "Cmd+W는 창 닫기용으로 macOS에서 예약되어 있습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Collapse unchanged regions"
-msgstr ""
+msgstr "변경되지 않은 영역 접기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Colors"
-msgstr ""
+msgstr "색"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Column width"
-msgstr ""
+msgstr "열 너비"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Column width and which panels show around the board."
-msgstr ""
+msgstr "열 너비 및 보드 주변에 표시할 패널을 설정합니다."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Comfortable"
-msgstr ""
+msgstr "넓게"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Command"
-msgstr ""
+msgstr "명령"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "커밋"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "인덱싱된 커밋"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Compact"
-msgstr ""
+msgstr "좁게"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Config sync"
-msgstr ""
+msgstr "구성 동기화"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Conflict"
-msgstr ""
+msgstr "충돌"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Connect a phone over an end-to-end encrypted relay."
-msgstr ""
+msgstr "종단 간 암호화 릴레이로 휴대폰을 연결합니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connected"
-msgstr ""
+msgstr "연결됨"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Connected"
-msgstr ""
+msgstr "연결됨"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "연결 중…"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Context bar"
-msgstr ""
+msgstr "컨텍스트 막대"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Context window"
-msgstr ""
+msgstr "컨텍스트 창"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "대화"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "임베딩된 대화"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
-msgstr ""
+msgstr "모든 프로젝트에서 대화, 작업, 커밋, 요약, 소스 코드를 모두 다시 빌드합니다. {rebuildAsk, plural, other {이전 모델로 작성된 요약 #개를 다시 작성하며}}, 백그라운드에서 약 {rewriteCalls, plural, other {#회 호출}}이 필요합니다."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the embedded browser keeps."
-msgstr ""
+msgstr "내장 브라우저가 보관하는 쿠키 및 저장소입니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copied"
-msgstr ""
+msgstr "복사됨"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "복사됨!"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "verb"
 msgid "Copy"
-msgstr ""
+msgstr "복사"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "\"{loginCommand}\"을(를) 클립보드에 복사"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Copy files"
-msgstr ""
+msgstr "파일 복사"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copy pairing link"
-msgstr ""
+msgstr "페어링 링크 복사"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste and interrupt inside a terminal."
-msgstr ""
+msgstr "터미널에서 복사, 붙여넣기 및 중단합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "비용"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Could not start pairing."
-msgstr ""
+msgstr "페어링을 시작할 수 없습니다."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Couldn't clear browser data"
-msgstr ""
+msgstr "브라우저 데이터를 삭제할 수 없습니다"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "다시 시작할 수 없음"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save base branch"
-msgstr ""
+msgstr "기본 분기를 저장할 수 없음"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Couldn't save shortcuts"
-msgstr ""
+msgstr "바로 가기를 저장할 수 없음"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Count merge bypass as ready"
-msgstr ""
+msgstr "병합 우회를 준비됨으로 간주"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Crash and error reports go to Sentry so bugs can be diagnosed and fixed. Stack traces are recorded with machine-specific paths removed from app code; no task content, code, or personal data is attached."
-msgstr ""
+msgstr "버그를 진단하고 수정할 수 있도록 충돌 및 오류 보고서가 Sentry로 전송됩니다. 스택 추적은 앱 코드에서 기기별 경로를 제거한 상태로 기록되며, 작업 내용, 코드 또는 개인 데이터는 첨부되지 않습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Crash reports"
-msgstr ""
+msgstr "충돌 보고서"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CSS font-family for the terminal"
-msgstr ""
+msgstr "터미널의 CSS font-family"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cumulative tool invocations"
-msgstr ""
+msgstr "누적 도구 호출 수"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Cursor"
-msgstr ""
+msgstr "커서"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cursor style"
-msgstr ""
+msgstr "커서 스타일"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "dictation mode"
 msgid "Custom"
-msgstr ""
+msgstr "사용자 지정"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Custom"
-msgstr ""
+msgstr "사용자 지정"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Custom"
-msgstr ""
+msgstr "사용자 지정"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom commands accessible from the task detail dialog"
-msgstr ""
+msgstr "작업 세부 정보 대화 상자에서 사용할 수 있는 사용자 지정 명령"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Custom commands in the task window's header and menu."
-msgstr ""
+msgstr "작업 창의 헤더와 메뉴에 표시되는 사용자 지정 명령입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom relay address"
-msgstr ""
+msgstr "사용자 지정 릴레이 주소"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Customize the terminal background, foreground, and cursor color"
-msgstr ""
+msgstr "터미널 배경, 전경 및 커서 색상 사용자 지정"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Dark"
-msgstr ""
+msgstr "다크"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Dark, when the system is dark"
-msgstr ""
+msgstr "다크, 시스템이 다크 모드일 때"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Debug overlays and logs for diagnosing sessions."
-msgstr ""
+msgstr "세션 진단을 위한 디버그 오버레이 및 로그입니다."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Debug tools in development builds."
-msgstr ""
+msgstr "개발 빌드용 디버그 도구입니다."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Default"
-msgstr ""
+msgstr "기본"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Default"
-msgstr ""
+msgstr "기본"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default base branch"
-msgstr ""
+msgstr "기본 기준 분기"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default browser pane URL"
-msgstr ""
+msgstr "기본 브라우저 창 URL"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default diff scope"
-msgstr ""
+msgstr "기본 diff 범위"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
-msgstr ""
+msgstr "변경 내용 패널의 Git 파일 diff 기본 레이아웃: 분할(나란히) 또는 인라인(통합)."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default URL"
-msgstr ""
+msgstr "기본 URL"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Description"
-msgstr ""
+msgstr "설명"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Desktop"
-msgstr ""
+msgstr "데스크톱"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Detected"
-msgstr ""
+msgstr "감지됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Detected shell name"
-msgstr ""
+msgstr "감지된 셸 이름"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev inspection bridge"
-msgstr ""
+msgstr "개발 검사 브리지"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev triggers"
-msgstr ""
+msgstr "개발 트리거"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Developer"
-msgstr ""
+msgstr "개발자"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Diagnostics"
-msgstr ""
+msgstr "진단"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Dictation"
-msgstr ""
+msgstr "받아쓰기"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again."
-msgstr ""
+msgstr "반복된 충돌로 받아쓰기가 중지되었습니다({workerError}). 다시 시도하려면 Kangentic을 다시 시작하세요."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes. Restart Kangentic to try again."
-msgstr ""
+msgstr "반복된 충돌로 받아쓰기가 중지되었습니다. 다시 시도하려면 Kangentic을 다시 시작하세요."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Diff view"
-msgstr ""
+msgstr "Diff 보기"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "삭제"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "저장되지 않은 변경 사항을 삭제할까요?"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Disconnected"
-msgstr ""
+msgstr "연결 끊김"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Display"
-msgstr ""
+msgstr "표시"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Display language"
-msgstr ""
+msgstr "표시 언어"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Download failed"
-msgstr ""
+msgstr "다운로드 실패"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Downloading"
-msgstr ""
+msgstr "다운로드 중"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
-msgstr ""
+msgstr "각 에이전트 세션은 로컬 MCP 서버를 받아 이 도구들을 자동으로 찾습니다. 에이전트가 만든 작업은 알림과 함께 보드에 표시됩니다."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Editors"
-msgstr ""
+msgstr "편집기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "노력 수준"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Elapsed time"
-msgstr ""
+msgstr "경과 시간"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Embed a Browser pane in task windows that agents can open."
-msgstr ""
+msgstr "에이전트가 열 수 있는 브라우저 창을 작업 창에 포함합니다."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Enter path manually"
-msgstr ""
+msgstr "경로 직접 입력"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Environment variables that turn telemetry off."
-msgstr ""
+msgstr "텔레메트리를 끄는 환경 변수입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Events"
-msgstr ""
+msgstr "이벤트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on."
-msgstr ""
+msgstr "모든 충돌은 소스 매핑된 스택과 함께 .kangentic/logs/crashes에 기록되며, 항상 켜져 있습니다."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Every hotkey is at its default"
-msgstr ""
+msgstr "모든 단축키가 기본값입니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Execution"
-msgstr ""
+msgstr "실행"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand"
-msgstr ""
+msgstr "펼치기"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand the prompt"
-msgstr ""
+msgstr "프롬프트 펼치기"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Extension"
-msgstr ""
+msgstr "확장자"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Failed"
-msgstr ""
+msgstr "실패"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Fair accuracy"
-msgstr ""
+msgstr "보통 정확도"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "File list"
-msgstr ""
+msgstr "파일 목록"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "File paths, project names, or code"
-msgstr ""
+msgstr "파일 경로, 프로젝트 이름 또는 코드"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "File sort"
-msgstr ""
+msgstr "파일 정렬"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Files & Terminal"
-msgstr ""
+msgstr "파일 및 터미널"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files copied into each new worktree, such as .env."
-msgstr ""
+msgstr "새 작업 트리마다 복사되는 파일(예: .env)."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Files to copy into a worktree"
-msgstr ""
+msgstr "작업 트리에 복사할 파일"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Finds your work by meaning and answers questions."
-msgstr ""
+msgstr "의미로 작업을 찾고 질문에 답합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Flat file list"
-msgstr ""
+msgstr "평면 파일 목록"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Focused"
-msgstr ""
+msgstr "포커스됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Fold away large unchanged spans so a big file shows only the changed hunks with a little context."
-msgstr ""
+msgstr "변경되지 않은 큰 구간을 접어 큰 파일에서 변경된 헝크와 약간의 컨텍스트만 표시합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "이 프로젝트가 가리키는 디스크의 폴더입니다. 새 위치로 옮기면 모든 작업, 기록, 작업 트리가 함께 이동합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Follow system appearance"
-msgstr ""
+msgstr "시스템 모양 따르기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font family"
-msgstr ""
+msgstr "글꼴"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font size"
-msgstr ""
+msgstr "글꼴 크기"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Foreground"
-msgstr ""
+msgstr "전경"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
-msgstr ""
+msgstr "암호화된 트래픽을 전달하며 키를 보관하지 않습니다."
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "일반"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Git"
-msgstr ""
+msgstr "Git"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Git changes"
-msgstr ""
+msgstr "Git 변경 사항"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Give agents tools to work with your board."
-msgstr ""
+msgstr "에이전트에 보드 작업용 도구를 제공합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Gives tasks the option to run in their own git worktree."
-msgstr ""
+msgstr "작업을 자체 git 작업 트리에서 실행할 수 있게 합니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Good accuracy"
-msgstr ""
+msgstr "양호한 정확도"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Graphics acceleration"
-msgstr ""
+msgstr "그래픽 가속"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Hardware rendering and motion across the whole app."
-msgstr ""
+msgstr "앱 전체의 하드웨어 렌더링 및 모션입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hardware rendering for the app window and terminals."
-msgstr ""
+msgstr "앱 창과 터미널에 하드웨어 렌더링을 사용합니다."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Header"
-msgstr ""
+msgstr "헤더"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hide whitespace-only changes in the diff to filter reformatting noise."
-msgstr ""
+msgstr "diff에서 공백만 바뀐 변경 사항을 숨겨 서식 변경으로 인한 잡음을 걸러냅니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "High accuracy"
-msgstr ""
+msgstr "높은 정확도"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
-msgstr ""
+msgstr "노력 수준이 높을수록 답변이 느리지만 여러 작업에 걸친 집계에 도움이 될 수 있습니다. 요약은 항상 에이전트 기본값을 사용합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
-msgstr ""
+msgstr "푸시투토크를 누른 채 터미널이나 입력란에 말하세요."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
-msgstr ""
+msgstr "누르고 있으면 녹음되고, 놓으면 변환된 텍스트가 삽입됩니다. 단축키에서 다시 지정할 수 있습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys"
-msgstr ""
+msgstr "단축키"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys that work anywhere in the app."
-msgstr ""
+msgstr "앱 어디에서나 작동하는 단축키입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hover a tile to try it on the whole app, click to keep it."
-msgstr ""
+msgstr "타일에 마우스를 올리면 앱 전체에 미리 적용되고, 클릭하면 유지됩니다."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "How changes to the shared board config are applied."
-msgstr ""
+msgstr "공유 보드 구성의 변경 사항을 적용하는 방식입니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "How it works"
-msgstr ""
+msgstr "작동 방식"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How linked PRs are kept up to date."
-msgstr ""
+msgstr "연결된 PR을 최신 상태로 유지하는 방법입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long an agent waits on you before the idle timer pauses it."
-msgstr ""
+msgstr "유휴 타이머가 에이전트를 일시 중지하기 전까지 에이전트가 사용자를 기다리는 시간입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long toasts remain visible"
-msgstr ""
+msgstr "알림이 표시되는 시간"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts stay up and how many stack at once."
-msgstr ""
+msgstr "토스트 표시 시간과 동시에 쌓이는 최대 개수입니다."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How many agents run at once and what happens when idle."
-msgstr ""
+msgstr "동시에 실행되는 에이전트 수와 유휴 시 동작입니다."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "How much each task card shows on the board."
-msgstr ""
+msgstr "보드에서 각 작업 카드에 표시할 정보의 양입니다."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How task windows close and where they reopen."
-msgstr ""
+msgstr "작업 창이 닫히는 방식과 다시 열리는 위치입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the agent handles tool approvals"
-msgstr ""
+msgstr "에이전트가 도구 승인을 처리하는 방식"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the changed files are sorted and grouped."
-msgstr ""
+msgstr "변경된 파일을 정렬하고 그룹화하는 방식입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension."
-msgstr ""
+msgstr "변경 사항 패널의 파일 정렬 방식: 이름순, 상태순(추가 / 수정 / 삭제), 크기순(변경이 많은 순), 확장자순."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the Changes panel shows a file's diff."
-msgstr ""
+msgstr "변경 내용 패널에서 파일의 diff를 표시하는 방식입니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How the relay works"
-msgstr ""
+msgstr "릴레이 작동 방식"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How to install and pair"
-msgstr ""
+msgstr "설치 및 페어링 방법"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "아이콘"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "공백 무시"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header and its menu"
-msgstr ""
+msgstr "작업 창 헤더와 메뉴에 표시"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header only"
-msgstr ""
+msgstr "작업 창 헤더에만 표시"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window menu only"
-msgstr ""
+msgstr "작업 창 메뉴에만 표시"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "In use by another app"
-msgstr ""
+msgstr "다른 앱에서 사용 중"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "인덱스"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Indexing and the local model that finds by meaning live in the <0>Knowledge Graph</0> tab, and run on your device with no API key. When you ask a question, the agent you choose there receives it with the board's task list, the conversation passages and code found for it, and the chat so far. To write a task summary, it receives that task's title, description, commits, changed files and closing messages."
-msgstr ""
+msgstr "인덱싱과 의미 기반으로 찾는 로컬 모델은 <0>지식 그래프</0> 탭에 있으며, API 키 없이 기기에서 실행됩니다. 질문하면 그곳에서 선택한 에이전트가 질문과 함께 보드의 작업 목록, 질문에 대해 찾은 대화 구절과 코드, 지금까지의 채팅을 받습니다. 작업 요약을 작성할 때는 해당 작업의 제목, 설명, 커밋, 변경된 파일 및 종료 메시지를 받습니다."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff view mode"
 msgid "Inline"
-msgstr ""
+msgstr "인라인"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "좁을 때 인라인"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Input / output totals"
-msgstr ""
+msgstr "입력 / 출력 합계"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inspection bridge"
-msgstr ""
+msgstr "검사 브리지"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Installing the app, pairing a phone, and push notifications."
-msgstr ""
+msgstr "앱 설치, 휴대폰 페어링 및 푸시 알림."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Judges conditions and workflow steps, and names tasks."
-msgstr ""
+msgstr "조건과 워크플로 단계를 판단하고 작업 이름을 짓습니다."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Kangentic could not write its settings file."
-msgstr ""
+msgstr "Kangentic에서 설정 파일을 쓸 수 없습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic Mobile"
-msgstr ""
+msgstr "Kangentic 모바일"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
-msgstr ""
+msgstr "적용하려면 Kangentic이 다시 시작됩니다. 실행 중인 에이전트는 일시 중단되었다가 다시 시작 후 재개됩니다."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Kangentic runs {wslAgentList} from WSL."
-msgstr ""
+msgstr "Kangentic은 WSL에서 {wslAgentList}을(를) 실행합니다."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic turned this off after repeated failures."
-msgstr ""
+msgstr "반복된 오류로 인해 Kangentic이 이 기능을 껐습니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Kangentic-operated relay"
-msgstr ""
+msgstr "Kangentic 운영 릴레이"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
-msgstr ""
+msgstr "키를 놓은 후에도 잠시 녹음을 계속해 마지막 단어가 잘리지 않게 합니다."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "계속 편집"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for a task's Browser pane."
-msgstr ""
+msgstr "작업의 브라우저 창에 사용하는 키입니다."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for an open task window."
-msgstr ""
+msgstr "열린 작업 창에 사용하는 키입니다."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Changes panel and its diff."
-msgstr ""
+msgstr "변경 사항 패널과 해당 diff에 사용하는 키입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "지식 그래프"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Label"
-msgstr ""
+msgstr "레이블"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Language"
-msgstr ""
+msgstr "언어"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Latest"
-msgstr ""
+msgstr "최신"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Launch options"
-msgstr ""
+msgstr "실행 옵션"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "레이아웃"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Leave blank if the server does not require credentials"
-msgstr ""
+msgstr "서버에 자격 증명이 필요 없으면 비워 두세요"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Browser pane."
-msgstr ""
+msgstr "에이전트가 브라우저 창을 조작하도록 허용합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
-msgstr ""
+msgstr "devtools 도구가 렌더러에서 JavaScript를 실행하고, 활동 이벤트를 주입하고, 원시 터미널 입력을 보낼 수 있게 합니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "License"
-msgstr ""
+msgstr "라이선스"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Light"
-msgstr ""
+msgstr "라이트"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Light, when the system is light"
-msgstr ""
+msgstr "라이트, 시스템이 라이트 모드일 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Limit how many agents can run at the same time"
-msgstr ""
+msgstr "동시에 실행할 수 있는 에이전트 수를 제한합니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link node_modules"
-msgstr ""
+msgstr "node_modules 링크"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model"
-msgstr ""
+msgstr "라이브 모델"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model downloaded"
-msgstr ""
+msgstr "라이브 모델 다운로드됨"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Local"
-msgstr ""
+msgstr "로컬"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Local"
-msgstr ""
+msgstr "로컬"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Local model"
-msgstr ""
+msgstr "로컬 모델"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
-msgstr ""
+msgstr "각 IPC 호출을 .kangentic/logs에 기록하며 변경 채널은 가려집니다. /preview에서만 기본으로 켜집니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max concurrent sessions"
-msgstr ""
+msgstr "최대 동시 세션 수"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max visible toasts"
-msgstr ""
+msgstr "최대 표시 알림 수"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Maximum simultaneous toasts on screen"
-msgstr ""
+msgstr "화면에 동시에 표시할 최대 알림 수"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP connection"
-msgstr ""
+msgstr "MCP 연결"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP server"
-msgstr ""
+msgstr "MCP 서버"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "MCP Server"
-msgstr ""
+msgstr "MCP 서버"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Menu"
-msgstr ""
+msgstr "메뉴"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Minutes idle"
-msgstr ""
+msgstr "유휴 시간(분)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mobile bridge"
-msgstr ""
+msgstr "모바일 브리지"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Mobile Devices"
-msgstr ""
+msgstr "모바일 장치"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Mode"
-msgstr ""
+msgstr "모드"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "모델"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Model (optional, e.g. whisper-1)"
-msgstr ""
+msgstr "모델(선택 사항, 예: whisper-1)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model acceleration"
-msgstr ""
+msgstr "모델 가속"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "열 또는 작업 재정의가 없을 때 새 세션에 사용할 모델"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Move..."
-msgstr ""
+msgstr "이동..."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Moving between task windows and arranging them."
-msgstr ""
+msgstr "작업 창 간 이동 및 정렬입니다."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Name"
-msgstr ""
+msgstr "이름"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Narrow"
-msgstr ""
+msgstr "좁게"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs a model"
-msgstr ""
+msgstr "모델 필요"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs a supported agent"
-msgstr ""
+msgstr "지원되는 에이전트 필요"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs an agent"
-msgstr ""
+msgstr "에이전트 필요"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs indexing"
-msgstr ""
+msgstr "인덱싱 필요"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs the Knowledge Graph"
-msgstr ""
+msgstr "Knowledge Graph 필요"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
-msgstr ""
+msgstr "카메라가 없나요? 링크를 복사하여 앱에 붙여 넣으세요."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No devices paired yet."
-msgstr ""
+msgstr "아직 페어링된 기기가 없습니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "No Done tasks yet"
-msgstr ""
+msgstr "아직 완료된 작업 없음"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "No key detected. It may be reserved by your OS or another app."
-msgstr ""
+msgstr "감지된 키가 없습니다. OS 또는 다른 앱에서 예약된 키일 수 있습니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No response"
-msgstr ""
+msgstr "응답 없음"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "No settings found for “{query}”"
-msgstr ""
+msgstr "“{query}”에 대한 설정을 찾을 수 없음"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "No shortcuts configured. Add one below or choose a preset."
-msgstr ""
+msgstr "구성된 바로 가기가 없습니다. 아래에서 추가하거나 프리셋을 선택하세요."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "No WSL support"
-msgstr ""
+msgstr "WSL 지원 안 함"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "no dictation model"
 msgid "None"
-msgstr ""
+msgstr "없음"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not found"
-msgstr ""
+msgstr "찾을 수 없음"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "로그인하지 않음"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "아직 인덱싱되지 않음"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Nothing committed yet"
-msgstr ""
+msgstr "아직 커밋된 항목 없음"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Notifications"
-msgstr ""
+msgstr "알림"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Off"
-msgstr ""
+msgstr "끄기"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Off"
-msgstr ""
+msgstr "끄기"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "release buffer"
 msgid "Off"
-msgstr ""
+msgstr "끄기"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Offline"
-msgstr ""
+msgstr "오프라인"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost"
-msgstr ""
+msgstr "localhost만"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost and private hosts, never public sites."
-msgstr ""
+msgstr "localhost와 사설 호스트만, 공개 사이트는 불가."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Only the final clip is sent. The live preview stays on this machine."
-msgstr ""
+msgstr "최종 클립만 전송됩니다. 라이브 미리 보기는 이 컴퓨터에만 유지됩니다."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Only yours, in kangentic.local.json"
-msgstr ""
+msgstr "나만 사용, kangentic.local.json에 저장"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open other URLs. Off keeps agents on the page you loaded."
-msgstr ""
+msgstr "다른 URL을 엽니다. 끄면 에이전트가 로드한 페이지에 머뭅니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open the surfaces a dev session cannot reach on its own."
-msgstr ""
+msgstr "개발 세션이 자체적으로 접근할 수 없는 화면을 엽니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine."
-msgstr ""
+msgstr "최종 텍스트용 OpenAI 호환 /v1/audio/transcriptions 엔드포인트로, 보정 모델이 클라우드 엔드포인트일 때 사용됩니다. 최종 클립만 전송되며 실시간 미리 보기는 이 컴퓨터에 남습니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Opting out"
-msgstr ""
+msgstr "수집 거부"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Optional startup features this agent CLI can turn off"
-msgstr ""
+msgstr "이 에이전트 CLI에서 끌 수 있는 선택적 시작 기능"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Other"
-msgstr ""
+msgstr "기타"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pair a device"
-msgstr ""
+msgstr "기기 페어링"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired {pairedDate}"
-msgstr ""
+msgstr "{pairedDate}에 페어링됨"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired: {confirmedDeviceName}"
-msgstr ""
+msgstr "페어링됨: {confirmedDeviceName}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pairing QR code"
-msgstr ""
+msgstr "페어링 QR 코드"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Password"
-msgstr ""
+msgstr "비밀번호"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
-msgstr ""
+msgstr "이 프로젝트의 작업에 사용할 서버상의 경로입니다. 서버 자체의 기본 디렉터리를 사용하려면 비워 두세요"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr ""
+msgstr "이 시간(분) 동안 응답을 기다린 에이전트를 일시 중지합니다. 단, 명령 터미널의 에이전트는 제외합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Pausing agents"
-msgstr ""
+msgstr "에이전트 일시 중지"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Performance"
-msgstr ""
+msgstr "성능"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "권한"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Persistent console logs"
-msgstr ""
+msgstr "영구 콘솔 로그"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Personal"
-msgstr ""
+msgstr "개인"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Personal shortcut in kangentic.local.json"
-msgstr ""
+msgstr "kangentic.local.json의 개인 바로 가기"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones"
-msgstr ""
+msgstr "휴대폰"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones paired to this desktop, identified by key fingerprint."
-msgstr ""
+msgstr "키 지문으로 식별되는, 이 데스크톱과 페어링된 휴대폰입니다."
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Pick a theme, or follow the system with a light and dark pair."
-msgstr ""
+msgstr "테마를 선택하거나 라이트/다크 쌍으로 시스템 설정을 따릅니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "계획 완료"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
-msgstr ""
+msgstr "각 워크플로를 계획합니다. 선택 전에는 시작되지 않습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Post-worktree script"
-msgstr ""
+msgstr "작업 트리 생성 후 스크립트"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Presets"
-msgstr ""
+msgstr "프리셋"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey"
-msgstr ""
+msgstr "단축키 누르기"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel."
-msgstr ""
+msgstr "단축키를 누르거나 마우스 버튼(가운데/측면)을 하나 이상 함께 누른 후 놓으세요. 취소하려면 Esc를 누르세요."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Press Enter after inserting, or leave the text for you to review and send."
-msgstr ""
+msgstr "삽입 후 Enter를 누르거나, 텍스트를 검토 후 직접 보내도록 남겨 둡니다."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press the new hotkey or mouse button. Escape to cancel."
-msgstr ""
+msgstr "새 단축키나 마우스 버튼을 누르세요. 취소하려면 Esc를 누르세요."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Preview while you speak: streaming is instant, chunked is accurate."
-msgstr ""
+msgstr "말하는 동안 미리 보기: 스트리밍은 즉각적이고 청크 방식은 정확합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Privacy"
-msgstr ""
+msgstr "개인정보"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr ""
+msgstr "주 프로세스를 프로파일링하여 이벤트 루프 보고서에 지연의 가장 무거운 함수를 표시합니다. 켜져 있는 동안 CPU를 사용합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Progress bar"
-msgstr ""
+msgstr "진행률 표시줄"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "Project"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr ""
+msgstr "작업별 재정의가 없을 때 사용할 프로젝트 기본 URL입니다. 브라우저 창을 처음 탐색할 때 자동 저장됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Project defaults"
-msgstr ""
+msgstr "프로젝트 기본값"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project location"
-msgstr ""
+msgstr "프로젝트 위치"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Pull requests"
-msgstr ""
+msgstr "끌어오기 요청"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Push-to-talk"
-msgstr ""
+msgstr "눌러서 말하기"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Push-to-talk and the other dictation keys."
-msgstr ""
+msgstr "눌러서 말하기 및 기타 받아쓰기 키입니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Questions"
-msgstr ""
+msgstr "문의"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "사용량 한도"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Re-detect agent"
-msgstr ""
+msgstr "에이전트 다시 감지"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable"
-msgstr ""
+msgstr "연결 가능"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable, {relayLatencyMs} ms"
-msgstr ""
+msgstr "연결 가능, {relayLatencyMs}ms"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Reads every source again, in every project."
-msgstr ""
+msgstr "모든 프로젝트의 모든 소스를 다시 읽습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Reasoning effort used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "열 또는 작업 재정의가 없을 때 새 세션에 사용할 추론 노력 수준"
 
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind"
-msgstr ""
+msgstr "다시 지정"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Rebind any hotkey. Conflicts and taken combos are flagged."
-msgstr ""
+msgstr "단축키를 다시 지정합니다. 충돌 및 사용 중인 조합은 표시됩니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind in the Hotkeys settings"
-msgstr ""
+msgstr "단축키 설정에서 다시 지정"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rebind keyboard hotkeys"
-msgstr ""
+msgstr "키보드 단축키 다시 지정"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild"
-msgstr ""
+msgstr "다시 빌드"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild didn't start"
-msgstr ""
+msgstr "다시 빌드가 시작되지 않음"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild everything?"
-msgstr ""
+msgstr "전체를 다시 빌드할까요?"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild the index"
-msgstr ""
+msgstr "인덱스 다시 빌드"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuilding..."
-msgstr ""
+msgstr "다시 빌드하는 중..."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Recent"
-msgstr ""
+msgstr "최근"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reconnecting…"
-msgstr ""
+msgstr "다시 연결 중…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Record IPC traffic"
-msgstr ""
+msgstr "IPC 트래픽 기록"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model"
-msgstr ""
+msgstr "보정 모델"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model downloaded"
-msgstr ""
+msgstr "보정 모델 다운로드됨"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refines the live draft into the accurate result on release. None keeps the live text as-is."
-msgstr ""
+msgstr "키를 놓으면 실시간 초안을 정확한 결과로 보정합니다. 없음을 선택하면 실시간 텍스트를 그대로 유지합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay"
-msgstr ""
+msgstr "릴레이"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address"
-msgstr ""
+msgstr "릴레이 주소"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address, the Kangentic-operated relay"
-msgstr ""
+msgstr "릴레이 주소, Kangentic 운영 릴레이"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay v{relayVersion}"
-msgstr ""
+msgstr "릴레이 v{relayVersion}"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Release buffer"
-msgstr ""
+msgstr "해제 후 버퍼"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the browser pane to apply."
-msgstr ""
+msgstr "적용하려면 브라우저 창을 다시 로드하세요."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remember window size and position between launches"
-msgstr ""
+msgstr "실행 간 창 크기 및 위치 기억"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Remote"
-msgstr ""
+msgstr "원격"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "제거"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remove a task's worktree when the task completes."
-msgstr ""
+msgstr "작업이 완료되면 작업의 작업 트리를 제거합니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "이름 바꾸기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns."
-msgstr ""
+msgstr "나란히 보기가 선택된 경우에도 좁은 diff 창은 두 열로 압축하지 않고 인라인(통합)으로 렌더링합니다."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Rendering"
-msgstr ""
+msgstr "렌더링"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all"
-msgstr ""
+msgstr "모두 재설정"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all hotkeys?"
-msgstr ""
+msgstr "모든 단축키를 재설정할까요?"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Reset to default"
-msgstr ""
+msgstr "기본값으로 재설정"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "변경 사항을 적용하려면 Kangentic을 다시 시작하세요."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart now"
-msgstr ""
+msgstr "지금 다시 시작"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart with graphics acceleration?"
-msgstr ""
+msgstr "그래픽 가속을 사용하여 다시 시작하시겠습니까?"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart without graphics acceleration?"
-msgstr ""
+msgstr "그래픽 가속 없이 다시 시작하시겠습니까?"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Restore every hotkey to its default"
-msgstr ""
+msgstr "모든 단축키를 기본값으로 복원"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Restore window position"
-msgstr ""
+msgstr "창 위치 복원"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine."
-msgstr ""
+msgstr "프로젝트를 마지막으로 닫을 때 실행 중이던 에이전트 세션을 재개합니다. 여러 세션을 한 번에 재개하여 컴퓨터가 느려지면 끄세요."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke"
-msgstr ""
+msgstr "해지"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect."
-msgstr ""
+msgstr "\"{revokeTargetName}\"({revokeTargetFingerprint})을(를) 해지하시겠습니까? 즉시 액세스 권한을 잃으며, 다시 연결하려면 다시 페어링해야 합니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke device"
-msgstr ""
+msgstr "기기 해지"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
-msgstr ""
+msgstr "인증하려면 터미널에서 <0>{loginCommand}</0>을(를) 실행하세요."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run any JavaScript in the page, with its cookies."
-msgstr ""
+msgstr "페이지 쿠키를 사용해 임의의 JavaScript를 실행합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run this agent locally, or attach to a server you run elsewhere"
-msgstr ""
+msgstr "이 에이전트를 로컬에서 실행하거나 다른 곳에서 실행 중인 서버에 연결합니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
-msgstr ""
+msgstr "작업 트리가 생성된 후 실행됩니다. Windows에서는 cmd.exe로 실행되므로 POSIX 전용 구문은 작동하지 않습니다."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Runs on this machine unless you choose a cloud refinement."
-msgstr ""
+msgstr "클라우드 보정을 선택하지 않으면 이 컴퓨터에서 실행됩니다."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "저장"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Save name"
-msgstr ""
+msgstr "이름 저장"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Saved URLs (per-task overrides and the project default) are kept."
-msgstr ""
+msgstr "저장된 URL(작업별 재정의 및 프로젝트 기본값)은 유지됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Scan a QR code with the Kangentic mobile app to pair a new phone."
-msgstr ""
+msgstr "Kangentic 모바일 앱으로 QR 코드를 스캔하여 새 휴대폰을 페어링합니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Scan this code with the Kangentic app on your phone."
-msgstr ""
+msgstr "휴대폰의 Kangentic 앱으로 이 코드를 스캔하세요."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Scope"
-msgstr ""
+msgstr "범위"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Search model downloaded"
-msgstr ""
+msgstr "검색 모델 다운로드됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Search quality"
-msgstr ""
+msgstr "검색 품질"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Search settings..."
-msgstr ""
+msgstr "설정 검색..."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Secure storage is unavailable on this system, so a device identity cannot be created."
-msgstr ""
+msgstr "이 시스템에서는 보안 저장소를 사용할 수 없어 기기 ID를 생성할 수 없습니다."
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Select display language"
-msgstr ""
+msgstr "표시 언어 선택"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Server URL"
-msgstr ""
+msgstr "서버 URL"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Server working directory"
-msgstr ""
+msgstr "서버 작업 디렉터리"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth."
-msgstr ""
+msgstr "인증 없는 localhost 포트에서 devtools MCP 도구에 스크린샷, 입력, DOM 및 상태 쿼리를 제공합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "세션 API 비용"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
-msgstr ""
+msgstr "모든 텔레메트리(분석 및 오류 보고)를 비활성화하려면 환경 변수로 <0>KANGENTIC_TELEMETRY=0</0>을 설정하세요. 익명 분석은 유지하고 오류 보고만 비활성화하려면 <1>KANGENTIC_ERROR_REPORTING=0</1>을 설정하세요."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Setting not saved"
-msgstr ""
+msgstr "설정이 저장되지 않음"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "설정"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with team via kangentic.json"
-msgstr ""
+msgstr "kangentic.json을 통해 팀과 공유"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with the team in kangentic.json"
-msgstr ""
+msgstr "kangentic.json으로 팀과 공유"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell"
-msgstr ""
+msgstr "셸"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell name"
-msgstr ""
+msgstr "셸 이름"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shortcuts"
-msgstr ""
+msgstr "바로 가기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show changed files as a flat list of full paths instead of a nested directory tree."
-msgstr ""
+msgstr "변경된 파일을 중첩된 디렉터리 트리 대신 전체 경로의 단순 목록으로 표시합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show each task's #N number on its card"
-msgstr ""
+msgstr "각 작업의 #N 번호를 카드에 표시"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the status bar at the bottom of the window"
-msgstr ""
+msgstr "창 하단에 상태 표시줄 표시"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the terminal panel below the board"
-msgstr ""
+msgstr "보드 아래에 터미널 패널 표시"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr ""
+msgstr "관리자 우회로 필수 리뷰를 건너뛰고 병합할 수 있는 PR을 준비됨으로 표시합니다. 실패한 검사는 건너뛰지 않습니다."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "나란히"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "since {sinceTime}"
-msgstr ""
+msgstr "{sinceTime}부터"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Single"
-msgstr ""
+msgstr "단일"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Size"
-msgstr ""
+msgstr "크기"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
-msgstr ""
+msgstr "diff를 가로로 스크롤하는 대신 긴 줄을 다음 행으로 줄 바꿈합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Source code"
-msgstr ""
+msgstr "소스 코드"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Source code embedded"
-msgstr ""
+msgstr "소스 코드 임베딩됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Spawn stalled"
-msgstr ""
+msgstr "생성 지연"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Staged"
-msgstr ""
+msgstr "스테이징됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stall profiler"
-msgstr ""
+msgstr "지연 프로파일러"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Status"
-msgstr ""
+msgstr "상태"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Status bar"
-msgstr ""
+msgstr "상태 표시줄"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop leftover processes"
-msgstr ""
+msgstr "남은 프로세스 중지"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
-msgstr ""
+msgstr "작업이 완료되거나, To Do로 돌아가거나, 삭제되거나, Command Terminal이 종료되면 에이전트가 폴더에서 실행 중으로 남겨 둔 항목을 중지합니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries rewritten"
-msgstr ""
+msgstr "요약 다시 작성됨"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries written"
-msgstr ""
+msgstr "요약 작성됨"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
-msgstr ""
+msgstr "새로 설치하지 않도록 루트 node_modules를 각 작업 트리에 심볼릭 링크합니다. 워크스페이스 리포지토리에서는 끄세요."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "System"
-msgstr ""
+msgstr "시스템"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "작업"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task and project creation counts"
-msgstr ""
+msgstr "작업 및 프로젝트 생성 횟수"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Task detail"
-msgstr ""
+msgstr "작업 세부 정보"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "작업 요약"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task titles, descriptions, or any user-generated content"
-msgstr ""
+msgstr "작업 제목, 설명 또는 기타 사용자 생성 콘텐츠"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "작업"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "임베딩된 작업"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Team"
-msgstr ""
+msgstr "팀"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "터미널"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal cursor appearance"
-msgstr ""
+msgstr "터미널 커서 모양"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Terminal may intercept"
-msgstr ""
+msgstr "터미널이 가로챌 수 있음"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal panel"
-msgstr ""
+msgstr "터미널 패널"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal shell used for agent sessions"
-msgstr ""
+msgstr "에이전트 세션에 사용되는 터미널 셸"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal text size in pixels"
-msgstr ""
+msgstr "터미널 텍스트 크기(픽셀)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Test connection"
-msgstr ""
+msgstr "연결 테스트"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "The agent, model and permissions new sessions start with."
-msgstr ""
+msgstr "새 세션이 시작될 때 사용할 에이전트, 모델 및 권한입니다."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's newest message"
-msgstr ""
+msgstr "에이전트의 최신 메시지"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's recent messages, one line each"
-msgstr ""
+msgstr "에이전트의 최근 메시지(각 한 줄)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The branch new worktrees start from."
-msgstr ""
+msgstr "새 작업 트리가 시작되는 분기입니다."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "The change was not written."
-msgstr ""
+msgstr "변경 사항이 기록되지 않았습니다."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
-msgstr ""
+msgstr "기본 분기의 소스와 문서를 최신 상태로 유지하며, 테스트, 데이터 파일 및 256KB를 초과하는 파일은 건너뜁니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The first message it gets for a new workflow."
-msgstr ""
+msgstr "새 워크플로에서 에이전트가 받는 첫 메시지입니다."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "The Kangentic relay"
-msgstr ""
+msgstr "Kangentic 릴레이"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr ""
+msgstr "지식 그래프 및 지식 그래프가 읽는 인덱스입니다. 모든 프로젝트에 적용"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "The language of menus, settings and dialogs."
-msgstr ""
+msgstr "메뉴, 설정 및 대화 상자에 사용되는 언어입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The language you speak. The models adapt to your choice."
-msgstr ""
+msgstr "사용하는 언어입니다. 모델이 선택에 맞춰 조정됩니다."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches."
-msgstr ""
+msgstr "로컬 모델을 사용할 수 없어 키워드 일치 결과를 표시합니다."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches. ({workerError})"
-msgstr ""
+msgstr "로컬 모델을 사용할 수 없어 키워드 일치 결과를 표시합니다. ({workerError})"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The local model that finds by meaning and draws the map; changing it re-indexes in the background."
-msgstr ""
+msgstr "의미로 검색하고 맵을 그리는 로컬 모델입니다. 변경하면 백그라운드에서 다시 인덱싱합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The model it plans with. Required when the agent takes one."
-msgstr ""
+msgstr "계획에 사용하는 모델입니다. 에이전트가 모델을 받는 경우 필수입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live."
-msgstr ""
+msgstr "에이전트 확인, 프롬프트 응답, diff 검토를 위한 휴대폰 컴패니언 앱입니다. 설치 방법이 있는 문서로 연결됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The project's code and docs, so answers can explain it."
-msgstr ""
+msgstr "답변에서 설명할 수 있도록 프로젝트의 코드와 문서를 포함합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The self-hosted relay to dial when Relay is set to Custom."
-msgstr ""
+msgstr "릴레이가 사용자 지정으로 설정된 경우 연결할 자체 호스팅 릴레이입니다."
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "The shell, font, cursor and colors every terminal uses."
-msgstr ""
+msgstr "모든 터미널에서 사용하는 셸, 글꼴, 커서 및 색상입니다."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The task's description"
-msgstr ""
+msgstr "작업 설명"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Theme"
-msgstr ""
+msgstr "테마"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
-msgstr ""
+msgstr "이 단축키는 고정되어 있어 다시 지정할 수 없습니다"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "This project's path to the agent CLI (auto-detected if empty)"
-msgstr ""
+msgstr "이 프로젝트의 에이전트 CLI 경로(비워 두면 자동 감지)"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "This restores every hotkey to its default. Your custom bindings will be removed."
-msgstr ""
+msgstr "모든 단축키가 기본값으로 복원됩니다. 사용자 지정 바인딩은 제거됩니다."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "모든 작업과 프로젝트에서 내장 브라우저 창의 쿠키, localStorage, IndexedDB, 서비스 워커, HTTP/인증 캐시를 삭제합니다. 모든 사이트에서 로그아웃됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticket numbers"
-msgstr ""
+msgstr "티켓 번호"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticking session duration"
-msgstr ""
+msgstr "실시간 세션 경과 시간"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Toast"
-msgstr ""
+msgstr "토스트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Toast auto-dismiss"
-msgstr ""
+msgstr "알림 자동 닫기"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Toasts"
-msgstr ""
+msgstr "알림"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Token counts"
-msgstr ""
+msgstr "토큰 수"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "도구 호출"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Transcription"
-msgstr ""
+msgstr "음성 변환"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Transition and motion effects."
-msgstr ""
+msgstr "전환 및 모션 효과입니다."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Try a different search term"
-msgstr ""
+msgstr "다른 검색어를 입력해 보세요."
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Underline"
-msgstr ""
+msgstr "밑줄"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Unreachable"
-msgstr ""
+msgstr "연결 불가"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's own level."
-msgstr ""
+msgstr "설정하지 않으면 에이전트 자체 수준으로 실행됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's recommended level."
-msgstr ""
+msgstr "설정하지 않으면 에이전트 권장 수준으로 실행됩니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usage analytics are powered by Aptabase, a privacy-first platform. No cookies. IP addresses are used for geographic lookup only, then discarded. A single anonymous, non-reversible install id counts unique installs; it contains no personal data. GDPR-compliant by design."
-msgstr ""
+msgstr "사용 분석은 개인정보 보호 우선 플랫폼인 Aptabase를 통해 제공됩니다. 쿠키를 사용하지 않습니다. IP 주소는 지리적 위치 조회에만 사용된 후 폐기됩니다. 익명의 되돌릴 수 없는 단일 설치 ID로 고유 설치 수를 집계하며, 여기에는 개인 데이터가 포함되지 않습니다. 설계 단계부터 GDPR을 준수합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Usage bar and percentage"
-msgstr ""
+msgstr "사용량 막대 및 백분율"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}."
-msgstr ""
+msgstr "{TERMINAL_FONT_SIZE_MIN}~{TERMINAL_FONT_SIZE_MAX} 사이의 값을 사용하세요."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Use one theme when the system is light and another when it is dark."
-msgstr ""
+msgstr "시스템이 밝은 모드일 때와 어두운 모드일 때 서로 다른 테마를 사용합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Used / total tokens"
-msgstr ""
+msgstr "사용 / 전체 토큰"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Username"
-msgstr ""
+msgstr "사용자 이름"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usernames, emails, or any personally identifiable information"
-msgstr ""
+msgstr "사용자 이름, 이메일 또는 기타 개인 식별 정보"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable - showing keyword matches. ({vecError})"
-msgstr ""
+msgstr "벡터 검색을 사용할 수 없어 키워드 일치 결과를 표시합니다. ({vecError})"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable on this platform - showing keyword matches."
-msgstr ""
+msgstr "이 플랫폼에서는 벡터 검색을 사용할 수 없어 키워드 일치 결과를 표시합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Version"
-msgstr ""
+msgstr "버전"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Voice dictation"
-msgstr ""
+msgstr "음성 받아쓰기"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Waiting for your phone…"
-msgstr ""
+msgstr "휴대폰 대기 중…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What each card shows under its title: the agent's latest message, its recent messages, or the task description."
-msgstr ""
+msgstr "각 카드의 제목 아래에 표시할 내용: 에이전트의 최신 메시지, 최근 메시지 또는 작업 설명."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What Quick Find and the Knowledge Graph search."
-msgstr ""
+msgstr "빠른 찾기와 지식 그래프의 검색 대상입니다."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What runs on this device, and what goes to the agent you choose."
-msgstr ""
+msgstr "이 기기에서 실행되는 항목과 선택한 에이전트에 전송되는 항목"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we collect"
-msgstr ""
+msgstr "수집하는 항목"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we don't collect"
-msgstr ""
+msgstr "수집하지 않는 항목"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a plan finishes and the task auto-moves"
-msgstr ""
+msgstr "계획이 완료되어 작업이 자동으로 이동할 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a running workflow cannot move a task on by itself"
-msgstr ""
+msgstr "실행 중인 워크플로가 작업을 스스로 진행시킬 수 없을 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a task spawn waits too long on the git queue while preparing"
-msgstr ""
+msgstr "작업 생성 준비 중 git 대기열에서 너무 오래 기다릴 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent finishes its turn or needs permission"
-msgstr ""
+msgstr "에이전트가 차례를 마치거나 권한이 필요할 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."
-msgstr ""
+msgstr "에이전트 세션이 예기치 않게 종료될 때. 데스크톱 알림은 오류 종료 시에만, 토스트는 정상 종료 시에도 표시됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When every task in a workflow reaches Done"
-msgstr ""
+msgstr "워크플로의 모든 작업이 Done에 도달할 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When idle"
-msgstr ""
+msgstr "유휴 상태일 때"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
-msgstr ""
+msgstr "Kangentic이 응답 대기 중인 에이전트를 일시 중지하는 시점."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low"
-msgstr ""
+msgstr "메모리가 부족할 때"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr ""
+msgstr "메모리가 부족하면 여유가 생길 때까지 1분에 하나씩, 가장 오래 응답을 기다린 에이전트를 일시 중지합니다."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Where each kind of alert shows up."
-msgstr ""
+msgstr "알림 유형별 표시 위치입니다."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Where new work starts, and how current it stays."
-msgstr ""
+msgstr "새 작업의 시작 위치와 최신 상태 유지 방법입니다."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Where the agent's command-line tool runs, and how it starts."
-msgstr ""
+msgstr "에이전트의 명령줄 도구가 실행되는 위치와 시작 방식입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Where the local model runs. Auto uses the GPU when there is one."
-msgstr ""
+msgstr "로컬 모델이 실행되는 위치입니다. 자동은 GPU가 있으면 GPU를 사용합니다."
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Where this project lives on disk."
-msgstr ""
+msgstr "디스크에서 이 프로젝트가 저장된 위치입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
-msgstr ""
+msgstr "에이전트가 이곳과 CLI 경로가 가리키는 모든 WSL 배포판에서 MCP 서버에 연결할 수 있는지 여부입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr ""
+msgstr "조건에 답하고 작업과 명령 터미널의 이름을 짓는 에이전트입니다. 선택하기 전에는 아무것도 실행되지 않습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers your questions and writes the task summaries."
-msgstr ""
+msgstr "질문에 답하고 작업 요약을 작성하는 에이전트입니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent CLI to use for new sessions"
-msgstr ""
+msgstr "새 세션에 사용할 에이전트 CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
-msgstr ""
+msgstr "워크플로 보기의 왼쪽 창에서 각 워크플로를 계획하는 에이전트입니다. 선택하기 전에는 워크플로 에이전트가 시작되지 않습니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
-msgstr ""
+msgstr "새로 연 변경 내용 패널에 표시할 변경 사항: 작업 중(커밋되지 않은 편집), 스테이징됨(인덱스) 또는 기준 대비 전체 분기."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Which features get used, as daily counts (never their content)"
-msgstr ""
+msgstr "사용된 기능의 일일 횟수(내용은 수집 안 함)"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Which stats show in the bar under a task's terminal."
-msgstr ""
+msgstr "작업 터미널 아래 막대에 표시할 통계입니다."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Wide"
-msgstr ""
+msgstr "넓게"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Width of board columns"
-msgstr ""
+msgstr "보드 열 너비"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Windows"
-msgstr ""
+msgstr "Windows"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgctxt "task windows"
 msgid "Windows"
-msgstr ""
+msgstr "창"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr ""
+msgstr "내장 브라우저의 쿠키, localStorage, IndexedDB, 서비스 워커, HTTP/인증 캐시를 삭제합니다. 저장된 URL은 유지됩니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "워크플로 에이전트"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Workflow agent prompt"
-msgstr ""
+msgstr "워크플로 에이전트 프롬프트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "워크플로 완료"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "워크플로 중단됨"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "워크플로"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Working"
-msgstr ""
+msgstr "작업 중"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Worktree init script"
-msgstr ""
+msgstr "작업 트리 초기화 스크립트"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Worktrees"
-msgstr ""
+msgstr "작업 트리"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "긴 줄 바꿈"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
-msgstr ""
+msgstr "<0>{PRIVACY_CONTACT_EMAIL}</0>(으)로 문의하세요."
 
 #. placeholder {0}: agent.cliTarget.distro
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "WSL: {0}"
-msgstr ""
+msgstr "WSL: {0}"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
+#, fuzzy
 msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."
-msgstr ""
+msgstr "OS나 다른 앱이 단축키를 먼저 가져갈 수 있습니다. 여기서 단축키가 동작하지 않으면 다른 조합을 사용해 보세요."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
-msgstr ""
+msgstr "휴대폰에도 이 코드가 표시됩니다. 휴대폰에서 확인하여 페어링을 완료하세요."

@@ -1758,6 +1758,7 @@ msgstr "Reads every source again, in every project."
 msgid "Reasoning effort used for new sessions when no column or task override is set"
 msgstr "Reasoning effort used for new sessions when no column or task override is set"
 
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Rebind"

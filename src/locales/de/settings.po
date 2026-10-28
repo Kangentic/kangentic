@@ -8,2607 +8,3232 @@ msgstr ""
 "Language: de\n"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "{blurb}. Opens the docs page."
-msgstr ""
+msgstr "{blurb}. Öffnet die Dokumentationsseite."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
-msgstr ""
+msgstr "{comboName} wird bereits vom Betriebssystem oder einer anderen App verwendet. Wählen Sie eine andere."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "{conflictComboCount, plural, one {Conflict detected} other {Conflicts detected}}"
-msgstr ""
+msgstr "{conflictComboCount, plural, one {Konflikt erkannt} other {Konflikte erkannt}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{count, plural, one {# Datei} other {# Dateien}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}"
-msgstr ""
+msgstr "{count} von {finished}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}, {skipped} skipped"
-msgstr ""
+msgstr "{count} von {finished}, {skipped} übersprungen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName} - {accuracyLabel} ({sizeMb} MB)"
-msgstr ""
+msgstr "{displayName} – {accuracyLabel} ({sizeMb} MB)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "{displayName} execution"
-msgstr ""
+msgstr "{displayName}-Ausführung"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} not found - click to re-detect"
-msgstr ""
+msgstr "{displayName} nicht gefunden – klicken, um erneut zu erkennen"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} path"
-msgstr ""
+msgstr "{displayName}-Pfad"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb} MB"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB, {activeBackend}"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb} MB, {activeBackend}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {percent}%"
-msgstr ""
+msgstr "{displayName}, {percent} %"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {sizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {sizeMb} MB"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
-msgstr ""
+msgstr "{hours, plural, one {Noch # Std.} other {Noch # Std.}}"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "{label}, always on"
-msgstr ""
+msgstr "{label}, immer aktiv"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {# min left} other {# min left}}"
-msgstr ""
+msgstr "{minutes, plural, one {Noch # Min.} other {Noch # Min.}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Checks each open PR about every # minute; off, it checks only when you open the project.} other {Checks each open PR about every # minutes; off, it checks only when you open the project.}}"
-msgstr ""
+msgstr "{minutes, plural, one {Prüft jeden offenen PR etwa jede # Minute; wenn aus, nur beim Öffnen des Projekts.} other {Prüft jeden offenen PR etwa alle # Minuten; wenn aus, nur beim Öffnen des Projekts.}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Fetches every # minute so behind counts stay current; creating a worktree always fetches first.} other {Fetches every # minutes so behind counts stay current; creating a worktree always fetches first.}}"
-msgstr ""
+msgstr "{minutes, plural, one {Ruft jede # Minute ab, damit Rückstandszähler aktuell bleiben; beim Erstellen eines Worktrees wird immer zuerst abgerufen.} other {Ruft alle # Minuten ab, damit Rückstandszähler aktuell bleiben; beim Erstellen eines Worktrees wird immer zuerst abgerufen.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {retrying in # min} other {retrying in # min}}"
-msgstr ""
+msgstr "{minutes, plural, one {Neuer Versuch in # Min.} other {Neuer Versuch in # Min.}}"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{percent}%, {displayName}"
-msgstr ""
+msgstr "{percent} %, {displayName}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{percent}%, {timeLeft}"
-msgstr ""
+msgstr "{percent} %, {timeLeft}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{releaseBufferMs} ms"
-msgstr ""
+msgstr "{releaseBufferMs} ms"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{toWrite, plural, one {# Aufgabe} other {# Aufgaben}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A call failed"
-msgstr ""
+msgstr "Ein Aufruf ist fehlgeschlagen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
-msgstr ""
+msgstr "Ein schwebendes Panel mit dem Aktivitätsstatus und den letzten Übergängen jeder Sitzung, auch in .kangentic/debug geschrieben."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
-msgstr ""
+msgstr "Eine Voreinstellung wählt das Live- und das Verfeinerungsmodell für Sie aus. Mit „Benutzerdefiniert“ wählen Sie sie selbst."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "A relay you run"
-msgstr ""
+msgstr "Ein selbst betriebenes Relay"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A sentence or two per Done task, so questions find it."
-msgstr ""
+msgstr "Ein bis zwei Sätze pro erledigter Aufgabe, damit Fragen sie finden."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A sentence or two per Done task, written in the background from its title, description, files and commits."
-msgstr ""
+msgstr "Ein bis zwei Sätze pro erledigter Aufgabe, im Hintergrund aus Titel, Beschreibung, Dateien und Commits erstellt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small model answers as well and faster, but invents more details in task summaries."
-msgstr ""
+msgstr "Ein kleines Modell antwortet ebenso gut und schneller, erfindet aber mehr Details in Aufgabenzusammenfassungen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
-msgstr ""
+msgstr "Ein kleines, schnelles Modell reicht meist, um eine Antwort zu lesen und mit Ja oder Nein zu antworten."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "Über {label}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Activity engine debug overlay"
-msgstr ""
+msgstr "Debug-Overlay der Aktivitäts-Engine"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Add shortcut"
-msgstr ""
+msgstr "Verknüpfung hinzufügen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
-msgstr ""
+msgstr "Adresse des laufenden Servers (z. B. http://10.0.0.5:4096)"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Advanced"
-msgstr ""
+msgstr "Erweitert"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agent"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "Agent aktiv"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "Aktive Agent-Zeit"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Agent Browser"
-msgstr ""
+msgstr "Agent-Browser"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Agent CLI"
-msgstr ""
+msgstr "Agent-CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent CLI version"
-msgstr ""
+msgstr "Version der Agent-CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent crash"
-msgstr ""
+msgstr "Agent-Absturz"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "Agent-Standard"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "Agent inaktiv"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Agent session starts, exit codes, and duration"
-msgstr ""
+msgstr "Starts, Exit-Codes und Dauer von Agent-Sitzungen"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "All"
-msgstr ""
+msgstr "Alle"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow eval"
-msgstr ""
+msgstr "Eval erlauben"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow interaction"
-msgstr ""
+msgstr "Interaktion erlauben"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow navigation"
-msgstr ""
+msgstr "Navigation erlauben"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow unsafe operations"
-msgstr ""
+msgstr "Unsichere Vorgänge erlauben"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Already default"
-msgstr ""
+msgstr "Bereits Standard"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept."
-msgstr ""
+msgstr "Speichert zusätzlich Info-, Debug- und Log-Ausgaben in .kangentic/logs, neben den stets behaltenen Fehlern und Warnungen."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Alt+F4 closes the window and is reserved by your OS."
-msgstr ""
+msgstr "Alt+F4 schließt das Fenster und ist vom Betriebssystem reserviert."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "Always on while the index is on"
-msgstr ""
+msgstr "Immer aktiv, solange der Index aktiv ist"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Amount of detail shown on task cards"
-msgstr ""
+msgstr "Detailgrad auf Aufgabenkarten"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "an unbound key"
-msgstr ""
+msgstr "eine nicht belegte Taste"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Analytics"
-msgstr ""
+msgstr "Analyse"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "between agent names"
 msgid "and"
-msgstr ""
+msgstr "und"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgctxt "between two links"
 msgid "and"
-msgstr ""
+msgstr "und"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Animations"
-msgstr ""
+msgstr "Animationen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Anonymous analytics and data collection policy"
-msgstr ""
+msgstr "Richtlinie zu anonymen Analysen und Datenerfassung"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Anonymous analytics only. No personal data collected."
-msgstr ""
+msgstr "Nur anonyme Analysedaten. Keine personenbezogenen Daten."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "API key (optional)"
-msgstr ""
+msgstr "API-Schlüssel (optional)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
-msgstr ""
+msgstr "App-Abstürze und Fehler (Stacktraces, bei denen gerätespezifische Pfade aus dem App-Code entfernt wurden)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App launches, platform, and architecture"
-msgstr ""
+msgstr "App-Starts, Plattform und Architektur"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Appearance"
-msgstr ""
+msgstr "Darstellung"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in both the header bar and kebab menu"
-msgstr ""
+msgstr "Erscheint in Kopfzeile und Drei-Punkte-Menü"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail header bar only"
-msgstr ""
+msgstr "Erscheint nur in der Kopfzeile der Aufgabendetails"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail kebab menu only"
-msgstr ""
+msgstr "Erscheint nur im Drei-Punkte-Menü der Aufgabendetails"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Applies after a restart, and does not change agent output or terminal text."
-msgstr ""
+msgstr "Wirkt nach einem Neustart und ändert weder Agent-Ausgabe noch Terminaltext."
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Applies to all projects"
-msgstr ""
+msgstr "Gilt für alle Projekte"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
-msgstr ""
+msgstr "Eine erkannte Änderung an kangentic.json sofort übernehmen, ohne Bestätigung."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Ask us anything about what Kangentic collects."
-msgstr ""
+msgstr "Fragen Sie uns alles darüber, was Kangentic erfasst."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Authentication"
-msgstr ""
+msgstr "Authentifizierung"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgctxt "acceleration"
 msgid "Auto"
-msgstr ""
+msgstr "Automatisch"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-apply board config changes"
-msgstr ""
+msgstr "Änderungen der Board-Konfiguration automatisch übernehmen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-cleanup"
-msgstr ""
+msgstr "Automatisch bereinigen"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Auto-detect"
-msgstr ""
+msgstr "Automatisch erkennen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-fetch remote"
-msgstr ""
+msgstr "Remote automatisch abrufen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-focus idle sessions"
-msgstr ""
+msgstr "Inaktive Sitzungen automatisch fokussieren"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-refresh PRs"
-msgstr ""
+msgstr "PRs automatisch aktualisieren"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-resume agents on restart"
-msgstr ""
+msgstr "Agents beim Neustart automatisch fortsetzen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-submit"
-msgstr ""
+msgstr "Automatisch senden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
-msgstr ""
+msgstr "Unteres Panel automatisch auf inaktive Sitzungen umschalten. Inaktive Tabs bleiben in jedem Fall hervorgehoben."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automation agent"
-msgstr ""
+msgstr "Automatisierungs-Agent"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "Hintergrund"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Bar"
-msgstr ""
+msgstr "Balken"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Basic accuracy"
-msgstr ""
+msgstr "Grundlegende Genauigkeit"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Behavior"
-msgstr ""
+msgstr "Verhalten"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Best accuracy"
-msgstr ""
+msgstr "Beste Genauigkeit"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Block"
-msgstr ""
+msgstr "Block"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "Board"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Board layout"
-msgstr ""
+msgstr "Board-Layout"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Both"
-msgstr ""
+msgstr "Beide"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Both"
-msgstr ""
+msgstr "Beides"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Branch"
-msgstr ""
+msgstr "Branch"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Branches"
-msgstr ""
+msgstr "Branches"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "Browser"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser automation"
-msgstr ""
+msgstr "Browserautomatisierung"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data"
-msgstr ""
+msgstr "Browserdaten"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data cleared"
-msgstr ""
+msgstr "Browserdaten gelöscht"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser pane"
-msgstr ""
+msgstr "Browserbereich"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Abbrechen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card density"
-msgstr ""
+msgstr "Kartendichte"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card preview"
-msgstr ""
+msgstr "Kartenvorschau"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "Karten"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change background"
-msgstr ""
+msgstr "Hintergrund ändern"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change cursor"
-msgstr ""
+msgstr "Cursor ändern"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change foreground"
-msgstr ""
+msgstr "Vordergrund ändern"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "Änderungen"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "Wird geprüft..."
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose a model"
-msgstr ""
+msgstr "Modell auswählen"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose an agent"
-msgstr ""
+msgstr "Agent auswählen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Claude 5h / weekly quota bars"
-msgstr ""
+msgstr "Claude-Kontingentbalken (5 h / wöchentlich)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Clear browser data"
-msgstr ""
+msgstr "Browserdaten löschen"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear browser data?"
-msgstr ""
+msgstr "Browserdaten löschen?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear data"
-msgstr ""
+msgstr "Daten löschen"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clearing..."
-msgstr ""
+msgstr "Wird gelöscht..."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CLI path"
-msgstr ""
+msgstr "CLI-Pfad"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
-msgstr ""
+msgstr "Klicken Sie auf eine leere Fläche außerhalb eines Aufgabenfensters, um es zu schließen. Steuerelemente, Aufgabenkarten und laufende Terminals reagieren weiterhin auf den ersten Klick. Der Agent läuft weiter und wird wieder verbunden, wenn Sie die Aufgabe erneut öffnen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click, type and drag. Off is read-only."
-msgstr ""
+msgstr "Klicken, tippen und ziehen. Aus bedeutet nur Lesezugriff."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Clicking outside never closes a task window"
-msgstr ""
+msgstr "Ein Klick außerhalb schließt nie ein Aufgabenfenster"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Close on outside click"
-msgstr ""
+msgstr "Bei Klick außerhalb schließen"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Close settings"
-msgstr ""
+msgstr "Einstellungen schließen"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes a task window only when it is the only one open"
-msgstr ""
+msgstr "Schließt ein Aufgabenfenster nur, wenn es das einzige geöffnete ist"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes every open task window"
-msgstr ""
+msgstr "Schließt alle geöffneten Aufgabenfenster"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes the focused task window"
-msgstr ""
+msgstr "Schließt das fokussierte Aufgabenfenster"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Closing now will discard your edits to the workflow agent prompt."
-msgstr ""
+msgstr "Wenn Sie jetzt schließen, werden Ihre Änderungen am Workflow-Agent-Prompt verworfen."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud endpoint"
-msgstr ""
+msgstr "Cloud-Endpunkt"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription API key"
-msgstr ""
+msgstr "API-Schlüssel für Cloud-Transkription"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription endpoint"
-msgstr ""
+msgstr "Endpunkt für Cloud-Transkription"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription model"
-msgstr ""
+msgstr "Modell für Cloud-Transkription"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+Q quits the app and is reserved by macOS."
-msgstr ""
+msgstr "Cmd+Q beendet die App und ist von macOS reserviert."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+W is reserved by macOS for closing windows."
-msgstr ""
+msgstr "Cmd+W ist von macOS zum Schließen von Fenstern reserviert."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Collapse unchanged regions"
-msgstr ""
+msgstr "Unveränderte Bereiche einklappen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Colors"
-msgstr ""
+msgstr "Farben"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Column width"
-msgstr ""
+msgstr "Spaltenbreite"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Column width and which panels show around the board."
-msgstr ""
+msgstr "Spaltenbreite und welche Bereiche um das Board angezeigt werden."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Comfortable"
-msgstr ""
+msgstr "Komfortabel"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Command"
-msgstr ""
+msgstr "Befehl"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "Commits"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "Indizierte Commits"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Compact"
-msgstr ""
+msgstr "Kompakt"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Config sync"
-msgstr ""
+msgstr "Konfigurationssynchronisierung"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Conflict"
-msgstr ""
+msgstr "Konflikt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Connect a phone over an end-to-end encrypted relay."
-msgstr ""
+msgstr "Telefon über Ende-zu-Ende-verschlüsseltes Relay verbinden."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connected"
-msgstr ""
+msgstr "Verbunden"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Connected"
-msgstr ""
+msgstr "Verbunden"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "Verbindung wird hergestellt…"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Context bar"
-msgstr ""
+msgstr "Kontextleiste"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Context window"
-msgstr ""
+msgstr "Kontextfenster"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "Unterhaltungen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "Eingebettete Unterhaltungen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
-msgstr ""
+msgstr "Unterhaltungen, Aufgaben, Commits, Zusammenfassungen und Quellcode werden in jedem Projekt neu aufgebaut. {rebuildAsk, plural, one {Die # mit einem früheren Modell geschriebene Zusammenfassung wird neu geschrieben} other {Die # mit einem früheren Modell geschriebenen Zusammenfassungen werden neu geschrieben}}, mit etwa {rewriteCalls, plural, one {# Aufruf} other {# Aufrufen}} im Hintergrund."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the embedded browser keeps."
-msgstr ""
+msgstr "Cookies und Speicher des eingebetteten Browsers."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copied"
-msgstr ""
+msgstr "Kopiert"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "Kopiert!"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "verb"
 msgid "Copy"
-msgstr ""
+msgstr "Kopieren"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "„{loginCommand}“ in die Zwischenablage kopieren"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Copy files"
-msgstr ""
+msgstr "Dateien kopieren"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copy pairing link"
-msgstr ""
+msgstr "Kopplungslink kopieren"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste and interrupt inside a terminal."
-msgstr ""
+msgstr "Kopieren, Einfügen und Unterbrechen im Terminal."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Kosten"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Could not start pairing."
-msgstr ""
+msgstr "Kopplung konnte nicht gestartet werden."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Couldn't clear browser data"
-msgstr ""
+msgstr "Browserdaten konnten nicht gelöscht werden"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "Neustart fehlgeschlagen"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save base branch"
-msgstr ""
+msgstr "Basis-Branch konnte nicht gespeichert werden"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Couldn't save shortcuts"
-msgstr ""
+msgstr "Verknüpfungen konnten nicht gespeichert werden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Count merge bypass as ready"
-msgstr ""
+msgstr "Merge-Bypass als bereit werten"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Crash and error reports go to Sentry so bugs can be diagnosed and fixed. Stack traces are recorded with machine-specific paths removed from app code; no task content, code, or personal data is attached."
-msgstr ""
+msgstr "Absturz- und Fehlerberichte werden an Sentry gesendet, damit Fehler analysiert und behoben werden können. Stacktraces werden ohne gerätespezifische Pfade im App-Code erfasst; Aufgabeninhalte, Code oder personenbezogene Daten werden nicht angehängt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Crash reports"
-msgstr ""
+msgstr "Absturzberichte"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CSS font-family for the terminal"
-msgstr ""
+msgstr "CSS-Schriftfamilie für das Terminal"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cumulative tool invocations"
-msgstr ""
+msgstr "Kumulierte Toolaufrufe"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Cursor"
-msgstr ""
+msgstr "Cursor"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cursor style"
-msgstr ""
+msgstr "Cursorstil"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "dictation mode"
 msgid "Custom"
-msgstr ""
+msgstr "Benutzerdefiniert"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Custom"
-msgstr ""
+msgstr "Benutzerdefiniert"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Custom"
-msgstr ""
+msgstr "Benutzerdefiniert"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom commands accessible from the task detail dialog"
-msgstr ""
+msgstr "Benutzerdefinierte Befehle, verfügbar im Dialog „Aufgabendetails“"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Custom commands in the task window's header and menu."
-msgstr ""
+msgstr "Eigene Befehle in Kopfzeile und Menü des Aufgabenfensters."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom relay address"
-msgstr ""
+msgstr "Benutzerdefinierte Relay-Adresse"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Customize the terminal background, foreground, and cursor color"
-msgstr ""
+msgstr "Hintergrund-, Vordergrund- und Cursorfarbe des Terminals anpassen"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Dark"
-msgstr ""
+msgstr "Dunkel"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Dark, when the system is dark"
-msgstr ""
+msgstr "Dunkel, wenn das System dunkel ist"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Debug overlays and logs for diagnosing sessions."
-msgstr ""
+msgstr "Debug-Overlays und Protokolle zur Diagnose von Sitzungen."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Debug tools in development builds."
-msgstr ""
+msgstr "Debugtools in Entwicklungsbuilds."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Default"
-msgstr ""
+msgstr "Standard"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Default"
-msgstr ""
+msgstr "Standard"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default base branch"
-msgstr ""
+msgstr "Standard-Basis-Branch"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default browser pane URL"
-msgstr ""
+msgstr "Standard-URL des Browserbereichs"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default diff scope"
-msgstr ""
+msgstr "Standard-Diff-Umfang"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
-msgstr ""
+msgstr "Standardlayout für Git-Dateidiffs im Bereich „Änderungen“: geteilt (nebeneinander) oder inline (vereinheitlicht)."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default URL"
-msgstr ""
+msgstr "Standard-URL"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Description"
-msgstr ""
+msgstr "Beschreibung"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Desktop"
-msgstr ""
+msgstr "Desktop"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Detected"
-msgstr ""
+msgstr "Erkannt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Detected shell name"
-msgstr ""
+msgstr "Erkannter Shell-Name"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev inspection bridge"
-msgstr ""
+msgstr "Dev-Inspektionsbrücke"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev triggers"
-msgstr ""
+msgstr "Dev-Auslöser"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Developer"
-msgstr ""
+msgstr "Entwickler"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Diagnostics"
-msgstr ""
+msgstr "Diagnose"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Dictation"
-msgstr ""
+msgstr "Diktieren"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again."
-msgstr ""
+msgstr "Diktieren nach wiederholten Abstürzen beendet ({workerError}). Starten Sie Kangentic neu, um es erneut zu versuchen."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes. Restart Kangentic to try again."
-msgstr ""
+msgstr "Diktieren nach wiederholten Abstürzen beendet. Starten Sie Kangentic neu, um es erneut zu versuchen."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Diff view"
-msgstr ""
+msgstr "Diff-Ansicht"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Verwerfen"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "Nicht gespeicherte Änderungen verwerfen?"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Disconnected"
-msgstr ""
+msgstr "Getrennt"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Display"
-msgstr ""
+msgstr "Anzeige"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Display language"
-msgstr ""
+msgstr "Anzeigesprache"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Download failed"
-msgstr ""
+msgstr "Download fehlgeschlagen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Downloading"
-msgstr ""
+msgstr "Wird heruntergeladen"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
-msgstr ""
+msgstr "Jede Agent-Sitzung erhält einen lokalen MCP-Server und erkennt diese Tools selbstständig. Von einem Agent erstellte Aufgaben erscheinen mit einer Benachrichtigung auf dem Board."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Editors"
-msgstr ""
+msgstr "Editoren"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Aufwand"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Elapsed time"
-msgstr ""
+msgstr "Verstrichene Zeit"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Embed a Browser pane in task windows that agents can open."
-msgstr ""
+msgstr "Browser-Bereich in Aufgabenfenstern für Agents einbetten."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Enter path manually"
-msgstr ""
+msgstr "Pfad manuell eingeben"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Environment variables that turn telemetry off."
-msgstr ""
+msgstr "Umgebungsvariablen, die die Telemetrie deaktivieren."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Events"
-msgstr ""
+msgstr "Ereignisse"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on."
-msgstr ""
+msgstr "Jeder Absturz schreibt einen Eintrag mit per Source Map aufgelöstem Stack nach .kangentic/logs/crashes; immer aktiv."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Every hotkey is at its default"
-msgstr ""
+msgstr "Alle Tastenkürzel sind auf Standard"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Execution"
-msgstr ""
+msgstr "Ausführung"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand"
-msgstr ""
+msgstr "Erweitern"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand the prompt"
-msgstr ""
+msgstr "Prompt erweitern"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Extension"
-msgstr ""
+msgstr "Erweiterung"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Failed"
-msgstr ""
+msgstr "Fehlgeschlagen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Fair accuracy"
-msgstr ""
+msgstr "Mäßige Genauigkeit"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "File list"
-msgstr ""
+msgstr "Dateiliste"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "File paths, project names, or code"
-msgstr ""
+msgstr "Dateipfade, Projektnamen oder Code"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "File sort"
-msgstr ""
+msgstr "Dateisortierung"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Files & Terminal"
-msgstr ""
+msgstr "Dateien & Terminal"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files copied into each new worktree, such as .env."
-msgstr ""
+msgstr "Dateien, die in jeden neuen Worktree kopiert werden, z. B. .env."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Files to copy into a worktree"
-msgstr ""
+msgstr "In einen Worktree zu kopierende Dateien"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Finds your work by meaning and answers questions."
-msgstr ""
+msgstr "Findet Ihre Arbeit nach Bedeutung und beantwortet Fragen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Flat file list"
-msgstr ""
+msgstr "Flache Dateiliste"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Focused"
-msgstr ""
+msgstr "Fokussiert"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Fold away large unchanged spans so a big file shows only the changed hunks with a little context."
-msgstr ""
+msgstr "Große unveränderte Bereiche einklappen, sodass eine große Datei nur die geänderten Hunks mit etwas Kontext zeigt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "Ordner auf dem Datenträger, auf den dieses Projekt verweist. An einen neuen Ort verschieben; alle Aufgaben, der Verlauf und die Worktrees werden mitverschoben."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Follow system appearance"
-msgstr ""
+msgstr "Systemdarstellung folgen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font family"
-msgstr ""
+msgstr "Schriftart"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font size"
-msgstr ""
+msgstr "Schriftgröße"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Foreground"
-msgstr ""
+msgstr "Vordergrund"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
-msgstr ""
+msgstr "Leitet verschlüsselte Daten weiter, kennt nie Ihre Schlüssel."
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "Allgemein"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Git"
-msgstr ""
+msgstr "Git"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Git changes"
-msgstr ""
+msgstr "Git-Änderungen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Give agents tools to work with your board."
-msgstr ""
+msgstr "Gibt Agents Tools, um mit Ihrem Board zu arbeiten."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Gives tasks the option to run in their own git worktree."
-msgstr ""
+msgstr "Aufgaben können in einem eigenen Git-Worktree laufen."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Good accuracy"
-msgstr ""
+msgstr "Gute Genauigkeit"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Graphics acceleration"
-msgstr ""
+msgstr "Grafikbeschleunigung"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Hardware rendering and motion across the whole app."
-msgstr ""
+msgstr "Hardware-Rendering und Animationen in der gesamten App."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hardware rendering for the app window and terminals."
-msgstr ""
+msgstr "Hardware-Rendering für App-Fenster und Terminals."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Header"
-msgstr ""
+msgstr "Kopfzeile"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hide whitespace-only changes in the diff to filter reformatting noise."
-msgstr ""
+msgstr "Reine Leerzeichenänderungen im Diff ausblenden, um Rauschen durch Umformatierung zu filtern."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "High accuracy"
-msgstr ""
+msgstr "Hohe Genauigkeit"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
-msgstr ""
+msgstr "Höherer Aufwand antwortet langsamer und kann bei Zählungen über viele Aufgaben helfen; Zusammenfassungen nutzen immer den Standard des Agenten."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
-msgstr ""
+msgstr "Push-to-Talk halten und in Terminal oder Textfeld sprechen."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
-msgstr ""
+msgstr "Gedrückt halten zum Aufnehmen, loslassen zum Einfügen der Transkription. Neu belegen unter „Tastenkürzel“."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys"
-msgstr ""
+msgstr "Tastenkürzel"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys that work anywhere in the app."
-msgstr ""
+msgstr "Tastenkürzel, die überall in der App funktionieren."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hover a tile to try it on the whole app, click to keep it."
-msgstr ""
+msgstr "Kachel überfahren, um sie in der ganzen App zu testen; klicken, um sie zu übernehmen."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "How changes to the shared board config are applied."
-msgstr ""
+msgstr "Anwendung von Änderungen an der gemeinsamen Board-Konfiguration."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "How it works"
-msgstr ""
+msgstr "Funktionsweise"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How linked PRs are kept up to date."
-msgstr ""
+msgstr "Wie verknüpfte PRs aktuell gehalten werden."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long an agent waits on you before the idle timer pauses it."
-msgstr ""
+msgstr "Wie lange ein Agent auf Sie wartet, bevor der Leerlauf-Timer ihn pausiert."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long toasts remain visible"
-msgstr ""
+msgstr "Wie lange Benachrichtigungen sichtbar bleiben"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts stay up and how many stack at once."
-msgstr ""
+msgstr "Wie lange Toasts sichtbar bleiben und wie viele sich stapeln."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How many agents run at once and what happens when idle."
-msgstr ""
+msgstr "Anzahl gleichzeitig laufender Agenten und Verhalten im Leerlauf."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "How much each task card shows on the board."
-msgstr ""
+msgstr "Wie viel jede Aufgabenkarte auf dem Board anzeigt."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How task windows close and where they reopen."
-msgstr ""
+msgstr "Wie sich Aufgabenfenster schließen und wo sie wieder öffnen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the agent handles tool approvals"
-msgstr ""
+msgstr "Wie der Agent Tool-Freigaben handhabt"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the changed files are sorted and grouped."
-msgstr ""
+msgstr "Wie die geänderten Dateien sortiert und gruppiert werden."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension."
-msgstr ""
+msgstr "Wie der Bereich „Änderungen“ Dateien sortiert: nach Name, nach Status (hinzugefügt / geändert / gelöscht), nach Größe (meiste Änderungen zuerst) oder nach Erweiterung."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the Changes panel shows a file's diff."
-msgstr ""
+msgstr "Wie der Bereich „Änderungen“ den Diff einer Datei anzeigt."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How the relay works"
-msgstr ""
+msgstr "So funktioniert das Relay"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How to install and pair"
-msgstr ""
+msgstr "Installieren und koppeln"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "Symbol"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "Leerzeichen ignorieren"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header and its menu"
-msgstr ""
+msgstr "In der Kopfzeile des Aufgabenfensters und im Menü"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header only"
-msgstr ""
+msgstr "Nur in der Kopfzeile des Aufgabenfensters"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window menu only"
-msgstr ""
+msgstr "Nur im Menü des Aufgabenfensters"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "In use by another app"
-msgstr ""
+msgstr "Von anderer App verwendet"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "Index"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Indexing and the local model that finds by meaning live in the <0>Knowledge Graph</0> tab, and run on your device with no API key. When you ask a question, the agent you choose there receives it with the board's task list, the conversation passages and code found for it, and the chat so far. To write a task summary, it receives that task's title, description, commits, changed files and closing messages."
-msgstr ""
+msgstr "Die Indizierung und das lokale Modell für die Suche nach Bedeutung befinden sich im Tab <0>Knowledge Graph</0> und laufen ohne API-Schlüssel auf Ihrem Gerät. Wenn Sie eine Frage stellen, erhält der dort gewählte Agent sie zusammen mit der Aufgabenliste des Boards, den dafür gefundenen Gesprächsauszügen und dem Code sowie dem bisherigen Chat. Um eine Aufgabenzusammenfassung zu erstellen, erhält er Titel, Beschreibung, Commits, geänderte Dateien und Abschlussnachrichten der Aufgabe."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff view mode"
 msgid "Inline"
-msgstr ""
+msgstr "Inline"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "Inline bei geringer Breite"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Input / output totals"
-msgstr ""
+msgstr "Eingabe-/Ausgabe-Summen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inspection bridge"
-msgstr ""
+msgstr "Inspektionsbrücke"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Installing the app, pairing a phone, and push notifications."
-msgstr ""
+msgstr "App installieren, Smartphone koppeln und Pushbenachrichtigungen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Judges conditions and workflow steps, and names tasks."
-msgstr ""
+msgstr "Bewertet Bedingungen und Workflow-Schritte, benennt Aufgaben."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Kangentic could not write its settings file."
-msgstr ""
+msgstr "Kangentic konnte die Einstellungsdatei nicht schreiben."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic Mobile"
-msgstr ""
+msgstr "Kangentic Mobile"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
-msgstr ""
+msgstr "Kangentic wird dafür neu gestartet. Laufende Agents werden angehalten und nach dem Neustart fortgesetzt."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Kangentic runs {wslAgentList} from WSL."
-msgstr ""
+msgstr "Kangentic führt {wslAgentList} über WSL aus."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic turned this off after repeated failures."
-msgstr ""
+msgstr "Kangentic hat dies nach wiederholten Fehlern deaktiviert."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Kangentic-operated relay"
-msgstr ""
+msgstr "Von Kangentic betriebenes Relay"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
-msgstr ""
+msgstr "Nach dem Loslassen kurz weiter aufnehmen, damit das letzte Wort nicht abgeschnitten wird."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Weiter bearbeiten"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for a task's Browser pane."
-msgstr ""
+msgstr "Tasten für den Browser-Bereich einer Aufgabe."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for an open task window."
-msgstr ""
+msgstr "Tasten für ein geöffnetes Aufgabenfenster."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Changes panel and its diff."
-msgstr ""
+msgstr "Tasten für den Änderungsbereich und seinen Diff."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Wissensgraph"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Label"
-msgstr ""
+msgstr "Bezeichnung"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Language"
-msgstr ""
+msgstr "Sprache"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Latest"
-msgstr ""
+msgstr "Neueste"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Launch options"
-msgstr ""
+msgstr "Startoptionen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "Layout"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Leave blank if the server does not require credentials"
-msgstr ""
+msgstr "Leer lassen, wenn der Server keine Anmeldedaten erfordert"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Browser pane."
-msgstr ""
+msgstr "Agenten dürfen den Browser-Bereich steuern."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
-msgstr ""
+msgstr "Erlaubt den Devtools-Tools, JavaScript im Renderer auszuführen, Aktivitätsereignisse einzuschleusen und rohe Terminaleingaben zu senden."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "License"
-msgstr ""
+msgstr "Lizenz"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Light"
-msgstr ""
+msgstr "Hell"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Light, when the system is light"
-msgstr ""
+msgstr "Hell, wenn das System hell ist"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Limit how many agents can run at the same time"
-msgstr ""
+msgstr "Begrenzen, wie viele Agenten gleichzeitig laufen können"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link node_modules"
-msgstr ""
+msgstr "node_modules verknüpfen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model"
-msgstr ""
+msgstr "Live-Modell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model downloaded"
-msgstr ""
+msgstr "Live-Modell heruntergeladen"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Local"
-msgstr ""
+msgstr "Lokal"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Local"
-msgstr ""
+msgstr "Lokal"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Local model"
-msgstr ""
+msgstr "Lokales Modell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
-msgstr ""
+msgstr "Protokolliert jeden IPC-Aufruf in .kangentic/logs, ändernde Kanäle geschwärzt; standardmäßig nur in /preview aktiv."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max concurrent sessions"
-msgstr ""
+msgstr "Max. gleichzeitige Sitzungen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max visible toasts"
-msgstr ""
+msgstr "Max. sichtbare Toasts"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Maximum simultaneous toasts on screen"
-msgstr ""
+msgstr "Maximale Anzahl gleichzeitiger Toasts auf dem Bildschirm"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP connection"
-msgstr ""
+msgstr "MCP-Verbindung"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP server"
-msgstr ""
+msgstr "MCP-Server"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "MCP Server"
-msgstr ""
+msgstr "MCP-Server"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Menu"
-msgstr ""
+msgstr "Menü"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Minutes idle"
-msgstr ""
+msgstr "Minuten inaktiv"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mobile bridge"
-msgstr ""
+msgstr "Mobile Bridge"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Mobile Devices"
-msgstr ""
+msgstr "Mobilgeräte"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Mode"
-msgstr ""
+msgstr "Modus"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Model (optional, e.g. whisper-1)"
-msgstr ""
+msgstr "Modell (optional, z. B. whisper-1)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model acceleration"
-msgstr ""
+msgstr "Modellbeschleunigung"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "Modell für neue Sitzungen, wenn keine Spalten- oder Aufgabenüberschreibung festgelegt ist"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Move..."
-msgstr ""
+msgstr "Verschieben..."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Moving between task windows and arranging them."
-msgstr ""
+msgstr "Zwischen Aufgabenfenstern wechseln und sie anordnen."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Name"
-msgstr ""
+msgstr "Name"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Narrow"
-msgstr ""
+msgstr "Schmal"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs a model"
-msgstr ""
+msgstr "Erfordert ein Modell"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs a supported agent"
-msgstr ""
+msgstr "Erfordert einen unterstützten Agent"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs an agent"
-msgstr ""
+msgstr "Erfordert einen Agent"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs indexing"
-msgstr ""
+msgstr "Indizierung erforderlich"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs the Knowledge Graph"
-msgstr ""
+msgstr "Erfordert den Knowledge Graph"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
-msgstr ""
+msgstr "Keine Kamera? Kopieren Sie den Link und fügen Sie ihn in die App ein."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No devices paired yet."
-msgstr ""
+msgstr "Noch keine Geräte gekoppelt."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "No Done tasks yet"
-msgstr ""
+msgstr "Noch keine erledigten Aufgaben"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "No key detected. It may be reserved by your OS or another app."
-msgstr ""
+msgstr "Keine Taste erkannt. Sie ist möglicherweise vom Betriebssystem oder einer anderen App reserviert."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No response"
-msgstr ""
+msgstr "Keine Antwort"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "No settings found for “{query}”"
-msgstr ""
+msgstr "Keine Einstellungen für „{query}“ gefunden"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "No shortcuts configured. Add one below or choose a preset."
-msgstr ""
+msgstr "Keine Verknüpfungen konfiguriert. Unten hinzufügen oder eine Vorlage wählen."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "No WSL support"
-msgstr ""
+msgstr "Keine WSL-Unterstützung"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "no dictation model"
 msgid "None"
-msgstr ""
+msgstr "Keins"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not found"
-msgstr ""
+msgstr "Nicht gefunden"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "Nicht angemeldet"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "Noch nicht indiziert"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Nothing committed yet"
-msgstr ""
+msgstr "Noch nichts committet"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Notifications"
-msgstr ""
+msgstr "Benachrichtigungen"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Off"
-msgstr ""
+msgstr "Aus"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Off"
-msgstr ""
+msgstr "Aus"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "release buffer"
 msgid "Off"
-msgstr ""
+msgstr "Aus"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Offline"
-msgstr ""
+msgstr "Offline"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost"
-msgstr ""
+msgstr "Nur localhost"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost and private hosts, never public sites."
-msgstr ""
+msgstr "Nur localhost, private Hosts, nie öffentliche Seiten."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Only the final clip is sent. The live preview stays on this machine."
-msgstr ""
+msgstr "Nur der finale Clip wird gesendet. Die Livevorschau bleibt auf diesem Gerät."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Only yours, in kangentic.local.json"
-msgstr ""
+msgstr "Nur für Sie, in kangentic.local.json"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open other URLs. Off keeps agents on the page you loaded."
-msgstr ""
+msgstr "Andere URLs öffnen. Aus hält Agenten auf geladener Seite."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open the surfaces a dev session cannot reach on its own."
-msgstr ""
+msgstr "Bereiche öffnen, die eine Dev-Sitzung allein nicht erreicht."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine."
-msgstr ""
+msgstr "OpenAI-kompatibler /v1/audio/transcriptions-Endpunkt für den finalen Text, verwendet, wenn das Verfeinerungsmodell Cloud-Endpunkt ist. Nur der finale Clip wird gesendet; die Live-Vorschau bleibt auf diesem Rechner."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Opting out"
-msgstr ""
+msgstr "Deaktivierung"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Optional startup features this agent CLI can turn off"
-msgstr ""
+msgstr "Optionale Startfunktionen, die diese Agent-CLI deaktivieren kann"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Other"
-msgstr ""
+msgstr "Sonstiges"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pair a device"
-msgstr ""
+msgstr "Gerät koppeln"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired {pairedDate}"
-msgstr ""
+msgstr "Gekoppelt am {pairedDate}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired: {confirmedDeviceName}"
-msgstr ""
+msgstr "Gekoppelt: {confirmedDeviceName}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pairing QR code"
-msgstr ""
+msgstr "QR-Code zum Koppeln"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Password"
-msgstr ""
+msgstr "Passwort"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
-msgstr ""
+msgstr "Pfad auf dem Server für die Aufgaben dieses Projekts. Leer lassen, um das Standardverzeichnis des Servers zu verwenden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr ""
+msgstr "Jeden Agenten pausieren, der so viele Minuten auf dich gewartet hat, außer in einem Command Terminal."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Pausing agents"
-msgstr ""
+msgstr "Agenten pausieren"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Performance"
-msgstr ""
+msgstr "Leistung"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "Berechtigungen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Persistent console logs"
-msgstr ""
+msgstr "Dauerhafte Konsolenprotokolle"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Personal"
-msgstr ""
+msgstr "Persönlich"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Personal shortcut in kangentic.local.json"
-msgstr ""
+msgstr "Persönliche Verknüpfung in kangentic.local.json"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones"
-msgstr ""
+msgstr "Handys"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones paired to this desktop, identified by key fingerprint."
-msgstr ""
+msgstr "Mit diesem Desktop gekoppelte Handys, per Schlüssel-Fingerabdruck."
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Pick a theme, or follow the system with a light and dark pair."
-msgstr ""
+msgstr "Design wählen oder mit einem Hell-/Dunkel-Paar dem System folgen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "Plan abgeschlossen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
-msgstr ""
+msgstr "Plant jeden Workflow. Nichts startet, bis einer gewählt ist."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Post-worktree script"
-msgstr ""
+msgstr "Post-Worktree-Skript"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Presets"
-msgstr ""
+msgstr "Vorlagen"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey"
-msgstr ""
+msgstr "Tastenkombination drücken"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel."
-msgstr ""
+msgstr "Drücken Sie eine Tastenkombination oder halten Sie eine oder mehrere Maustasten (Mitte / Seite) gleichzeitig gedrückt und lassen Sie sie dann los. Esc zum Abbrechen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Press Enter after inserting, or leave the text for you to review and send."
-msgstr ""
+msgstr "Nach dem Einfügen Enter drücken oder den Text zum Prüfen und Senden stehen lassen."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press the new hotkey or mouse button. Escape to cancel."
-msgstr ""
+msgstr "Drücken Sie die neue Tastenkombination oder Maustaste. Esc zum Abbrechen."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Preview while you speak: streaming is instant, chunked is accurate."
-msgstr ""
+msgstr "Vorschau beim Sprechen: Streaming ist sofort, Chunked ist genau."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Privacy"
-msgstr ""
+msgstr "Datenschutz"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr ""
+msgstr "Profiliert den Hauptprozess und nennt im Event-Loop-Bericht die aufwendigsten Funktionen eines Hängers; kostet CPU, solange aktiv."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Progress bar"
-msgstr ""
+msgstr "Fortschrittsbalken"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr ""
+msgstr "Standard-URL des Projekts, wenn eine Aufgabe keine eigene Überschreibung hat. Wird beim ersten Navigieren im Browserbereich automatisch gespeichert."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Project defaults"
-msgstr ""
+msgstr "Projektstandards"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project location"
-msgstr ""
+msgstr "Projektspeicherort"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Pull requests"
-msgstr ""
+msgstr "Pull Requests"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Push-to-talk"
-msgstr ""
+msgstr "Push-to-Talk"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Push-to-talk and the other dictation keys."
-msgstr ""
+msgstr "Push-to-Talk und die weiteren Diktiertasten."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Questions"
-msgstr ""
+msgstr "Fragen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "Ratenlimits"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Re-detect agent"
-msgstr ""
+msgstr "Agent erneut erkennen"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable"
-msgstr ""
+msgstr "Erreichbar"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable, {relayLatencyMs} ms"
-msgstr ""
+msgstr "Erreichbar, {relayLatencyMs} ms"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Reads every source again, in every project."
-msgstr ""
+msgstr "Liest jede Quelle in jedem Projekt erneut ein."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Reasoning effort used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "Denkaufwand für neue Sitzungen, wenn keine Spalten- oder Aufgabenüberschreibung festgelegt ist"
 
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind"
-msgstr ""
+msgstr "Neu zuweisen"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Rebind any hotkey. Conflicts and taken combos are flagged."
-msgstr ""
+msgstr "Kürzel neu belegen. Konflikte und vergebene Kürzel sind markiert."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind in the Hotkeys settings"
-msgstr ""
+msgstr "In den Tastenkürzel-Einstellungen neu zuweisen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rebind keyboard hotkeys"
-msgstr ""
+msgstr "Tastenkürzel neu belegen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild"
-msgstr ""
+msgstr "Neu aufbauen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild didn't start"
-msgstr ""
+msgstr "Neuaufbau wurde nicht gestartet"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild everything?"
-msgstr ""
+msgstr "Alles neu aufbauen?"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild the index"
-msgstr ""
+msgstr "Index neu aufbauen"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuilding..."
-msgstr ""
+msgstr "Wird neu aufgebaut..."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Recent"
-msgstr ""
+msgstr "Letzte"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reconnecting…"
-msgstr ""
+msgstr "Verbindung wird wiederhergestellt…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Record IPC traffic"
-msgstr ""
+msgstr "IPC-Verkehr aufzeichnen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model"
-msgstr ""
+msgstr "Verfeinerungsmodell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model downloaded"
-msgstr ""
+msgstr "Verfeinerungsmodell heruntergeladen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refines the live draft into the accurate result on release. None keeps the live text as-is."
-msgstr ""
+msgstr "Verfeinert beim Loslassen den Live-Entwurf zum genauen Ergebnis. „Keine“ übernimmt den Live-Text unverändert."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay"
-msgstr ""
+msgstr "Relay"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address"
-msgstr ""
+msgstr "Relay-Adresse"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address, the Kangentic-operated relay"
-msgstr ""
+msgstr "Relay-Adresse, das von Kangentic betriebene Relay"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay v{relayVersion}"
-msgstr ""
+msgstr "Relay v{relayVersion}"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Release buffer"
-msgstr ""
+msgstr "Nachlaufpuffer"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the browser pane to apply."
-msgstr ""
+msgstr "Laden Sie den Browserbereich neu, um die Änderung zu übernehmen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remember window size and position between launches"
-msgstr ""
+msgstr "Fenstergröße und -position zwischen Starts speichern"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Remote"
-msgstr ""
+msgstr "Remote"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "Entfernen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remove a task's worktree when the task completes."
-msgstr ""
+msgstr "Worktree einer Aufgabe entfernen, wenn die Aufgabe abgeschlossen ist."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Umbenennen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns."
-msgstr ""
+msgstr "Schmalen Diff-Bereich inline (unified) anzeigen, auch wenn „Nebeneinander“ gewählt ist, statt zwei Spalten zu quetschen."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Rendering"
-msgstr ""
+msgstr "Rendering"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all"
-msgstr ""
+msgstr "Alle zurücksetzen"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all hotkeys?"
-msgstr ""
+msgstr "Alle Tastenkürzel zurücksetzen?"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Reset to default"
-msgstr ""
+msgstr "Auf Standard zurücksetzen"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "Starten Sie Kangentic neu, um die Änderung zu übernehmen."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart now"
-msgstr ""
+msgstr "Jetzt neu starten"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart with graphics acceleration?"
-msgstr ""
+msgstr "Mit Grafikbeschleunigung neu starten?"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart without graphics acceleration?"
-msgstr ""
+msgstr "Ohne Grafikbeschleunigung neu starten?"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Restore every hotkey to its default"
-msgstr ""
+msgstr "Alle Tastenkürzel auf Standard zurücksetzen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Restore window position"
-msgstr ""
+msgstr "Fensterposition wiederherstellen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine."
-msgstr ""
+msgstr "Agentsitzungen fortsetzen, die beim letzten Schließen des Projekts liefen. Deaktivieren, falls viele gleichzeitige Fortsetzungen den Rechner verlangsamen."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke"
-msgstr ""
+msgstr "Widerrufen"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect."
-msgstr ""
+msgstr "„{revokeTargetName}“ ({revokeTargetFingerprint}) widerrufen? Das Gerät verliert sofort den Zugriff und muss für eine erneute Verbindung wieder gekoppelt werden."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke device"
-msgstr ""
+msgstr "Gerät widerrufen"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
-msgstr ""
+msgstr "Führen Sie <0>{loginCommand}</0> im Terminal aus, um sich anzumelden."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run any JavaScript in the page, with its cookies."
-msgstr ""
+msgstr "Beliebiges JavaScript mit Cookies auf der Seite ausführen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run this agent locally, or attach to a server you run elsewhere"
-msgstr ""
+msgstr "Diesen Agent lokal ausführen oder mit einem anderswo betriebenen Server verbinden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
-msgstr ""
+msgstr "Wird nach dem Erstellen eines Worktrees ausgeführt. Unter Windows über cmd.exe, daher funktioniert reine POSIX-Syntax nicht."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Runs on this machine unless you choose a cloud refinement."
-msgstr ""
+msgstr "Läuft auf diesem Gerät, außer Sie wählen eine Cloud-Verfeinerung."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "Speichern"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Save name"
-msgstr ""
+msgstr "Namen speichern"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Saved URLs (per-task overrides and the project default) are kept."
-msgstr ""
+msgstr "Gespeicherte URLs (aufgabenspezifische Überschreibungen und der Projektstandard) bleiben erhalten."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Scan a QR code with the Kangentic mobile app to pair a new phone."
-msgstr ""
+msgstr "QR-Code mit der Kangentic-Mobile-App scannen, um ein neues Smartphone zu koppeln."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Scan this code with the Kangentic app on your phone."
-msgstr ""
+msgstr "Scannen Sie diesen Code mit der Kangentic-App auf Ihrem Smartphone."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Scope"
-msgstr ""
+msgstr "Geltungsbereich"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Search model downloaded"
-msgstr ""
+msgstr "Suchmodell heruntergeladen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Search quality"
-msgstr ""
+msgstr "Suchqualität"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Search settings..."
-msgstr ""
+msgstr "Einstellungen durchsuchen..."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Secure storage is unavailable on this system, so a device identity cannot be created."
-msgstr ""
+msgstr "Auf diesem System ist kein sicherer Speicher verfügbar, daher kann keine Geräteidentität erstellt werden."
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Select display language"
-msgstr ""
+msgstr "Anzeigesprache auswählen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Server URL"
-msgstr ""
+msgstr "Server-URL"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Server working directory"
-msgstr ""
+msgstr "Arbeitsverzeichnis auf dem Server"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth."
-msgstr ""
+msgstr "Stellt Screenshots, Eingaben, DOM- und Statusabfragen für die Devtools-MCP-Tools bereit, über einen localhost-Port ohne Authentifizierung."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "API-Kosten der Sitzung"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "Sitzungen"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
-msgstr ""
+msgstr "Setzen Sie die Umgebungsvariable <0>KANGENTIC_TELEMETRY=0</0>, um die gesamte Telemetrie (Analyse und Fehlerberichte) zu deaktivieren. Setzen Sie <1>KANGENTIC_ERROR_REPORTING=0</1>, um nur die Fehlerberichte zu deaktivieren und die anonyme Analyse beizubehalten."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Setting not saved"
-msgstr ""
+msgstr "Einstellung nicht gespeichert"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "Einstellungen"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with team via kangentic.json"
-msgstr ""
+msgstr "Über kangentic.json mit dem Team geteilt"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with the team in kangentic.json"
-msgstr ""
+msgstr "In kangentic.json mit dem Team geteilt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell"
-msgstr ""
+msgstr "Shell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell name"
-msgstr ""
+msgstr "Shell-Name"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shortcuts"
-msgstr ""
+msgstr "Verknüpfungen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show changed files as a flat list of full paths instead of a nested directory tree."
-msgstr ""
+msgstr "Geänderte Dateien als flache Liste vollständiger Pfade statt als verschachtelte Verzeichnisstruktur anzeigen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show each task's #N number on its card"
-msgstr ""
+msgstr "Nummer #N jeder Aufgabe auf ihrer Karte anzeigen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the status bar at the bottom of the window"
-msgstr ""
+msgstr "Statusleiste am unteren Fensterrand anzeigen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the terminal panel below the board"
-msgstr ""
+msgstr "Terminalbereich unterhalb des Boards anzeigen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr ""
+msgstr "Zeigt einen PR als bereit an, wenn dein Admin-Bypass ihn trotz erforderlichem Review mergen könnte, aber nie trotz fehlgeschlagener Prüfung."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "Nebeneinander"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "since {sinceTime}"
-msgstr ""
+msgstr "seit {sinceTime}"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Single"
-msgstr ""
+msgstr "Einzeln"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Size"
-msgstr ""
+msgstr "Größe"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
-msgstr ""
+msgstr "Lange Zeilen in die nächste Zeile umbrechen, statt den Diff horizontal zu scrollen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Source code"
-msgstr ""
+msgstr "Quellcode"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Source code embedded"
-msgstr ""
+msgstr "Quellcode eingebettet"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Spawn stalled"
-msgstr ""
+msgstr "Start blockiert"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Staged"
-msgstr ""
+msgstr "Gestaged"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stall profiler"
-msgstr ""
+msgstr "Blockierungs-Profiler"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Status"
-msgstr ""
+msgstr "Status"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Status bar"
-msgstr ""
+msgstr "Statusleiste"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop leftover processes"
-msgstr ""
+msgstr "Übrige Prozesse beenden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
-msgstr ""
+msgstr "Beendet, was ein Agent in seinem Ordner laufen ließ, wenn seine Aufgabe erledigt, zurück in To Do oder gelöscht ist oder sein Command Terminal endet."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries rewritten"
-msgstr ""
+msgstr "Zusammenfassungen neu geschrieben"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries written"
-msgstr ""
+msgstr "Zusammenfassungen geschrieben"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
-msgstr ""
+msgstr "Verlinkt das node_modules im Stammverzeichnis per Symlink in jeden Worktree, um eine Neuinstallation zu sparen; bei Workspace-Repositorys deaktivieren."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "System"
-msgstr ""
+msgstr "System"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "Aufgabe"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task and project creation counts"
-msgstr ""
+msgstr "Anzahl erstellter Aufgaben und Projekte"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Task detail"
-msgstr ""
+msgstr "Aufgabendetails"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "Aufgabenzusammenfassungen"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task titles, descriptions, or any user-generated content"
-msgstr ""
+msgstr "Aufgabentitel, Beschreibungen oder andere nutzergenerierte Inhalte"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "Aufgaben"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "Eingebettete Aufgaben"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Team"
-msgstr ""
+msgstr "Team"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "Terminal"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal cursor appearance"
-msgstr ""
+msgstr "Darstellung des Terminal-Cursors"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Terminal may intercept"
-msgstr ""
+msgstr "Terminal fängt evtl. ab"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal panel"
-msgstr ""
+msgstr "Terminalbereich"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal shell used for agent sessions"
-msgstr ""
+msgstr "Terminal-Shell für Agent-Sitzungen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal text size in pixels"
-msgstr ""
+msgstr "Textgröße im Terminal in Pixeln"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Test connection"
-msgstr ""
+msgstr "Verbindung testen"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "The agent, model and permissions new sessions start with."
-msgstr ""
+msgstr "Agent, Modell und Berechtigungen für neue Sitzungen."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's newest message"
-msgstr ""
+msgstr "Die neueste Nachricht des Agenten"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's recent messages, one line each"
-msgstr ""
+msgstr "Die letzten Nachrichten des Agenten, je eine Zeile"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The branch new worktrees start from."
-msgstr ""
+msgstr "Der Branch, von dem neue Worktrees ausgehen."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "The change was not written."
-msgstr ""
+msgstr "Die Änderung wurde nicht geschrieben."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
-msgstr ""
+msgstr "Quellcode und Dokumentation des Standard-Branches, stets aktuell; Tests, Datendateien und Dateien über 256 KB werden übersprungen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The first message it gets for a new workflow."
-msgstr ""
+msgstr "Die erste Nachricht, die er für einen neuen Workflow erhält."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "The Kangentic relay"
-msgstr ""
+msgstr "Das Kangentic-Relay"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr ""
+msgstr "Der Wissensgraph und der Index, den er liest. Gilt für alle Projekte"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "The language of menus, settings and dialogs."
-msgstr ""
+msgstr "Die Sprache von Menüs, Einstellungen und Dialogen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The language you speak. The models adapt to your choice."
-msgstr ""
+msgstr "Die Sprache, die du sprichst. Die Modelle passen sich deiner Wahl an."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches."
-msgstr ""
+msgstr "Das lokale Modell ist nicht verfügbar – Stichworttreffer werden angezeigt."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches. ({workerError})"
-msgstr ""
+msgstr "Das lokale Modell ist nicht verfügbar – Stichworttreffer werden angezeigt. ({workerError})"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The local model that finds by meaning and draws the map; changing it re-indexes in the background."
-msgstr ""
+msgstr "Das lokale Modell, das nach Bedeutung sucht und die Karte zeichnet; bei Änderung wird im Hintergrund neu indiziert."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The model it plans with. Required when the agent takes one."
-msgstr ""
+msgstr "Das Modell, mit dem er plant. Erforderlich, wenn der Agent eines unterstützt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live."
-msgstr ""
+msgstr "Die Smartphone-App zum Prüfen von Agents, Beantworten von Eingabeaufforderungen und Reviewen von Diffs. Verlinkt auf ihre Dokumentation mit der Installationsanleitung."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The project's code and docs, so answers can explain it."
-msgstr ""
+msgstr "Code und Dokumentation des Projekts, damit Antworten es erklären können."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The self-hosted relay to dial when Relay is set to Custom."
-msgstr ""
+msgstr "Das selbst gehostete Relay, das verwendet wird, wenn Relay auf Benutzerdefiniert gesetzt ist."
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "The shell, font, cursor and colors every terminal uses."
-msgstr ""
+msgstr "Shell, Schriftart, Cursor und Farben für alle Terminals."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The task's description"
-msgstr ""
+msgstr "Die Beschreibung der Aufgabe"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Theme"
-msgstr ""
+msgstr "Design"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
-msgstr ""
+msgstr "Dieser Hotkey ist fest und kann nicht neu belegt werden"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "This project's path to the agent CLI (auto-detected if empty)"
-msgstr ""
+msgstr "Pfad zur Agent-CLI für dieses Projekt (automatisch erkannt, wenn leer)"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "This restores every hotkey to its default. Your custom bindings will be removed."
-msgstr ""
+msgstr "Dadurch werden alle Tastenkürzel auf den Standard zurückgesetzt. Ihre benutzerdefinierten Belegungen werden entfernt."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "Dadurch werden Cookies, localStorage, IndexedDB, Service Worker und HTTP-/Authentifizierungscaches des eingebetteten Browserbereichs für alle Aufgaben und Projekte gelöscht. Sie werden von allen Websites abgemeldet."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticket numbers"
-msgstr ""
+msgstr "Ticketnummern"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticking session duration"
-msgstr ""
+msgstr "Laufende Sitzungsdauer"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Toast"
-msgstr ""
+msgstr "Toast"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Toast auto-dismiss"
-msgstr ""
+msgstr "Toasts automatisch ausblenden"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Toasts"
-msgstr ""
+msgstr "Toasts"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Token counts"
-msgstr ""
+msgstr "Token-Anzahl"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "Tool-Aufrufe"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Transcription"
-msgstr ""
+msgstr "Transkription"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Transition and motion effects."
-msgstr ""
+msgstr "Übergangs- und Bewegungseffekte."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Try a different search term"
-msgstr ""
+msgstr "Anderen Suchbegriff versuchen"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Underline"
-msgstr ""
+msgstr "Unterstrich"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Unreachable"
-msgstr ""
+msgstr "Nicht erreichbar"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's own level."
-msgstr ""
+msgstr "Ohne Angabe läuft der Agent auf seiner eigenen Stufe."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's recommended level."
-msgstr ""
+msgstr "Ohne Angabe läuft der Agent auf seiner empfohlenen Stufe."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usage analytics are powered by Aptabase, a privacy-first platform. No cookies. IP addresses are used for geographic lookup only, then discarded. A single anonymous, non-reversible install id counts unique installs; it contains no personal data. GDPR-compliant by design."
-msgstr ""
+msgstr "Die Nutzungsanalyse erfolgt über Aptabase, eine datenschutzorientierte Plattform. Keine Cookies. IP-Adressen werden nur zur geografischen Zuordnung verwendet und anschließend verworfen. Eine einzige anonyme, nicht rückverfolgbare Installations-ID zählt eindeutige Installationen; sie enthält keine personenbezogenen Daten. DSGVO-konform by Design."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Usage bar and percentage"
-msgstr ""
+msgstr "Nutzungsbalken und Prozentsatz"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}."
-msgstr ""
+msgstr "Zulässig: {TERMINAL_FONT_SIZE_MIN} bis {TERMINAL_FONT_SIZE_MAX}."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Use one theme when the system is light and another when it is dark."
-msgstr ""
+msgstr "Ein Design für helles und ein anderes für dunkles Systemdesign verwenden."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Used / total tokens"
-msgstr ""
+msgstr "Verwendete / gesamte Tokens"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Username"
-msgstr ""
+msgstr "Benutzername"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usernames, emails, or any personally identifiable information"
-msgstr ""
+msgstr "Benutzernamen, E-Mail-Adressen oder andere personenbezogene Daten"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable - showing keyword matches. ({vecError})"
-msgstr ""
+msgstr "Die Vektorsuche ist nicht verfügbar – Stichworttreffer werden angezeigt. ({vecError})"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable on this platform - showing keyword matches."
-msgstr ""
+msgstr "Die Vektorsuche ist auf dieser Plattform nicht verfügbar – Stichworttreffer werden angezeigt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Version"
-msgstr ""
+msgstr "Version"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Voice dictation"
-msgstr ""
+msgstr "Spracheingabe"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Waiting for your phone…"
-msgstr ""
+msgstr "Warten auf Ihr Smartphone…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What each card shows under its title: the agent's latest message, its recent messages, or the task description."
-msgstr ""
+msgstr "Was jede Karte unter ihrem Titel zeigt: die letzte Nachricht des Agents, seine neuesten Nachrichten oder die Aufgabenbeschreibung."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What Quick Find and the Knowledge Graph search."
-msgstr ""
+msgstr "Was Schnellsuche und Wissensgraph durchsuchen."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What runs on this device, and what goes to the agent you choose."
-msgstr ""
+msgstr "Was auf diesem Gerät läuft und was an den gewählten Agenten geht."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we collect"
-msgstr ""
+msgstr "Was wir erfassen"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we don't collect"
-msgstr ""
+msgstr "Was wir nicht erfassen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a plan finishes and the task auto-moves"
-msgstr ""
+msgstr "Wenn ein Plan fertig ist und die Aufgabe automatisch verschoben wird"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a running workflow cannot move a task on by itself"
-msgstr ""
+msgstr "Wenn ein laufender Workflow eine Aufgabe nicht selbst weiterbewegen kann"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a task spawn waits too long on the git queue while preparing"
-msgstr ""
+msgstr "Wenn der Start einer Aufgabe bei der Vorbereitung zu lange auf die Git-Warteschlange wartet"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent finishes its turn or needs permission"
-msgstr ""
+msgstr "Wenn ein Agent seinen Zug beendet oder eine Berechtigung benötigt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."
-msgstr ""
+msgstr "Wenn eine Agent-Sitzung unerwartet endet. Desktopbenachrichtigungen nur bei Fehlerbeendigungen; Toasts melden auch saubere Beendigungen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When every task in a workflow reaches Done"
-msgstr ""
+msgstr "Wenn jede Aufgabe eines Workflows Done erreicht"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When idle"
-msgstr ""
+msgstr "Bei Inaktivität"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
-msgstr ""
+msgstr "Wann Kangentic Agents pausiert, die auf Sie warten."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low"
-msgstr ""
+msgstr "Bei knappem Arbeitsspeicher"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr ""
+msgstr "Bei knappem Arbeitsspeicher den Agent pausieren, der am längsten auf Sie wartet, einen pro Minute, bis wieder Platz ist."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Where each kind of alert shows up."
-msgstr ""
+msgstr "Wo die einzelnen Arten von Hinweisen angezeigt werden."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Where new work starts, and how current it stays."
-msgstr ""
+msgstr "Wo neue Arbeit beginnt und wie aktuell sie bleibt."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Where the agent's command-line tool runs, and how it starts."
-msgstr ""
+msgstr "Wo das Befehlszeilentool des Agents läuft und wie es startet."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Where the local model runs. Auto uses the GPU when there is one."
-msgstr ""
+msgstr "Wo das lokale Modell läuft. „Automatisch“ nutzt die GPU, falls vorhanden."
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Where this project lives on disk."
-msgstr ""
+msgstr "Speicherort dieses Projekts auf dem Datenträger."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
-msgstr ""
+msgstr "Ob Agents den MCP-Server erreichen können, hier und aus jeder WSL-Distribution, auf die ein CLI-Pfad verweist."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr ""
+msgstr "Welcher Agent Bedingungen beantwortet und Aufgaben sowie Command Terminals benennt; nichts läuft, bis einer gewählt ist."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers your questions and writes the task summaries."
-msgstr ""
+msgstr "Welcher Agent Ihre Fragen beantwortet und die Aufgabenzusammenfassungen schreibt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent CLI to use for new sessions"
-msgstr ""
+msgstr "Welche Agent-CLI für neue Sitzungen verwendet wird"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
-msgstr ""
+msgstr "Welcher Agent jeden Workflow plant, im linken Bereich der Workflow-Ansicht. Kein Workflow-Agent startet, bis einer gewählt ist."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
-msgstr ""
+msgstr "Welche Änderungen ein neu geöffnetes Änderungen-Panel zeigt: Arbeitskopie (nicht committete Änderungen), Staged (Index) oder den gesamten Branch gegenüber seiner Basis."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Which features get used, as daily counts (never their content)"
-msgstr ""
+msgstr "Welche Funktionen genutzt werden, als tägliche Anzahl (nie deren Inhalt)"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Which stats show in the bar under a task's terminal."
-msgstr ""
+msgstr "Welche Statistiken in der Leiste unter dem Terminal erscheinen."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Wide"
-msgstr ""
+msgstr "Breit"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Width of board columns"
-msgstr ""
+msgstr "Breite der Board-Spalten"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Windows"
-msgstr ""
+msgstr "Windows"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgctxt "task windows"
 msgid "Windows"
-msgstr ""
+msgstr "Fenster"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr ""
+msgstr "Cookies, localStorage, IndexedDB, Service Worker und HTTP-/Auth-Caches des eingebetteten Browsers löschen. Gespeicherte URLs bleiben erhalten."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "Workflow-Agent"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Workflow agent prompt"
-msgstr ""
+msgstr "Prompt des Workflow-Agents"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "Workflow abgeschlossen"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "Workflow ins Stocken geraten"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "Workflows"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Working"
-msgstr ""
+msgstr "Arbeitskopie"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Worktree init script"
-msgstr ""
+msgstr "Worktree-Init-Skript"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Worktrees"
-msgstr ""
+msgstr "Worktrees"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "Lange Zeilen umbrechen"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
-msgstr ""
+msgstr "Schreiben Sie an <0>{PRIVACY_CONTACT_EMAIL}</0>."
 
 #. placeholder {0}: agent.cliTarget.distro
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "WSL: {0}"
-msgstr ""
+msgstr "WSL: {0}"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
+#, fuzzy
 msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."
-msgstr ""
+msgstr "Ihr Betriebssystem und andere Apps können ein Tastenkürzel zuerst belegen. Wenn eines hier keine Wirkung hat, versuchen Sie eine andere Kombination."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
-msgstr ""
+msgstr "Ihr Smartphone zeigt diesen Code ebenfalls an. Bestätigen Sie dort, um die Kopplung abzuschließen."

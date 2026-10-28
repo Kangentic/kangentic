@@ -8,105 +8,131 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "{matchCount, plural, one {# match} other {# matches}}"
-msgstr ""
+msgstr "{matchCount, plural, other {#개 일치}}"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "모든 프로젝트"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "archived"
-msgstr ""
+msgstr "보관됨"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Ask the Knowledge Graph: <0>\"{question}\"</0>"
-msgstr ""
+msgstr "지식 그래프에 질문: <0>\"{question}\"</0>"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Backlog"
-msgstr ""
+msgstr "백로그"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Close search"
-msgstr ""
+msgstr "검색 닫기"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "대화"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "History"
-msgstr ""
+msgstr "기록"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Matched by meaning"
-msgstr ""
+msgstr "의미 기반 일치"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in any project."
-msgstr ""
+msgstr "모든 프로젝트에서 일치하는 키워드가 없습니다."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in this project."
-msgstr ""
+msgstr "이 프로젝트에서 일치하는 키워드가 없습니다."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the active terminal"
-msgstr ""
+msgstr "활성 터미널 열기"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the conversation history"
-msgstr ""
+msgstr "대화 기록 열기"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search across tasks, backlog, conversations, session events, and projects."
-msgstr ""
+msgstr "작업, 백로그, 대화, 세션 이벤트, 프로젝트 전체에서 검색합니다."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search failed"
-msgstr ""
+msgstr "검색 실패"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search tasks, backlog, conversations, session events, projects..."
-msgstr ""
+msgstr "작업, 백로그, 대화, 세션 이벤트, 프로젝트 검색..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Searching..."
-msgstr ""
+msgstr "검색 중..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Session events"
-msgstr ""
+msgstr "세션 이벤트"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "System"
-msgstr ""
+msgstr "시스템"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "작업"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "터미널"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "This project"
-msgstr ""
+msgstr "이 프로젝트"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "도구"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Type to find by title, description, or tool call."
-msgstr ""
+msgstr "제목, 설명 또는 도구 호출로 찾으려면 입력하세요."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "You"
-msgstr ""
+msgstr "나"

@@ -115,12 +115,16 @@ chrome unless these are stated.
     search meant the "Add column" label wrapped and then clipped off the right edge, with
     `body`'s `overflow-hidden` and no scrollbar to recover it. Decide the order controls give
     ground in, and write it down.
-  - **Collapse by container query, not by viewport breakpoint.** `@container` on the row plus
-    `@[NNNpx]:` variants reads the space the row actually has, with the sidebar already
-    subtracted, so one set of thresholds covers every sidebar width and the row responds to a
-    sidebar drag as well as a window resize. `src/renderer/components/board/toolbar-collapse.ts`
-    is the worked example, with `BoardManagerDialog`, `MonitorBody` and `form-layout.tsx` as
-    the other adopters. Every class must be a complete literal, since Tailwind scans source text.
+  - **Collapse on the row's own width, not the viewport's.** Read the space the row actually
+    has, with the sidebar already subtracted, so one rule covers every sidebar width and the row
+    responds to a sidebar drag as well as a window resize. A threshold that does not depend on
+    text is a container query: `@container` on the row plus `@[NNNpx]:` variants
+    (`BoardManagerDialog`, `MonitorBody`, `form-layout.tsx`). A row whose collapse depends on how
+    wide its labels are picks its step by measuring them instead, because a width measured on
+    English does not hold in another language: German and Russian left the toolbar search 44px
+    across between two fixed steps. `src/renderer/components/board/toolbar-collapse.ts` is the
+    worked example (a pure step choice plus `data-*` variants the step sets), as `Tabs.tsx` is for
+    a tab row. Every class must be a complete literal, since Tailwind scans source text.
   - **An icon-only control keeps its name.** `hidden` on a label removes it from the
     accessibility tree, so a control that sheds its text carries an `aria-label`, and its hover
     text is a Tooltip ([[one-tooltip]]).
@@ -182,9 +186,13 @@ chrome unless these are stated.
   between a wide viewport and the floor (a wrapped label is the only thing that can grow it), no
   control's right edge passes the row's content edge, the search field keeps a coarse minimum
   width, and the title bar's project name never reaches the icon cluster. It also asserts the
-  labels ARE text at full width, which is what stops the whole spec passing vacuously: every
-  collapse class is a min-width container query, so a variant that fails to compile leaves the
-  row permanently icon-only, and an icon-only row trivially fits.
+  labels ARE text at full width, which is what stops the whole spec passing vacuously: a step
+  that never lets go leaves the row permanently icon-only, and an icon-only row trivially fits.
+  The toolbar cases run again in Russian, the longest language measured, because a ladder sized
+  on English passed every English case while Russian squeezed the search between two steps. They
+  find controls by test id, and prove the catalog loaded by `<html lang>` and the absence of the
+  English action, so a later correction to a translation cannot break them. `toolbar-collapse.test.ts`
+  pins the step choice itself.
 
   **There is deliberately no static check here, and this is the gap.** Whether a row clips needs
   the runtime tree, so a scan cannot express it; the spec above is the only guard, and a new

@@ -31,6 +31,11 @@
   // The adapters' display names, as main's sentence names an agent that cannot
   // approve plans; matches the mock's agents.list() entries.
   const AGENT_DISPLAY_NAMES = { claude: 'Claude Code', codex: 'Codex CLI', gemini: 'Gemini CLI' };
+  // The display languages the mock ships when a spec seeds no
+  // `window.__mockShippedLocales`: SHIPPED_LOCALES in src/shared/i18n/locales.ts,
+  // so the web demo's Language picker offers what the app ships.
+  // tests/unit/i18n-locales.test.ts pins it against that list.
+  const DEFAULT_SHIPPED_LOCALES = ['en', 'zh-CN', 'zh-TW', 'fr', 'de', 'it', 'es', 'ja', 'ko', 'ru', 'pt-BR', 'tr', 'pl', 'cs', 'hu'];
   // KEEP IN SYNC with AUTOMATION_TRIGGERS in src/shared/automation-manifest.ts:
   // the three groups, in the order a task meets them.
   const AUTOMATION_TRIGGER_ORDER = ['enter', 'turn_end', 'exit'];
@@ -5252,7 +5257,7 @@
     // Display language. The real bridge reads the boot locale off the window's
     // command line; the mock reads the config's displayLanguage, which is what
     // main would have started in. getInfo mirrors readLanguageInfo: the shipped
-    // list is SHIPPED_LOCALES (['en']) unless a spec seeds
+    // list is DEFAULT_SHIPPED_LOCALES unless a spec seeds
     // window.__mockShippedLocales, and the suggestion is
     // window.__mockLanguageSuggestion while the config has not answered it, and
     // counts each call in window.__mockLanguageGetInfoCalls so a spec can tell a
@@ -5263,7 +5268,7 @@
       },
       getInfo: async function () {
         window.__mockLanguageGetInfoCalls = (window.__mockLanguageGetInfoCalls || 0) + 1;
-        var shippedLocales = Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales.slice() : ['en'];
+        var shippedLocales = (Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales : DEFAULT_SHIPPED_LOCALES).slice();
         var suggestion = config.hasAnsweredLanguageSuggestion === true
           ? null
           : (window.__mockLanguageSuggestion || null);
@@ -5285,7 +5290,7 @@
       // window.__mockLanguageRestartHoldRelease() resolves every held call. With
       // the hold unset the call resolves immediately.
       setLanguageAndRestart: function (locale) {
-        var shipped = Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales : ['en'];
+        var shipped = Array.isArray(window.__mockShippedLocales) ? window.__mockShippedLocales : DEFAULT_SHIPPED_LOCALES;
         if (shipped.indexOf(locale) === -1) {
           return Promise.reject(new Error('mock language.setLanguageAndRestart: ' + locale + ' does not ship'));
         }

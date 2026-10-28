@@ -8,46 +8,57 @@ msgstr ""
 "Language: tr\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Temizle"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Clear and start over"
-msgstr ""
+msgstr "Temizle ve baştan başla"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr ""
+msgstr "Parola alanlarında dikte kapalıdır"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Inserting..."
-msgstr ""
+msgstr "Ekleniyor..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Listening"
-msgstr ""
+msgstr "Dinleniyor"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "No terminal or input focused"
-msgstr ""
+msgstr "Odaklanmış terminal veya giriş alanı yok"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
-msgstr ""
+msgstr "Model hazırlanıyor... %{downloadPercent}"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to insert"
-msgstr ""
+msgstr "Eklemek için bırakın"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Release to send"
-msgstr ""
+msgstr "Göndermek için bırakın"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Sending..."
-msgstr ""
+msgstr "Gönderiliyor..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
+#, fuzzy
 msgid "Still sending the last one"
-msgstr ""
+msgstr "Sonuncusu hâlâ gönderiliyor"

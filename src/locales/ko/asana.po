@@ -8,66 +8,82 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "취소"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Connect"
-msgstr ""
+msgstr "연결"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Connect Asana"
-msgstr ""
+msgstr "Asana 연결"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Could not save the token."
-msgstr ""
+msgstr "토큰을 저장할 수 없습니다."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Create a Personal Access Token"
-msgstr ""
+msgstr "개인 액세스 토큰 만들기"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Hide token"
-msgstr ""
+msgstr "토큰 숨기기"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
-msgstr ""
+msgstr "Kangentic은 개인 액세스 토큰으로 Asana에 연결합니다. 전체 설정은 30초 정도 걸립니다."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open app.asana.com/0/my-apps"
-msgstr ""
+msgstr "app.asana.com/0/my-apps 열기"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open Asana developer settings"
-msgstr ""
+msgstr "Asana 개발자 설정 열기"
 
 #. The two highlighted phrases are labels in Asana's own English interface. Keep them as written.
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
-msgstr ""
+msgstr "<0>Personal access tokens</0> 탭을 열고 <1>Create new token</1>을 클릭하세요. 이름을 \"Kangentic\"으로 지정하고 API 약관에 동의한 다음, Asana에 표시되는 토큰을 복사하세요(한 번만 표시됨)."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste it here"
-msgstr ""
+msgstr "여기에 붙여넣기"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste your Personal Access Token to continue."
-msgstr ""
+msgstr "계속하려면 개인 액세스 토큰을 붙여넣으세요."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste your token"
-msgstr ""
+msgstr "토큰 붙여넣기"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Personal Access Token"
-msgstr ""
+msgstr "개인 액세스 토큰"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Show token"
-msgstr ""
+msgstr "토큰 표시"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."
-msgstr ""
+msgstr "토큰은 로컬에 저장되며 운영 체제의 키체인으로 암호화됩니다. Kangentic은 토큰을 Asana 외에는 어디에도 보내지 않습니다."

@@ -215,7 +215,9 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                             from the tab's own tone so it follows hover and the
                             selection. The pair takes the free width. */}
                         <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
-                          <span>{translateText(tab.label)}</span>
+                          {/* Wraps, at a word or inside one too long for the rail
+                              ("Производительность"), rather than running past it. */}
+                          <span className="min-w-0 [overflow-wrap:anywhere]">{translateText(tab.label)}</span>
                           {isSearching && matchCount !== undefined && matchCount > 0 && (
                             <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
                           )}

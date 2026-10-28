@@ -8,280 +8,349 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{cachedTokenText} cached (system) · {conversationTokenText} conversation"
-msgstr ""
+msgstr "{cachedTokenText} 已快取 (系統) · {conversationTokenText} 對話"
 
 #: src/renderer/components/terminal/ContextBarPopover.tsx
+#, fuzzy
 msgid "{contextLabel} context window"
-msgstr ""
+msgstr "{contextLabel} 上下文視窗"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{pct}% context"
-msgstr ""
+msgstr "上下文 {pct}%"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "{remainingPercent}% remaining"
-msgstr ""
+msgstr "剩餘 {remainingPercent}%"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "{toolName} interrupted"
-msgstr ""
+msgstr "{toolName} 已中斷"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Activity"
-msgstr ""
+msgstr "活動"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "代理程式作用時間"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "All"
-msgstr ""
+msgstr "全部"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
-msgstr ""
+msgstr "看板設定檔 - 此任務依循的各欄代理程式、模型與投入程度"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Click to change effort"
-msgstr ""
+msgstr "按一下以變更推理強度"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Click to change model"
-msgstr ""
+msgstr "按一下以變更模型"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Collapse terminal panel"
-msgstr ""
+msgstr "摺疊終端機面板"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Compacting context..."
-msgstr ""
+msgstr "正在壓縮上下文..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Config changed"
-msgstr ""
+msgstr "設定已變更"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Context tokens used / total window size"
-msgstr ""
+msgstr "已使用的上下文權杖 / 視窗總大小"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Custom"
-msgstr ""
+msgstr "自訂"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgctxt "Default value"
 msgid "Default"
-msgstr ""
+msgstr "預設"
 
 #: src/renderer/components/terminal/FileDropOverlay.tsx
+#, fuzzy
 msgid "Drop files to insert path"
-msgstr ""
+msgstr "放開檔案以插入路徑"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Each column's own settings"
-msgstr ""
+msgstr "各欄自身的設定"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "推理強度"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Elapsed session time"
-msgstr ""
+msgstr "工作階段經過時間"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Expand terminal panel"
-msgstr ""
+msgstr "展開終端機面板"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Idle (no activity detected)"
-msgstr ""
+msgstr "閒置 (未偵測到活動)"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Idle (waiting for input)"
-msgstr ""
+msgstr "閒置 (正在等待輸入)"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Input / output tokens"
-msgstr ""
+msgstr "輸入 / 輸出權杖"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "Isolated session"
-msgstr ""
+msgstr "隔離的工作階段"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "模型"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Model done"
-msgstr ""
+msgstr "模型已完成"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
+#, fuzzy
 msgid "No active sessions. Drag a task into a column that starts an agent."
-msgstr ""
+msgstr "沒有作用中的工作階段。將任務拖曳至會啟動代理程式的欄位。"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "No activity yet for {filteredLabel}..."
-msgstr ""
+msgstr "{filteredLabel} 尚無活動..."
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+#, fuzzy
 msgid "No tool calls yet"
-msgstr ""
+msgstr "尚無工具呼叫"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Notice"
-msgstr ""
+msgstr "通知"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Plan approved automatically"
-msgstr ""
+msgstr "計畫已自動核准"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Profile - applies from the next column"
-msgstr ""
+msgstr "設定檔 - 從下一欄開始套用"
 
 #: src/renderer/components/terminal/ProfilePicker.tsx
+#, fuzzy
 msgid "Profile unavailable"
-msgstr ""
+msgstr "設定檔無法使用"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "速率限制"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets {resetMoment}"
-msgstr ""
+msgstr "重設時間：{resetMoment}"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets in {duration}"
-msgstr ""
+msgstr "{duration}後重設"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resets now"
-msgstr ""
+msgstr "立即重設"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Resuming agent..."
-msgstr ""
+msgstr "正在繼續代理程式..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Retrying"
-msgstr ""
+msgstr "正在重試"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Selecting tool..."
-msgstr ""
+msgstr "正在選取工具..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Service error"
-msgstr ""
+msgstr "服務錯誤"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "工作階段 API 費用"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Session ended"
-msgstr ""
+msgstr "工作階段已結束"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Session started"
-msgstr ""
+msgstr "工作階段已開始"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Starting agent..."
-msgstr ""
+msgstr "正在啟動代理程式..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Subagent"
-msgstr ""
+msgstr "子代理程式"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Subagent done"
-msgstr ""
+msgstr "子代理程式已完成"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Task done"
-msgstr ""
+msgstr "任務已完成"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Teammate idle"
-msgstr ""
+msgstr "隊友閒置"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Thinking..."
-msgstr ""
+msgstr "正在思考..."
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "This agent does not support changing the effort level from Kangentic"
-msgstr ""
+msgstr "此代理程式不支援從 Kangentic 變更推理強度"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "This agent does not support changing the model from Kangentic"
-msgstr ""
+msgstr "此代理程式不支援從 Kangentic 變更模型"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "工具"
 
 #: src/renderer/components/terminal/ToolBreakdownPopover.tsx
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "工具呼叫"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Tool calls across every run of this session"
-msgstr ""
+msgstr "此工作階段所有執行的工具呼叫次數"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Tool calls: {toolCallCountText}"
-msgstr ""
+msgstr "工具呼叫：{toolCallCountText}"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "Updated {timeAgo}"
-msgstr ""
+msgstr "更新於 {timeAgo}"
 
 #: src/renderer/components/terminal/ContextBarPopover.tsx
+#, fuzzy
 msgid "Use column default <0>({swimlaneDefaultText})</0>"
-msgstr ""
+msgstr "使用欄預設值 <0>({swimlaneDefaultText})</0>"
 
 #: src/renderer/components/terminal/ContextBar.tsx
+#, fuzzy
 msgid "v{taskAgentVersionNumber}"
-msgstr ""
+msgstr "v{taskAgentVersionNumber}"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Waiting for agent activity..."
-msgstr ""
+msgstr "正在等待代理程式活動..."
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Waiting for input"
-msgstr ""
+msgstr "正在等待輸入"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing the model this session was started with. Click to change."
-msgstr ""
+msgstr "正在等待代理程式回報。目前顯示此工作階段啟動時使用的模型。按一下以變更。"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing the model this session was started with. This agent does not support changing it from Kangentic."
-msgstr ""
+msgstr "正在等待代理程式回報。目前顯示此工作階段啟動時使用的模型。此代理程式不支援從 Kangentic 變更。"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing your configured default. Click to change."
-msgstr ""
+msgstr "正在等待代理程式回報。目前顯示您設定的預設值。按一下以變更。"
 
 #: src/renderer/components/terminal/ModelEffortPicker.tsx
+#, fuzzy
 msgid "Waiting for the agent to report. Showing your configured default. This agent does not support changing it from Kangentic."
-msgstr ""
+msgstr "正在等待代理程式回報。目前顯示您設定的預設值。此代理程式不支援從 Kangentic 變更。"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Worktree"
-msgstr ""
+msgstr "工作樹"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
+#, fuzzy
 msgid "Worktree removed"
-msgstr ""
+msgstr "工作樹已移除"

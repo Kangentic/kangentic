@@ -8,66 +8,82 @@ msgstr ""
 "Language: tr\n"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "İptal"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Connect"
-msgstr ""
+msgstr "Bağlan"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Connect Asana"
-msgstr ""
+msgstr "Asana'yı bağla"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Could not save the token."
-msgstr ""
+msgstr "Belirteç kaydedilemedi."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Create a Personal Access Token"
-msgstr ""
+msgstr "Kişisel Erişim Belirteci oluşturun"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Hide token"
-msgstr ""
+msgstr "Belirteci gizle"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
-msgstr ""
+msgstr "Kangentic, Asana'ya Kişisel Erişim Belirteci ile bağlanır. Kurulumun tamamı yaklaşık 30 saniye sürer."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open app.asana.com/0/my-apps"
-msgstr ""
+msgstr "app.asana.com/0/my-apps adresini açın"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open Asana developer settings"
-msgstr ""
+msgstr "Asana geliştirici ayarlarını açın"
 
 #. The two highlighted phrases are labels in Asana's own English interface. Keep them as written.
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
-msgstr ""
+msgstr "<0>Personal access tokens</0> sekmesini açın ve <1>Create new token</1> düğmesine tıklayın. Adını \"Kangentic\" koyun, API koşullarını kabul edin, ardından Asana'nın gösterdiği belirteci kopyalayın (yalnızca bir kez gösterilir)."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste it here"
-msgstr ""
+msgstr "Buraya yapıştırın"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste your Personal Access Token to continue."
-msgstr ""
+msgstr "Devam etmek için Kişisel Erişim Belirtecinizi yapıştırın."
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Paste your token"
-msgstr ""
+msgstr "Belirtecinizi yapıştırın"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Personal Access Token"
-msgstr ""
+msgstr "Kişisel Erişim Belirteci"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Show token"
-msgstr ""
+msgstr "Belirteci göster"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
+#, fuzzy
 msgid "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."
-msgstr ""
+msgstr "Belirteciniz yerel olarak saklanır ve işletim sisteminizin anahtar zinciriyle şifrelenir. Kangentic onu Asana dışında hiçbir yere göndermez."

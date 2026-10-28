@@ -8,689 +8,855 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(default)"
-msgstr ""
+msgstr "(기본값)"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "(unknown)"
-msgstr ""
+msgstr "(알 수 없음)"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agentName} default"
-msgstr ""
+msgstr "{agentName} 기본값"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{agents} reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "{agents}에서 이 호출의 사용량을 보고하지 않아 토큰과 비용을 알 수 없습니다."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {{blindLabel} does not report subagent usage, so fan-outs in this range cannot be counted.} other {{blindLabel} do not report subagent usage, so fan-outs in this range cannot be counted.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, other {{blindLabel}은(는) 하위 에이전트 사용량을 보고하지 않으므로 이 범위의 팬아웃을 집계할 수 없습니다.}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{blindAgentCount, plural, one {Excludes {blindLabel}, which does not report subagent usage.} other {Excludes {blindLabel}, which do not report subagent usage.}}"
-msgstr ""
+msgstr "{blindAgentCount, plural, other {하위 에이전트 사용량을 보고하지 않는 {blindLabel}은(는) 제외됩니다.}}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{cacheReadText} read"
-msgstr ""
+msgstr "읽기 {cacheReadText}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call, {failedCount} failed or timed out (still paid for).} other {{callCount} calls, {failedCount} failed or timed out (still paid for).}}"
-msgstr ""
+msgstr "{calls, plural, other {호출 {callCount}회, {failedCount}회 실패 또는 시간 초과(비용 청구됨).}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call.} other {{callCount} calls.}}"
-msgstr ""
+msgstr "{calls, plural, other {호출 {callCount}회.}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{calls, plural, one {{callCount} call} other {{callCount} calls}}"
-msgstr ""
+msgstr "{calls, plural, other {호출 {callCount}회}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {Cost per hour by model} day {Cost per day by model} week {Cost per week by model} other {Cost per {costBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {모델별 시간당 비용} day {모델별 일별 비용} week {모델별 주별 비용} other {모델별 {costBucketMinutes}분당 비용}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{costBucketUnit, select, hour {cost per hour, stacked by model} day {cost per day, stacked by model} week {cost per week, stacked by model} other {cost per {costBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{costBucketUnit, select, hour {시간당 비용, 모델별 누적} day {일별 비용, 모델별 누적} week {주별 비용, 모델별 누적} other {{costBucketMinutes}분당 비용, 모델별 누적}}"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "{freshInput} fresh input, {output} output, {cacheWrite} cache write, {cacheRead} cache read."
-msgstr ""
+msgstr "새 입력 {freshInput}, 출력 {output}, 캐시 쓰기 {cacheWrite}, 캐시 읽기 {cacheRead}."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{freshInputText} in / {outputText} out"
-msgstr ""
+msgstr "입력 {freshInputText} / 출력 {outputText}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{liveSessionCount} active now"
-msgstr ""
+msgstr "현재 {liveSessionCount}개 활성"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{nestedCount, plural, one {{nestedCountText} of {subagentTotalText} was spawned by another subagent.} other {{nestedCountText} of {subagentTotalText} were spawned by another subagent.}}"
-msgstr ""
+msgstr "{nestedCount, plural, other {{subagentTotalText}개 중 {nestedCountText}개는 다른 하위 에이전트가 생성했습니다.}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{skippedCount, plural, one {Skipped # project with an unreadable database: {skippedNames}} other {Skipped # projects with unreadable databases: {skippedNames}}}"
-msgstr ""
+msgstr "{skippedCount, plural, other {데이터베이스를 읽을 수 없는 프로젝트 #개를 건너뜀: {skippedNames}}}"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {cost}, {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}: {cost}, 토큰 {tokenCount}개"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens"
-msgstr ""
+msgstr "{sliceLabel}: 토큰 {tokenCount}개"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "{sliceLabel}: {tokenCount} tokens, {cost}"
-msgstr ""
+msgstr "{sliceLabel}: 토큰 {tokenCount}개, {cost}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCacheReadText} cache read."
-msgstr ""
+msgstr "캐시 읽기 {subagentCacheReadText}."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{subagentCount, plural, one {{subagentCountText} subagent} other {{subagentCountText} subagents}}"
-msgstr ""
+msgstr "{subagentCount, plural, other {하위 에이전트 {subagentCountText}개}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour over the selected range} day {Cache hit rate per day over the selected range} week {Cache hit rate per week over the selected range} other {Cache hit rate per {tokenBucketMinutes} minutes over the selected range}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {선택한 범위의 시간당 캐시 적중률} day {선택한 범위의 일별 캐시 적중률} week {선택한 범위의 주별 캐시 적중률} other {선택한 범위의 {tokenBucketMinutes}분당 캐시 적중률}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Cache hit rate per hour} day {Cache hit rate per day} week {Cache hit rate per week} other {Cache hit rate per {tokenBucketMinutes} minutes}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {시간당 캐시 적중률} day {일별 캐시 적중률} week {주별 캐시 적중률} other {{tokenBucketMinutes}분당 캐시 적중률}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {Tokens per hour by model} day {Tokens per day by model} week {Tokens per week by model} other {Tokens per {tokenBucketMinutes} minutes by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {모델별 시간당 토큰} day {모델별 일별 토큰} week {모델별 주별 토큰} other {모델별 {tokenBucketMinutes}분당 토큰}}"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "{tokenBucketUnit, select, hour {tokens per hour, stacked by model} day {tokens per day, stacked by model} week {tokens per week, stacked by model} other {tokens per {tokenBucketMinutes} minutes, stacked by model}}"
-msgstr ""
+msgstr "{tokenBucketUnit, select, hour {시간당 토큰, 모델별 누적} day {일별 토큰, 모델별 누적} week {주별 토큰, 모델별 누적} other {{tokenBucketMinutes}분당 토큰, 모델별 누적}}"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "{tokenCount} tokens"
-msgstr ""
+msgstr "토큰 {tokenCount}개"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "{tokensPerHourText} tokens/hr"
-msgstr ""
+msgstr "{tokensPerHourText} 토큰/시간"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "About these numbers"
-msgstr ""
+msgstr "이 수치에 대하여"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Agent with the most tokens in this project over the range"
-msgstr ""
+msgstr "기간 내 이 프로젝트에서 토큰을 가장 많이 사용한 에이전트"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "All Projects"
-msgstr ""
+msgstr "모든 프로젝트"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "All Time"
-msgstr ""
+msgstr "전체 기간"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "API-equivalent"
-msgstr ""
+msgstr "API 환산"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "API-equivalent cost as each agent reported it"
-msgstr ""
+msgstr "각 에이전트가 보고한 API 환산 비용"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "API-equivalent cost as reported by agents (subscription sessions may report $0)"
-msgstr ""
+msgstr "에이전트가 보고한 API 기준 비용(구독 세션은 $0으로 보고될 수 있음)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Apply"
-msgstr ""
+msgstr "적용"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Average {averageTime} per call."
-msgstr ""
+msgstr "호출당 평균 {averageTime}."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Average time the agent was working per session, excluding idle. Covers only sessions with activity tracking, which is fewer than the Sessions column counts."
-msgstr ""
+msgstr "유휴 시간을 제외하고 세션당 에이전트가 작업한 평균 시간입니다. 활동 추적이 있는 세션만 포함하므로 세션 열의 수보다 적습니다."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Average wall time per call"
-msgstr ""
+msgstr "호출당 평균 실제 소요 시간"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Avg Active"
-msgstr ""
+msgstr "평균 활성"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Avg Active is time the agent was working, over the sessions with activity tracking, which is fewer than the Sessions count."
-msgstr ""
+msgstr "평균 활성 시간은 에이전트가 작업한 시간으로, 활동 추적이 있는 세션을 기준으로 하며 이는 세션 수보다 적습니다."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Avg time"
-msgstr ""
+msgstr "평균 시간"
 
 #: src/renderer/components/stats/StatsFilterRow.tsx
+#, fuzzy
 msgid "Back to the full range"
-msgstr ""
+msgstr "전체 범위로 돌아가기"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "백그라운드"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Background calls"
-msgstr ""
+msgstr "백그라운드 호출"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Background calls are headless agent calls Kangentic makes for you, such as Condition checks and task titles. None is a session, so none is in the session figures."
-msgstr ""
+msgstr "백그라운드 호출은 조건 확인, 작업 제목 생성 등 Kangentic이 대신 수행하는 헤드리스 에이전트 호출입니다. 세션이 아니므로 세션 수치에는 포함되지 않습니다."
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Background calls by day"
-msgstr ""
+msgstr "일별 백그라운드 호출"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Burn Rate"
-msgstr ""
+msgstr "소비율"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (cost/hr)"
-msgstr ""
+msgstr "소모율(비용/시간)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate (tokens/hr)"
-msgstr ""
+msgstr "소모율(토큰/시간)"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in cost per hour"
-msgstr ""
+msgstr "시간에 따른 시간당 비용 소모율"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Burn rate over time in tokens per hour"
-msgstr ""
+msgstr "시간에 따른 시간당 토큰 소모율"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By agent"
-msgstr ""
+msgstr "에이전트별"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By effort"
-msgstr ""
+msgstr "노력 수준별"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By model"
-msgstr ""
+msgstr "모델별"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "By subagent"
-msgstr ""
+msgstr "하위 에이전트별"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cache hit rate"
-msgstr ""
+msgstr "캐시 적중률"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache read"
-msgstr ""
+msgstr "캐시 읽기"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cache Read"
-msgstr ""
+msgstr "캐시 읽기"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache read as a share of all input: {cacheReadText} read against {cacheWriteText} written and {freshInputText} fresh."
-msgstr ""
+msgstr "전체 입력 중 캐시 읽기 비율: 읽기 {cacheReadText}, 쓰기 {cacheWriteText}, 새 입력 {freshInputText}."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cache read over all input"
-msgstr ""
+msgstr "전체 입력 대비 캐시 읽기"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cache Reads"
-msgstr ""
+msgstr "캐시 읽기"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Cache write"
-msgstr ""
+msgstr "캐시 쓰기"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls"
-msgstr ""
+msgstr "호출"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Calls that errored or timed out. They still cost what the agent reported."
-msgstr ""
+msgstr "오류가 발생했거나 시간이 초과된 호출입니다. 이 호출에도 에이전트가 보고한 비용이 그대로 발생합니다."
 
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Chart metric"
-msgstr ""
+msgstr "차트 지표"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Choose which project's usage to view"
-msgstr ""
+msgstr "사용량을 볼 프로젝트 선택"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Clear custom range"
-msgstr ""
+msgstr "사용자 지정 범위 지우기"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "CLI invocations, counting each resume of a conversation separately"
-msgstr ""
+msgstr "CLI 호출 수(대화 재개는 각각 별도로 집계)"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Close usage stats"
-msgstr ""
+msgstr "사용량 통계 닫기"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Compactions"
-msgstr ""
+msgstr "압축"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Context compactions across the range"
-msgstr ""
+msgstr "범위 전체의 컨텍스트 압축 횟수"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
+#, fuzzy
 msgid "cost"
-msgstr ""
+msgstr "비용"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "비용"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Cost and main-thread tokens averaged over the whole selected range, idle time included. Both lines use the same hours, so each one times the range reproduces the tile above it."
-msgstr ""
+msgstr "선택한 범위 전체(유휴 시간 포함)에 대한 평균 비용 및 메인 스레드 토큰입니다. 두 줄 모두 같은 시간을 기준으로 하므로 각 값에 범위를 곱하면 위 타일의 값이 됩니다."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost covers finalized sessions plus any currently running, refreshed live as they progress."
-msgstr ""
+msgstr "비용에는 완료된 세션과 현재 실행 중인 세션이 포함되며, 진행에 따라 실시간으로 갱신됩니다."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cost is API-equivalent list price for the tokens each agent reported, not what a subscription was billed; subscription sessions may report $0."
-msgstr ""
+msgstr "비용은 각 에이전트가 보고한 토큰에 대한 API 기준 정가이며 구독 청구 금액이 아닙니다. 구독 세션은 $0으로 보고될 수 있습니다."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Cost Share"
-msgstr ""
+msgstr "비용 점유율"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cost/hr"
-msgstr ""
+msgstr "비용/시간"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "cumulative cost"
-msgstr ""
+msgstr "누적 비용"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative cost over the selected range"
-msgstr ""
+msgstr "선택한 범위의 누적 비용"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Cumulative spend"
-msgstr ""
+msgstr "누적 지출"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgctxt "Date range"
 msgid "Custom"
-msgstr ""
+msgstr "사용자 지정"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Day"
-msgstr ""
+msgstr "날짜"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Edit the custom range"
-msgstr ""
+msgstr "사용자 지정 범위 편집"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Failed"
-msgstr ""
+msgstr "실패"
 
 #: src/renderer/components/stats/LazyStatsDashboard.tsx
+#, fuzzy
 msgid "Failed to load the usage dashboard"
-msgstr ""
+msgstr "사용량 대시보드를 불러오지 못했습니다"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Failed to load usage stats: {error}"
-msgstr ""
+msgstr "사용량 통계를 불러오지 못함: {error}"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files"
-msgstr ""
+msgstr "파일"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Files changed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "에이전트 세션이 변경한 파일(기본 분기 대비 git diff)"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Finalized sessions in the range"
-msgstr ""
+msgstr "기간 내 완료된 세션"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Fresh in"
-msgstr ""
+msgstr "신규 입력"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output from {subagentTurnCountText} subagent turn(s). The Tokens tile is main-thread only, so these are on top of it; the session's reported Cost already covers them."
-msgstr ""
+msgstr "하위 에이전트 턴 {subagentTurnCountText}회의 새 입력 및 출력입니다. 토큰 타일은 메인 스레드만 집계하므로 이 값은 추가분이며, 세션에서 보고된 비용에는 이미 포함되어 있습니다."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Fresh input and output on the main thread. {cacheWriteText} cache write and {cacheReadText} cache read are counted separately and priced differently."
-msgstr ""
+msgstr "메인 스레드의 새 입력 및 출력입니다. 캐시 쓰기 {cacheWriteText}와(과) 캐시 읽기 {cacheReadText}은(는) 별도로 집계되며 가격이 다르게 책정됩니다."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Fresh input tokens across the turns in this range (cache reads counted separately)"
-msgstr ""
+msgstr "기간 내 턴의 새 입력 토큰(캐시 읽기는 별도 집계)"
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "From"
-msgstr ""
+msgstr "시작"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Headless agent calls Kangentic makes for you, kept out of the totals above"
-msgstr ""
+msgstr "Kangentic이 대신 수행하는 헤드리스 에이전트 호출이며, 위 합계에는 포함되지 않습니다"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Input"
-msgstr ""
+msgstr "입력"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Job"
-msgstr ""
+msgstr "작업"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Last Active"
-msgstr ""
+msgstr "마지막 활동"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines"
-msgstr ""
+msgstr "줄"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Lines added / removed by agent sessions (git diff vs the base branch)"
-msgstr ""
+msgstr "에이전트 세션이 추가/삭제한 줄(기본 분기 대비 git diff)"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Live"
-msgstr ""
+msgstr "실시간"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "모델"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Most recent session start in the range"
-msgstr ""
+msgstr "기간 내 가장 최근 세션 시작 시간"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No activity tracking recorded in this range"
-msgstr ""
+msgstr "이 범위에 기록된 활동 추적 없음"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in the last 2 hours"
-msgstr ""
+msgstr "최근 2시간 동안 기록된 에이전트 턴 없음"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No agent turns recorded in this range"
-msgstr ""
+msgstr "이 범위에 기록된 에이전트 턴 없음"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "No background calls in this range"
-msgstr ""
+msgstr "이 기간에 백그라운드 호출이 없습니다"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "No calls in this range"
-msgstr ""
+msgstr "이 기간에 호출 없음"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No cost reported by agents in this range"
-msgstr ""
+msgstr "이 범위에 에이전트가 보고한 비용 없음"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in the last 2 hours"
-msgstr ""
+msgstr "최근 2시간 동안 기록된 입력 없음"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No input recorded in this range"
-msgstr ""
+msgstr "이 범위에 기록된 입력 없음"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No per-turn token data recorded in this range"
-msgstr ""
+msgstr "이 범위에 기록된 턴별 토큰 데이터 없음"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "No project usage recorded yet"
-msgstr ""
+msgstr "아직 기록된 프로젝트 사용량 없음"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No spend recorded in the last 2 hours"
-msgstr ""
+msgstr "최근 2시간 동안 기록된 지출 없음"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "No subagent turns recorded in this range"
-msgstr ""
+msgstr "이 범위에 기록된 하위 에이전트 턴 없음"
 
 #: src/renderer/components/stats/ChartCard.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "No usage recorded yet"
-msgstr ""
+msgstr "아직 기록된 사용량이 없습니다"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "None reported by these agents in this range"
-msgstr ""
+msgstr "이 범위에 이 에이전트들이 보고한 항목 없음"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Not reported by these agents in this range"
-msgstr ""
+msgstr "이 범위에 이 에이전트들이 보고하지 않음"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Other"
-msgstr ""
+msgstr "기타"
 
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgid "Other ({foldedCount})"
-msgstr ""
+msgstr "기타({foldedCount})"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/useStatsData.ts
+#, fuzzy
 msgctxt "Usage statistics"
 msgid "Output"
-msgstr ""
+msgstr "출력"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Output tokens across the turns in this range"
-msgstr ""
+msgstr "기간 내 턴의 출력 토큰"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
-msgstr ""
+msgstr "세션 {coveredSessionsCompact}개 기준"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Per-turn capture starts {captureStart}, so this covers less of the range than Cost does."
-msgstr ""
+msgstr "턴별 수집이 {captureStart}부터 시작되므로 이 값은 비용보다 범위를 적게 포함합니다."
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "Pick a custom month range"
-msgstr ""
+msgstr "사용자 지정 월 범위 선택"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Priced at API list rates from the tokens each agent reported. Not what a subscription was billed."
-msgstr ""
+msgstr "각 에이전트가 보고한 토큰을 기준으로 API 정가로 계산한 금액입니다. 구독 청구 금액과는 다릅니다."
 
 #: src/renderer/components/stats/PerProjectTable.tsx
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "프로젝트"
 
 #: src/renderer/components/stats/StatsScopePicker.tsx
+#, fuzzy
 msgid "Project scope"
-msgstr ""
+msgstr "프로젝트 범위"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Registered project - click a row to view that project in the dashboard"
-msgstr ""
+msgstr "등록된 프로젝트 - 행을 클릭하면 대시보드에서 해당 프로젝트를 봅니다"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "다시 시도"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "세션"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Share of fresh input plus output across all projects in the range"
-msgstr ""
+msgstr "기간 내 전체 프로젝트 중 새 입력과 출력의 점유율"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Subagents"
-msgstr ""
+msgstr "하위 에이전트"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "The agent reported no usage for these calls, so their tokens and cost are not known."
-msgstr ""
+msgstr "에이전트가 이 호출의 사용량을 보고하지 않아 토큰과 비용을 알 수 없습니다."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "The Knowledge Graph index is restarting. The figures refresh when it is back."
-msgstr ""
+msgstr "Knowledge Graph 인덱스를 다시 시작하는 중입니다. 다시 시작되면 수치가 새로 고쳐집니다."
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Month"
-msgstr ""
+msgstr "이번 달"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "This project's share of the total cost across all projects in the range"
-msgstr ""
+msgstr "기간 내 전체 프로젝트 총비용 중 이 프로젝트의 점유율"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "This Week"
-msgstr ""
+msgstr "이번 주"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "Time the agent was working, per session, excluding idle. Covers the {coveredSessionsText} session(s) with activity tracking in this range, which is fewer than the Sessions tile counts."
-msgstr ""
+msgstr "세션당 에이전트가 작업한 시간이며 유휴 시간은 제외됩니다. 이 범위에서 활동이 추적된 세션 {coveredSessionsText}개를 대상으로 하므로 세션 타일의 수보다 적습니다."
 
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
+#, fuzzy
 msgid "To"
-msgstr ""
+msgstr "종료"
 
 #: src/renderer/components/stats/period-options.ts
+#, fuzzy
 msgid "Today"
-msgstr ""
+msgstr "오늘"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Token Share"
-msgstr ""
+msgstr "토큰 점유율"
 
 #: src/renderer/components/stats/BreakdownCard.tsx
 #: src/renderer/components/stats/charts/KngDonut.tsx
+#, fuzzy
 msgid "tokens"
-msgstr ""
+msgstr "토큰"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsMetricToggle.tsx
+#, fuzzy
 msgid "Tokens"
-msgstr ""
+msgstr "토큰"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "Tokens and cost as each agent reported them"
-msgstr ""
+msgstr "각 에이전트가 보고한 토큰 및 비용"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens are counted per turn and kept apart by type, because cache reads are far larger and far cheaper than fresh input. Per-turn counting started later than cost, so a long range covers less of it."
-msgstr ""
+msgstr "토큰은 턴별로 집계되며 유형별로 구분됩니다. 캐시 읽기는 새 입력보다 훨씬 많고 훨씬 저렴하기 때문입니다. 턴별 집계는 비용보다 늦게 시작되었으므로 긴 범위에서는 일부만 포함됩니다."
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "Tokens by type"
-msgstr ""
+msgstr "유형별 토큰"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens In"
-msgstr ""
+msgstr "입력 토큰"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens Out"
-msgstr ""
+msgstr "출력 토큰"
 
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens per 5 minutes, stacked by token type"
-msgstr ""
+msgstr "5분당 토큰, 토큰 유형별 누적"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tokens served from the prompt cache, counted apart from Tokens In"
-msgstr ""
+msgstr "프롬프트 캐시에서 제공된 토큰(입력 토큰과 별도 집계)"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/StatsDashboardBody.tsx
+#, fuzzy
 msgid "tokens/hr"
-msgstr ""
+msgstr "토큰/시간"
 
 #: src/renderer/components/stats/KpiTiles.tsx
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Tool Calls"
-msgstr ""
+msgstr "도구 호출"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Top Agent"
-msgstr ""
+msgstr "최다 사용 에이전트"
 
 #: src/renderer/components/stats/BackgroundCard.tsx
+#, fuzzy
 msgid "Total"
-msgstr ""
+msgstr "합계"
 
 #: src/renderer/components/stats/PerProjectTable.tsx
+#, fuzzy
 msgid "Total tool calls across sessions in the range"
-msgstr ""
+msgstr "기간 내 세션 전체의 총 도구 호출 수"
 
 #: src/renderer/components/stats/StatsPage.tsx
+#, fuzzy
 msgid "Usage"
-msgstr ""
+msgstr "사용량"
 
 #: src/renderer/components/stats/background-display.ts
+#, fuzzy
 msgid "Usage reported for {reportedCount} of them."
-msgstr ""
+msgstr "그중 {reportedCount}회의 사용량이 보고되었습니다."
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last month"
-msgstr ""
+msgstr "지난달 대비"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs last week"
-msgstr ""
+msgstr "지난주 대비"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs preceding window"
-msgstr ""
+msgstr "이전 기간 대비"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs prior 2h"
-msgstr ""
+msgstr "이전 2시간 대비"
 
 #: src/renderer/components/stats/KpiTiles.tsx
+#, fuzzy
 msgid "vs yesterday"
-msgstr ""
+msgstr "어제 대비"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
+#, fuzzy
 msgid "What the CLI reported answering with; with no report, the model Kangentic asked for, or the agent default"
-msgstr ""
+msgstr "CLI가 응답에 사용했다고 보고한 모델이며, 보고가 없으면 Kangentic이 요청한 모델 또는 에이전트 기본값"

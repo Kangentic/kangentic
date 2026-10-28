@@ -8,175 +8,218 @@ msgstr ""
 "Language: ko\n"
 
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
+#, fuzzy
 msgid "Add terminal"
-msgstr ""
+msgstr "터미널 추가"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "명령 터미널"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Command Terminals"
-msgstr ""
+msgstr "명령 터미널"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Commands"
-msgstr ""
+msgstr "명령"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't check out branch"
-msgstr ""
+msgstr "분기를 체크아웃할 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Couldn't open the window"
-msgstr ""
+msgstr "창을 열 수 없습니다"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't resume conversation"
-msgstr ""
+msgstr "대화를 재개할 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't start Command Terminal"
-msgstr ""
+msgstr "Command Terminal을 시작할 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't stop the old terminal"
-msgstr ""
+msgstr "이전 터미널을 중지할 수 없음"
 
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Couldn't stop the terminal"
-msgstr ""
+msgstr "터미널을 중지할 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't switch branch"
-msgstr ""
+msgstr "분기를 전환할 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Earlier"
-msgstr ""
+msgstr "이전"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
-msgstr ""
+msgstr "터미널을 종료하며, 사용한 경우 대화는 이전 항목에 유지됩니다"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Expand {name}"
-msgstr ""
+msgstr "{name} 펼치기"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Expand terminal"
-msgstr ""
+msgstr "터미널 확장"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "변경 사항 패널을 로드하지 못했습니다"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Hide changes"
-msgstr ""
+msgstr "변경 내용 숨기기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "명령 터미널 숨기기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide panel"
-msgstr ""
+msgstr "패널 숨기기"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Its process may still be running."
-msgstr ""
+msgstr "프로세스가 아직 실행 중일 수 있습니다."
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Maximize panel"
-msgstr ""
+msgstr "패널 최대화"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Move to its own window"
-msgstr ""
+msgstr "별도 창으로 이동"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open folder"
-msgstr ""
+msgstr "폴더 열기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "새 창에서 열기"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open project folder"
-msgstr ""
+msgstr "프로젝트 폴더 열기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Restore panel"
-msgstr ""
+msgstr "패널 복원"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Restore the grid"
-msgstr ""
+msgstr "그리드 복원"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
-msgstr ""
+msgstr "{name} 재개"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Resuming conversation..."
-msgstr ""
+msgstr "대화 재개 중..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Running"
-msgstr ""
+msgstr "실행 중"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "변경 내용 표시"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Starting Command Terminal..."
-msgstr ""
+msgstr "Command Terminal 시작 중..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop {name}"
-msgstr ""
+msgstr "{name} 중지"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop one of the four to add another"
-msgstr ""
+msgstr "추가하려면 4개 중 하나를 중지하세요"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stop terminal"
-msgstr ""
+msgstr "터미널 중지"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping terminal"
-msgstr ""
+msgstr "터미널 중지 중"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping..."
-msgstr ""
+msgstr "중지 중..."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Switch branch"
-msgstr ""
+msgstr "분기 전환"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "The terminals are back in the panel."
-msgstr ""
+msgstr "터미널이 패널로 돌아왔습니다."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Toggle changes"
-msgstr ""
+msgstr "변경 내용 전환"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Untitled conversation"
-msgstr ""
+msgstr "제목 없는 대화"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Wait for the terminals to start."
-msgstr ""
+msgstr "터미널이 시작될 때까지 기다리세요."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Widen the panel to restore the grid"
-msgstr ""
+msgstr "그리드를 복원하려면 패널을 넓히세요"

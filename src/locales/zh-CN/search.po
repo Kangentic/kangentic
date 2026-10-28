@@ -8,105 +8,131 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "{matchCount, plural, one {# match} other {# matches}}"
-msgstr ""
+msgstr "{matchCount, plural, other {# 个匹配项}}"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "所有项目"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "archived"
-msgstr ""
+msgstr "已归档"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Ask the Knowledge Graph: <0>\"{question}\"</0>"
-msgstr ""
+msgstr "询问知识图谱：<0>“{question}”</0>"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Backlog"
-msgstr ""
+msgstr "待办列表"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Close search"
-msgstr ""
+msgstr "关闭搜索"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "对话"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "History"
-msgstr ""
+msgstr "历史记录"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Matched by meaning"
-msgstr ""
+msgstr "按语义匹配"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in any project."
-msgstr ""
+msgstr "所有项目中均无关键字匹配项。"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "No keyword matches in this project."
-msgstr ""
+msgstr "此项目中无关键字匹配项。"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the active terminal"
-msgstr ""
+msgstr "打开活动终端"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Opens the conversation history"
-msgstr ""
+msgstr "打开对话历史记录"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "项目"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search across tasks, backlog, conversations, session events, and projects."
-msgstr ""
+msgstr "在任务、待办列表、对话、会话事件和项目中搜索。"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search failed"
-msgstr ""
+msgstr "搜索失败"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Search tasks, backlog, conversations, session events, projects..."
-msgstr ""
+msgstr "搜索任务、待办列表、对话、会话事件、项目..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Searching..."
-msgstr ""
+msgstr "正在搜索..."
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Session events"
-msgstr ""
+msgstr "会话事件"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "System"
-msgstr ""
+msgstr "系统"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "任务"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "终端"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "This project"
-msgstr ""
+msgstr "此项目"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Tool"
-msgstr ""
+msgstr "工具"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "Type to find by title, description, or tool call."
-msgstr ""
+msgstr "输入以按标题、描述或工具调用查找。"
 
 #: src/renderer/components/search/SearchPalette.tsx
+#, fuzzy
 msgid "You"
-msgstr ""
+msgstr "你"

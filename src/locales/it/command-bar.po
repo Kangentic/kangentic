@@ -8,175 +8,218 @@ msgstr ""
 "Language: it\n"
 
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
+#, fuzzy
 msgid "Add terminal"
-msgstr ""
+msgstr "Aggiungi terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Terminale comandi"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Command Terminals"
-msgstr ""
+msgstr "Terminali dei comandi"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Commands"
-msgstr ""
+msgstr "Comandi"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't check out branch"
-msgstr ""
+msgstr "Impossibile eseguire il checkout del ramo"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Couldn't open the window"
-msgstr ""
+msgstr "Impossibile aprire la finestra"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't resume conversation"
-msgstr ""
+msgstr "Impossibile riprendere la conversazione"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't start Command Terminal"
-msgstr ""
+msgstr "Impossibile avviare il Command Terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't stop the old terminal"
-msgstr ""
+msgstr "Impossibile arrestare il terminale precedente"
 
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Couldn't stop the terminal"
-msgstr ""
+msgstr "Impossibile arrestare il terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't switch branch"
-msgstr ""
+msgstr "Impossibile cambiare ramo"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Earlier"
-msgstr ""
+msgstr "Precedenti"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
-msgstr ""
+msgstr "Chiude il terminale e, se è stata usata, la conversazione resta in Precedenti"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Expand {name}"
-msgstr ""
+msgstr "Espandi {name}"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Expand terminal"
-msgstr ""
+msgstr "Espandi terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "Impossibile caricare il pannello Modifiche"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Hide changes"
-msgstr ""
+msgstr "Nascondi modifiche"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "Nascondi terminale dei comandi"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide panel"
-msgstr ""
+msgstr "Nascondi pannello"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Its process may still be running."
-msgstr ""
+msgstr "Il processo potrebbe essere ancora in esecuzione."
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Maximize panel"
-msgstr ""
+msgstr "Ingrandisci pannello"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Move to its own window"
-msgstr ""
+msgstr "Sposta in una finestra separata"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open folder"
-msgstr ""
+msgstr "Apri cartella"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "Apri in una nuova finestra"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open project folder"
-msgstr ""
+msgstr "Apri cartella del progetto"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Restore panel"
-msgstr ""
+msgstr "Ripristina pannello"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Restore the grid"
-msgstr ""
+msgstr "Ripristina la griglia"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
-msgstr ""
+msgstr "Riprendi {name}"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Resuming conversation..."
-msgstr ""
+msgstr "Ripresa della conversazione..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Running"
-msgstr ""
+msgstr "In esecuzione"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "Mostra modifiche"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Starting Command Terminal..."
-msgstr ""
+msgstr "Avvio del Command Terminal..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop {name}"
-msgstr ""
+msgstr "Arresta {name}"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop one of the four to add another"
-msgstr ""
+msgstr "Arrestane uno dei quattro per aggiungerne un altro"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stop terminal"
-msgstr ""
+msgstr "Arresta terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping terminal"
-msgstr ""
+msgstr "Arresto del terminale"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping..."
-msgstr ""
+msgstr "Arresto..."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Switch branch"
-msgstr ""
+msgstr "Cambia ramo"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "The terminals are back in the panel."
-msgstr ""
+msgstr "I terminali sono tornati nel pannello."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Toggle changes"
-msgstr ""
+msgstr "Attiva/disattiva modifiche"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Untitled conversation"
-msgstr ""
+msgstr "Conversazione senza titolo"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Wait for the terminals to start."
-msgstr ""
+msgstr "Attendi l'avvio dei terminali."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Widen the panel to restore the grid"
-msgstr ""
+msgstr "Allarga il pannello per ripristinare la griglia"

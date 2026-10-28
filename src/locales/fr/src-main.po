@@ -8,131 +8,163 @@ msgstr ""
 "Language: fr\n"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{place}. Stalled: {reason}"
-msgstr ""
+msgstr "{place}. Bloqué : {reason}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{place}. Waiting on you: {reason}"
-msgstr ""
+msgstr "{place}. En attente de votre action : {reason}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{projectName}: {workflowName}"
-msgstr ""
+msgstr "{projectName} : {workflowName}"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
-msgstr ""
+msgstr "{provider} bloque la connexion depuis les applications qui intègrent un navigateur, ce qui est généralement la cause ici. Vous pouvez ouvrir la page de connexion dans votre navigateur par défaut, mais vous connecter là-bas ne vous connecte pas dans ce volet. Pour utiliser le volet lui-même, connectez-vous avec une autre méthode sur ce site."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} returned a sign-in error"
-msgstr ""
+msgstr "{provider} a renvoyé une erreur de connexion"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} would not complete this sign-in."
-msgstr ""
+msgstr "{provider} n'a pas pu finaliser cette connexion."
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
-msgstr ""
+msgstr "Workflow {workflowTitle}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "A project"
-msgstr ""
+msgstr "Un projet"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "A task"
-msgstr ""
+msgstr "Une tâche"
 
 #: src/main/diagnostics/renderer-recovery.ts
+#, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
-msgstr ""
+msgstr "Mémoire système disponible à ce moment-là : {availableMb} Mo."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Fermer"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Terminal de commandes"
 
 #: src/main/index.ts
+#, fuzzy
 msgctxt "Action"
 msgid "Copy"
-msgstr ""
+msgstr "Copier"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Copy Image"
-msgstr ""
+msgstr "Copier l'image"
 
 #: src/main/diagnostics/renderer-recovery.ts
+#, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
-msgstr ""
+msgstr "Mémoire système libre (commit) à ce moment-là : {remainingMb} Mo."
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
-msgstr ""
+msgstr "Kangentic ne peut pas lire sa base de données"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Kangentic's window stopped responding"
-msgstr ""
+msgstr "La fenêtre de Kangentic ne répond plus"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Needs permission: {place}"
-msgstr ""
+msgstr "Autorisation requise : {place}"
 
 #: src/main/window-open-policy.ts
+#, fuzzy
 msgid "Not secure - {host}"
-msgstr ""
+msgstr "Non sécurisé - {host}"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "OK"
-msgstr ""
+msgstr "OK"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Open in my browser"
-msgstr ""
+msgstr "Ouvrir dans mon navigateur"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Paste"
-msgstr ""
+msgstr "Coller"
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Quit"
-msgstr ""
+msgstr "Quitter"
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "Réessayer"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Running agents are resuming."
-msgstr ""
+msgstr "Les agents en cours d'exécution reprennent."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Select All"
-msgstr ""
+msgstr "Tout sélectionner"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Session crashed: {label}"
-msgstr ""
+msgstr "Plantage de la session : {label}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Terminals restarted"
-msgstr ""
+msgstr "Terminaux redémarrés"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "La fenêtre a planté ({crashReason}) et n'a pas pu récupérer après {attempts, plural, one {# tentative} many {# de tentatives} other {# tentatives}} en {minutes, plural, one {# minute} many {# de minutes} other {# minutes}}."
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
-msgstr ""
+msgstr "Cela signifie généralement qu'un autre programme bloque le fichier : une analyse antivirus, une synchronisation OneDrive ou Dropbox, ou un disque défaillant."
 
 #: src/main/window-open-policy.ts
+#, fuzzy
 msgid "Unknown site"
-msgstr ""
+msgstr "Site inconnu"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."
-msgstr ""
+msgstr "Vos agents sont toujours en cours d'exécution en arrière-plan. Redémarrez Kangentic pour vous y reconnecter."

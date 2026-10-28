@@ -8,175 +8,218 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
+#, fuzzy
 msgid "Add terminal"
-msgstr ""
+msgstr "Terminál hozzáadása"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Parancsterminál"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Command Terminals"
-msgstr ""
+msgstr "Parancsterminálok"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Commands"
-msgstr ""
+msgstr "Parancsok"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't check out branch"
-msgstr ""
+msgstr "Nem sikerült kivenni az ágat"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Couldn't open the window"
-msgstr ""
+msgstr "Nem sikerült megnyitni az ablakot"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't resume conversation"
-msgstr ""
+msgstr "Nem sikerült folytatni a beszélgetést"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't start Command Terminal"
-msgstr ""
+msgstr "Nem sikerült elindítani a parancsterminált"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't stop the old terminal"
-msgstr ""
+msgstr "Nem sikerült leállítani a régi terminált"
 
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Couldn't stop the terminal"
-msgstr ""
+msgstr "Nem sikerült leállítani a terminált"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Couldn't switch branch"
-msgstr ""
+msgstr "Nem sikerült ágat váltani"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Earlier"
-msgstr ""
+msgstr "Korábbiak"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
-msgstr ""
+msgstr "Bezárja a terminált; ha használták, a beszélgetése a Korábbiak között megmarad"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Expand {name}"
-msgstr ""
+msgstr "{name} kibontása"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Expand terminal"
-msgstr ""
+msgstr "Terminál kibontása"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr ""
+msgstr "Nem sikerült betölteni a Módosítások panelt"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Hide changes"
-msgstr ""
+msgstr "Változások elrejtése"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide Command Terminal"
-msgstr ""
+msgstr "Parancsterminál elrejtése"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Hide panel"
-msgstr ""
+msgstr "Panel elrejtése"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
+#, fuzzy
 msgid "Its process may still be running."
-msgstr ""
+msgstr "Lehet, hogy a folyamata még fut."
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Maximize panel"
-msgstr ""
+msgstr "Panel teljes méretre"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Move to its own window"
-msgstr ""
+msgstr "Áthelyezés külön ablakba"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open folder"
-msgstr ""
+msgstr "Mappa megnyitása"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "Megnyitás új ablakban"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Open project folder"
-msgstr ""
+msgstr "Projektmappa megnyitása"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
+#, fuzzy
 msgid "Restore panel"
-msgstr ""
+msgstr "Panel visszaállítása"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Restore the grid"
-msgstr ""
+msgstr "Rács visszaállítása"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
-msgstr ""
+msgstr "{name} folytatása"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Resuming conversation..."
-msgstr ""
+msgstr "Beszélgetés folytatása..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Running"
-msgstr ""
+msgstr "Fut"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
-msgstr ""
+msgstr "Módosítások megjelenítése"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Starting Command Terminal..."
-msgstr ""
+msgstr "Parancsterminál indítása..."
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop {name}"
-msgstr ""
+msgstr "{name} leállítása"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Stop one of the four to add another"
-msgstr ""
+msgstr "Állítson le egyet a négyből egy újabb hozzáadásához"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stop terminal"
-msgstr ""
+msgstr "Terminál leállítása"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping terminal"
-msgstr ""
+msgstr "Terminál leállítása folyamatban"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Stopping..."
-msgstr ""
+msgstr "Leállítás..."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Switch branch"
-msgstr ""
+msgstr "Ágváltás"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "The terminals are back in the panel."
-msgstr ""
+msgstr "A terminálok visszakerültek a panelre."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Toggle changes"
-msgstr ""
+msgstr "Módosítások be/ki"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Untitled conversation"
-msgstr ""
+msgstr "Névtelen beszélgetés"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
+#, fuzzy
 msgid "Wait for the terminals to start."
-msgstr ""
+msgstr "Várja meg, amíg a terminálok elindulnak."
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Widen the panel to restore the grid"
-msgstr ""
+msgstr "Szélesítse ki a panelt a rács visszaállításához"

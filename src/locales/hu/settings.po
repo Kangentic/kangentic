@@ -8,2607 +8,3232 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "{blurb}. Opens the docs page."
-msgstr ""
+msgstr "{blurb}. Megnyitja a dokumentációs oldalt."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "{comboName} is already in use by your OS or another app. Pick another."
-msgstr ""
+msgstr "A(z) {comboName} kombinációt már használja az operációs rendszer vagy egy másik alkalmazás. Válasszon másikat."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "{conflictComboCount, plural, one {Conflict detected} other {Conflicts detected}}"
-msgstr ""
+msgstr "{conflictComboCount, plural, one {Ütközés észlelve} other {Ütközések észlelve}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count, plural, one {# file} other {# files}}"
-msgstr ""
+msgstr "{count, plural, one {# fájl} other {# fájl}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}"
-msgstr ""
+msgstr "{count} / {finished}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{count} of {finished}, {skipped} skipped"
-msgstr ""
+msgstr "{count} / {finished}, {skipped} kihagyva"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName} - {accuracyLabel} ({sizeMb} MB)"
-msgstr ""
+msgstr "{displayName} – {accuracyLabel} ({sizeMb} MB)"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "{displayName} execution"
-msgstr ""
+msgstr "{displayName} végrehajtása"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} not found - click to re-detect"
-msgstr ""
+msgstr "{displayName} nem található - kattintson az újbóli észleléshez"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "{displayName} path"
-msgstr ""
+msgstr "{displayName} elérési útja"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb} MB"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{displayName}, {approxSizeMb} MB, {activeBackend}"
-msgstr ""
+msgstr "{displayName}, {approxSizeMb} MB, {activeBackend}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {percent}%"
-msgstr ""
+msgstr "{displayName}, {percent}%"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{displayName}, {sizeMb} MB"
-msgstr ""
+msgstr "{displayName}, {sizeMb} MB"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{hours, plural, one {# hr left} other {# hr left}}"
-msgstr ""
+msgstr "{hours, plural, one {# óra van hátra} other {# óra van hátra}}"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "{label}, always on"
-msgstr ""
+msgstr "{label}, mindig bekapcsolva"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {# min left} other {# min left}}"
-msgstr ""
+msgstr "{minutes, plural, one {# perc van hátra} other {# perc van hátra}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Checks each open PR about every # minute; off, it checks only when you open the project.} other {Checks each open PR about every # minutes; off, it checks only when you open the project.}}"
-msgstr ""
+msgstr "{minutes, plural, one {Minden nyitott PR-t nagyjából # percenként ellenőriz; kikapcsolva csak a projekt megnyitásakor.} other {Minden nyitott PR-t nagyjából # percenként ellenőriz; kikapcsolva csak a projekt megnyitásakor.}}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "{minutes, plural, one {Fetches every # minute so behind counts stay current; creating a worktree always fetches first.} other {Fetches every # minutes so behind counts stay current; creating a worktree always fetches first.}}"
-msgstr ""
+msgstr "{minutes, plural, one {# percenként lekér, hogy a lemaradási számok naprakészek maradjanak; worktree létrehozása előtt mindig lekér.} other {# percenként lekér, hogy a lemaradási számok naprakészek maradjanak; worktree létrehozása előtt mindig lekér.}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{minutes, plural, one {retrying in # min} other {retrying in # min}}"
-msgstr ""
+msgstr "{minutes, plural, one {újrapróbálás # perc múlva} other {újrapróbálás # perc múlva}}"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "{percent}%, {displayName}"
-msgstr ""
+msgstr "{percent}%, {displayName}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{percent}%, {timeLeft}"
-msgstr ""
+msgstr "{percent}%, {timeLeft}"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "{releaseBufferMs} ms"
-msgstr ""
+msgstr "{releaseBufferMs} ms"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
-msgstr ""
+msgstr "{toWrite, plural, one {# feladat} other {# feladat}}"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A call failed"
-msgstr ""
+msgstr "Egy hívás sikertelen volt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
-msgstr ""
+msgstr "Lebegő panel az egyes munkamenetek aktivitási állapotáról és utolsó átmeneteiről, a .kangentic/debug mappába is kiírva."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
-msgstr ""
+msgstr "Az előbeállítás kiválasztja az élő és a finomító modellt. Egyéni módban Ön választja ki őket."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "A relay you run"
-msgstr ""
+msgstr "Saját üzemeltetésű továbbító"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A sentence or two per Done task, so questions find it."
-msgstr ""
+msgstr "Kész feladatonként egy-két mondat, hogy a kérdések megtalálják."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "A sentence or two per Done task, written in the background from its title, description, files and commits."
-msgstr ""
+msgstr "Egy-két mondat minden kész feladatról, a háttérben készül a címe, leírása, fájljai és commitjai alapján."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small model answers as well and faster, but invents more details in task summaries."
-msgstr ""
+msgstr "Egy kis modell ugyanolyan jól és gyorsabban válaszol, de több részletet talál ki a feladatösszefoglalókban."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "A small, fast model is usually enough to read one reply and answer yes or no."
-msgstr ""
+msgstr "Egy válasz elolvasásához és igen/nem válaszhoz általában elég egy kis, gyors modell."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "About {label}"
-msgstr ""
+msgstr "Tudnivalók: {label}"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Activity engine debug overlay"
-msgstr ""
+msgstr "Aktivitásmotor hibakereső rétege"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Add shortcut"
-msgstr ""
+msgstr "Parancsikon hozzáadása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
-msgstr ""
+msgstr "A futó szerver címe (pl. http://10.0.0.5:4096)"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Advanced"
-msgstr ""
+msgstr "Speciális"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Ügynök"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active"
-msgstr ""
+msgstr "Ügynök aktív"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent active time"
-msgstr ""
+msgstr "Ügynök aktív ideje"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Agent Browser"
-msgstr ""
+msgstr "Ügynökböngésző"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Agent CLI"
-msgstr ""
+msgstr "Ágens CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent CLI version"
-msgstr ""
+msgstr "Ágens CLI verziója"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent crash"
-msgstr ""
+msgstr "Ágens összeomlása"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Agent default"
-msgstr ""
+msgstr "Ügynök alapértelmezése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Agent idle"
-msgstr ""
+msgstr "Ügynök tétlen"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Agent session starts, exit codes, and duration"
-msgstr ""
+msgstr "Ágensmunkamenetek indítása, kilépési kódjai és időtartama"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "All"
-msgstr ""
+msgstr "Összes"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow eval"
-msgstr ""
+msgstr "Eval engedélyezése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow interaction"
-msgstr ""
+msgstr "Interakció engedélyezése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow navigation"
-msgstr ""
+msgstr "Navigáció engedélyezése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Allow unsafe operations"
-msgstr ""
+msgstr "Nem biztonságos műveletek engedélyezése"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Already default"
-msgstr ""
+msgstr "Már alapértelmezett"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Also saves info, debug and log output to .kangentic/logs, beside the errors and warnings always kept."
-msgstr ""
+msgstr "Az info, debug és log kimenetet is a .kangentic/logs mappába menti, a mindig megőrzött hibák és figyelmeztetések mellé."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Alt+F4 closes the window and is reserved by your OS."
-msgstr ""
+msgstr "Az Alt+F4 bezárja az ablakot, ezért az operációs rendszer számára fenntartott."
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgid "Always on while the index is on"
-msgstr ""
+msgstr "Mindig bekapcsolva, amíg az index be van kapcsolva"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Amount of detail shown on task cards"
-msgstr ""
+msgstr "A feladatkártyákon megjelenő részletek mennyisége"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "an unbound key"
-msgstr ""
+msgstr "egy hozzá nem rendelt billentyű"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Analytics"
-msgstr ""
+msgstr "Analitika"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "between agent names"
 msgid "and"
-msgstr ""
+msgstr "és"
 
 #: src/renderer/components/settings/settings-card.tsx
+#, fuzzy
 msgctxt "between two links"
 msgid "and"
-msgstr ""
+msgstr "és"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Animations"
-msgstr ""
+msgstr "Animációk"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Anonymous analytics and data collection policy"
-msgstr ""
+msgstr "Névtelen analitika és adatgyűjtési szabályzat"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Anonymous analytics only. No personal data collected."
-msgstr ""
+msgstr "Csak anonim analitika. Személyes adatot nem gyűjtünk."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "API key (optional)"
-msgstr ""
+msgstr "API-kulcs (nem kötelező)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App crashes and errors (stack traces with machine-specific paths removed from app code)"
-msgstr ""
+msgstr "Alkalmazásösszeomlások és hibák (veremkivonatok, az alkalmazáskódból eltávolított gépspecifikus útvonalakkal)"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "App launches, platform, and architecture"
-msgstr ""
+msgstr "Alkalmazásindítások, platform és architektúra"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Appearance"
-msgstr ""
+msgstr "Megjelenés"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in both the header bar and kebab menu"
-msgstr ""
+msgstr "A fejlécsávban és a kebabmenüben is megjelenik"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail header bar only"
-msgstr ""
+msgstr "Csak a feladatrészletek fejlécsávjában jelenik meg"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Appears in the task detail kebab menu only"
-msgstr ""
+msgstr "Csak a feladatrészletek kebabmenüjében jelenik meg"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Applies after a restart, and does not change agent output or terminal text."
-msgstr ""
+msgstr "Újraindítás után lép életbe, és nem módosítja az ágens kimenetét vagy a terminál szövegét."
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Applies to all projects"
-msgstr ""
+msgstr "Minden projektre vonatkozik"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
-msgstr ""
+msgstr "Az észlelt kangentic.json-változás azonnali alkalmazása megerősítés kérése nélkül."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Ask us anything about what Kangentic collects."
-msgstr ""
+msgstr "Kérdezzen bármit arról, mit gyűjt a Kangentic."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Authentication"
-msgstr ""
+msgstr "Hitelesítés"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgctxt "acceleration"
 msgid "Auto"
-msgstr ""
+msgstr "Automatikus"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-apply board config changes"
-msgstr ""
+msgstr "Táblakonfiguráció-változások automatikus alkalmazása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-cleanup"
-msgstr ""
+msgstr "Automatikus takarítás"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Auto-detect"
-msgstr ""
+msgstr "Automatikus felismerés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-fetch remote"
-msgstr ""
+msgstr "Távoli tároló automatikus lekérése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-focus idle sessions"
-msgstr ""
+msgstr "Tétlen munkamenetek automatikus fókuszálása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-refresh PRs"
-msgstr ""
+msgstr "PR-ek automatikus frissítése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-resume agents on restart"
-msgstr ""
+msgstr "Ágensek automatikus folytatása újraindításkor"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Auto-submit"
-msgstr ""
+msgstr "Automatikus elküldés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automatically switch the bottom panel to idle sessions. Idle tabs stay highlighted either way."
-msgstr ""
+msgstr "Az alsó panel automatikusan a tétlen munkamenetekre vált. A tétlen lapok így is, úgy is kiemelve maradnak."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Automation agent"
-msgstr ""
+msgstr "Automatizálási ágens"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Background"
-msgstr ""
+msgstr "Háttér"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Bar"
-msgstr ""
+msgstr "Függőleges vonal"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Basic accuracy"
-msgstr ""
+msgstr "Alapszintű pontosság"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Behavior"
-msgstr ""
+msgstr "Működés"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Best accuracy"
-msgstr ""
+msgstr "Legjobb pontosság"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Block"
-msgstr ""
+msgstr "Blokk"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Board"
-msgstr ""
+msgstr "Tábla"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Board layout"
-msgstr ""
+msgstr "Tábla elrendezése"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Both"
-msgstr ""
+msgstr "Mindkettő"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Both"
-msgstr ""
+msgstr "Mindkettő"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Branch"
-msgstr ""
+msgstr "Ág"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Branches"
-msgstr ""
+msgstr "Ágak"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "Böngésző"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser automation"
-msgstr ""
+msgstr "Böngészőautomatizálás"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data"
-msgstr ""
+msgstr "Böngészőadatok"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Browser data cleared"
-msgstr ""
+msgstr "Böngészőadatok törölve"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Browser pane"
-msgstr ""
+msgstr "Böngészőpanel"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Cancel"
-msgstr ""
+msgstr "Mégse"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card density"
-msgstr ""
+msgstr "Kártyasűrűség"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Card preview"
-msgstr ""
+msgstr "Kártya előnézete"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "Kártyák"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change background"
-msgstr ""
+msgstr "Háttér módosítása"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change cursor"
-msgstr ""
+msgstr "Kurzor módosítása"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Change foreground"
-msgstr ""
+msgstr "Előtér módosítása"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "Módosítások"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Checking..."
-msgstr ""
+msgstr "Ellenőrzés..."
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose a model"
-msgstr ""
+msgstr "Válasszon modellt"
 
 #: src/renderer/components/settings/tabs/answer-agent-rows.tsx
+#, fuzzy
 msgid "Choose an agent"
-msgstr ""
+msgstr "Válasszon ügynököt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Claude 5h / weekly quota bars"
-msgstr ""
+msgstr "Claude 5 órás / heti kvótasávok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Clear browser data"
-msgstr ""
+msgstr "Böngészőadatok törlése"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear browser data?"
-msgstr ""
+msgstr "Törli a böngészőadatokat?"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clear data"
-msgstr ""
+msgstr "Adatok törlése"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Clearing..."
-msgstr ""
+msgstr "Törlés..."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CLI path"
-msgstr ""
+msgstr "CLI elérési útja"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click empty space outside a task window to close it. Controls, task cards, and running terminals still act on the first click. The agent keeps running and reattaches when you reopen the task."
-msgstr ""
+msgstr "Kattintson a feladatablakon kívüli üres területre a bezárásához. A vezérlők, a feladatkártyák és a futó terminálok továbbra is az első kattintásra reagálnak. Az ágens tovább fut, és újracsatlakozik, amikor újra megnyitja a feladatot."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Click, type and drag. Off is read-only."
-msgstr ""
+msgstr "Kattintás, gépelés, húzás. Kikapcsolva csak olvasható."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Clicking outside never closes a task window"
-msgstr ""
+msgstr "A külső kattintás soha nem zárja be a feladatablakot"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Close on outside click"
-msgstr ""
+msgstr "Bezárás külső kattintásra"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Close settings"
-msgstr ""
+msgstr "Beállítások bezárása"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes a task window only when it is the only one open"
-msgstr ""
+msgstr "Csak akkor zárja be a feladatablakot, ha az az egyetlen nyitott"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes every open task window"
-msgstr ""
+msgstr "Bezárja az összes nyitott feladatablakot"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Closes the focused task window"
-msgstr ""
+msgstr "Bezárja a fókuszban lévő feladatablakot"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Closing now will discard your edits to the workflow agent prompt."
-msgstr ""
+msgstr "Ha most bezárja, a munkafolyamat-ügynök promptjának módosításai elvesznek."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud endpoint"
-msgstr ""
+msgstr "Felhőbeli végpont"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription API key"
-msgstr ""
+msgstr "Felhőalapú átírás API-kulcsa"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription endpoint"
-msgstr ""
+msgstr "Felhőalapú átírás végpontja"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Cloud transcription model"
-msgstr ""
+msgstr "Felhőalapú átírás modellje"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+Q quits the app and is reserved by macOS."
-msgstr ""
+msgstr "A Cmd+Q kilép az alkalmazásból, ezért a macOS számára fenntartott."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Cmd+W is reserved by macOS for closing windows."
-msgstr ""
+msgstr "A Cmd+W a macOS számára fenntartott az ablakok bezárásához."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Collapse unchanged regions"
-msgstr ""
+msgstr "Változatlan részek összecsukása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Colors"
-msgstr ""
+msgstr "Színek"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Column width"
-msgstr ""
+msgstr "Oszlopszélesség"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Column width and which panels show around the board."
-msgstr ""
+msgstr "Oszlopszélesség és a tábla körül megjelenő panelek."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Comfortable"
-msgstr ""
+msgstr "Tágas"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Command"
-msgstr ""
+msgstr "Parancs"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits"
-msgstr ""
+msgstr "Commitok"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Commits indexed"
-msgstr ""
+msgstr "Indexelt commitok"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Compact"
-msgstr ""
+msgstr "Tömör"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "Config sync"
-msgstr ""
+msgstr "Konfiguráció szinkronizálása"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Conflict"
-msgstr ""
+msgstr "Ütközés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Connect a phone over an end-to-end encrypted relay."
-msgstr ""
+msgstr "Telefon csatlakoztatása E2E-titkosított közvetítőn át."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connected"
-msgstr ""
+msgstr "Csatlakozva"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Connected"
-msgstr ""
+msgstr "Csatlakozva"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "Csatlakozás…"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Context bar"
-msgstr ""
+msgstr "Környezetsáv"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Context window"
-msgstr ""
+msgstr "Környezetablak"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations"
-msgstr ""
+msgstr "Beszélgetések"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations embedded"
-msgstr ""
+msgstr "Beágyazott beszélgetések"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Conversations, tasks, commits, summaries and source code are all rebuilt, in every project. {rebuildAsk, plural, one {The # summary written with an earlier model is rewritten} other {The # summaries written with an earlier model are rewritten}}, about {rewriteCalls, plural, one {# call} other {# calls}} in the background."
-msgstr ""
+msgstr "A beszélgetések, feladatok, commitok, összefoglalók és a forráskód minden projektben újraépülnek. {rebuildAsk, plural, one {A korábbi modellel írt # összefoglaló újraíródik} other {A korábbi modellel írt # összefoglaló újraíródik}}, a háttérben nagyjából {rewriteCalls, plural, one {# hívással} other {# hívással}}."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Cookies and storage the embedded browser keeps."
-msgstr ""
+msgstr "A beágyazott böngésző által tárolt sütik és adatok."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copied"
-msgstr ""
+msgstr "Másolva"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copied!"
-msgstr ""
+msgstr "Másolva!"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgctxt "verb"
 msgid "Copy"
-msgstr ""
+msgstr "Másolás"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Copy \"{loginCommand}\" to clipboard"
-msgstr ""
+msgstr "„{loginCommand}” másolása a vágólapra"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Copy files"
-msgstr ""
+msgstr "Fájlok másolása"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Copy pairing link"
-msgstr ""
+msgstr "Párosítási hivatkozás másolása"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Copy, paste and interrupt inside a terminal."
-msgstr ""
+msgstr "Másolás, beillesztés és megszakítás a terminálban."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cost"
-msgstr ""
+msgstr "Költség"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Could not start pairing."
-msgstr ""
+msgstr "Nem sikerült elindítani a párosítást."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Couldn't clear browser data"
-msgstr ""
+msgstr "Nem sikerült törölni a böngészőadatokat"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "Nem sikerült az újraindítás"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Couldn't save base branch"
-msgstr ""
+msgstr "Nem sikerült menteni az alapágat"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Couldn't save shortcuts"
-msgstr ""
+msgstr "Nem sikerült menteni a parancsikonokat"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Count merge bypass as ready"
-msgstr ""
+msgstr "Egyesítési megkerülés készként számítva"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Crash and error reports go to Sentry so bugs can be diagnosed and fixed. Stack traces are recorded with machine-specific paths removed from app code; no task content, code, or personal data is attached."
-msgstr ""
+msgstr "Az összeomlás- és hibajelentések a Sentry szolgáltatáshoz kerülnek, hogy a hibákat diagnosztizálni és javítani lehessen. A veremkivonatok az alkalmazáskódból eltávolított gépspecifikus útvonalakkal kerülnek rögzítésre; feladattartalom, kód vagy személyes adat nem kerül csatolásra."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Crash reports"
-msgstr ""
+msgstr "Összeomlási jelentések"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "CSS font-family for the terminal"
-msgstr ""
+msgstr "A terminál CSS font-family értéke"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cumulative tool invocations"
-msgstr ""
+msgstr "Összesített eszközhívások"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Cursor"
-msgstr ""
+msgstr "Kurzor"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Cursor style"
-msgstr ""
+msgstr "Kurzorstílus"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "dictation mode"
 msgid "Custom"
-msgstr ""
+msgstr "Egyéni"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgctxt "hotkey state"
 msgid "Custom"
-msgstr ""
+msgstr "Egyéni"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Custom"
-msgstr ""
+msgstr "Egyéni"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom commands accessible from the task detail dialog"
-msgstr ""
+msgstr "A feladat részletei párbeszédablakból elérhető egyéni parancsok"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Custom commands in the task window's header and menu."
-msgstr ""
+msgstr "Egyéni parancsok a feladatablak fejlécében és menüjében."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Custom relay address"
-msgstr ""
+msgstr "Egyéni továbbító címe"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Customize the terminal background, foreground, and cursor color"
-msgstr ""
+msgstr "A terminál háttér-, előtér- és kurzorszínének testreszabása"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Dark"
-msgstr ""
+msgstr "Sötét"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Dark, when the system is dark"
-msgstr ""
+msgstr "Sötét, ha a rendszer sötét"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Debug overlays and logs for diagnosing sessions."
-msgstr ""
+msgstr "Hibakereső rétegek és naplók a munkamenetek diagnosztizálásához."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Debug tools in development builds."
-msgstr ""
+msgstr "Hibakereső eszközök fejlesztői buildekben."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card density"
 msgid "Default"
-msgstr ""
+msgstr "Alapértelmezett"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Default"
-msgstr ""
+msgstr "Alapértelmezett"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default base branch"
-msgstr ""
+msgstr "Alapértelmezett alapág"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Default browser pane URL"
-msgstr ""
+msgstr "Böngészőpanel alapértelmezett URL-je"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default diff scope"
-msgstr ""
+msgstr "Alapértelmezett diff-hatókör"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default layout for Git file diffs in the Changes panel: split (side by side) or inline (unified)."
-msgstr ""
+msgstr "A Git-fájldiffek alapértelmezett elrendezése a Változások panelen: osztott (egymás mellett) vagy beágyazott (egyesített)."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Default URL"
-msgstr ""
+msgstr "Alapértelmezett URL"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Description"
-msgstr ""
+msgstr "Leírás"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Desktop"
-msgstr ""
+msgstr "Asztali"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Detected"
-msgstr ""
+msgstr "Észlelve"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Detected shell name"
-msgstr ""
+msgstr "Az észlelt shell neve"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev inspection bridge"
-msgstr ""
+msgstr "Fejlesztői vizsgálóhíd"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Dev triggers"
-msgstr ""
+msgstr "Fejlesztői triggerek"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Developer"
-msgstr ""
+msgstr "Fejlesztői"
 
 #: src/renderer/components/settings/tabs/DeveloperTab.tsx
+#, fuzzy
 msgid "Diagnostics"
-msgstr ""
+msgstr "Diagnosztika"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Dictation"
-msgstr ""
+msgstr "Diktálás"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes ({workerError}). Restart Kangentic to try again."
-msgstr ""
+msgstr "A diktálás ismétlődő összeomlások miatt leállt ({workerError}). Indítsa újra a Kangenticet az újrapróbálkozáshoz."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Dictation stopped after repeated crashes. Restart Kangentic to try again."
-msgstr ""
+msgstr "A diktálás ismétlődő összeomlások miatt leállt. Indítsa újra a Kangenticet az újrapróbálkozáshoz."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Diff view"
-msgstr ""
+msgstr "Eltérésnézet"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Elvetés"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "Elveti a nem mentett módosításokat?"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Disconnected"
-msgstr ""
+msgstr "Leválasztva"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Display"
-msgstr ""
+msgstr "Megjelenítés"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Display language"
-msgstr ""
+msgstr "Megjelenítési nyelv"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Download failed"
-msgstr ""
+msgstr "Sikertelen letöltés"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Downloading"
-msgstr ""
+msgstr "Letöltés"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgid "Each agent session gets a local MCP server and discovers these tools on its own. Tasks an agent creates appear on the board with a toast."
-msgstr ""
+msgstr "Minden ügynökmunkamenet saját helyi MCP-kiszolgálót kap, és önállóan felderíti ezeket az eszközöket. Az ügynök által létrehozott feladatok értesítéssel jelennek meg a táblán."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Editors"
-msgstr ""
+msgstr "Szerkesztők"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Erőfeszítés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Elapsed time"
-msgstr ""
+msgstr "Eltelt idő"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Embed a Browser pane in task windows that agents can open."
-msgstr ""
+msgstr "Ügynökök által nyitható böngészőpanel a feladatablakokban."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Enter path manually"
-msgstr ""
+msgstr "Elérési út megadása kézzel"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Environment variables that turn telemetry off."
-msgstr ""
+msgstr "Környezeti változók a telemetria kikapcsolásához."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Events"
-msgstr ""
+msgstr "Események"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Every crash writes a record with its source-mapped stack to .kangentic/logs/crashes; it is always on."
-msgstr ""
+msgstr "Minden összeomlás rekordot ír forrásleképezett veremmel a .kangentic/logs/crashes mappába; mindig be van kapcsolva."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Every hotkey is at its default"
-msgstr ""
+msgstr "Minden gyorsbillentyű az alapértelmezett"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Execution"
-msgstr ""
+msgstr "Végrehajtás"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand"
-msgstr ""
+msgstr "Kibontás"
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Expand the prompt"
-msgstr ""
+msgstr "Prompt kibontása"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Extension"
-msgstr ""
+msgstr "Kiterjesztés"
 
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
+#, fuzzy
 msgctxt "connection state"
 msgid "Failed"
-msgstr ""
+msgstr "Sikertelen"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Fair accuracy"
-msgstr ""
+msgstr "Elfogadható pontosság"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "File list"
-msgstr ""
+msgstr "Fájllista"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "File paths, project names, or code"
-msgstr ""
+msgstr "Fájlútvonalak, projektnevek vagy kód"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "File sort"
-msgstr ""
+msgstr "Fájlrendezés"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Files & Terminal"
-msgstr ""
+msgstr "Fájlok és terminál"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Files copied into each new worktree, such as .env."
-msgstr ""
+msgstr "Minden új worktree-be átmásolt fájlok, például .env."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Files to copy into a worktree"
-msgstr ""
+msgstr "Worktree-be másolandó fájlok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Finds your work by meaning and answers questions."
-msgstr ""
+msgstr "Jelentés alapján megtalálja a munkáit, és válaszol."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Flat file list"
-msgstr ""
+msgstr "Egyszintű fájllista"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Focused"
-msgstr ""
+msgstr "Fókuszban lévő"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Fold away large unchanged spans so a big file shows only the changed hunks with a little context."
-msgstr ""
+msgstr "A nagy, változatlan szakaszok összecsukása, így egy nagy fájl csak a módosított részeket mutatja kevés környezettel."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Folder on disk this project points at. Move it to a new location; all tasks, history, and worktrees move with it."
-msgstr ""
+msgstr "A lemezen lévő mappa, amelyre a projekt mutat. Áthelyezéskor minden feladat, előzmény és worktree vele együtt költözik."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Follow system appearance"
-msgstr ""
+msgstr "Rendszer megjelenésének követése"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font family"
-msgstr ""
+msgstr "Betűcsalád"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Font size"
-msgstr ""
+msgstr "Betűméret"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Foreground"
-msgstr ""
+msgstr "Előtér"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Forwards encrypted traffic and never holds your keys."
-msgstr ""
+msgstr "Továbbítja a titkosított forgalmat, és sosem tárolja a kulcsait."
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "General"
-msgstr ""
+msgstr "Általános"
 
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Git"
-msgstr ""
+msgstr "Git"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Git changes"
-msgstr ""
+msgstr "Git-módosítások"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Give agents tools to work with your board."
-msgstr ""
+msgstr "Eszközök az ügynököknek a táblával való munkához."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Gives tasks the option to run in their own git worktree."
-msgstr ""
+msgstr "A feladatok saját git worktree-ben is futhatnak."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Good accuracy"
-msgstr ""
+msgstr "Jó pontosság"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Graphics acceleration"
-msgstr ""
+msgstr "Grafikus gyorsítás"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Hardware rendering and motion across the whole app."
-msgstr ""
+msgstr "Hardveres renderelés és animációk az egész alkalmazásban."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hardware rendering for the app window and terminals."
-msgstr ""
+msgstr "Hardveres megjelenítés az alkalmazásablakhoz és a terminálokhoz."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Header"
-msgstr ""
+msgstr "Fejléc"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hide whitespace-only changes in the diff to filter reformatting noise."
-msgstr ""
+msgstr "Csak szóközt érintő változások elrejtése a diffben az újraformázási zaj kiszűréséhez."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "High accuracy"
-msgstr ""
+msgstr "Magas pontosság"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
-msgstr ""
+msgstr "A nagyobb erőfeszítés lassabban válaszol, és segíthet a sok feladatra kiterjedő számlálásban; az összefoglalók mindig az ágens alapértelmezését használják."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
-msgstr ""
+msgstr "A beszédgombot tartva diktálhat terminálba vagy mezőbe."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
-msgstr ""
+msgstr "Tartsa lenyomva a felvételhez, engedje fel az átirat beszúrásához. Módosítás a Gyorsbillentyűk között."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys"
-msgstr ""
+msgstr "Gyorsbillentyűk"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Hotkeys that work anywhere in the app."
-msgstr ""
+msgstr "Az alkalmazásban bárhol működő gyorsbillentyűk."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Hover a tile to try it on the whole app, click to keep it."
-msgstr ""
+msgstr "Vigye az egeret egy csempe fölé a kipróbáláshoz, kattintson a megtartáshoz."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgid "How changes to the shared board config are applied."
-msgstr ""
+msgstr "A megosztott táblakonfiguráció változásainak alkalmazási módja."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "How it works"
-msgstr ""
+msgstr "Működés"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "How linked PRs are kept up to date."
-msgstr ""
+msgstr "A csatolt PR-ek naprakészen tartásának módja."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long an agent waits on you before the idle timer pauses it."
-msgstr ""
+msgstr "Mennyi ideig várhat Önre egy ágens, mielőtt a tétlenségi időzítő szünetelteti."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How long toasts remain visible"
-msgstr ""
+msgstr "Az értesítések láthatóságának időtartama"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "How long toasts stay up and how many stack at once."
-msgstr ""
+msgstr "Felugró értesítések időtartama és egyszerre látható száma."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How many agents run at once and what happens when idle."
-msgstr ""
+msgstr "Hány ágens fut egyszerre, és mi történik tétlen állapotban."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "How much each task card shows on the board."
-msgstr ""
+msgstr "Mennyi információt mutasson a táblán az egyes feladatkártyák."
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "How task windows close and where they reopen."
-msgstr ""
+msgstr "Hogyan záródnak be a feladatablakok, és hol nyílnak meg újra."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the agent handles tool approvals"
-msgstr ""
+msgstr "Hogyan kezeli az ágens az eszközök jóváhagyását"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the changed files are sorted and grouped."
-msgstr ""
+msgstr "A módosított fájlok rendezésének és csoportosításának módja."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "How the Changes panel orders files: by name, by status (added / modified / deleted), by size (most changes first), or by extension."
-msgstr ""
+msgstr "A Változások panel fájlrendezése: név, állapot (hozzáadott / módosított / törölt), méret (a legtöbb változás elöl) vagy kiterjesztés szerint."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "How the Changes panel shows a file's diff."
-msgstr ""
+msgstr "A Módosítások panel így jeleníti meg a fájlok eltéréseit."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How the relay works"
-msgstr ""
+msgstr "A továbbító működése"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "How to install and pair"
-msgstr ""
+msgstr "Telepítés és párosítás"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Icon"
-msgstr ""
+msgstr "Ikon"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ignore whitespace"
-msgstr ""
+msgstr "Szóközök figyelmen kívül hagyása"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header and its menu"
-msgstr ""
+msgstr "A feladatablak fejlécében és menüjében"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window header only"
-msgstr ""
+msgstr "Csak a feladatablak fejlécében"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "In the task window menu only"
-msgstr ""
+msgstr "Csak a feladatablak menüjében"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "In use by another app"
-msgstr ""
+msgstr "Egy másik alkalmazás használja"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Index"
-msgstr ""
+msgstr "Index"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Indexing and the local model that finds by meaning live in the <0>Knowledge Graph</0> tab, and run on your device with no API key. When you ask a question, the agent you choose there receives it with the board's task list, the conversation passages and code found for it, and the chat so far. To write a task summary, it receives that task's title, description, commits, changed files and closing messages."
-msgstr ""
+msgstr "Az indexelés és a jelentés alapján kereső helyi modell a <0>Tudásgráf</0> lapon található, és API-kulcs nélkül fut az eszközén. Amikor kérdést tesz fel, az ott kiválasztott ágens megkapja azt a tábla feladatlistájával, a hozzá talált beszélgetésrészletekkel és kóddal, valamint az eddigi csevegéssel együtt. Feladat-összefoglaló írásához megkapja az adott feladat címét, leírását, commitjait, módosított fájljait és záró üzeneteit."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff view mode"
 msgid "Inline"
-msgstr ""
+msgstr "Beágyazott"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inline when narrow"
-msgstr ""
+msgstr "Keskeny nézetben egyesített"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Input / output totals"
-msgstr ""
+msgstr "Bemeneti / kimeneti összesítés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Inspection bridge"
-msgstr ""
+msgstr "Vizsgálati híd"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Installing the app, pairing a phone, and push notifications."
-msgstr ""
+msgstr "Az alkalmazás telepítése, telefon párosítása és leküldéses értesítések."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Judges conditions and workflow steps, and names tasks."
-msgstr ""
+msgstr "Feltételeket és folyamatlépéseket ítél meg, feladatokat nevez el."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Kangentic could not write its settings file."
-msgstr ""
+msgstr "A Kangentic nem tudta írni a beállításfájlját."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Kangentic Mobile"
-msgstr ""
+msgstr "Kangentic Mobile"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
-msgstr ""
+msgstr "A Kangentic újraindul a módosítás alkalmazásához. A futó ügynökök felfüggesztődnek, és az újraindítás után folytatódnak."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Kangentic runs {wslAgentList} from WSL."
-msgstr ""
+msgstr "A Kangentic a WSL-ből futtatja: {wslAgentList}."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Kangentic turned this off after repeated failures."
-msgstr ""
+msgstr "A Kangentic ismételt hibák miatt kikapcsolta ezt."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Kangentic-operated relay"
-msgstr ""
+msgstr "A Kangentic által üzemeltetett továbbító"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Keep capturing briefly after release so the last word is not clipped."
-msgstr ""
+msgstr "A felengedés után még rövid ideig rögzít, hogy az utolsó szó ne vágódjon le."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Szerkesztés folytatása"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for a task's Browser pane."
-msgstr ""
+msgstr "Billentyűk a feladat Böngésző paneljéhez."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for an open task window."
-msgstr ""
+msgstr "Billentyűk a megnyitott feladatablakhoz."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Keys for the Changes panel and its diff."
-msgstr ""
+msgstr "Billentyűk a Módosítások panelhez és annak diffjéhez."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Tudásgráf"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "noun"
 msgid "Label"
-msgstr ""
+msgstr "Felirat"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Language"
-msgstr ""
+msgstr "Nyelv"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Latest"
-msgstr ""
+msgstr "Legutóbbi"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Launch options"
-msgstr ""
+msgstr "Indítási beállítások"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "Elrendezés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Leave blank if the server does not require credentials"
-msgstr ""
+msgstr "Hagyja üresen, ha a kiszolgáló nem kér hitelesítő adatokat"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Let agents drive the Browser pane."
-msgstr ""
+msgstr "Az ágensek vezérelhetik a Böngésző panelt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Lets the devtools tools run JavaScript in the renderer, inject activity events and send raw terminal input."
-msgstr ""
+msgstr "Engedi, hogy a devtools eszközök JavaScriptet futtassanak a rendererben, tevékenységeseményeket injektáljanak és nyers terminálbemenetet küldjenek."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "License"
-msgstr ""
+msgstr "Licenc"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgctxt "theme base"
 msgid "Light"
-msgstr ""
+msgstr "Világos"
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Light, when the system is light"
-msgstr ""
+msgstr "Világos, ha a rendszer világos"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Limit how many agents can run at the same time"
-msgstr ""
+msgstr "Az egyszerre futó ágensek számának korlátozása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Link node_modules"
-msgstr ""
+msgstr "node_modules csatolása"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model"
-msgstr ""
+msgstr "Élő modell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Live model downloaded"
-msgstr ""
+msgstr "Élő modell letöltve"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Local"
-msgstr ""
+msgstr "Helyi"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgctxt "relay"
 msgid "Local"
-msgstr ""
+msgstr "Helyi"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Local model"
-msgstr ""
+msgstr "Helyi modell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
-msgstr ""
+msgstr "Minden IPC-hívást naplóz a .kangentic/logs mappába, a módosító csatornákat kitakarva; alapértelmezésként csak a /preview módban van bekapcsolva."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max concurrent sessions"
-msgstr ""
+msgstr "Egyidejű munkamenetek max. száma"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Max visible toasts"
-msgstr ""
+msgstr "Látható értesítések max. száma"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Maximum simultaneous toasts on screen"
-msgstr ""
+msgstr "Egyszerre a képernyőn látható értesítések maximális száma"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP connection"
-msgstr ""
+msgstr "MCP-kapcsolat"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "MCP server"
-msgstr ""
+msgstr "MCP-kiszolgáló"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "MCP Server"
-msgstr ""
+msgstr "MCP-kiszolgáló"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut display"
 msgid "Menu"
-msgstr ""
+msgstr "Menü"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Minutes idle"
-msgstr ""
+msgstr "Tétlen percek"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Mobile bridge"
-msgstr ""
+msgstr "Mobilhíd"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Mobile Devices"
-msgstr ""
+msgstr "Mobileszközök"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Mode"
-msgstr ""
+msgstr "Mód"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Model (optional, e.g. whisper-1)"
-msgstr ""
+msgstr "Modell (nem kötelező, pl. whisper-1)"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model acceleration"
-msgstr ""
+msgstr "Modellgyorsítás"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Model used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "Az új munkamenetek modellje, ha nincs oszlop- vagy feladatszintű felülbírálás"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Move..."
-msgstr ""
+msgstr "Áthelyezés..."
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Moving between task windows and arranging them."
-msgstr ""
+msgstr "Váltás a feladatablakok között és elrendezésük."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Name"
-msgstr ""
+msgstr "Név"
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Narrow"
-msgstr ""
+msgstr "Keskeny"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs a model"
-msgstr ""
+msgstr "Modell szükséges"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs a supported agent"
-msgstr ""
+msgstr "Támogatott ágens szükséges"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs an agent"
-msgstr ""
+msgstr "Ágens szükséges"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Needs indexing"
-msgstr ""
+msgstr "Indexelés szükséges"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Needs the Knowledge Graph"
-msgstr ""
+msgstr "A tudásgráf szükséges"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No camera? Copy the link and paste it into the app."
-msgstr ""
+msgstr "Nincs kamera? Másolja a hivatkozást, és illessze be az alkalmazásba."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No devices paired yet."
-msgstr ""
+msgstr "Még nincs párosított eszköz."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "No Done tasks yet"
-msgstr ""
+msgstr "Még nincs kész feladat"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "No key detected. It may be reserved by your OS or another app."
-msgstr ""
+msgstr "Nem észlelhető billentyű. Lehet, hogy az operációs rendszer vagy egy másik alkalmazás foglalja."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "No response"
-msgstr ""
+msgstr "Nincs válasz"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "No settings found for “{query}”"
-msgstr ""
+msgstr "Nincs találat a következőre: „{query}”"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "No shortcuts configured. Add one below or choose a preset."
-msgstr ""
+msgstr "Nincs beállított parancsikon. Adjon hozzá egyet lent, vagy válasszon egy előbeállítást."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "No WSL support"
-msgstr ""
+msgstr "Nincs WSL-támogatás"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "no dictation model"
 msgid "None"
-msgstr ""
+msgstr "Nincs"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not found"
-msgstr ""
+msgstr "Nem található"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Not signed in"
-msgstr ""
+msgstr "Nincs bejelentkezve"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Not yet indexed"
-msgstr ""
+msgstr "Még nincs indexelve"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Nothing committed yet"
-msgstr ""
+msgstr "Még nincs commit"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Notifications"
-msgstr ""
+msgstr "Értesítések"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Off"
-msgstr ""
+msgstr "Ki"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Off"
-msgstr ""
+msgstr "Ki"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgctxt "release buffer"
 msgid "Off"
-msgstr ""
+msgstr "Ki"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Offline"
-msgstr ""
+msgstr "Offline"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost"
-msgstr ""
+msgstr "Csak localhost"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Only localhost and private hosts, never public sites."
-msgstr ""
+msgstr "Csak localhost és privát hostok, publikus oldal nem."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Only the final clip is sent. The live preview stays on this machine."
-msgstr ""
+msgstr "Csak a végső hangrészlet kerül elküldésre. Az élő előnézet ezen a gépen marad."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Only yours, in kangentic.local.json"
-msgstr ""
+msgstr "Csak az öné, a kangentic.local.json fájlban"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open other URLs. Off keeps agents on the page you loaded."
-msgstr ""
+msgstr "Más URL-ek megnyitása. Kikapcsolva csak a betöltött oldal."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Open the surfaces a dev session cannot reach on its own."
-msgstr ""
+msgstr "Olyan felületek megnyitása, amelyeket a dev munkamenet nem ér el."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "OpenAI-compatible /v1/audio/transcriptions endpoint for the final text, used when Refinement model is Cloud endpoint. Only the final clip is sent; the live preview stays on this machine."
-msgstr ""
+msgstr "OpenAI-kompatibilis /v1/audio/transcriptions végpont a végleges szöveghez, ha a finomító modell a felhővégpont. Csak a végső klip kerül elküldésre; az élő előnézet ezen a gépen marad."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Opting out"
-msgstr ""
+msgstr "Leiratkozás"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Optional startup features this agent CLI can turn off"
-msgstr ""
+msgstr "Opcionális indítási funkciók, amelyeket ez az ügynök CLI kikapcsolhat"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgctxt "settings group"
 msgid "Other"
-msgstr ""
+msgstr "Egyéb"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pair a device"
-msgstr ""
+msgstr "Eszköz párosítása"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired {pairedDate}"
-msgstr ""
+msgstr "Párosítva: {pairedDate}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Paired: {confirmedDeviceName}"
-msgstr ""
+msgstr "Párosítva: {confirmedDeviceName}"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Pairing QR code"
-msgstr ""
+msgstr "Párosítási QR-kód"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Password"
-msgstr ""
+msgstr "Jelszó"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
-msgstr ""
+msgstr "A projekt feladatainak elérési útja a kiszolgálón. Hagyja üresen a kiszolgáló saját alapértelmezett könyvtárához"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
-msgstr ""
+msgstr "Minden ügynök szüneteltetése, amely ennyi perce Önre vár, kivéve a parancsterminálban futót."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Pausing agents"
-msgstr ""
+msgstr "Ügynökök szüneteltetése"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Performance"
-msgstr ""
+msgstr "Teljesítmény"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Permissions"
-msgstr ""
+msgstr "Engedélyek"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Persistent console logs"
-msgstr ""
+msgstr "Állandó konzolnaplók"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Personal"
-msgstr ""
+msgstr "Személyes"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Personal shortcut in kangentic.local.json"
-msgstr ""
+msgstr "Személyes parancsikon a kangentic.local.json fájlban"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones"
-msgstr ""
+msgstr "Telefonok"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Phones paired to this desktop, identified by key fingerprint."
-msgstr ""
+msgstr "Ehhez a géphez párosított telefonok, kulcsujjlenyomat alapján."
 
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Pick a theme, or follow the system with a light and dark pair."
-msgstr ""
+msgstr "Válasszon témát, vagy kövesse a rendszert világos-sötét párral."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plan complete"
-msgstr ""
+msgstr "A terv elkészült"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Plans each workflow. Nothing starts until one is chosen."
-msgstr ""
+msgstr "Minden munkafolyamatot megtervez. Választásig semmi sem indul."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Post-worktree script"
-msgstr ""
+msgstr "Worktree utáni szkript"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Presets"
-msgstr ""
+msgstr "Előbeállítások"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey"
-msgstr ""
+msgstr "Nyomjon le egy gyorsbillentyűt"
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press a hotkey, or hold one or more mouse buttons (middle / side) together, then release. Esc to cancel."
-msgstr ""
+msgstr "Nyomjon le egy gyorsbillentyűt, vagy tartson lenyomva egyszerre egy vagy több egérgombot (középső / oldalsó), majd engedje fel. Megszakítás: Esc."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Press Enter after inserting, or leave the text for you to review and send."
-msgstr ""
+msgstr "Enter lenyomása beszúrás után, vagy a szöveg meghagyása ellenőrzésre és küldésre."
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
+#, fuzzy
 msgid "Press the new hotkey or mouse button. Escape to cancel."
-msgstr ""
+msgstr "Nyomja le az új gyorsbillentyűt vagy egérgombot. Megszakítás: Escape."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Preview while you speak: streaming is instant, chunked is accurate."
-msgstr ""
+msgstr "Előnézet beszéd közben: a streamelés azonnali, a darabolt pontos."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Privacy"
-msgstr ""
+msgstr "Adatvédelem"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Profiles the main process and names a stall's heaviest functions in the event-loop report; costs CPU while on."
-msgstr ""
+msgstr "Profilozza a fő folyamatot, és az eseményhurok-jelentésben megnevezi az akadás legnehezebb függvényeit; bekapcsolva CPU-t használ."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Progress bar"
-msgstr ""
+msgstr "Folyamatjelző sáv"
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project default URL when a task has no per-task override. Auto-saved when you first navigate the Browser pane."
-msgstr ""
+msgstr "A projekt alapértelmezett URL-je, ha egy feladatnak nincs saját felülbírálása. Automatikusan mentődik, amikor először navigálsz a Böngésző panelen."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Project defaults"
-msgstr ""
+msgstr "Projekt alapértelmezései"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Project location"
-msgstr ""
+msgstr "Projekt helye"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Pull requests"
-msgstr ""
+msgstr "Pull requestek"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Push-to-talk"
-msgstr ""
+msgstr "Gombnyomásra beszéd"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Push-to-talk and the other dictation keys."
-msgstr ""
+msgstr "Push-to-talk és a többi diktálási billentyű."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Questions"
-msgstr ""
+msgstr "Kérdések"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rate limits"
-msgstr ""
+msgstr "Sebességkorlátok"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Re-detect agent"
-msgstr ""
+msgstr "Ügynök újbóli észlelése"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable"
-msgstr ""
+msgstr "Elérhető"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reachable, {relayLatencyMs} ms"
-msgstr ""
+msgstr "Elérhető, {relayLatencyMs} ms"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Reads every source again, in every project."
-msgstr ""
+msgstr "Minden forrást újra beolvas, minden projektben."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Reasoning effort used for new sessions when no column or task override is set"
-msgstr ""
+msgstr "Új munkamenetekhez használt gondolkodási erőfeszítés, ha nincs oszlop- vagy feladatszintű felülbírálás"
 
+#: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind"
-msgstr ""
+msgstr "Újrakiosztás"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Rebind any hotkey. Conflicts and taken combos are flagged."
-msgstr ""
+msgstr "Bármely billentyű átállítható. Ütköző és foglalt kombók jelölve."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Rebind in the Hotkeys settings"
-msgstr ""
+msgstr "Átállítás a Gyorsbillentyűk beállításaiban"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Rebind keyboard hotkeys"
-msgstr ""
+msgstr "Billentyűparancsok átállítása"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild"
-msgstr ""
+msgstr "Újraépítés"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild didn't start"
-msgstr ""
+msgstr "Az újraépítés nem indult el"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild everything?"
-msgstr ""
+msgstr "Mindent újraépít?"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuild the index"
-msgstr ""
+msgstr "Index újraépítése"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Rebuilding..."
-msgstr ""
+msgstr "Újraépítés..."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgctxt "card preview"
 msgid "Recent"
-msgstr ""
+msgstr "Előzmények"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Reconnecting…"
-msgstr ""
+msgstr "Újracsatlakozás…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Record IPC traffic"
-msgstr ""
+msgstr "IPC-forgalom rögzítése"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model"
-msgstr ""
+msgstr "Finomító modell"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refinement model downloaded"
-msgstr ""
+msgstr "Finomító modell letöltve"
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Refines the live draft into the accurate result on release. None keeps the live text as-is."
-msgstr ""
+msgstr "Felengedéskor pontos eredménnyé finomítja az élő vázlatot. A Nincs változatlanul hagyja az élő szöveget."
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay"
-msgstr ""
+msgstr "Relé"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address"
-msgstr ""
+msgstr "Továbbító címe"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay address, the Kangentic-operated relay"
-msgstr ""
+msgstr "Továbbító címe, a Kangentic által üzemeltetett továbbító"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Relay v{relayVersion}"
-msgstr ""
+msgstr "Továbbító v{relayVersion}"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Release buffer"
-msgstr ""
+msgstr "Elengedési puffer"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Reload the browser pane to apply."
-msgstr ""
+msgstr "Az alkalmazáshoz töltse újra a böngészőpanelt."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remember window size and position between launches"
-msgstr ""
+msgstr "Az ablak méretének és helyzetének megjegyzése indítások között"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgctxt "execution mode"
 msgid "Remote"
-msgstr ""
+msgstr "Távoli"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Remove"
-msgstr ""
+msgstr "Eltávolítás"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Remove a task's worktree when the task completes."
-msgstr ""
+msgstr "A feladat worktree-jének eltávolítása a feladat befejezésekor."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Rename"
-msgstr ""
+msgstr "Átnevezés"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Render a narrow diff pane inline (unified) even when Side by side is selected, instead of squeezing two columns."
-msgstr ""
+msgstr "Keskeny diff-panel egyesített nézetben jelenik meg akkor is, ha az Egymás mellett van kiválasztva, két oszlop összenyomása helyett."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Rendering"
-msgstr ""
+msgstr "Renderelés"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all"
-msgstr ""
+msgstr "Összes visszaállítása"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Reset all hotkeys?"
-msgstr ""
+msgstr "Visszaállítja az összes gyorsbillentyűt?"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Reset to default"
-msgstr ""
+msgstr "Visszaállítás alapértelmezettre"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "A módosítás alkalmazásához indítsa újra a Kangenticet."
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart now"
-msgstr ""
+msgstr "Újraindítás most"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart with graphics acceleration?"
-msgstr ""
+msgstr "Újraindítás grafikus gyorsítással?"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "Restart without graphics acceleration?"
-msgstr ""
+msgstr "Újraindítás grafikus gyorsítás nélkül?"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Restore every hotkey to its default"
-msgstr ""
+msgstr "Minden gyorsbillentyű visszaállítása az alapértelmezettre"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Restore window position"
-msgstr ""
+msgstr "Ablakpozíció visszaállítása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Resume agent sessions that were running when the project last closed. Turn off if resuming many at once slows your machine."
-msgstr ""
+msgstr "A projekt legutóbbi bezárásakor futó ügynök-munkamenetek folytatása. Kapcsold ki, ha sok egyszerre folytatása lelassítja a gépet."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke"
-msgstr ""
+msgstr "Visszavonás"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke \"{revokeTargetName}\" ({revokeTargetFingerprint})? It loses access immediately and must be paired again to reconnect."
-msgstr ""
+msgstr "Visszavonja a(z) „{revokeTargetName}” ({revokeTargetFingerprint}) eszközt? Azonnal elveszíti a hozzáférést, és az újracsatlakozáshoz újra párosítani kell."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Revoke device"
-msgstr ""
+msgstr "Eszköz visszavonása"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Run <0>{loginCommand}</0> in your terminal to authenticate."
-msgstr ""
+msgstr "A hitelesítéshez futtassa a(z) <0>{loginCommand}</0> parancsot a terminálban."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run any JavaScript in the page, with its cookies."
-msgstr ""
+msgstr "Bármilyen JavaScript futtatása az oldalon, annak sütijeivel."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Run this agent locally, or attach to a server you run elsewhere"
-msgstr ""
+msgstr "Az ügynök futtatása helyben, vagy csatlakozás egy máshol futtatott szerverhez"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Runs after a worktree is created. Runs through cmd.exe on Windows, so POSIX-only syntax will not carry over."
-msgstr ""
+msgstr "Worktree létrehozása után fut. Windowson a cmd.exe futtatja, így a csak POSIX-szintaxis nem működik."
 
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Runs on this machine unless you choose a cloud refinement."
-msgstr ""
+msgstr "Ezen a gépen fut, hacsak nem felhőalapú finomítást választ."
 
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Save"
-msgstr ""
+msgstr "Mentés"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Save name"
-msgstr ""
+msgstr "Név mentése"
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "Saved URLs (per-task overrides and the project default) are kept."
-msgstr ""
+msgstr "A mentett URL-ek (a feladatonkénti felülbírálások és a projekt alapértelmezése) megmaradnak."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Scan a QR code with the Kangentic mobile app to pair a new phone."
-msgstr ""
+msgstr "Olvass be egy QR-kódot a Kangentic mobilalkalmazással új telefon párosításához."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Scan this code with the Kangentic app on your phone."
-msgstr ""
+msgstr "Olvasd be ezt a kódot a telefonodon a Kangentic alkalmazással."
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Scope"
-msgstr ""
+msgstr "Hatókör"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Search model downloaded"
-msgstr ""
+msgstr "Keresési modell letöltve"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Search quality"
-msgstr ""
+msgstr "Keresési minőség"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Search settings..."
-msgstr ""
+msgstr "Beállítások keresése..."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Secure storage is unavailable on this system, so a device identity cannot be created."
-msgstr ""
+msgstr "A biztonságos tároló nem érhető el ezen a rendszeren, ezért nem hozható létre eszközidentitás."
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "Select display language"
-msgstr ""
+msgstr "Megjelenítési nyelv kiválasztása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Server URL"
-msgstr ""
+msgstr "Szerver URL-je"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Server working directory"
-msgstr ""
+msgstr "Szerver munkakönyvtára"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Serves screenshots, input, DOM and state queries to the devtools MCP tools, on a localhost port with no auth."
-msgstr ""
+msgstr "Képernyőképeket, bevitelt, DOM- és állapotlekérdezéseket szolgál ki a devtools MCP-eszközöknek, hitelesítés nélküli localhost porton."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Session API cost"
-msgstr ""
+msgstr "Munkamenet API-költsége"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgid "Sessions"
-msgstr ""
+msgstr "Munkamenetek"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Set <0>KANGENTIC_TELEMETRY=0</0> as an environment variable to disable all telemetry (analytics and error reporting). Set <1>KANGENTIC_ERROR_REPORTING=0</1> to disable only error reporting while keeping anonymous analytics."
-msgstr ""
+msgstr "Állítsa be a <0>KANGENTIC_TELEMETRY=0</0> környezeti változót az összes telemetria (analitika és hibajelentés) letiltásához. Állítsa be a <1>KANGENTIC_ERROR_REPORTING=0</1> változót, ha csak a hibajelentést szeretné letiltani, az anonim analitikát megtartva."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "Setting not saved"
-msgstr ""
+msgstr "A beállítás nincs mentve"
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Settings"
-msgstr ""
+msgstr "Beállítások"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with team via kangentic.json"
-msgstr ""
+msgstr "Megosztva a csapattal a kangentic.json fájlon keresztül"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shared with the team in kangentic.json"
-msgstr ""
+msgstr "Megosztva a csapattal a kangentic.json fájlban"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell"
-msgstr ""
+msgstr "Shell"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shell name"
-msgstr ""
+msgstr "Shell neve"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgid "Shortcuts"
-msgstr ""
+msgstr "Parancsikonok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show changed files as a flat list of full paths instead of a nested directory tree."
-msgstr ""
+msgstr "A módosított fájlok teljes elérési utak sima listájaként jelennek meg beágyazott könyvtárfa helyett."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show each task's #N number on its card"
-msgstr ""
+msgstr "A feladatok #N számának megjelenítése a kártyán"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the status bar at the bottom of the window"
-msgstr ""
+msgstr "Állapotsor megjelenítése az ablak alján"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Show the terminal panel below the board"
-msgstr ""
+msgstr "Terminálpanel megjelenítése a tábla alatt"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Shows a PR as ready when your admin bypass could merge it past a required review, never past a failing check."
-msgstr ""
+msgstr "A PR-t késznek jelzi, ha rendszergazdai megkerüléssel egy kötelező ellenőrzés nélkül is egyesíthető, sikertelen ellenőrzéssel soha."
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgid "Side by side"
-msgstr ""
+msgstr "Egymás mellett"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "since {sinceTime}"
-msgstr ""
+msgstr "{sinceTime} óta"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
+#, fuzzy
 msgctxt "close on outside click"
 msgid "Single"
-msgstr ""
+msgstr "Egyetlen"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Size"
-msgstr ""
+msgstr "Méret"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Soft-wrap long lines onto the next row instead of scrolling the diff horizontally."
-msgstr ""
+msgstr "A hosszú sorok tördelése a következő sorba a diff vízszintes görgetése helyett."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Source code"
-msgstr ""
+msgstr "Forráskód"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Source code embedded"
-msgstr ""
+msgstr "Forráskód beágyazva"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Spawn stalled"
-msgstr ""
+msgstr "Indítás elakadt"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Staged"
-msgstr ""
+msgstr "Előkészített"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stall profiler"
-msgstr ""
+msgstr "Elakadás-profilozó"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "sort files by"
 msgid "Status"
-msgstr ""
+msgstr "Állapot"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Status bar"
-msgstr ""
+msgstr "Állapotsor"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop leftover processes"
-msgstr ""
+msgstr "Visszamaradt folyamatok leállítása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
-msgstr ""
+msgstr "Leállítja, amit az ügynök futva hagyott a mappájában, ha a feladata kész, visszakerül a Teendők közé, törlődik, vagy a parancsterminálja bezárul."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries rewritten"
-msgstr ""
+msgstr "Összefoglalók újraírva"
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "Summaries written"
-msgstr ""
+msgstr "Összefoglalók megírva"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Symlink the root node_modules into each worktree to skip a fresh install; workspace repos should turn it off."
-msgstr ""
+msgstr "A gyökér node_modules szimbolikus linkelése minden worktree-be az új telepítés elkerülésére; workspace tárolókban kapcsolja ki."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgctxt "settings tab group"
 msgid "System"
-msgstr ""
+msgstr "Rendszer"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "Feladat"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task and project creation counts"
-msgstr ""
+msgstr "Feladat- és projektlétrehozások száma"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "Task detail"
-msgstr ""
+msgstr "Feladat részletei"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "Feladat-összefoglalók"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Task titles, descriptions, or any user-generated content"
-msgstr ""
+msgstr "Feladatcímek, leírások vagy bármilyen felhasználó által létrehozott tartalom"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks"
-msgstr ""
+msgstr "Feladatok"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Tasks embedded"
-msgstr ""
+msgstr "Beágyazott feladatok"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#, fuzzy
 msgctxt "shortcut scope"
 msgid "Team"
-msgstr ""
+msgstr "Csapat"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Terminal"
-msgstr ""
+msgstr "Terminál"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal cursor appearance"
-msgstr ""
+msgstr "A terminál kurzorának megjelenése"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "Terminal may intercept"
-msgstr ""
+msgstr "A terminál elfoghatja"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal panel"
-msgstr ""
+msgstr "Terminálpanel"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal shell used for agent sessions"
-msgstr ""
+msgstr "Az ügynökmunkamenetekhez használt terminálhéj"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Terminal text size in pixels"
-msgstr ""
+msgstr "A terminál szövegmérete képpontban"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #: src/renderer/components/settings/tabs/McpServerTab.tsx
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Test connection"
-msgstr ""
+msgstr "Kapcsolat tesztelése"
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "The agent, model and permissions new sessions start with."
-msgstr ""
+msgstr "Az új munkamenetek kezdő ügynöke, modellje és engedélyei."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's newest message"
-msgstr ""
+msgstr "Az ágens legújabb üzenete"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The agent's recent messages, one line each"
-msgstr ""
+msgstr "Az ágens legutóbbi üzenetei, soronként egy"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The branch new worktrees start from."
-msgstr ""
+msgstr "Az ág, amelyből az új worktree-k indulnak."
 
 #: src/renderer/components/settings/AppSettingsPanel.tsx
+#, fuzzy
 msgid "The change was not written."
-msgstr ""
+msgstr "A módosítás nem lett kiírva."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
+#, fuzzy
 msgid "The default branch's source and docs, kept current; tests, data files and files over 256 KB are skipped."
-msgstr ""
+msgstr "Az alapértelmezett ág forráskódja és dokumentációja, naprakészen tartva; a tesztek, az adatfájlok és a 256 KB-nál nagyobb fájlok kimaradnak."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The first message it gets for a new workflow."
-msgstr ""
+msgstr "Az első üzenet, amelyet egy új munkafolyamathoz kap."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "The Kangentic relay"
-msgstr ""
+msgstr "A Kangentic relay"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr ""
+msgstr "A tudásgráf és az általa olvasott index. Minden projektre vonatkozik"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
+#, fuzzy
 msgid "The language of menus, settings and dialogs."
-msgstr ""
+msgstr "A menük, a beállítások és a párbeszédablakok nyelve."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The language you speak. The models adapt to your choice."
-msgstr ""
+msgstr "Az Ön által beszélt nyelv. A modellek ehhez igazodnak."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches."
-msgstr ""
+msgstr "A helyi modell nem érhető el – kulcsszavas találatok láthatók."
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "The local model is unavailable - showing keyword matches. ({workerError})"
-msgstr ""
+msgstr "A helyi modell nem érhető el – kulcsszavas találatok láthatók. ({workerError})"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The local model that finds by meaning and draws the map; changing it re-indexes in the background."
-msgstr ""
+msgstr "A helyi modell, amely jelentés alapján keres és a térképet rajzolja; módosításakor a háttérben újraindexel."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The model it plans with. Required when the agent takes one."
-msgstr ""
+msgstr "A modell, amellyel tervez. Kötelező, ha az ügynök támogatja."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The phone companion app for checking on agents, answering prompts, and reviewing diffs. Links out to its docs, where the install instructions live."
-msgstr ""
+msgstr "A telefonos társalkalmazás az ügynökök ellenőrzéséhez, kérdések megválaszolásához és diffek áttekintéséhez. A dokumentációjára mutat, ahol a telepítési útmutató található."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The project's code and docs, so answers can explain it."
-msgstr ""
+msgstr "A projekt kódja és dokumentációja, hogy a válaszok elmagyarázhassák."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "The self-hosted relay to dial when Relay is set to Custom."
-msgstr ""
+msgstr "A saját üzemeltetésű relay, amelyhez csatlakozik, ha a Relay értéke Egyéni."
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "The shell, font, cursor and colors every terminal uses."
-msgstr ""
+msgstr "Az összes terminál shellje, betűtípusa, kurzora és színei."
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "The task's description"
-msgstr ""
+msgstr "A feladat leírása"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/ThemeTab.tsx
+#, fuzzy
 msgid "Theme"
-msgstr ""
+msgstr "Téma"
 
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
+#, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
-msgstr ""
+msgstr "Ez a gyorsbillentyű rögzített, nem rendelhető át"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "This project's path to the agent CLI (auto-detected if empty)"
-msgstr ""
+msgstr "A projekt ügynök CLI-útvonala (üresen automatikus észlelés)"
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgid "This restores every hotkey to its default. Your custom bindings will be removed."
-msgstr ""
+msgstr "Ez minden gyorsbillentyűt visszaállít az alapértelmezettre. Az egyéni hozzárendelések törlődnek."
 
 #: src/renderer/components/settings/tabs/BrowserTab.tsx
+#, fuzzy
 msgid "This wipes cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser pane across all tasks and projects. You will be signed out of any sites."
-msgstr ""
+msgstr "Ez törli a sütiket, a localStorage-ot, az IndexedDB-t, a service workereket és a HTTP-/hitelesítési gyorsítótárakat a beágyazott böngészőpanelben az összes feladatra és projektre kiterjedően. Minden webhelyről ki lesz jelentkeztetve."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticket numbers"
-msgstr ""
+msgstr "Jegyszámok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Ticking session duration"
-msgstr ""
+msgstr "Futó munkamenet-időtartam"
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgctxt "notification channel"
 msgid "Toast"
-msgstr ""
+msgstr "Felugró"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Toast auto-dismiss"
-msgstr ""
+msgstr "Értesítések automatikus elrejtése"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Toasts"
-msgstr ""
+msgstr "Értesítések"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Token counts"
-msgstr ""
+msgstr "Tokenszámok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Tool calls"
-msgstr ""
+msgstr "Eszközhívások"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/DictationTab.tsx
+#, fuzzy
 msgid "Transcription"
-msgstr ""
+msgstr "Átírás"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Transition and motion effects."
-msgstr ""
+msgstr "Átmeneti és mozgási effektusok."
 
 #: src/renderer/components/settings/shared.tsx
+#, fuzzy
 msgid "Try a different search term"
-msgstr ""
+msgstr "Próbáljon másik keresőkifejezést"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgctxt "cursor style"
 msgid "Underline"
-msgstr ""
+msgstr "Aláhúzás"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Unreachable"
-msgstr ""
+msgstr "Nem érhető el"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's own level."
-msgstr ""
+msgstr "Beállítás nélkül az ügynök saját szintjén fut."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Unset runs at the agent's recommended level."
-msgstr ""
+msgstr "Beállítás nélkül az ügynök ajánlott szintjén fut."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usage analytics are powered by Aptabase, a privacy-first platform. No cookies. IP addresses are used for geographic lookup only, then discarded. A single anonymous, non-reversible install id counts unique installs; it contains no personal data. GDPR-compliant by design."
-msgstr ""
+msgstr "A használati analitikát az Aptabase, egy adatvédelmet előtérbe helyező platform biztosítja. Nincsenek sütik. Az IP-címeket csak földrajzi helymeghatározásra használjuk, majd elvetjük. Egyetlen anonim, visszafejthetetlen telepítési azonosító számolja az egyedi telepítéseket; ez nem tartalmaz személyes adatot. Kialakításából adódóan GDPR-kompatibilis."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Usage bar and percentage"
-msgstr ""
+msgstr "Használati sáv és százalék"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
+#, fuzzy
 msgid "Use {TERMINAL_FONT_SIZE_MIN} to {TERMINAL_FONT_SIZE_MAX}."
-msgstr ""
+msgstr "{TERMINAL_FONT_SIZE_MIN} és {TERMINAL_FONT_SIZE_MAX} közötti érték adható meg."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Use one theme when the system is light and another when it is dark."
-msgstr ""
+msgstr "Egy téma világos, egy másik sötét rendszermegjelenés esetén."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Used / total tokens"
-msgstr ""
+msgstr "Felhasznált / összes token"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#, fuzzy
 msgid "Username"
-msgstr ""
+msgstr "Felhasználónév"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Usernames, emails, or any personally identifiable information"
-msgstr ""
+msgstr "Felhasználónevek, e-mail-címek vagy bármilyen személyazonosításra alkalmas adat"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable - showing keyword matches. ({vecError})"
-msgstr ""
+msgstr "A vektoros keresés nem érhető el – kulcsszavas találatok láthatók. ({vecError})"
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
+#, fuzzy
 msgid "Vector search is unavailable on this platform - showing keyword matches."
-msgstr ""
+msgstr "A vektoros keresés ezen a platformon nem érhető el – kulcsszavas találatok láthatók."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Version"
-msgstr ""
+msgstr "Verzió"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Voice dictation"
-msgstr ""
+msgstr "Hangalapú diktálás"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Waiting for your phone…"
-msgstr ""
+msgstr "Várakozás a telefonra…"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What each card shows under its title: the agent's latest message, its recent messages, or the task description."
-msgstr ""
+msgstr "Mit mutat a kártya a címe alatt: az ügynök legutóbbi üzenetét, a legutóbbi üzeneteit vagy a feladat leírását."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "What Quick Find and the Knowledge Graph search."
-msgstr ""
+msgstr "Amiben a Gyorskeresés és a Tudásgráf keres."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What runs on this device, and what goes to the agent you choose."
-msgstr ""
+msgstr "Mi fut ezen az eszközön, és mi jut el a kiválasztott ágenshez."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we collect"
-msgstr ""
+msgstr "Amit gyűjtünk"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "What we don't collect"
-msgstr ""
+msgstr "Amit nem gyűjtünk"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a plan finishes and the task auto-moves"
-msgstr ""
+msgstr "Amikor egy terv elkészül, és a feladat automatikusan továbblép"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a running workflow cannot move a task on by itself"
-msgstr ""
+msgstr "Amikor egy futó munkafolyamat nem tud magától továbbléptetni egy feladatot"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When a task spawn waits too long on the git queue while preparing"
-msgstr ""
+msgstr "Amikor egy feladat indítása előkészítés közben túl sokáig vár a git-sorban"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent finishes its turn or needs permission"
-msgstr ""
+msgstr "Amikor egy ügynök befejezi a körét, vagy engedélyre van szüksége"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."
-msgstr ""
+msgstr "Amikor egy ügynök munkamenete váratlanul véget ér. Asztali értesítés csak hibás kilépéskor; a felugró értesítések a szabályos kilépéseket is jelzik."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When every task in a workflow reaches Done"
-msgstr ""
+msgstr "Amikor egy munkafolyamat minden feladata eléri a Kész állapotot"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When idle"
-msgstr ""
+msgstr "Tétlenség esetén"
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
+#, fuzzy
 msgid "When Kangentic pauses agents that are waiting on you."
-msgstr ""
+msgstr "Mikor szüneteltesse a Kangentic az Önre váró ügynököket."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low"
-msgstr ""
+msgstr "Kevés memória esetén"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "When memory runs low, pause the agent that has waited on you longest, one a minute, until there is room."
-msgstr ""
+msgstr "Kevés memória esetén percenként egyet szüneteltet: azt az ügynököt, amely a legrégebben vár önre, amíg elég hely nem lesz."
 
 #: src/renderer/components/settings/tabs/NotificationsTab.tsx
+#, fuzzy
 msgid "Where each kind of alert shows up."
-msgstr ""
+msgstr "Hol jelenjenek meg az egyes értesítéstípusok."
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Where new work starts, and how current it stays."
-msgstr ""
+msgstr "Honnan indul az új munka, és mennyire marad naprakész."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "Where the agent's command-line tool runs, and how it starts."
-msgstr ""
+msgstr "Hol fut az ügynök parancssori eszköze, és hogyan indul."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Where the local model runs. Auto uses the GPU when there is one."
-msgstr ""
+msgstr "Hol fut a helyi modell. Az Automatikus a GPU-t használja, ha van."
 
 #: src/renderer/components/settings/tabs/GeneralTab.tsx
+#, fuzzy
 msgid "Where this project lives on disk."
-msgstr ""
+msgstr "A projekt helye a lemezen."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Whether agents can reach the MCP server, here and from any WSL distro a CLI path points into."
-msgstr ""
+msgstr "Elérik-e az ügynökök az MCP-kiszolgálót innen és bármely WSL-disztribúcióból, amelybe CLI-útvonal mutat."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers Conditions and names tasks and Command Terminals; nothing runs until one is chosen."
-msgstr ""
+msgstr "Melyik ügynök válaszol a Feltételekre, és nevezi el a feladatokat és a Parancsterminálokat; amíg nincs kiválasztva, semmi sem fut."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent answers your questions and writes the task summaries."
-msgstr ""
+msgstr "Melyik ügynök válaszol a kérdéseire, és írja meg a feladatösszefoglalókat."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent CLI to use for new sessions"
-msgstr ""
+msgstr "Az új munkamenetekhez használt ügynök-CLI"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which agent plans each workflow, in the Workflows view's left pane. No workflow agent starts until one is chosen."
-msgstr ""
+msgstr "Melyik ügynök tervezi a munkafolyamatokat a Munkafolyamatok nézet bal paneljén. Amíg nincs kiválasztva, nem indul munkafolyamat-ügynök."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Which changes a freshly opened Changes panel shows: working (uncommitted edits), staged (index), or the full branch vs its base."
-msgstr ""
+msgstr "Mely módosításokat mutassa az újonnan megnyitott Módosítások panel: munkaverziót (nem véglegesített módosítások), előkészítettet (index) vagy a teljes ágat az alapjához képest."
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Which features get used, as daily counts (never their content)"
-msgstr ""
+msgstr "Mely funkciókat használják, napi számlálással (tartalmuk soha)"
 
 #: src/renderer/components/settings/tabs/TaskTab.tsx
+#, fuzzy
 msgid "Which stats show in the bar under a task's terminal."
-msgstr ""
+msgstr "A feladat terminálja alatti sávban megjelenő statisztikák."
 
 #: src/renderer/components/settings/tabs/BoardTab.tsx
+#, fuzzy
 msgctxt "column width"
 msgid "Wide"
-msgstr ""
+msgstr "Széles"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Width of board columns"
-msgstr ""
+msgstr "A tábla oszlopainak szélessége"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Windows"
-msgstr ""
+msgstr "Ablakok"
 
 #: src/renderer/components/settings/tabs/BehaviorTab.tsx
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
+#, fuzzy
 msgctxt "task windows"
 msgid "Windows"
-msgstr ""
+msgstr "Ablakok"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wipe cookies, localStorage, IndexedDB, service workers, and HTTP/auth caches for the embedded browser. Saved URLs are kept."
-msgstr ""
+msgstr "Törli a beágyazott böngésző cookie-jait, localStorage- és IndexedDB-adatait, service workereit, valamint HTTP- és hitelesítési gyorsítótárait. A mentett URL-ek megmaradnak."
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow agent"
-msgstr ""
+msgstr "Munkafolyamat-ügynök"
 
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
+#, fuzzy
 msgid "Workflow agent prompt"
-msgstr ""
+msgstr "Munkafolyamat-ügynök promptja"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow complete"
-msgstr ""
+msgstr "A munkafolyamat elkészült"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Workflow stalled"
-msgstr ""
+msgstr "A munkafolyamat elakadt"
 
 #: src/renderer/components/settings/settings-tabs.ts
+#, fuzzy
 msgid "Workflows"
-msgstr ""
+msgstr "Munkafolyamatok"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
+#, fuzzy
 msgctxt "diff scope"
 msgid "Working"
-msgstr ""
+msgstr "Munkaterület"
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
 msgid "Worktree init script"
-msgstr ""
+msgstr "Worktree inicializáló szkript"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Worktrees"
-msgstr ""
+msgstr "Worktree-k"
 
 #: src/renderer/components/settings/settings-registry.ts
+#, fuzzy
 msgid "Wrap long lines"
-msgstr ""
+msgstr "Hosszú sorok tördelése"
 
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
+#, fuzzy
 msgid "Write to <0>{PRIVACY_CONTACT_EMAIL}</0>."
-msgstr ""
+msgstr "Írjon a(z) <0>{PRIVACY_CONTACT_EMAIL}</0> címre."
 
 #. placeholder {0}: agent.cliTarget.distro
 #: src/renderer/components/settings/tabs/AgentTab.tsx
+#, fuzzy
 msgid "WSL: {0}"
-msgstr ""
+msgstr "WSL: {0}"
 
 #: src/renderer/components/settings/keybindings/OsHotkeyBanner.tsx
+#, fuzzy
 msgid "Your OS and other apps can claim a hotkey first. If one does nothing here, try another combination."
-msgstr ""
+msgstr "Az operációs rendszer és más alkalmazások előbb lefoglalhatnak egy gyorsbillentyűt. Ha egy itt nem működik, próbáljon másik kombinációt."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#, fuzzy
 msgid "Your phone shows this code too. Confirm there to finish pairing."
-msgstr ""
+msgstr "A telefonod is ezt a kódot mutatja. A párosítás befejezéséhez erősítsd meg ott."

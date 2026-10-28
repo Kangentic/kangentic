@@ -8,1178 +8,1462 @@ msgstr ""
 "Language: ru\n"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{blockedLabel} already waits for {blockerLabel}."
-msgstr ""
+msgstr "{blockedLabel} уже ждёт {blockerLabel}."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "{count, plural, one {Blocked by # task...} other {Blocked by # tasks...}}"
-msgstr ""
+msgstr "{count, plural, one {Заблокировано # задачей...} few {Заблокировано # задачами...} many {Заблокировано # задачами...} other {Заблокировано # задачами...}}"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has passed {columnName}. Its plan approval can no longer change."
-msgstr ""
+msgstr "{label}: колонка {columnName} уже пройдена. Одобрение плана больше нельзя изменить."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has reached {columnName}. Only the columns after it can change."
-msgstr ""
+msgstr "{label}: колонка {columnName} уже достигнута. Изменить можно только следующие за ней колонки."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has started. Only a task in To Do can wait for another."
-msgstr ""
+msgstr "{label}: работа уже начата. Ждать другую задачу может только задача в To Do."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has started. Removing the link changes nothing."
-msgstr ""
+msgstr "{label}: работа уже начата. Удаление связи ничего не изменит."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done and stays with its workflow."
-msgstr ""
+msgstr "{label}: задача выполнена и остаётся в своём рабочем процессе."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
-msgstr ""
+msgstr "{label}: задача выполнена. Одобрение плана больше нельзя изменить."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Removing the link changes nothing."
-msgstr ""
+msgstr "{label}: задача выполнена. Удаление связи ничего не изменит."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Waiting for it changes nothing."
-msgstr ""
+msgstr "{label}: задача выполнена. Ожидание её ничего не изменит."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
-msgstr ""
+msgstr "{label} входит в {workflowTitle}, а он приостановлен. Возобновите его, чтобы перемещать его задачи."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
-msgstr ""
+msgstr "{label} входит в {workflowTitle}. Удалите задачу из рабочего процесса, чтобы переместить её в To Do."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is locked while {workflowTitle} runs."
-msgstr ""
+msgstr "{label} заблокирована, пока выполняется {workflowTitle}."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is not in a workflow. Its column's Plan approval decides; change that with kangentic_update_column."
-msgstr ""
+msgstr "{label} не входит в рабочий процесс. Решает параметр «Одобрение плана» её колонки; измените его через kangentic_update_column."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {Не более одного раза, пока вы не переместите задачу.} one {Не более # раза, пока вы не переместите задачу.} few {Не более # раз, пока вы не переместите задачу.} many {Не более # раз, пока вы не переместите задачу.} other {Не более # раза, пока вы не переместите задачу.}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {не более одного раза, пока вы не переместите задачу} one {не более # раза, пока вы не переместите задачу} few {не более # раз, пока вы не переместите задачу} many {не более # раз, пока вы не переместите задачу} other {не более # раза, пока вы не переместите задачу}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {Частота: не более одного раза, пока вы не переместите задачу.} one {Частота: не более # раза, пока вы не переместите задачу.} few {Частота: не более # раз, пока вы не переместите задачу.} many {Частота: не более # раз, пока вы не переместите задачу.} other {Частота: не более # раза, пока вы не переместите задачу.}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{method} to {host}"
-msgstr ""
+msgstr "{method} на {host}"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgid "{state, select, open {PR {number} open} draft {PR {number} draft} merged {PR {number} merged} closed {PR {number} closed} other {PR {number} {state}}}"
-msgstr ""
+msgstr "{state, select, open {PR {number} открыт} draft {PR {number} — черновик} merged {PR {number} слит} closed {PR {number} закрыт} other {PR {number}: {state}}}"
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, from {boardName}'s {columnName} column."
-msgstr ""
+msgstr "{value, select, automatic {Автоматически, по столбцу {columnName} доски {boardName}.} other {Вручную, по столбцу {columnName} доски {boardName}.}}"
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}}), but {waitingAgentName}'s plans still wait for you."
-msgstr ""
+msgstr "{value, select, automatic {Автоматически} other {Вручную}}, задано для этой задачи (столбец {columnName} доски {boardName}: {columnValue, select, automatic {автоматически} other {вручную}}), но планы {waitingAgentName} по-прежнему ждут вас."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})."
-msgstr ""
+msgstr "{value, select, automatic {Автоматически} other {Вручную}}, задано для этой задачи (столбец {columnName} доски {boardName}: {columnValue, select, automatic {автоматически} other {вручную}})."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "A task cannot wait for itself."
-msgstr ""
+msgstr "Задача не может ждать саму себя."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "A task visits at least one column."
-msgstr ""
+msgstr "Задача проходит хотя бы одну колонку."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "A workflow task's <workflow> block: its route, its neighbours, and how its turns are judged."
-msgstr ""
+msgstr "Блок <workflow> задачи рабочего процесса: её маршрут, соседи и то, как оцениваются её ходы."
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "Монитор агента"
 
 #: src/shared/transcript-format.ts
+#, fuzzy
 msgid "Approved automatically"
-msgstr ""
+msgstr "Одобрено автоматически"
 
 #: src/shared/transcript-format.ts
+#, fuzzy
 msgid "Approved by you"
-msgstr ""
+msgstr "Одобрено вами"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Arabic"
-msgstr ""
+msgstr "Арабский"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "At a turn end the turn is over, so it sends at once."
-msgstr ""
+msgstr "В конце хода ход уже завершён, поэтому сообщение отправляется сразу."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Attached file paths, one per line (empty if none)."
-msgstr ""
+msgstr "Пути прикреплённых файлов, по одному на строку (пусто, если их нет)."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Automations are paused for this task."
-msgstr ""
+msgstr "Автоматизации для этой задачи приостановлены."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "Available when the workflow agent finishes"
-msgstr ""
+msgstr "Доступно после завершения работы агента рабочего процесса"
 
 #: src/shared/dictation-presets.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Balanced"
-msgstr ""
+msgstr "Сбалансированный"
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Best"
-msgstr ""
+msgstr "Лучший"
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Blocked by {blocker}..."
-msgstr ""
+msgstr "Заблокировано: {blocker}..."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Blocked by a task..."
-msgstr ""
+msgstr "Заблокировано задачей..."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Body"
-msgstr ""
+msgstr "Тело"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Bold"
-msgstr ""
+msgstr "Жирный"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "Браузер"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Call webhook"
-msgstr ""
+msgstr "Вызвать веб-хук"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "Изменения"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Chinese"
-msgstr ""
+msgstr "Китайский"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
-msgstr ""
+msgstr "Закрыть"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side)."
-msgstr ""
+msgstr "Закрыть активное окно сведений о задаче щелчком этой кнопкой по его заголовку (по умолчанию средняя кнопка мыши). Можно назначить любое сочетание клавиш или кнопку мыши (среднюю или боковую)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close the open panel: the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal."
-msgstr ""
+msgstr "Закрыть открытую панель: командный терминал, диалог сведений о задаче или диалог создания (Новая задача / Новая задача в бэклоге). Escape также закрывает любое модальное окно."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close window (click header)"
-msgstr ""
+msgstr "Закрыть окно (щелчок по заголовку)"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Collapse or expand the bottom terminal panel."
-msgstr ""
+msgstr "Свернуть или развернуть нижнюю панель терминала."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Column"
-msgstr ""
+msgstr "Колонка"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Командный терминал"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Command Terminal - {projectName}"
-msgstr ""
+msgstr "Командный терминал — {projectName}"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Condition checks"
-msgstr ""
+msgstr "Проверки условий"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Condition: only if {condition}."
-msgstr ""
+msgstr "Условие: только если {condition}."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Condition: only if the last line reads \"{line}\"."
-msgstr ""
+msgstr "Условие: только если последняя строка — «{line}»."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Contains it"
-msgstr ""
+msgstr "Содержит текст"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Copy"
-msgstr ""
+msgstr "Копировать"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy selection"
-msgstr ""
+msgstr "Копировать выделенное"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy the selected diff text to the clipboard."
-msgstr ""
+msgstr "Копировать выделенный текст diff в буфер обмена."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy the selected terminal text (Ctrl+Shift+C always copies). With no selection, Ctrl+C cancels the running command instead."
-msgstr ""
+msgstr "Копировать выделенный текст терминала (Ctrl+Shift+C копирует всегда). Без выделения Ctrl+C вместо этого прерывает выполняемую команду."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Delivery"
-msgstr ""
+msgstr "Доставка"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Delivery: waits for the current turn to end."
-msgstr ""
+msgstr "Доставка: ожидает окончания текущего хода."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it."
-msgstr ""
+msgstr "Порт dev-сервера, зарезервированный этой задачей. Обычно пусто — порт появляется, только когда агент его запросит."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Dismiss dialog"
-msgstr ""
+msgstr "Закрыть диалог"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgctxt "task status"
 msgid "Done"
-msgstr ""
+msgstr "Готово"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Draw / annotate"
-msgstr ""
+msgstr "Рисование / аннотации"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Dutch"
-msgstr ""
+msgstr "Нидерландский"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Effective base branch: the task's override, else the project's configured default."
-msgstr ""
+msgstr "Действующая базовая ветвь: переопределённая для задачи, иначе заданная по умолчанию в проекте."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty for a task outside a workflow."
-msgstr ""
+msgstr "Пусто для задачи вне рабочего процесса."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty for a workflow made from nothing."
-msgstr ""
+msgstr "Пусто для рабочего процесса, созданного с нуля."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty on task enter, and for an agent whose transcript Kangentic cannot read."
-msgstr ""
+msgstr "Пусто при входе задачи в колонку, а также для агента, чей транскрипт Kangentic не может прочитать."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until a PR is linked."
-msgstr ""
+msgstr "Пусто, пока не привязан PR."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until an agent reserves a port."
-msgstr ""
+msgstr "Пусто, пока агент не зарезервирует порт."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task has a branch."
-msgstr ""
+msgstr "Пусто, пока у задачи нет ветви."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task has a worktree."
-msgstr ""
+msgstr "Пусто, пока у задачи нет рабочего дерева."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task is linked to a tracker issue."
-msgstr ""
+msgstr "Пусто, пока задача не привязана к тикету трекера."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Ends with it"
-msgstr ""
+msgstr "Заканчивается текстом"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "English"
-msgstr ""
+msgstr "Английский"
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
-msgstr ""
+msgstr "Введите полный URL ретранслятора, например wss://relay.example.com."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Exactly this line"
-msgstr ""
+msgstr "Точно эта строка"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "File Diff"
-msgstr ""
+msgstr "Сравнение файлов"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Find in conversation"
-msgstr ""
+msgstr "Найти в беседе"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Find on board"
-msgstr ""
+msgstr "Найти на доске"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Focus the board search, or open Quick Find if not on the board."
-msgstr ""
+msgstr "Перейти к поиску по доске или открыть Quick Find, если доска не открыта."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "French"
-msgstr ""
+msgstr "Французский"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "German"
-msgstr ""
+msgstr "Немецкий"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Git branch name (empty if the task has none)."
-msgstr ""
+msgstr "Имя ветви Git (пусто, если у задачи её нет)."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Give up after"
-msgstr ""
+msgstr "Прекратить через"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Headers"
-msgstr ""
+msgstr "Заголовки"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
-msgstr ""
+msgstr "Удерживайте для диктовки; отпустите, чтобы вставить текст в активный терминал или текстовое поле."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Insert newline"
-msgstr ""
+msgstr "Вставить новую строку"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Inspect element"
-msgstr ""
+msgstr "Проверить элемент"
 
 #: src/shared/embedding-runtime.ts
+#, fuzzy
 msgid "Intel Macs"
-msgstr ""
+msgstr "Компьютеры Mac с процессорами Intel"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Interrupt (cancel)"
-msgstr ""
+msgstr "Прервать (отмена)"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Italian"
-msgstr ""
+msgstr "Итальянский"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Italic"
-msgstr ""
+msgstr "Курсив"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Japanese"
-msgstr ""
+msgstr "Японский"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Jump to the next change in the diff. Past a file's last change, continues into the next file."
-msgstr ""
+msgstr "Перейти к следующему изменению в diff. После последнего изменения файла переходит к следующему файлу."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Jump to the previous change in the diff. Before a file's first change, continues into the previous file."
-msgstr ""
+msgstr "Перейти к предыдущему изменению в diff. Перед первым изменением файла переходит к предыдущему файлу."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "Kangentic can't approve {agentName}'s plans, so they wait for you."
-msgstr ""
+msgstr "Kangentic не может одобрять планы {agentName}, поэтому они ждут вас."
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "Граф знаний"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Korean"
-msgstr ""
+msgstr "Корейский"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Leave empty to send the default JSON payload"
-msgstr ""
+msgstr "Оставьте пустым, чтобы отправить JSON по умолчанию"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Legacy. The column's Start an agent here setting does this now."
-msgstr ""
+msgstr "Устаревшее. Теперь это делает параметр колонки «Запускать агента здесь»."
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Light"
-msgstr ""
+msgstr "Лёгкий"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Link"
-msgstr ""
+msgstr "Ссылка"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Main project checkout path. Always the base repo, even when the task has a worktree."
-msgstr ""
+msgstr "Путь к основной копии проекта. Всегда базовый репозиторий, даже если у задачи есть рабочее дерево."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
-msgstr ""
+msgstr "Вручную, так как Kangentic не может одобрять планы {agentName}."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Maximize"
-msgstr ""
+msgstr "Развернуть"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), a create dialog (New Task / New Backlog Task), or the Edit Columns dialog."
-msgstr ""
+msgstr "Развернуть открытую панель: командный терминал, диалог сведений о задаче (просмотр или редактирование), диалог создания (Новая задача / Новая задача в бэклоге) или диалог изменения столбцов."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Message"
-msgstr ""
+msgstr "Сообщение"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Message: {message}"
-msgstr ""
+msgstr "Сообщение: {message}"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Method"
-msgstr ""
+msgstr "Метод"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field unit"
 msgid "minutes"
-msgstr ""
+msgstr "мин"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move task left"
-msgstr ""
+msgstr "Переместить задачу влево"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move task right"
-msgstr ""
+msgstr "Переместить задачу вправо"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move the open task one column left and keep its window open."
-msgstr ""
+msgstr "Переместить открытую задачу на один столбец влево, не закрывая её окно."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move the open task one column right and keep its window open."
-msgstr ""
+msgstr "Переместить открытую задачу на один столбец вправо, не закрывая её окно."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Move to column"
-msgstr ""
+msgstr "Переместить в колонку"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Move to column runs only at a turn end."
-msgstr ""
+msgstr "«Переместить в колонку» выполняется только в конце хода."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Moves the task to {column}"
-msgstr ""
+msgstr "Перемещает задачу в {column}"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Moves the task to another column, with a message for the agent there."
-msgstr ""
+msgstr "Перемещает задачу в другую колонку с сообщением для её агента."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Moves the task to the next column"
-msgstr ""
+msgstr "Перемещает задачу в следующий столбец"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "New task"
-msgstr ""
+msgstr "Новая задача"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next change"
-msgstr ""
+msgstr "Следующее изменение"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next changed file"
-msgstr ""
+msgstr "Следующий измененный файл"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next column"
-msgstr ""
+msgstr "Следующий столбец"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
-msgstr ""
+msgstr "Первый вариант — следующая колонка: следующая по маршруту задачи или на доске."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No message yet."
-msgstr ""
+msgstr "Сообщение пока не задано."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No script yet."
-msgstr ""
+msgstr "Скрипт пока не задан."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "No task it can wait for."
-msgstr ""
+msgstr "Нет задачи, которую она могла бы ждать."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No URL yet."
-msgstr ""
+msgstr "URL пока не задан."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "No workflow \"{workflowSelector}\" in this project."
-msgstr ""
+msgstr "В этом проекте нет рабочего процесса «{workflowSelector}»."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Not offered on this trigger."
-msgstr ""
+msgstr "Недоступно для этого триггера."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Nothing runs at a turn end in {column}."
-msgstr ""
+msgstr "В конце хода в {column} ничего не выполняется."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Nothing runs when a task enters To Do or Done."
-msgstr ""
+msgstr "При поступлении задачи в To Do или Done ничего не выполняется."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies \"{title}\""
-msgstr ""
+msgstr "Уведомляет «{title}»"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notify me"
-msgstr ""
+msgstr "Уведомить меня"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on agent turn end"
-msgstr ""
+msgstr "в конце хода агента"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On agent turn end"
-msgstr ""
+msgstr "В конце хода агента"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on task enter"
-msgstr ""
+msgstr "при поступлении задачи"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On task enter"
-msgstr ""
+msgstr "При поступлении задачи"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on task exit"
-msgstr ""
+msgstr "при уходе задачи"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On task exit"
-msgstr ""
+msgstr "При уходе задачи"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr ""
+msgstr "По строке на каждую колонку между To Do и Done: что в ней запускается и как через неё проходили недавние задачи."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "One per line, as Name: Value."
-msgstr ""
+msgstr "По одному в строке, в виде Имя: Значение."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "only if {condition}"
-msgstr ""
+msgstr "только если {condition}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Only if {condition}."
-msgstr ""
+msgstr "Только если {condition}."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "only if the last line reads \"{line}\""
-msgstr ""
+msgstr "только если последняя строка — «{line}»"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Only if the last line reads \"{line}\"."
-msgstr ""
+msgstr "Только если последняя строка — «{line}»."
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgctxt "task status"
 msgid "Open"
-msgstr ""
+msgstr "Открыта"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
-msgstr ""
+msgstr "Открыть поиск в активном окне беседы."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the command terminal overlay."
-msgstr ""
+msgstr "Открыть или закрыть оверлей командного терминала."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the cross-project view of every running agent."
-msgstr ""
+msgstr "Открыть или закрыть сводку всех запущенных агентов по всем проектам."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the map of what the conversation index has learned."
-msgstr ""
+msgstr "Открыть или закрыть карту того, что изучил индекс бесед."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the settings panel."
-msgstr ""
+msgstr "Открыть или закрыть панель настроек."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the usage statistics dashboard."
-msgstr ""
+msgstr "Открыть или закрыть панель статистики использования."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the cross-project Quick Find palette."
-msgstr ""
+msgstr "Открыть палитру быстрого поиска по всем проектам."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the New Task dialog on the board."
-msgstr ""
+msgstr "Открыть на доске диалог создания задачи."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the Workflows view; pressed there, return to the view you came from."
-msgstr ""
+msgstr "Открыть представление рабочих процессов; повторное нажатие возвращает в предыдущее представление."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open workflows"
-msgstr ""
+msgstr "Открыть рабочие процессы"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Paste"
-msgstr ""
+msgstr "Вставить"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Paste as plain text"
-msgstr ""
+msgstr "Вставить как обычный текст"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Paste text or an image into the terminal (Ctrl+Shift+V also pastes)."
-msgstr ""
+msgstr "Вставить текст или изображение в терминал (Ctrl+Shift+V тоже вставляет)."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
-msgstr ""
+msgstr "Приостановлено"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "planApproval is set per task now. Put planApproval on each task entry."
-msgstr ""
+msgstr "Теперь planApproval задаётся для каждой задачи. Укажите planApproval в каждой записи задачи."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "planApproval must be \"automatic\", \"manual\", or null."
-msgstr ""
+msgstr "planApproval должен иметь значение \"automatic\", \"manual\" или null."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Polish"
-msgstr ""
+msgstr "Польский"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Portuguese"
-msgstr ""
+msgstr "Португальский"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgid "PR {number}"
-msgstr ""
+msgstr "PR {number}"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous change"
-msgstr ""
+msgstr "Предыдущее изменение"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous changed file"
-msgstr ""
+msgstr "Предыдущий измененный файл"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous column"
-msgstr ""
+msgstr "Предыдущий столбец"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Prompt"
-msgstr ""
+msgstr "Промпт"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request number as a string (empty if none)."
-msgstr ""
+msgstr "Номер pull request в виде строки (пусто, если его нет)."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request state: open, merged, closed or draft."
-msgstr ""
+msgstr "Состояние pull request: open, merged, closed или draft."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request URL (empty if none)."
-msgstr ""
+msgstr "URL pull request (пусто, если его нет)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Push-to-talk (hold)"
-msgstr ""
+msgstr "Нажми и говори (удерживать)"
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Queued..."
-msgstr ""
+msgstr "В очереди..."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Quick Find"
-msgstr ""
+msgstr "Быстрый поиск"
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot contain a backslash."
-msgstr ""
+msgstr "Адрес ретранслятора не может содержать обратную косую черту."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot include a #fragment; the pairing slot is carried in the query string."
-msgstr ""
+msgstr "Адрес ретранслятора не может содержать #фрагмент: слот сопряжения передаётся в строке запроса."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot include a username or password."
-msgstr ""
+msgstr "Адрес ретранслятора не может содержать имя пользователя или пароль."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address is too long (max {maxBytes} bytes)."
-msgstr ""
+msgstr "Адрес ретранслятора слишком длинный (макс. {maxBytes} байт)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Reload page"
-msgstr ""
+msgstr "Перезагрузить страницу"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
-msgstr ""
+msgstr "Сначала удалите {label} из {workflowTitle}."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Reset zoom"
-msgstr ""
+msgstr "Сбросить масштаб"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Review the latest changes and fix any issues you find"
-msgstr ""
+msgstr "Проверь последние изменения и исправь найденные проблемы"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run immediately"
-msgstr ""
+msgstr "Выполнить сразу"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends."
-msgstr ""
+msgstr "«Выполнить сразу» прерывает текущий ход. «Дождаться текущего хода» отправляет сообщение по окончании хода."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run script"
-msgstr ""
+msgstr "Выполнить скрипт"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Runs {script}"
-msgstr ""
+msgstr "Запускает {script}"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Runs a shell command and waits for it to finish."
-msgstr ""
+msgstr "Выполняет команду оболочки и ожидает её завершения."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Runs in the task's worktree, or the project checkout when it has none."
-msgstr ""
+msgstr "Выполняется в рабочем дереве задачи, а если его нет — в checkout проекта."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Russian"
-msgstr ""
+msgstr "Русский"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save board configuration"
-msgstr ""
+msgstr "Сохранить конфигурацию доски"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save edits"
-msgstr ""
+msgstr "Сохранить изменения"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save the task edit form, the same as its Save button."
-msgstr ""
+msgstr "Сохранить форму редактирования задачи, как кнопкой «Сохранить»."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Script"
-msgstr ""
+msgstr "Скрипт"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Select the next file in the Changes panel."
-msgstr ""
+msgstr "Выбрать следующий файл на панели изменений."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Select the previous file in the Changes panel."
-msgstr ""
+msgstr "Выбрать предыдущий файл на панели изменений."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Send message to agent"
-msgstr ""
+msgstr "Отправить сообщение агенту"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Sends \"{message}\""
-msgstr ""
+msgstr "Отправляет «{message}»"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sends a message to the agent working on the task."
-msgstr ""
+msgstr "Отправляет сообщение агенту, работающему над задачей."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sends a request. Retries a network error, 408, 429 or 5xx."
-msgstr ""
+msgstr "Отправляет запрос. Повторяет при сетевой ошибке, 408, 429 или 5xx."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sent to the agent in that column once it is ready."
-msgstr ""
+msgstr "Отправляется агенту в этом столбце, когда он будет готов."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sent to the task's agent as if you typed it yourself."
-msgstr ""
+msgstr "Отправляется агенту задачи так, будто вы ввели это сами."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the activity-engine debug overlay."
-msgstr ""
+msgstr "Показать или скрыть отладочный оверлей механизма активности."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr ""
+msgstr "Показать или скрыть панель браузера в окне сведений о задаче."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
-msgstr ""
+msgstr "Показать или скрыть панель изменений (diff) в окне сведений о задаче."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the description panel inside the task detail dialog."
-msgstr ""
+msgstr "Показать или скрыть панель описания в окне сведений о задаче."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the project sidebar."
-msgstr ""
+msgstr "Показать или скрыть боковую панель проекта."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Shows a desktop notification."
-msgstr ""
+msgstr "Показывает уведомление на рабочем столе."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr ""
+msgstr "Показывает уведомление на рабочем столе. Щелчок по нему открывает задачу."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap)."
-msgstr ""
+msgstr "Привязка вниз: восстановить развёрнутое окно или переместить окно, привязанное к половине экрана, в нижний угол (привязка с учётом состояния, как в Win11)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap)."
-msgstr ""
+msgstr "Привязка влево: к левой половине или из правого угла в соответствующий левый угол (привязка с учётом состояния, как в Win11)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap)."
-msgstr ""
+msgstr "Привязка вправо: к правой половине или из левого угла в соответствующий правый угол (привязка с учётом состояния, как в Win11)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap)."
-msgstr ""
+msgstr "Привязка вверх: развернуть плавающее окно или переместить окно, привязанное к половине экрана, в верхний угол (привязка с учётом состояния, как в Win11)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window down"
-msgstr ""
+msgstr "Привязать окно вниз"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window left"
-msgstr ""
+msgstr "Привязать окно влево"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window right"
-msgstr ""
+msgstr "Привязать окно вправо"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window up"
-msgstr ""
+msgstr "Привязать окно вверх"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Spanish"
-msgstr ""
+msgstr "Испанский"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start agent"
-msgstr ""
+msgstr "Запустить агента"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start an agent here is off, so no agent ends a turn here."
-msgstr ""
+msgstr "Параметр «Запускать агента здесь» выключен, поэтому здесь ни один агент не завершает ход."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start an agent here is off."
-msgstr ""
+msgstr "Параметр «Запускать агента здесь» выключен."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Starts the agent with \"{prompt}\""
-msgstr ""
+msgstr "Запускает агента с «{prompt}»"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Starts the agent."
-msgstr ""
+msgstr "Запускает агента."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Starts with it"
-msgstr ""
+msgstr "Начинается с текста"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Switch board / backlog"
-msgstr ""
+msgstr "Доска / бэклог"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task description with a \": \" prefix when non-empty (PTY-sanitized)."
-msgstr ""
+msgstr "Описание задачи с префиксом \": \", если оно не пустое (очищено для PTY)."
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "Сводки задач"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task title (PTY-sanitized)."
-msgstr ""
+msgstr "Заголовок задачи (очищен для PTY)."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is '{{task_xml}}{{workflow_xml}}{{attachments}}'."
-msgstr ""
+msgstr "Заголовок и описание задачи, обёрнутые в XML-конверт <task>. Шаблон промпта по умолчанию: '{{task_xml}}{{workflow_xml}}{{attachments}}.'"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Task titles"
-msgstr ""
+msgstr "Названия задач"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task UUID."
-msgstr ""
+msgstr "UUID задачи."
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Terminal names"
-msgstr ""
+msgstr "Имена терминалов"
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr ""
+msgstr "Сравнение текста использует последнее сообщение агента, поэтому выполняется только по завершении хода агента."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
-msgstr ""
+msgstr "Эта связь замыкает цикл. Связи рабочего процесса не могут образовывать круг."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The agent's reply at the end of its last turn in this column."
-msgstr ""
+msgstr "Ответ агента в конце его последнего хода в этой колонке."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column the task moved into."
-msgstr ""
+msgstr "Колонка, в которую перешла задача."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column the task moved out of."
-msgstr ""
+msgstr "Колонка, из которой ушла задача."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column this automation belongs to."
-msgstr ""
+msgstr "Колонка, к которой относится эта автоматизация."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The linked tracker issue's key, such as a Jira key or a GitHub issue number."
-msgstr ""
+msgstr "Ключ связанного тикета трекера, например ключ Jira или номер issue в GitHub."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The linked tracker issue's URL."
-msgstr ""
+msgstr "URL связанного тикета трекера."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The project's name as it reads in the sidebar."
-msgstr ""
+msgstr "Название проекта в том виде, в каком оно отображается на боковой панели."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is archived."
-msgstr ""
+msgstr "Задача в архиве."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is in Done."
-msgstr ""
+msgstr "Задача в столбце «Готово»."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is in To Do."
-msgstr ""
+msgstr "Задача в столбце «К выполнению»."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The task's #N, the number people say out loud."
-msgstr ""
+msgstr "Номер задачи #N, который произносят вслух."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The task's labels, comma-separated."
-msgstr ""
+msgstr "Метки задачи через запятую."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
-msgstr ""
+msgstr "Агент этого столбца не может сообщать о завершении хода."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is archived. Restore it to the board to continue working on it."
-msgstr ""
+msgstr "Эта задача в архиве. Восстановите её на доске, чтобы продолжить работу над ней."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is complete. Move it out of Done to continue working on it."
-msgstr ""
+msgstr "Эта задача завершена. Переместите её из столбца «Готово», чтобы продолжить работу над ней."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is in To Do. Move it to another column to start its agent."
-msgstr ""
+msgstr "Эта задача в столбце «К выполнению». Переместите её в другой столбец, чтобы запустить её агента."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Title"
-msgstr ""
+msgstr "Заголовок"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Agent Monitor"
-msgstr ""
+msgstr "Показать или скрыть монитор агентов"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle between the board and the backlog view."
-msgstr ""
+msgstr "Переключение между доской и бэклогом."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Browser pane"
-msgstr ""
+msgstr "Показать или скрыть браузер"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Changes panel"
-msgstr ""
+msgstr "Показать или скрыть панель изменений"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal"
-msgstr ""
+msgstr "Показать или скрыть командный терминал"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle debug overlay"
-msgstr ""
+msgstr "Показать или скрыть отладочный оверлей"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle description peek"
-msgstr ""
+msgstr "Показать или скрыть описание"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Knowledge Graph"
-msgstr ""
+msgstr "Показать или скрыть граф знаний"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle settings"
-msgstr ""
+msgstr "Показать или скрыть настройки"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle sidebar"
-msgstr ""
+msgstr "Показать или скрыть боковую панель"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle terminal panel"
-msgstr ""
+msgstr "Показать или скрыть панель терминала"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Usage Stats"
-msgstr ""
+msgstr "Показать или скрыть статистику использования"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Turkish"
-msgstr ""
+msgstr "Турецкий"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Ukrainian"
-msgstr ""
+msgstr "Украинский"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "URL"
-msgstr ""
+msgstr "URL"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Usage Statistics"
-msgstr ""
+msgstr "Статистика использования"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Wait for current turn"
-msgstr ""
+msgstr "Дождаться текущего хода"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "waits for the current turn to end"
-msgstr ""
+msgstr "ожидает окончания текущего хода"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "What the workflow was made from, in a <brief> block with the source task's number."
-msgstr ""
+msgstr "Из чего создан рабочий процесс — в блоке <brief> с номером исходной задачи."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "When this automation runs: enter, turn_end or exit."
-msgstr ""
+msgstr "Когда запускается эта автоматизация: enter, turn_end или exit."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "with a message"
-msgstr ""
+msgstr "с сообщением"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Workflow steps"
-msgstr ""
+msgstr "Шаги рабочего процесса"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Worktree directory path (empty if the task has none)."
-msgstr ""
+msgstr "Путь к каталогу рабочего дерева (пусто, если у задачи его нет)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in a markdown link. Fixed."
-msgstr ""
+msgstr "Обернуть выделенный текст описания в ссылку Markdown. Не настраивается."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in bold markdown. Fixed."
-msgstr ""
+msgstr "Выделить выбранный текст описания полужирным в Markdown. Не настраивается."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in italic markdown. Fixed."
-msgstr ""
+msgstr "Выделить выбранный текст описания курсивом в Markdown. Не настраивается."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1]."
-msgstr ""
+msgstr "Телефон не будет сопрягаться с ретранслятором без TLS. Используйте wss:// или ws:// только для localhost, 127.0.0.1 или [::1]."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Zoom in"
-msgstr ""
+msgstr "Увеличить"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Zoom out"
-msgstr ""
+msgstr "Уменьшить"

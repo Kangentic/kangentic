@@ -8,310 +8,383 @@ msgstr ""
 "Language: it\n"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": {reason}"
-msgstr ""
+msgstr "\"{taskTitle}\": {reason}"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "{finishedCount, plural, one {# recently finished} other {# recently finished}}"
-msgstr ""
+msgstr "{finishedCount, plural, one {# completato di recente} many {# completati di recente} other {# completati di recente}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "{projectOptionCount, plural, one {{representableSelectionCount} of # project} other {{representableSelectionCount} of # projects}}"
-msgstr ""
+msgstr "{projectOptionCount, plural, one {{representableSelectionCount} di # progetto} many {{representableSelectionCount} di # progetti} other {{representableSelectionCount} di # progetti}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "{totalSessionCount, plural, one {Filters are hiding {hiddenSessionCount} of # session} other {Filters are hiding {hiddenSessionCount} of # sessions}}"
-msgstr ""
+msgstr "{totalSessionCount, plural, one {I filtri nascondono {hiddenSessionCount} di # sessione} many {I filtri nascondono {hiddenSessionCount} di # sessioni} other {I filtri nascondono {hiddenSessionCount} di # sessioni}}"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "{workingProjectCount, plural, one {across # project} other {across # projects}}"
-msgstr ""
+msgstr "{workingProjectCount, plural, one {in # progetto} many {in # progetti} other {in # progetti}}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "<0>{visibleCount}</0>of<1>{totalSessionCount}</1>"
-msgstr ""
+msgstr "<0>{visibleCount}</0>di<1>{totalSessionCount}</1>"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Active"
-msgstr ""
+msgstr "Attivo"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Agent"
-msgstr ""
+msgstr "Agente"
 
 #: src/renderer/components/monitor/MonitorPage.tsx
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "Monitor agenti"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Agents actively running right now, across every project in view"
-msgstr ""
+msgstr "Agenti in esecuzione in questo momento, in tutti i progetti visualizzati"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Agents waiting on a response from you, across every project in view"
-msgstr ""
+msgstr "Agenti in attesa di una tua risposta, in tutti i progetti visualizzati"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "All projects"
-msgstr ""
+msgstr "Tutti i progetti"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Automations"
-msgstr ""
+msgstr "Automazioni"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Awaiting permission {when}"
-msgstr ""
+msgstr "In attesa di autorizzazione {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Cards"
-msgstr ""
+msgstr "Schede"
 
 #: src/renderer/components/monitor/MonitorPage.tsx
+#, fuzzy
 msgid "Close agent monitor"
-msgstr ""
+msgstr "Chiudi monitor agenti"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Column"
-msgstr ""
+msgstr "Colonna"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Context"
-msgstr ""
+msgstr "Contesto"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't archive task"
-msgstr ""
+msgstr "Impossibile archiviare l'attività"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't delete task"
-msgstr ""
+msgstr "Impossibile eliminare l'attività"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't move task"
-msgstr ""
+msgstr "Impossibile spostare l'attività"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Couldn't send task to backlog"
-msgstr ""
+msgstr "Impossibile spostare l'attività nel backlog"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "Default value"
 msgid "Default"
-msgstr ""
+msgstr "Predefinito"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Doing now"
-msgstr ""
+msgstr "Attività in corso"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Effort"
-msgstr ""
+msgstr "Impegno"
 
 #: src/renderer/components/monitor/LazyMonitor.tsx
+#, fuzzy
 msgid "Failed to load the agent monitor"
-msgstr ""
+msgstr "Impossibile caricare il monitor dell'agente"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Filter sessions"
-msgstr ""
+msgstr "Filtra sessioni"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorCard.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Finished"
-msgstr ""
+msgstr "Terminato"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Finished {when}"
-msgstr ""
+msgstr "Terminato {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Group"
-msgstr ""
+msgstr "Raggruppa"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Group sessions by"
-msgstr ""
+msgstr "Raggruppa sessioni per"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
-msgstr ""
+msgstr "Inattivo"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "last active {when}"
-msgstr ""
+msgstr "ultima attività {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Layout"
-msgstr ""
+msgstr "Layout"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "List"
-msgstr ""
+msgstr "Elenco"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Live only"
-msgstr ""
+msgstr "Solo attive"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "longest since {when}"
-msgstr ""
+msgstr "il più lungo da {when}"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Model"
-msgstr ""
+msgstr "Modello"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Needs you"
-msgstr ""
+msgstr "Richiede attenzione"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Newest"
-msgstr ""
+msgstr "Più recenti"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
+#, fuzzy
 msgid "No agents running"
-msgstr ""
+msgstr "Nessun agente in esecuzione"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "No sessions match the current filters."
-msgstr ""
+msgstr "Nessuna sessione corrisponde ai filtri correnti."
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Oldest"
-msgstr ""
+msgstr "Meno recenti"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "automations state"
 msgid "On"
-msgstr ""
+msgstr "Attive"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Open {taskTitle}"
-msgstr ""
+msgstr "Apri {taskTitle}"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Open on board"
-msgstr ""
+msgstr "Apri nella bacheca"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #: src/renderer/components/monitor/MonitorCard.tsx
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "Agent status"
 msgid "Paused"
-msgstr ""
+msgstr "In pausa"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgctxt "automations state"
 msgid "Paused"
-msgstr ""
+msgstr "In pausa"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "paused or waiting to start"
-msgstr ""
+msgstr "in pausa o in attesa di avvio"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Permission"
-msgstr ""
+msgstr "Autorizzazione"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Permission mode the session was spawned under"
-msgstr ""
+msgstr "Modalità di autorizzazione con cui è stata avviata la sessione"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Project"
-msgstr ""
+msgstr "Progetto"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Projects"
-msgstr ""
+msgstr "Progetti"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Projects in view with at least one live session"
-msgstr ""
+msgstr "Progetti visualizzati con almeno una sessione attiva"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Reasoning effort the session is running with"
-msgstr ""
+msgstr "Livello di ragionamento usato dalla sessione"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
 msgid "Recently finished"
-msgstr ""
+msgstr "Terminato di recente"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Runtime"
-msgstr ""
+msgstr "Tempo di esecuzione"
 
 #: src/renderer/components/monitor/MonitorBody.tsx
+#, fuzzy
 msgid "Sessions from every project appear here as soon as an agent starts."
-msgstr ""
+msgstr "Le sessioni di tutti i progetti vengono visualizzate qui non appena si avvia un agente."
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "Sessions you paused, plus any queued waiting for a free slot"
-msgstr ""
+msgstr "Sessioni messe in pausa, più quelle in coda in attesa di uno slot libero"
 
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
+#, fuzzy
 msgid "Show in project"
-msgstr ""
+msgstr "Mostra nel progetto"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Show only sessions with a live agent, hiding paused and recently finished"
-msgstr ""
+msgstr "Mostra solo le sessioni con un agente attivo, nascondendo quelle in pausa e terminate di recente"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Sort"
-msgstr ""
+msgstr "Ordina"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Sort sessions by"
-msgstr ""
+msgstr "Ordina sessioni per"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Status"
-msgstr ""
+msgstr "Stato"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
+#, fuzzy
 msgid "Table"
-msgstr ""
+msgstr "Tabella"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
 #: src/renderer/components/monitor/useMonitorDetailOwnership.ts
+#, fuzzy
 msgid "Task"
-msgstr ""
+msgstr "Attività"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "The workflow the task belongs to"
-msgstr ""
+msgstr "Il flusso di lavoro a cui appartiene l'attività"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Waiting to start"
-msgstr ""
+msgstr "In attesa di avvio"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Whether the agent is working, waiting on you, paused, or finished"
-msgstr ""
+msgstr "Se l'agente è al lavoro, in attesa di te, in pausa o ha finito"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Whether the column's automations run for the task"
-msgstr ""
+msgstr "Se le automazioni della colonna vengono eseguite per l'attività"
 
 #: src/renderer/components/monitor/MonitorSummaryCards.tsx
+#, fuzzy
 msgid "with a live session"
-msgstr ""
+msgstr "con una sessione attiva"
 
 #: src/renderer/components/monitor/MonitorTable.tsx
+#, fuzzy
 msgid "Workflow"
-msgstr ""
+msgstr "Workflow"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
+#, fuzzy
 msgid "Working"
-msgstr ""
+msgstr "In corso"

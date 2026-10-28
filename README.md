@@ -100,6 +100,10 @@ WSL users install the Windows version and can pick a WSL distro as the terminal 
 
 Resuming after a restart, the MCP board tools, and handing history to the next agent depend on the CLI. See [what each agent supports](https://www.kangentic.com/features/agent-orchestration/#supported-agents).
 
+## Languages
+
+Kangentic's interface is available in English, 中文(简体), 中文(繁體), Français, Deutsch, Italiano, Español, 日本語, 한국어, Русский, Português (Brasil), Türkçe, Polski, Čeština and Magyar. Change it under Settings > Language, and Kangentic restarts in it. The translations are machine-made and open to review. Each language's PO files are under `src/locales/<code>/`, and [Translations](docs/contributing/translations.md) explains how to correct one.
+
 ## Data and privacy
 
 Your boards, tasks, and transcripts stay in a local SQLite database. The agent CLIs reach their own providers under your own accounts, as they would in your terminal.

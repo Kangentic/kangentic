@@ -8,253 +8,315 @@ msgstr ""
 "Language: de\n"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr ""
+msgstr "{strokeCount, plural, one {# Strich} other {# Striche}}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
-msgstr ""
+msgstr "{viewportWidth} x {viewportHeight}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Agent is driving"
-msgstr ""
+msgstr "Agent steuert"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Already at the largest zoom"
-msgstr ""
+msgstr "Bereits maximal vergrößert"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Already at the smallest zoom"
-msgstr ""
+msgstr "Bereits maximal verkleinert"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
-msgstr ""
+msgstr "Ein Agent hat diese Seite auf {viewportWidth} x {viewportHeight} CSS-Pixel eingestellt. Zurücksetzen, um wieder die Größe des Bereichs zu verwenden."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "at {zoomPercent}%"
-msgstr ""
+msgstr "bei {zoomPercent} %"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Back"
-msgstr ""
+msgstr "Zurück"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Löschen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Clear all strokes"
-msgstr ""
+msgstr "Alle Striche löschen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Click elements to capture their identity"
-msgstr ""
+msgstr "Elemente anklicken, um ihre Identität zu erfassen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Close browser"
-msgstr ""
+msgstr "Browser schließen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Close the browser and free its memory. Show reopens the page."
-msgstr ""
+msgstr "Browser schließen und Speicher freigeben. „Anzeigen“ öffnet die Seite erneut."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Couldn't save URL"
-msgstr ""
+msgstr "URL konnte nicht gespeichert werden"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Couldn't send to agent"
-msgstr ""
+msgstr "Senden an Agent fehlgeschlagen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Default URL saved"
-msgstr ""
+msgstr "Standard-URL gespeichert"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Draw"
-msgstr ""
+msgstr "Zeichnen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Explain what I marked\""
-msgstr ""
+msgstr "z. B. „Erkläre, was ich markiert habe“"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Match the circled spacing\""
-msgstr ""
+msgstr "z. B. „Abstand wie eingekreist anpassen“"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Why is this misaligned?\""
-msgstr ""
+msgstr "z. B. „Warum ist das falsch ausgerichtet?“"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Enter a valid http:// or https:// URL."
-msgstr ""
+msgstr "Geben Sie eine gültige http://- oder https://-URL ein."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Enter in the note also sends"
-msgstr ""
+msgstr "Eingabetaste in der Notiz sendet ebenfalls"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Esc stops inspecting"
-msgstr ""
+msgstr "Esc beendet die Inspektion"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Failed to load: {finalUrl}"
-msgstr ""
+msgstr "Laden fehlgeschlagen: {finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Forward"
-msgstr ""
+msgstr "Vorwärts"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "https://example.com or localhost:5173"
-msgstr ""
+msgstr "https://example.com oder localhost:5173"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Inspect"
-msgstr ""
+msgstr "Untersuchen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Inspect failed"
-msgstr ""
+msgstr "Untersuchen fehlgeschlagen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Invalid URL: {target}"
-msgstr ""
+msgstr "Ungültige URL: {target}"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
-msgstr ""
+msgstr "Lokaler Dev-Server, Staging, Produktion oder eine beliebige http(s)-Seite. Diese Aufgabe merkt sich, wo Sie waren; andere Aufgaben behalten ihre eigene Position."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "No earlier page"
-msgstr ""
+msgstr "Keine vorherige Seite"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "No forward page"
-msgstr ""
+msgstr "Keine nächste Seite"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Nothing drawn yet"
-msgstr ""
+msgstr "Noch nichts gezeichnet"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
-msgstr ""
+msgstr "Unter Windows: Wenn Ihr Dev-Server in WSL läuft und `localhost` keine Verbindung herstellt, führen Sie <0>{WSL_HOSTNAME_COMMAND}</0> aus und verwenden Sie stattdessen diese IP."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Only http:// and https:// URLs are allowed."
-msgstr ""
+msgstr "Nur http://- und https://-URLs sind zulässig."
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Open"
-msgstr ""
+msgstr "Öffnen"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Open {pickUrl}"
-msgstr ""
+msgstr "{pickUrl} öffnen"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Open a URL to preview"
-msgstr ""
+msgstr "URL für die Vorschau öffnen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "In neuem Fenster öffnen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Or Ctrl+scroll wheel"
-msgstr ""
+msgstr "Oder Strg+Mausrad"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Quick picks"
-msgstr ""
+msgstr "Schnellauswahl"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reload"
-msgstr ""
+msgstr "Neu laden"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "Remove from queue"
-msgstr ""
+msgstr "Aus Warteschlange entfernen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reset"
-msgstr ""
+msgstr "Zurücksetzen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset this page to the pane's own size"
-msgstr ""
+msgstr "Diese Seite auf die Größe des Bereichs zurücksetzen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset viewport"
-msgstr ""
+msgstr "Viewport zurücksetzen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset zoom (current {zoomPercent}%)"
-msgstr ""
+msgstr "Zoom zurücksetzen (aktuell {zoomPercent} %)"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset zoom to 100%"
-msgstr ""
+msgstr "Zoom auf 100 % zurücksetzen"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Save as project default"
-msgstr ""
+msgstr "Als Projektstandard speichern"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Save as project default for all tasks"
-msgstr ""
+msgstr "Als Projektstandard für alle Aufgaben speichern"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Send"
-msgstr ""
+msgstr "Senden"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Send to agent"
-msgstr ""
+msgstr "An Agent senden"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "The browser pane opens it for this project."
-msgstr ""
+msgstr "Der Browserbereich öffnet sie für dieses Projekt."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "This URL is the project default"
-msgstr ""
+msgstr "Diese URL ist der Projektstandard"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Toggle draw mode"
-msgstr ""
+msgstr "Zeichenmodus umschalten"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Undo"
-msgstr ""
+msgstr "Rückgängig"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Undo last stroke"
-msgstr ""
+msgstr "Letzten Strich rückgängig machen"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Webpack, generic"
-msgstr ""
+msgstr "Webpack, generisch"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "What should the agent do with this?"
-msgstr ""
+msgstr "Was soll der Agent damit tun?"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "Will send:"
-msgstr ""
+msgstr "Wird gesendet:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Zoom in"
-msgstr ""
+msgstr "Vergrößern"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Zoom out"
-msgstr ""
+msgstr "Verkleinern"

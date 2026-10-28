@@ -8,39 +8,47 @@ msgstr ""
 "Language: hu\n"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Cancel"
-msgstr ""
+msgstr "Mégse"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change and restart"
-msgstr ""
+msgstr "Módosítás és újraindítás"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change the display language to {language}?"
-msgstr ""
+msgstr "Módosítja a megjelenítési nyelvet erre: {language}?"
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "Nem sikerült az újraindítás"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Kangentic restarts to change the language."
-msgstr ""
+msgstr "A Kangentic újraindul a nyelv módosításához."
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "A módosítás alkalmazásához indítsa újra a Kangenticet."
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Restart now"
-msgstr ""
+msgstr "Újraindítás most"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Switch to {language}?"
-msgstr ""
+msgstr "Váltás erre: {language}?"

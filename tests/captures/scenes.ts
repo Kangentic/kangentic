@@ -909,14 +909,15 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
     ],
   },
   // The Language picker opened from its chevron and closed from it again: the menu lists each
-  // shipped language by its own name and code (English alone until translations ship), with the
-  // current one checked. Never a pick, which asks to restart the app.
+  // shipped language by its own name and code, with the current one checked. The chevron is
+  // found by its test id, since its name is translated in every language but English. Never a
+  // pick, which asks to restart the app.
   language: {
     ready: '[data-testid="setting-row-displayLanguage"]',
     alt: 'Settings on the Language tab: the Display language card, whose Language picker lists each language Kangentic ships by its own name and code, with a check on the current one.',
     choreography: [
-      { click: '[data-testid="setting-row-displayLanguage"] button[aria-label="Open dropdown"]', waitFor: '[data-testid="display-language-menu"]', ms: 2400 },
-      { click: '[data-testid="setting-row-displayLanguage"] button[aria-label="Close dropdown"]', waitFor: gone('[data-testid="display-language-menu"]'), ms: 900 },
+      { click: '[data-testid="display-language-toggle"]', waitFor: '[data-testid="display-language-menu"]', ms: 2400 },
+      { click: '[data-testid="display-language-toggle"]', waitFor: gone('[data-testid="display-language-menu"]'), ms: 900 },
     ],
   },
   // Column width through Narrow and Wide, which redraws the board's columns beside the panel, and back.

@@ -12,8 +12,8 @@
  * - MCP and agent command code never translates: text an agent reads stays English;
  * - main's esbuild bundle carries a shared list's descriptors and resolves them;
  * - a shipped language translates the first-launch suggestion's strings;
- * - one message ID never reads translated in one area and untranslated in
- *   another, since the renderer merges a locale's areas and the last one wins;
+ * - one message ID reads the same in every area of a locale, translated or not,
+ *   since the renderer merges a locale's areas and the last one wins;
  * - settings search matches the text as displayed, in the session's language.
  *
  * Tier: Unit.
@@ -47,8 +47,6 @@ const RUNTIME_MACRO_MODULE = '@lingui/core/runtime-macro';
 const LABELED_FIRST_ARGUMENT_MACROS = new Set(['plural', 'select', 'selectOrdinal']);
 /** The runtime macro's tags, whose placeholders are `${{ name }}` or a nested macro call. */
 const MESSAGE_TAG_MACROS = new Set(['msg', 'defineMessage']);
-/** Languages whose catalogs carry the suggestion strings now: zh-CN's are the design's own. */
-const SEEDED_SUGGESTION_LOCALES = ['zh-CN'];
 
 function toPosix(filePath: string): string {
   return filePath.replace(/\\/g, '/');
@@ -379,7 +377,8 @@ describe('translated catalogs', () => {
   it('every shipped language translates the first-launch suggestion strings', async () => {
     const languageCatalog = catalogs.find((catalog) => toPosix(catalog.path).endsWith('/language'));
     expect(languageCatalog, 'the components/language catalog').toBeDefined();
-    const locales = [...new Set([...SHIPPED_LOCALES.filter((locale) => locale !== SOURCE_LOCALE), ...SEEDED_SUGGESTION_LOCALES])];
+    const locales = SHIPPED_LOCALES.filter((locale) => locale !== SOURCE_LOCALE);
+    expect(locales.length, 'a shipped language other than English, or this check runs over nothing').toBeGreaterThan(0);
     for (const locale of locales) {
       const messages = (await languageCatalog?.read(locale)) ?? {};
       for (const [key, descriptor] of Object.entries(LANGUAGE_PROMPT_MESSAGES)) {
@@ -389,28 +388,33 @@ describe('translated catalogs', () => {
     }
   });
 
-  it('no message reads translated in one area and untranslated in another', async () => {
+  it('no message reads one way in one area and another way, or untranslated, in another', async () => {
     const config = getConfig({ configPath: path.join(REPO_ROOT, 'lingui.config.ts'), skipValidation: true });
     const conflicts: string[] = [];
     for (const locale of config.locales.filter((candidate) => candidate !== config.sourceLocale)) {
-      const translatedness = new Map<string, Map<boolean, string[]>>();
+      const copies = new Map<string, Map<string, string[]>>();
       for (const catalog of catalogs) {
         const messages = (await catalog.read(locale)) ?? {};
         for (const [id, entry] of Object.entries(messages)) {
-          const translated = (entry.translation ?? '') !== '';
-          const byState = translatedness.get(id) ?? new Map<boolean, string[]>();
-          byState.set(translated, [...(byState.get(translated) ?? []), path.basename(catalog.path)]);
-          translatedness.set(id, byState);
+          const translation = entry.translation ?? '';
+          const byTranslation = copies.get(id) ?? new Map<string, string[]>();
+          byTranslation.set(translation, [...(byTranslation.get(translation) ?? []), path.basename(catalog.path)]);
+          copies.set(id, byTranslation);
         }
       }
-      for (const [id, byState] of translatedness) {
-        if (byState.size > 1) conflicts.push(`${locale} ${id}: translated in ${byState.get(true)?.join(', ')}, not in ${byState.get(false)?.join(', ')}`);
+      for (const [id, byTranslation] of copies) {
+        if (byTranslation.size < 2) continue;
+        const readings = [...byTranslation].map(([translation, areas]) => (
+          `${translation === '' ? 'untranslated' : JSON.stringify(translation)} in ${areas.join(', ')}`
+        ));
+        conflicts.push(`${locale} ${id}: ${readings.join('; ')}`);
       }
     }
     expect(
       conflicts,
-      'The renderer merges a locale\'s areas and the last wins, so an untranslated copy can hide a translation. '
-      + 'Translate every copy, or give the message a context of its own.',
+      'The renderer merges a locale\'s areas and the last wins, so a copy that reads differently, or not at all, '
+      + 'hides the other, and a correction to one copy does not show. Give every copy the same translation, or give '
+      + 'the message a context of its own.',
     ).toEqual([]);
   });
 });

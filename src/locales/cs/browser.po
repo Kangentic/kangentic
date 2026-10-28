@@ -8,253 +8,315 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr ""
+msgstr "{strokeCount, plural, one {# tah} few {# tahy} many {# tahu} other {# tahů}}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
-msgstr ""
+msgstr "{viewportWidth} × {viewportHeight}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Agent is driving"
-msgstr ""
+msgstr "Agent ovládá prohlížeč"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Already at the largest zoom"
-msgstr ""
+msgstr "Již je nastaveno největší přiblížení"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Already at the smallest zoom"
-msgstr ""
+msgstr "Již je nastaveno nejmenší přiblížení"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
-msgstr ""
+msgstr "Agent nastavil vykreslování této stránky na {viewportWidth} × {viewportHeight} pixelů CSS. Obnovením se znovu použije vlastní velikost podokna."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "at {zoomPercent}%"
-msgstr ""
+msgstr "při {zoomPercent} %"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Back"
-msgstr ""
+msgstr "Zpět"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Clear"
-msgstr ""
+msgstr "Vymazat"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Clear all strokes"
-msgstr ""
+msgstr "Vymazat všechny tahy"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Click elements to capture their identity"
-msgstr ""
+msgstr "Kliknutím na prvky zachytíte jejich identitu"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Close browser"
-msgstr ""
+msgstr "Zavřít prohlížeč"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Close the browser and free its memory. Show reopens the page."
-msgstr ""
+msgstr "Zavře prohlížeč a uvolní jeho paměť. Možnost Zobrazit stránku znovu otevře."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Couldn't save URL"
-msgstr ""
+msgstr "Adresu URL se nepodařilo uložit"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Couldn't send to agent"
-msgstr ""
+msgstr "Odeslání agentovi se nezdařilo"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Default URL saved"
-msgstr ""
+msgstr "Výchozí adresa URL uložena"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Draw"
-msgstr ""
+msgstr "Kreslit"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Explain what I marked\""
-msgstr ""
+msgstr "např. „Vysvětli, co jsem označil“"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Match the circled spacing\""
-msgstr ""
+msgstr "např. „Sjednoť rozestupy podle zakroužkovaných“"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "e.g. \"Why is this misaligned?\""
-msgstr ""
+msgstr "např. „Proč to není zarovnané?“"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Enter a valid http:// or https:// URL."
-msgstr ""
+msgstr "Zadejte platnou adresu URL začínající http:// nebo https://."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Enter in the note also sends"
-msgstr ""
+msgstr "Odeslat lze i klávesou Enter v poznámce"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Esc stops inspecting"
-msgstr ""
+msgstr "Esc ukončí kontrolu"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Failed to load: {finalUrl}"
-msgstr ""
+msgstr "Načtení se nezdařilo: {finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Forward"
-msgstr ""
+msgstr "Vpřed"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "https://example.com or localhost:5173"
-msgstr ""
+msgstr "https://example.com nebo localhost:5173"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Inspect"
-msgstr ""
+msgstr "Prozkoumat"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Inspect failed"
-msgstr ""
+msgstr "Kontrola se nezdařila"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Invalid URL: {target}"
-msgstr ""
+msgstr "Neplatná adresa URL: {target}"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
-msgstr ""
+msgstr "Místní vývojový server, staging, produkce nebo jakákoli stránka http(s). Tato úloha si pamatuje, kde jste skončili; ostatní úlohy mají vlastní."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "No earlier page"
-msgstr ""
+msgstr "Žádná předchozí stránka"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "No forward page"
-msgstr ""
+msgstr "Žádná další stránka"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Nothing drawn yet"
-msgstr ""
+msgstr "Zatím nic nenakresleno"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
-msgstr ""
+msgstr "Ve Windows: pokud váš vývojový server běží ve WSL a `localhost` se nepřipojí, spusťte <0>{WSL_HOSTNAME_COMMAND}</0> a použijte místo toho tuto IP adresu."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Only http:// and https:// URLs are allowed."
-msgstr ""
+msgstr "Povoleny jsou pouze adresy URL http:// a https://."
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Open"
-msgstr ""
+msgstr "Otevřít"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Open {pickUrl}"
-msgstr ""
+msgstr "Otevřít {pickUrl}"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Open a URL to preview"
-msgstr ""
+msgstr "Otevřete URL pro náhled"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Open in new window"
-msgstr ""
+msgstr "Otevřít v novém okně"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Or Ctrl+scroll wheel"
-msgstr ""
+msgstr "Nebo Ctrl+kolečko myši"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Quick picks"
-msgstr ""
+msgstr "Rychlý výběr"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reload"
-msgstr ""
+msgstr "Znovu načíst"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "Remove from queue"
-msgstr ""
+msgstr "Odebrat z fronty"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgctxt "Action"
 msgid "Reset"
-msgstr ""
+msgstr "Obnovit"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset this page to the pane's own size"
-msgstr ""
+msgstr "Obnovit vlastní velikost panelu pro tuto stránku"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset viewport"
-msgstr ""
+msgstr "Obnovit zobrazení"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset zoom (current {zoomPercent}%)"
-msgstr ""
+msgstr "Obnovit přiblížení (aktuálně {zoomPercent} %)"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Reset zoom to 100%"
-msgstr ""
+msgstr "Obnovit přiblížení na 100 %"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Save as project default"
-msgstr ""
+msgstr "Uložit jako výchozí pro projekt"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Save as project default for all tasks"
-msgstr ""
+msgstr "Uložit jako výchozí pro projekt pro všechny úlohy"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Send"
-msgstr ""
+msgstr "Odeslat"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Send to agent"
-msgstr ""
+msgstr "Odeslat agentovi"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "The browser pane opens it for this project."
-msgstr ""
+msgstr "Panel prohlížeče ji pro tento projekt otevře."
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "This URL is the project default"
-msgstr ""
+msgstr "Tato adresa URL je výchozí pro projekt"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Toggle draw mode"
-msgstr ""
+msgstr "Přepnout režim kreslení"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Undo"
-msgstr ""
+msgstr "Zpět"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Undo last stroke"
-msgstr ""
+msgstr "Vrátit poslední tah"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
+#, fuzzy
 msgid "Webpack, generic"
-msgstr ""
+msgstr "Webpack, obecné"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "What should the agent do with this?"
-msgstr ""
+msgstr "Co s tím má agent udělat?"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
+#, fuzzy
 msgid "Will send:"
-msgstr ""
+msgstr "Bude odesláno:"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Zoom in"
-msgstr ""
+msgstr "Přiblížit"
 
 #: src/renderer/components/browser/BrowserPane.tsx
+#, fuzzy
 msgid "Zoom out"
-msgstr ""
+msgstr "Oddálit"

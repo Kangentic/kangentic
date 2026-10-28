@@ -8,1178 +8,1462 @@ msgstr ""
 "Language: ko\n"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{blockedLabel} already waits for {blockerLabel}."
-msgstr ""
+msgstr "{blockedLabel}은(는) 이미 {blockerLabel}을(를) 기다리고 있습니다."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "{count, plural, one {Blocked by # task...} other {Blocked by # tasks...}}"
-msgstr ""
+msgstr "{count, plural, other {작업 #개에 의해 차단됨...}}"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has passed {columnName}. Its plan approval can no longer change."
-msgstr ""
+msgstr "{label}이(가) {columnName}을(를) 지났습니다. 계획 승인을 더 이상 변경할 수 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has reached {columnName}. Only the columns after it can change."
-msgstr ""
+msgstr "{label}이(가) {columnName}에 도달했습니다. 그 이후의 열만 변경할 수 있습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has started. Only a task in To Do can wait for another."
-msgstr ""
+msgstr "{label}이(가) 시작되었습니다. To Do에 있는 작업만 다른 작업을 기다릴 수 있습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} has started. Removing the link changes nothing."
-msgstr ""
+msgstr "{label}이(가) 시작되었습니다. 연결을 제거해도 달라지는 것이 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done and stays with its workflow."
-msgstr ""
+msgstr "{label}은(는) 완료되었으며 워크플로에 그대로 남습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
-msgstr ""
+msgstr "{label}이(가) 완료되었습니다. 계획 승인을 더 이상 변경할 수 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Removing the link changes nothing."
-msgstr ""
+msgstr "{label}이(가) 완료되었습니다. 연결을 제거해도 달라지는 것이 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is done. Waiting for it changes nothing."
-msgstr ""
+msgstr "{label}이(가) 완료되었습니다. 이 작업을 기다려도 달라지는 것이 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
-msgstr ""
+msgstr "{label}이(가) 속한 {workflowTitle}이(가) 일시 중지되었습니다. 작업을 이동하려면 다시 시작하세요."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
-msgstr ""
+msgstr "{label}은(는) {workflowTitle}에 속해 있습니다. To Do로 이동하려면 워크플로에서 제거하세요."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is locked while {workflowTitle} runs."
-msgstr ""
+msgstr "{workflowTitle}이(가) 실행되는 동안 {label}은(는) 잠겨 있습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "{label} is not in a workflow. Its column's Plan approval decides; change that with kangentic_update_column."
-msgstr ""
+msgstr "{label}은(는) 워크플로에 속해 있지 않습니다. 해당 열의 계획 승인 설정이 적용되며, kangentic_update_column으로 변경할 수 있습니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {작업을 이동할 때까지 최대 한 번 실행됩니다.} other {작업을 이동할 때까지 최대 #번 실행됩니다.}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {작업을 이동할 때까지 최대 한 번} other {작업을 이동할 때까지 최대 #번}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}"
-msgstr ""
+msgstr "{maxRuns, plural, =1 {빈도: 작업을 이동할 때까지 최대 한 번 실행됩니다.} other {빈도: 작업을 이동할 때까지 최대 #번 실행됩니다.}}"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "{method} to {host}"
-msgstr ""
+msgstr "{host}(으)로 {method}"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgid "{state, select, open {PR {number} open} draft {PR {number} draft} merged {PR {number} merged} closed {PR {number} closed} other {PR {number} {state}}}"
-msgstr ""
+msgstr "{state, select, open {PR {number} 열림} draft {PR {number} 초안} merged {PR {number} 병합됨} closed {PR {number} 닫힘} other {PR {number} {state}}}"
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, from {boardName}'s {columnName} column."
-msgstr ""
+msgstr "{value, select, automatic {자동, {boardName}의 {columnName} 열 설정에 따름.} other {수동, {boardName}의 {columnName} 열 설정에 따름.}}"
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}}), but {waitingAgentName}'s plans still wait for you."
-msgstr ""
+msgstr "{value, select, automatic {자동} other {수동}}, 이 작업에 설정됨({boardName}의 {columnName} 열은 {columnValue, select, automatic {자동} other {수동}}). 그러나 {waitingAgentName}의 계획은 여전히 사용자를 기다립니다."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})."
-msgstr ""
+msgstr "{value, select, automatic {자동} other {수동}}, 이 작업에 설정됨({boardName}의 {columnName} 열은 {columnValue, select, automatic {자동} other {수동}})."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "A task cannot wait for itself."
-msgstr ""
+msgstr "작업은 자기 자신을 기다릴 수 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "A task visits at least one column."
-msgstr ""
+msgstr "작업은 하나 이상의 열을 거쳐야 합니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "A workflow task's <workflow> block: its route, its neighbours, and how its turns are judged."
-msgstr ""
+msgstr "워크플로 작업의 <workflow> 블록: 경로, 인접 항목, 턴 판정 방식."
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Agent Monitor"
-msgstr ""
+msgstr "에이전트 모니터"
 
 #: src/shared/transcript-format.ts
+#, fuzzy
 msgid "Approved automatically"
-msgstr ""
+msgstr "자동 승인됨"
 
 #: src/shared/transcript-format.ts
+#, fuzzy
 msgid "Approved by you"
-msgstr ""
+msgstr "사용자가 승인함"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Arabic"
-msgstr ""
+msgstr "아랍어"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "At a turn end the turn is over, so it sends at once."
-msgstr ""
+msgstr "턴 종료 시에는 턴이 이미 끝났으므로 즉시 전송됩니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Attached file paths, one per line (empty if none)."
-msgstr ""
+msgstr "첨부 파일 경로(줄당 하나, 없으면 비어 있음)."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Automations are paused for this task."
-msgstr ""
+msgstr "이 작업의 자동화가 일시 중지되었습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "Available when the workflow agent finishes"
-msgstr ""
+msgstr "워크플로 에이전트가 완료되면 사용 가능"
 
 #: src/shared/dictation-presets.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Balanced"
-msgstr ""
+msgstr "균형"
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Best"
-msgstr ""
+msgstr "최고"
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Blocked by {blocker}..."
-msgstr ""
+msgstr "{blocker}에 의해 차단됨..."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Blocked by a task..."
-msgstr ""
+msgstr "작업에 의해 차단됨..."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Body"
-msgstr ""
+msgstr "본문"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Bold"
-msgstr ""
+msgstr "굵게"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Browser"
-msgstr ""
+msgstr "브라우저"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Call webhook"
-msgstr ""
+msgstr "웹훅 호출"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Changes"
-msgstr ""
+msgstr "변경 사항"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Chinese"
-msgstr ""
+msgstr "중국어"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
-msgstr ""
+msgstr "닫기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side)."
-msgstr ""
+msgstr "이 버튼으로 제목 표시줄을 클릭하여 포커스된 작업 상세 창을 닫습니다(기본값: 마우스 가운데 버튼). 키보드 조합이나 마우스 버튼(가운데/측면)으로 다시 지정할 수 있습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close the open panel: the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal."
-msgstr ""
+msgstr "열린 패널(명령 터미널, 작업 상세 대화 상자 또는 생성 대화 상자(새 작업/새 백로그 작업))을 닫습니다. Esc 키로도 모든 모달을 닫을 수 있습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Close window (click header)"
-msgstr ""
+msgstr "창 닫기(헤더 클릭)"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Collapse or expand the bottom terminal panel."
-msgstr ""
+msgstr "하단 터미널 패널을 접거나 펼칩니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Column"
-msgstr ""
+msgstr "열"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "명령 터미널"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Command Terminal - {projectName}"
-msgstr ""
+msgstr "명령 터미널 - {projectName}"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Condition checks"
-msgstr ""
+msgstr "조건 확인"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Condition: only if {condition}."
-msgstr ""
+msgstr "조건: {condition}인 경우에만 실행됩니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Condition: only if the last line reads \"{line}\"."
-msgstr ""
+msgstr "조건: 마지막 줄이 \"{line}\"인 경우에만 실행됩니다."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Contains it"
-msgstr ""
+msgstr "포함"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Copy"
-msgstr ""
+msgstr "복사"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy selection"
-msgstr ""
+msgstr "선택 영역 복사"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy the selected diff text to the clipboard."
-msgstr ""
+msgstr "선택한 diff 텍스트를 클립보드에 복사합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Copy the selected terminal text (Ctrl+Shift+C always copies). With no selection, Ctrl+C cancels the running command instead."
-msgstr ""
+msgstr "선택한 터미널 텍스트를 복사합니다(Ctrl+Shift+C는 항상 복사). 선택 영역이 없으면 Ctrl+C는 대신 실행 중인 명령을 취소합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Delivery"
-msgstr ""
+msgstr "전달 방식"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Delivery: waits for the current turn to end."
-msgstr ""
+msgstr "전달: 현재 턴이 끝날 때까지 기다립니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it."
-msgstr ""
+msgstr "이 작업이 예약한 개발 서버 포트. 보통 비어 있으며, 에이전트가 요청한 후에만 생깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Dismiss dialog"
-msgstr ""
+msgstr "대화 상자 닫기"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgctxt "task status"
 msgid "Done"
-msgstr ""
+msgstr "완료"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Draw / annotate"
-msgstr ""
+msgstr "그리기/주석"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Dutch"
-msgstr ""
+msgstr "네덜란드어"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Effective base branch: the task's override, else the project's configured default."
-msgstr ""
+msgstr "유효 기본 분기: 작업의 재정의 값, 없으면 프로젝트에 구성된 기본값."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty for a task outside a workflow."
-msgstr ""
+msgstr "워크플로에 속하지 않은 작업이면 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty for a workflow made from nothing."
-msgstr ""
+msgstr "아무것도 없이 만든 워크플로면 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty on task enter, and for an agent whose transcript Kangentic cannot read."
-msgstr ""
+msgstr "작업 진입 시, 그리고 Kangentic이 기록을 읽을 수 없는 에이전트이면 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until a PR is linked."
-msgstr ""
+msgstr "PR이 연결될 때까지 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until an agent reserves a port."
-msgstr ""
+msgstr "에이전트가 포트를 예약할 때까지 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task has a branch."
-msgstr ""
+msgstr "작업에 분기가 생길 때까지 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task has a worktree."
-msgstr ""
+msgstr "작업에 작업 트리가 생길 때까지 비어 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Empty until the task is linked to a tracker issue."
-msgstr ""
+msgstr "작업이 트래커 이슈에 연결될 때까지 비어 있습니다."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Ends with it"
-msgstr ""
+msgstr "다음으로 끝남"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "English"
-msgstr ""
+msgstr "영어"
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
-msgstr ""
+msgstr "전체 릴레이 URL을 입력하세요(예: wss://relay.example.com)."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Exactly this line"
-msgstr ""
+msgstr "이 줄과 정확히 일치"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "File Diff"
-msgstr ""
+msgstr "파일 차이"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Find in conversation"
-msgstr ""
+msgstr "대화에서 찾기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Find on board"
-msgstr ""
+msgstr "보드에서 찾기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Focus the board search, or open Quick Find if not on the board."
-msgstr ""
+msgstr "보드 검색에 포커스를 두거나, 보드가 아닌 경우 빠른 찾기를 엽니다."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "French"
-msgstr ""
+msgstr "프랑스어"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "German"
-msgstr ""
+msgstr "독일어"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Git branch name (empty if the task has none)."
-msgstr ""
+msgstr "Git 분기 이름(작업에 없으면 비어 있음)."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Give up after"
-msgstr ""
+msgstr "제한 시간"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Headers"
-msgstr ""
+msgstr "헤더"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
-msgstr ""
+msgstr "누르고 있는 동안 받아쓰고, 놓으면 포커스된 터미널이나 텍스트 필드에 입력합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Insert newline"
-msgstr ""
+msgstr "줄 바꿈 삽입"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Inspect element"
-msgstr ""
+msgstr "요소 검사"
 
 #: src/shared/embedding-runtime.ts
+#, fuzzy
 msgid "Intel Macs"
-msgstr ""
+msgstr "Intel Mac"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Interrupt (cancel)"
-msgstr ""
+msgstr "중단(취소)"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Italian"
-msgstr ""
+msgstr "이탈리아어"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Italic"
-msgstr ""
+msgstr "기울임꼴"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Japanese"
-msgstr ""
+msgstr "일본어"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Jump to the next change in the diff. Past a file's last change, continues into the next file."
-msgstr ""
+msgstr "diff의 다음 변경 사항으로 이동합니다. 파일의 마지막 변경 사항 이후에는 다음 파일로 이어집니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Jump to the previous change in the diff. Before a file's first change, continues into the previous file."
-msgstr ""
+msgstr "diff의 이전 변경 사항으로 이동합니다. 파일의 첫 변경 사항 이전에는 이전 파일로 이어집니다."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "Kangentic can't approve {agentName}'s plans, so they wait for you."
-msgstr ""
+msgstr "Kangentic은 {agentName}의 계획을 승인할 수 없으므로 사용자의 승인을 기다립니다."
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Knowledge Graph"
-msgstr ""
+msgstr "지식 그래프"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Korean"
-msgstr ""
+msgstr "한국어"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Leave empty to send the default JSON payload"
-msgstr ""
+msgstr "기본 JSON 페이로드를 보내려면 비워 두세요"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Legacy. The column's Start an agent here setting does this now."
-msgstr ""
+msgstr "레거시 기능입니다. 이제 열의 여기서 에이전트 시작 설정이 이 역할을 합니다."
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
+#, fuzzy
 msgctxt "quality preset"
 msgid "Light"
-msgstr ""
+msgstr "가벼움"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Link"
-msgstr ""
+msgstr "링크"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Main project checkout path. Always the base repo, even when the task has a worktree."
-msgstr ""
+msgstr "기본 프로젝트 체크아웃 경로. 작업에 작업 트리가 있어도 항상 기본 리포지토리입니다."
 
 #: src/shared/plan-approval.ts
+#, fuzzy
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
-msgstr ""
+msgstr "수동, Kangentic이 {agentName}의 계획을 승인할 수 없기 때문입니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Maximize"
-msgstr ""
+msgstr "최대화"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), a create dialog (New Task / New Backlog Task), or the Edit Columns dialog."
-msgstr ""
+msgstr "열린 패널(명령 터미널, 작업 상세 대화 상자(보기 또는 편집 모드), 생성 대화 상자(새 작업/새 백로그 작업) 또는 열 편집 대화 상자)을 최대화합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Message"
-msgstr ""
+msgstr "메시지"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Message: {message}"
-msgstr ""
+msgstr "메시지: {message}"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Method"
-msgstr ""
+msgstr "메서드"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field unit"
 msgid "minutes"
-msgstr ""
+msgstr "분"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move task left"
-msgstr ""
+msgstr "작업을 왼쪽으로 이동"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move task right"
-msgstr ""
+msgstr "작업을 오른쪽으로 이동"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move the open task one column left and keep its window open."
-msgstr ""
+msgstr "열린 작업을 왼쪽 열로 한 칸 이동하고 창을 계속 열어 둡니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Move the open task one column right and keep its window open."
-msgstr ""
+msgstr "열린 작업을 오른쪽 열로 한 칸 이동하고 창을 계속 열어 둡니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Move to column"
-msgstr ""
+msgstr "열로 이동"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Move to column runs only at a turn end."
-msgstr ""
+msgstr "열로 이동은 턴 종료 시에만 실행됩니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Moves the task to {column}"
-msgstr ""
+msgstr "작업을 {column}(으)로 이동"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Moves the task to another column, with a message for the agent there."
-msgstr ""
+msgstr "작업을 다른 열로 이동하고 해당 열의 에이전트에게 메시지를 보냅니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Moves the task to the next column"
-msgstr ""
+msgstr "작업을 다음 열로 이동"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "New task"
-msgstr ""
+msgstr "새 작업"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next change"
-msgstr ""
+msgstr "다음 변경 사항"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next changed file"
-msgstr ""
+msgstr "다음 변경된 파일"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Next column"
-msgstr ""
+msgstr "다음 열"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
-msgstr ""
+msgstr "첫 번째 선택지는 다음 열로, 작업 경로 또는 보드상의 다음 열입니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No message yet."
-msgstr ""
+msgstr "아직 메시지가 없습니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No script yet."
-msgstr ""
+msgstr "아직 스크립트가 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "No task it can wait for."
-msgstr ""
+msgstr "기다릴 수 있는 작업이 없습니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "No URL yet."
-msgstr ""
+msgstr "아직 URL이 없습니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "No workflow \"{workflowSelector}\" in this project."
-msgstr ""
+msgstr "이 프로젝트에 \"{workflowSelector}\" 워크플로가 없습니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Not offered on this trigger."
-msgstr ""
+msgstr "이 트리거에서는 사용할 수 없습니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Nothing runs at a turn end in {column}."
-msgstr ""
+msgstr "{column}에서는 턴 종료 시 아무것도 실행되지 않습니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Nothing runs when a task enters To Do or Done."
-msgstr ""
+msgstr "작업이 To Do 또는 Done에 들어갈 때는 아무것도 실행되지 않습니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Notifies \"{title}\""
-msgstr ""
+msgstr "\"{title}\" 알림 표시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Notify me"
-msgstr ""
+msgstr "알림 받기"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on agent turn end"
-msgstr ""
+msgstr "에이전트 턴 종료 시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On agent turn end"
-msgstr ""
+msgstr "에이전트 턴 종료 시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on task enter"
-msgstr ""
+msgstr "작업 진입 시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On task enter"
-msgstr ""
+msgstr "작업 진입 시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "on task exit"
-msgstr ""
+msgstr "작업 이탈 시"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "On task exit"
-msgstr ""
+msgstr "작업 이탈 시"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr ""
+msgstr "할 일과 완료 사이의 열마다 한 줄: 실행하는 내용과 최근 작업의 진행 결과."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "One per line, as Name: Value."
-msgstr ""
+msgstr "한 줄에 하나씩, 이름: 값 형식으로 입력합니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "only if {condition}"
-msgstr ""
+msgstr "{condition}인 경우에만"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Only if {condition}."
-msgstr ""
+msgstr "{condition}인 경우에만 실행됩니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "only if the last line reads \"{line}\""
-msgstr ""
+msgstr "마지막 줄이 \"{line}\"인 경우에만"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Only if the last line reads \"{line}\"."
-msgstr ""
+msgstr "마지막 줄이 \"{line}\"인 경우에만 실행됩니다."
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgctxt "task status"
 msgid "Open"
-msgstr ""
+msgstr "열림"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
-msgstr ""
+msgstr "포커스된 대화 창에서 뷰어 내 검색을 엽니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the command terminal overlay."
-msgstr ""
+msgstr "명령 터미널 오버레이를 열거나 닫습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the cross-project view of every running agent."
-msgstr ""
+msgstr "실행 중인 모든 에이전트를 프로젝트 전체에서 보여 주는 보기를 열거나 닫습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the map of what the conversation index has learned."
-msgstr ""
+msgstr "대화 인덱스가 학습한 내용의 맵을 열거나 닫습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the settings panel."
-msgstr ""
+msgstr "설정 패널을 열거나 닫습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open or close the usage statistics dashboard."
-msgstr ""
+msgstr "사용 통계 대시보드를 열거나 닫습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the cross-project Quick Find palette."
-msgstr ""
+msgstr "프로젝트 전체 빠른 찾기 팔레트를 엽니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the New Task dialog on the board."
-msgstr ""
+msgstr "보드에서 새 작업 대화 상자를 엽니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open the Workflows view; pressed there, return to the view you came from."
-msgstr ""
+msgstr "워크플로 보기를 엽니다. 워크플로 보기에서 누르면 이전 보기로 돌아갑니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Open workflows"
-msgstr ""
+msgstr "워크플로 열기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgctxt "hotkey"
 msgid "Paste"
-msgstr ""
+msgstr "붙여넣기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Paste as plain text"
-msgstr ""
+msgstr "일반 텍스트로 붙여넣기"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Paste text or an image into the terminal (Ctrl+Shift+V also pastes)."
-msgstr ""
+msgstr "터미널에 텍스트나 이미지를 붙여넣습니다(Ctrl+Shift+V로도 붙여넣기 가능)."
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
-msgstr ""
+msgstr "일시 중지됨"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "planApproval is set per task now. Put planApproval on each task entry."
-msgstr ""
+msgstr "이제 planApproval은 작업별로 설정됩니다. 각 작업 항목에 planApproval을 지정하세요."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "planApproval must be \"automatic\", \"manual\", or null."
-msgstr ""
+msgstr "planApproval은 \"automatic\", \"manual\" 또는 null이어야 합니다."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Polish"
-msgstr ""
+msgstr "폴란드어"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Portuguese"
-msgstr ""
+msgstr "포르투갈어"
 
 #: src/shared/knowledge-graph-task-fields.ts
+#, fuzzy
 msgid "PR {number}"
-msgstr ""
+msgstr "PR {number}"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous change"
-msgstr ""
+msgstr "이전 변경 사항"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous changed file"
-msgstr ""
+msgstr "이전 변경된 파일"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Previous column"
-msgstr ""
+msgstr "이전 열"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Prompt"
-msgstr ""
+msgstr "프롬프트"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request number as a string (empty if none)."
-msgstr ""
+msgstr "문자열로 된 끌어오기 요청 번호(없으면 비어 있음)."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request state: open, merged, closed or draft."
-msgstr ""
+msgstr "끌어오기 요청 상태: open, merged, closed 또는 draft."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Pull request URL (empty if none)."
-msgstr ""
+msgstr "끌어오기 요청 URL(없으면 비어 있음)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Push-to-talk (hold)"
-msgstr ""
+msgstr "눌러서 말하기(누르고 있기)"
 
 #: src/shared/workflow-waiting.ts
+#, fuzzy
 msgid "Queued..."
-msgstr ""
+msgstr "대기 중..."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Quick Find"
-msgstr ""
+msgstr "빠른 찾기"
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot contain a backslash."
-msgstr ""
+msgstr "릴레이 주소에는 백슬래시를 포함할 수 없습니다."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot include a #fragment; the pairing slot is carried in the query string."
-msgstr ""
+msgstr "릴레이 주소에는 #fragment를 포함할 수 없습니다. 페어링 슬롯은 쿼리 문자열로 전달됩니다."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address cannot include a username or password."
-msgstr ""
+msgstr "릴레이 주소에는 사용자 이름이나 비밀번호를 포함할 수 없습니다."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Relay address is too long (max {maxBytes} bytes)."
-msgstr ""
+msgstr "릴레이 주소가 너무 깁니다(최대 {maxBytes}바이트)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Reload page"
-msgstr ""
+msgstr "페이지 새로 고침"
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
-msgstr ""
+msgstr "먼저 {workflowTitle}에서 {label}을(를) 제거하세요."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Reset zoom"
-msgstr ""
+msgstr "확대/축소 초기화"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Review the latest changes and fix any issues you find"
-msgstr ""
+msgstr "최근 변경 사항을 검토하고 발견된 문제를 수정하세요"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run immediately"
-msgstr ""
+msgstr "즉시 실행"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends."
-msgstr ""
+msgstr "즉시 실행은 진행 중인 턴을 중단합니다. 현재 턴 대기는 턴이 끝나면 보냅니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Run script"
-msgstr ""
+msgstr "스크립트 실행"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Runs {script}"
-msgstr ""
+msgstr "{script} 실행"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Runs a shell command and waits for it to finish."
-msgstr ""
+msgstr "셸 명령을 실행하고 완료될 때까지 기다립니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Runs in the task's worktree, or the project checkout when it has none."
-msgstr ""
+msgstr "작업의 작업 트리에서 실행하며, 작업 트리가 없으면 프로젝트 체크아웃에서 실행합니다."
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Russian"
-msgstr ""
+msgstr "러시아어"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save board configuration"
-msgstr ""
+msgstr "보드 구성 저장"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save edits"
-msgstr ""
+msgstr "편집 내용 저장"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Save the task edit form, the same as its Save button."
-msgstr ""
+msgstr "작업 편집 양식을 저장합니다. 저장 버튼과 동일합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Script"
-msgstr ""
+msgstr "스크립트"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Select the next file in the Changes panel."
-msgstr ""
+msgstr "변경 사항 패널에서 다음 파일을 선택합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Select the previous file in the Changes panel."
-msgstr ""
+msgstr "변경 사항 패널에서 이전 파일을 선택합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Send message to agent"
-msgstr ""
+msgstr "에이전트에 메시지 보내기"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Sends \"{message}\""
-msgstr ""
+msgstr "\"{message}\" 전송"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sends a message to the agent working on the task."
-msgstr ""
+msgstr "작업을 수행 중인 에이전트에 메시지를 보냅니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sends a request. Retries a network error, 408, 429 or 5xx."
-msgstr ""
+msgstr "요청을 보냅니다. 네트워크 오류, 408, 429 또는 5xx 발생 시 재시도합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sent to the agent in that column once it is ready."
-msgstr ""
+msgstr "해당 열의 에이전트가 준비되면 전송됩니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Sent to the task's agent as if you typed it yourself."
-msgstr ""
+msgstr "직접 입력한 것처럼 작업의 에이전트에 전송됩니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the activity-engine debug overlay."
-msgstr ""
+msgstr "활동 엔진 디버그 오버레이를 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr ""
+msgstr "작업 세부 정보 대화 상자에서 브라우저 창을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
-msgstr ""
+msgstr "작업 세부 정보 대화 상자에서 변경 내용(diff) 패널을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the description panel inside the task detail dialog."
-msgstr ""
+msgstr "작업 세부 정보 대화 상자에서 설명 패널을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Show or hide the project sidebar."
-msgstr ""
+msgstr "프로젝트 사이드바를 표시하거나 숨깁니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Shows a desktop notification."
-msgstr ""
+msgstr "데스크톱 알림을 표시합니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr ""
+msgstr "데스크톱 알림을 표시합니다. 클릭하면 작업이 열립니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap)."
-msgstr ""
+msgstr "아래로 스냅: 최대화 상태이면 복원하고, 절반 스냅된 창이면 아래쪽 모서리로 이동합니다(Win11 상태 기반 스냅)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap)."
-msgstr ""
+msgstr "왼쪽으로 스냅: 왼쪽 절반으로, 또는 오른쪽 모서리에서 대응하는 왼쪽 모서리로 이동합니다(Win11 상태 기반 스냅)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap)."
-msgstr ""
+msgstr "오른쪽으로 스냅: 오른쪽 절반으로, 또는 왼쪽 모서리에서 대응하는 오른쪽 모서리로 이동합니다(Win11 상태 기반 스냅)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap)."
-msgstr ""
+msgstr "위로 스냅: 플로팅 상태이면 최대화하고, 절반 스냅된 창이면 위쪽 모서리로 이동합니다(Win11 상태 기반 스냅)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window down"
-msgstr ""
+msgstr "창을 아래로 스냅"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window left"
-msgstr ""
+msgstr "창을 왼쪽으로 스냅"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window right"
-msgstr ""
+msgstr "창을 오른쪽으로 스냅"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Snap window up"
-msgstr ""
+msgstr "창을 위로 스냅"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Spanish"
-msgstr ""
+msgstr "스페인어"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start agent"
-msgstr ""
+msgstr "에이전트 시작"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start an agent here is off, so no agent ends a turn here."
-msgstr ""
+msgstr "여기서 에이전트 시작이 꺼져 있어 이 열에서 턴을 끝내는 에이전트가 없습니다."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Start an agent here is off."
-msgstr ""
+msgstr "여기서 에이전트 시작이 꺼져 있습니다."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Starts the agent with \"{prompt}\""
-msgstr ""
+msgstr "\"{prompt}\"(으)로 에이전트 시작"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "Starts the agent."
-msgstr ""
+msgstr "에이전트를 시작합니다."
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Starts with it"
-msgstr ""
+msgstr "다음으로 시작"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Switch board / backlog"
-msgstr ""
+msgstr "보드/백로그 전환"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task description with a \": \" prefix when non-empty (PTY-sanitized)."
-msgstr ""
+msgstr "작업 설명. 비어 있지 않으면 \": \" 접두사가 붙습니다(PTY 정리됨)."
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Task summaries"
-msgstr ""
+msgstr "작업 요약"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task title (PTY-sanitized)."
-msgstr ""
+msgstr "작업 제목(PTY 정리됨)."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is '{{task_xml}}{{workflow_xml}}{{attachments}}'."
-msgstr ""
+msgstr "<task> XML 봉투로 감싼 작업 제목과 설명. 기본 프롬프트 템플릿은 '{{task_xml}}{{workflow_xml}}{{attachments}}.'"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Task titles"
-msgstr ""
+msgstr "작업 제목"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Task UUID."
-msgstr ""
+msgstr "작업 UUID."
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Terminal names"
-msgstr ""
+msgstr "터미널 이름"
 
 #: src/shared/final-line-match.ts
+#, fuzzy
 msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr ""
+msgstr "텍스트 일치는 에이전트의 마지막 메시지를 읽으므로 에이전트 턴이 끝날 때만 실행됩니다."
 
 #: src/shared/workflow-refusals.ts
+#, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
-msgstr ""
+msgstr "이 연결은 순환을 만듭니다. 워크플로의 연결은 순환할 수 없습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The agent's reply at the end of its last turn in this column."
-msgstr ""
+msgstr "이 열에서 에이전트의 마지막 턴이 끝날 때의 응답."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column the task moved into."
-msgstr ""
+msgstr "작업이 이동해 들어온 열."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column the task moved out of."
-msgstr ""
+msgstr "작업이 이동해 나간 열."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The column this automation belongs to."
-msgstr ""
+msgstr "이 자동화가 속한 열."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The linked tracker issue's key, such as a Jira key or a GitHub issue number."
-msgstr ""
+msgstr "연결된 트래커 이슈의 키(예: Jira 키 또는 GitHub 이슈 번호)."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The linked tracker issue's URL."
-msgstr ""
+msgstr "연결된 트래커 이슈의 URL."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The project's name as it reads in the sidebar."
-msgstr ""
+msgstr "사이드바에 표시되는 프로젝트 이름."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is archived."
-msgstr ""
+msgstr "작업이 보관되었습니다."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is in Done."
-msgstr ""
+msgstr "작업이 완료 열에 있습니다."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "The task is in To Do."
-msgstr ""
+msgstr "작업이 할 일 열에 있습니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The task's #N, the number people say out loud."
-msgstr ""
+msgstr "작업의 #N, 사람들이 부르는 번호."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "The task's labels, comma-separated."
-msgstr ""
+msgstr "작업의 레이블(쉼표로 구분)."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
-msgstr ""
+msgstr "이 열의 에이전트는 턴 완료를 보고할 수 없습니다."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is archived. Restore it to the board to continue working on it."
-msgstr ""
+msgstr "이 작업은 보관되었습니다. 계속 작업하려면 보드로 복원하세요."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is complete. Move it out of Done to continue working on it."
-msgstr ""
+msgstr "이 작업은 완료되었습니다. 계속 작업하려면 완료 열에서 다른 곳으로 이동하세요."
 
 #: src/shared/session-resume-eligibility.ts
+#, fuzzy
 msgid "This task is in To Do. Move it to another column to start its agent."
-msgstr ""
+msgstr "이 작업은 할 일 열에 있습니다. 에이전트를 시작하려면 다른 열로 이동하세요."
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "Title"
-msgstr ""
+msgstr "제목"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Agent Monitor"
-msgstr ""
+msgstr "에이전트 모니터 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle between the board and the backlog view."
-msgstr ""
+msgstr "보드 보기와 백로그 보기를 전환합니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Browser pane"
-msgstr ""
+msgstr "브라우저 창 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Changes panel"
-msgstr ""
+msgstr "변경 내용 패널 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Command Terminal"
-msgstr ""
+msgstr "명령 터미널 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle debug overlay"
-msgstr ""
+msgstr "디버그 오버레이 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle description peek"
-msgstr ""
+msgstr "설명 미리 보기 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Knowledge Graph"
-msgstr ""
+msgstr "지식 그래프 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle settings"
-msgstr ""
+msgstr "설정 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle sidebar"
-msgstr ""
+msgstr "사이드바 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle terminal panel"
-msgstr ""
+msgstr "터미널 패널 토글"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Toggle Usage Stats"
-msgstr ""
+msgstr "사용 통계 토글"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Turkish"
-msgstr ""
+msgstr "튀르키예어"
 
 #: src/shared/dictation-languages.ts
+#, fuzzy
 msgctxt "spoken language"
 msgid "Ukrainian"
-msgstr ""
+msgstr "우크라이나어"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgctxt "automation field"
 msgid "URL"
-msgstr ""
+msgstr "URL"
 
 #: src/shared/pop-out.ts
+#, fuzzy
 msgid "Usage Statistics"
-msgstr ""
+msgstr "사용 통계"
 
 #: src/shared/automation-manifest.ts
+#, fuzzy
 msgid "Wait for current turn"
-msgstr ""
+msgstr "현재 턴 대기"
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "waits for the current turn to end"
-msgstr ""
+msgstr "현재 턴이 끝날 때까지 대기"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "What the workflow was made from, in a <brief> block with the source task's number."
-msgstr ""
+msgstr "워크플로를 만든 출처. 원본 작업 번호와 함께 <brief> 블록으로 제공됩니다."
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "When this automation runs: enter, turn_end or exit."
-msgstr ""
+msgstr "이 자동화가 실행되는 시점: enter, turn_end 또는 exit."
 
 #: src/shared/automation-describe.ts
+#, fuzzy
 msgid "with a message"
-msgstr ""
+msgstr "메시지 포함"
 
 #: src/shared/background-call-jobs.ts
+#, fuzzy
 msgid "Workflow steps"
-msgstr ""
+msgstr "워크플로 단계"
 
 #: src/shared/task-template-vars.ts
+#, fuzzy
 msgid "Worktree directory path (empty if the task has none)."
-msgstr ""
+msgstr "작업 트리 디렉터리 경로(작업에 작업 트리가 없으면 비어 있음)."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in a markdown link. Fixed."
-msgstr ""
+msgstr "선택한 설명 텍스트를 마크다운 링크로 감쌉니다. 변경할 수 없습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in bold markdown. Fixed."
-msgstr ""
+msgstr "선택한 설명 텍스트를 마크다운 굵게로 감쌉니다. 변경할 수 없습니다."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Wrap the selected description text in italic markdown. Fixed."
-msgstr ""
+msgstr "선택한 설명 텍스트를 마크다운 기울임꼴로 감쌉니다. 변경할 수 없습니다."
 
 #: src/shared/relay.ts
+#, fuzzy
 msgid "Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1]."
-msgstr ""
+msgstr "휴대폰은 TLS를 사용하지 않는 릴레이와 페어링하지 않습니다. wss://를 사용하거나, localhost, 127.0.0.1, [::1]에 한해서만 ws://를 사용하세요."
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Zoom in"
-msgstr ""
+msgstr "확대"
 
 #: src/shared/keybindings.ts
+#, fuzzy
 msgid "Zoom out"
-msgstr ""
+msgstr "축소"

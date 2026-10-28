@@ -7,7 +7,7 @@ import { tipLabel } from '../../../utils/tooltip';
 import { CardTile, InfoTip } from '../settings-card';
 import { SETTING_LABEL_CLASS } from '../../SettingText';
 import { KeyCombo } from './KeyCombo';
-import { KeyCaptureInput } from './KeyCaptureInput';
+import { KeyCaptureInput, REBIND_BUTTON_BOX_CLASS } from './KeyCaptureInput';
 import { translateText } from '../../../i18n/translate';
 
 interface HotkeyRowProps {
@@ -51,10 +51,12 @@ export function HotkeyRow({
     <CardTile className="flex items-center gap-3" testId={`hotkey-row-${definition.id}`}>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          {/* The label and its info icon never split across lines: the label
-              truncates instead. Only the state pills after them wrap. */}
+          {/* The label and its info icon never split across lines: a label too
+              long for the row (a longer language) wraps beside the icon, since
+              cutting it short would drop the half that names the action. Only the
+              state pills after them wrap onto their own line. */}
           <span className="flex min-w-0 max-w-full items-center gap-1.5">
-            <span className={`${SETTING_LABEL_CLASS} truncate`}>{label}</span>
+            <span className={`${SETTING_LABEL_CLASS} min-w-0 [overflow-wrap:anywhere]`}>{label}</span>
             {definition.description ? <InfoTip label={label} text={translateText(definition.description)} /> : null}
           </span>
           {conflict && (
@@ -84,8 +86,9 @@ export function HotkeyRow({
         <Tooltip label={t`This hotkey is fixed and cannot be rebound`}>
           <div className="flex items-center gap-2 flex-shrink-0">
             <KeyCombo combo={effective} />
-            {/* Spacer matching the Rebind button so the lock aligns with the reset column. */}
-            <span className="w-16" aria-hidden="true" />
+            {/* Spacer the width of the Rebind button, in whatever language it is
+                drawn in, so the lock aligns with the reset column. */}
+            <span className={`invisible ${REBIND_BUTTON_BOX_CLASS}`} aria-hidden="true"><Trans>Rebind</Trans></span>
             <span className="w-7 h-7 flex items-center justify-center">
               <Lock size={13} className="text-fg-disabled" />
             </span>

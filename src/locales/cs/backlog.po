@@ -8,179 +8,220 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
-msgstr ""
+msgstr "Soubor „{fileName}“ překračuje limit 10 MB."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{duplicateCount} already in the backlog"
-msgstr ""
+msgstr "{duplicateCount} již v backlogu"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{importedCount} imported"
-msgstr ""
+msgstr "{importedCount} importováno"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
-msgstr ""
+msgstr "{loadedCount, plural, one {Načtena # položka} few {Načteny # položky} many {Načteno # položky} other {Načteno # položek}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
-msgstr ""
+msgstr "{pendingDeletePriorityCount, plural, one {# položka s touto prioritou bude nastavena na „{fallbackPriorityLabel}“.} few {# položky s touto prioritou budou nastaveny na „{fallbackPriorityLabel}“.} many {# položky s touto prioritou bude nastaveno na „{fallbackPriorityLabel}“.} other {# položek s touto prioritou bude nastaveno na „{fallbackPriorityLabel}“.}}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source"
 msgid "{provider} {sourceType}"
-msgstr ""
+msgstr "{provider} {sourceType}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # backlog task.} other {This will permanently delete # backlog tasks.}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Tímto trvale odstraníte # úkol z backlogu.} few {Tímto trvale odstraníte # úkoly z backlogu.} many {Tímto trvale odstraníte # úkolu z backlogu.} other {Tímto trvale odstraníte # úkolů z backlogu.}}"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{selectedCount} selected"
-msgstr ""
+msgstr "Vybráno: {selectedCount}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{loadedCount, plural, one {{shownCount} z # položky} few {{shownCount} z # položek} many {{shownCount} z # položky} other {{shownCount} z # položek}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
-msgstr ""
+msgstr "{skippedAttachmentCount, plural, one {Přeskočena # příloha} few {Přeskočeny # přílohy} many {Přeskočeno # přílohy} other {Přeskočeno # příloh}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "{summary}."
-msgstr ""
+msgstr "{summary}."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Add Label"
-msgstr ""
+msgstr "Přidat štítek"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Add labels when creating tasks"
-msgstr ""
+msgstr "Štítky přidáte při vytváření úkolů"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Add Priority"
-msgstr ""
+msgstr "Přidat prioritu"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Add Source"
-msgstr ""
+msgstr "Přidat zdroj"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "All"
-msgstr ""
+msgstr "Vše"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "All items have been imported"
-msgstr ""
+msgstr "Všechny položky byly importovány"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Assignee"
-msgstr ""
+msgstr "Řešitel"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Back"
-msgstr ""
+msgstr "Zpět"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Backlog is empty"
-msgstr ""
+msgstr "Backlog je prázdný"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Cancel"
-msgstr ""
+msgstr "Zrušit"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Change color"
-msgstr ""
+msgstr "Změnit barvu"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Clear filters"
-msgstr ""
+msgstr "Vymazat filtry"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "CLI check failed"
-msgstr ""
+msgstr "Kontrola CLI selhala"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "CLI not available"
-msgstr ""
+msgstr "CLI není k dispozici"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "CLI not available or not authenticated"
-msgstr ""
+msgstr "CLI není k dispozici nebo není ověřeno"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "Closed"
-msgstr ""
+msgstr "Uzavřené"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard this new backlog task and its unsaved changes."
-msgstr ""
+msgstr "Zavřením nyní zahodíte tento nový úkol backlogu a jeho neuložené změny."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Closing now will discard your unsaved edits to this backlog task."
-msgstr ""
+msgstr "Zavřením nyní zahodíte neuložené úpravy tohoto úkolu backlogu."
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Coming soon"
-msgstr ""
+msgstr "Již brzy"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{detailUnavailableCount, plural, one {komentáře nedostupné pro # položku} few {komentáře nedostupné pro # položky} many {komentáře nedostupné pro # položky} other {komentáře nedostupné pro # položek}}"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Connect"
-msgstr ""
+msgstr "Připojit"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't delete backlog task"
-msgstr ""
+msgstr "Úkol backlogu se nepodařilo odstranit"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't remove attachment"
-msgstr ""
+msgstr "Přílohu nelze odebrat"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Couldn't save backlog task"
-msgstr ""
+msgstr "Úkol backlogu se nepodařilo uložit"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Create"
-msgstr ""
+msgstr "Vytvořit"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Create or import items to stage work before promoting to the board"
-msgstr ""
+msgstr "Vytvořte nebo importujte položky a připravte si práci před přesunem na nástěnku"
 
 #: src/renderer/components/backlog/BacklogView.tsx
+#, fuzzy
 msgid "Create your first task"
-msgstr ""
+msgstr "Vytvořte první úkol"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Created"
-msgstr ""
+msgstr "Vytvořeno"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Created {createdAgo}, updated {updatedAgo}"
-msgstr ""
+msgstr "Vytvořeno {createdAgo}, aktualizováno {updatedAgo}"
 
 #: src/renderer/components/backlog/manage-labels/ColorPickerPopover.tsx
+#, fuzzy
 msgid "Custom color"
-msgstr ""
+msgstr "Vlastní barva"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
@@ -188,363 +229,443 @@ msgstr ""
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Delete"
-msgstr ""
+msgstr "Odstranit"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "Delete {selectedCount, plural, one {# backlog task} other {# backlog tasks}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Odstranit # úkol z backlogu} few {Odstranit # úkoly z backlogu} many {Odstranit # úkolu z backlogu} other {Odstranit # úkolů z backlogu}}"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #: src/renderer/components/backlog/BacklogDialogs.tsx
+#, fuzzy
 msgid "Delete {selectedCount, plural, one {# item} other {# items}}"
-msgstr ""
+msgstr "{selectedCount, plural, one {Smazat # položku} few {Smazat # položky} many {Smazat # položky} other {Smazat # položek}}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Delete backlog task"
-msgstr ""
+msgstr "Odstranit úkol z backlogu"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Delete item"
-msgstr ""
+msgstr "Smazat položku"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Delete label"
-msgstr ""
+msgstr "Smazat štítek"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Delete label \"{pendingDeleteLabelName}\""
-msgstr ""
+msgstr "Smazat štítek „{pendingDeleteLabelName}“"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Delete priority"
-msgstr ""
+msgstr "Odstranit prioritu"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgid "Delete priority \"{pendingDeletePriorityLabel}\""
-msgstr ""
+msgstr "Odstranit prioritu „{pendingDeletePriorityLabel}“"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Discard"
-msgstr ""
+msgstr "Zahodit"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr ""
+msgstr "Zahodit neuložené změny?"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Drop files here"
-msgstr ""
+msgstr "Sem přetáhněte soubory"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Edit"
-msgstr ""
+msgstr "Upravit"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Edit Backlog Task"
-msgstr ""
+msgstr "Upravit úkol backlogu"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Edit item"
-msgstr ""
+msgstr "Upravit položku"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Failed to add source"
-msgstr ""
+msgstr "Nepodařilo se přidat zdroj"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Failed to sync issues"
-msgstr ""
+msgstr "Synchronizace issues selhala"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "File too large"
-msgstr ""
+msgstr "Soubor je příliš velký"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Filter by ID, title, label, or assignee..."
-msgstr ""
+msgstr "Filtrovat podle ID, názvu, štítku nebo řešitele..."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Hide imported items"
-msgstr ""
+msgstr "Skrýt importované položky"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "High"
-msgstr ""
+msgstr "Vysoká"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Import"
-msgstr ""
+msgstr "Importovat"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Import ({selectedCount})"
-msgstr ""
+msgstr "Importovat ({selectedCount})"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Import failed"
-msgstr ""
+msgstr "Import selhal"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
-msgstr ""
+msgstr "Import z nástěnky GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from a repository issue tracker"
-msgstr ""
+msgstr "Import ze systému pro sledování problémů v úložišti"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import from Azure DevOps boards"
-msgstr ""
+msgstr "Import z nástěnek Azure DevOps"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Import Sources"
-msgstr ""
+msgstr "Zdroje importu"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "Import Tasks"
-msgstr ""
+msgstr "Importovat úlohy"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Import tasks from an Asana project"
-msgstr ""
+msgstr "Import úkolů z projektu Asana"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import row badge"
 msgid "imported"
-msgstr ""
+msgstr "importováno"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Imported"
-msgstr ""
+msgstr "Importované"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Importing..."
-msgstr ""
+msgstr "Importování..."
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Issues"
-msgstr ""
+msgstr "Problémy"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Issues imported"
-msgstr ""
+msgstr "Issues importovány"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Keep editing"
-msgstr ""
+msgstr "Pokračovat v úpravách"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Label"
-msgstr ""
+msgstr "Štítek"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "Label name"
-msgstr ""
+msgstr "Název štítku"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Labels"
-msgstr ""
+msgstr "Štítky"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgctxt "toolbar button"
 msgid "Labels"
-msgstr ""
+msgstr "Štítky"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Low"
-msgstr ""
+msgstr "Nízká"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Medium"
-msgstr ""
+msgstr "Střední"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgid "Move {selectedCount} to Board"
-msgstr ""
+msgstr "Přesunout {selectedCount} na nástěnku"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
+#, fuzzy
 msgid "Move to"
-msgstr ""
+msgstr "Přesunout do"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
+#, fuzzy
 msgid "Move to board"
-msgstr ""
+msgstr "Přesunout na nástěnku"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
+#, fuzzy
 msgid "Move to Board"
-msgstr ""
+msgstr "Přesunout na nástěnku"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "New Backlog Task"
-msgstr ""
+msgstr "Nový úkol backlogu"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "No items found"
-msgstr ""
+msgstr "Nenalezeny žádné položky"
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "No items match your filters"
-msgstr ""
+msgstr "Filtrům neodpovídají žádné položky"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "No labels yet"
-msgstr ""
+msgstr "Zatím žádné štítky"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
+#, fuzzy
 msgid "No sources configured. Add one to start."
-msgstr ""
+msgstr "Nejsou nastaveny žádné zdroje. Začněte přidáním zdroje."
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "None"
-msgstr ""
+msgstr "Žádná"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import state filter"
 msgid "Open"
-msgstr ""
+msgstr "Otevřené"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgid "Open in {sourceName}"
-msgstr ""
+msgstr "Otevřít v {sourceName}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
-msgstr ""
+msgstr "Vložte libovolnou adresu URL projektu Asana (seznam, nástěnka nebo kalendář)."
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
-msgstr ""
+msgstr "Vložte libovolnou adresu URL projektu Azure DevOps (nástěnky, sprinty, backlogy atd.)"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub Project"
-msgstr ""
+msgstr "Vložte úplnou adresu URL vašeho projektu GitHub Project"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
-msgstr ""
+msgstr "Vložte úplnou adresu URL vašeho úložiště GitHub"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgctxt "toolbar button"
 msgid "Priorities"
-msgstr ""
+msgstr "Priority"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Priority"
-msgstr ""
+msgstr "Priorita"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Priority {number}"
-msgstr ""
+msgstr "Priorita {number}"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Projects"
-msgstr ""
+msgstr "Projekty"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Refresh to check for new items"
-msgstr ""
+msgstr "Obnovte pro kontrolu nových položek"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Rename"
-msgstr ""
+msgstr "Přejmenovat"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Retry"
-msgstr ""
+msgstr "Zkusit znovu"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgctxt "button"
 msgid "Save"
-msgstr ""
+msgstr "Uložit"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Select all"
-msgstr ""
+msgstr "Vybrat vše"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Show imported items"
-msgstr ""
+msgstr "Zobrazit importované položky"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Status"
-msgstr ""
+msgstr "Stav"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgid "Syncing..."
-msgstr ""
+msgstr "Synchronizace..."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "Task title"
-msgstr ""
+msgstr "Název úkolu"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "This action cannot be undone."
-msgstr ""
+msgstr "Tuto akci nelze vrátit zpět."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "This label is not assigned to any items."
-msgstr ""
+msgstr "Tento štítek není přiřazen k žádné položce."
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
+#, fuzzy
 msgid "This will permanently delete the backlog task."
-msgstr ""
+msgstr "Tímto trvale odstraníte úkol z backlogu."
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
+#, fuzzy
 msgid "This will remove the label from {pendingDeleteLabelCount, plural, one {# item} other {# items}}."
-msgstr ""
+msgstr "{pendingDeleteLabelCount, plural, one {Tímto odeberete štítek z # položky.} few {Tímto odeberete štítek z # položek.} many {Tímto odeberete štítek z # položky.} other {Tímto odeberete štítek z # položek.}}"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
+#, fuzzy
 msgctxt "column header"
 msgid "Title"
-msgstr ""
+msgstr "Název"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
+#, fuzzy
 msgctxt "import filter"
 msgid "Type"
-msgstr ""
+msgstr "Typ"
 
 #: src/renderer/components/backlog/priority-labels.ts
+#, fuzzy
 msgctxt "priority"
 msgid "Urgent"
-msgstr ""
+msgstr "Urgentní"
 
 #: src/renderer/components/backlog/import-providers.tsx
+#, fuzzy
 msgctxt "import source type"
 msgid "Work Items"
-msgstr ""
+msgstr "Pracovní položky"

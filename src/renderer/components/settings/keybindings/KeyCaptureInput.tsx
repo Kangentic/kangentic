@@ -30,6 +30,13 @@ function reservedComboMessage(combo: string): MessageDescriptor | null {
 /** How long to wait, while capturing, before assuming the keypress was swallowed. */
 const NO_KEY_HINT_DELAY_MS = 4000;
 
+/**
+ * The Rebind button's box, shared with the spacer a fixed hotkey's row draws in
+ * its place (HotkeyRow), so the two stay one width. At least 64px, which English
+ * fits in, and as wide as the word in a longer language ("Переназначить").
+ */
+export const REBIND_BUTTON_BOX_CLASS = 'min-w-16 px-2 py-1 text-xs whitespace-nowrap border';
+
 interface KeyCaptureInputProps {
   /** Current effective combo, shown in the idle state. */
   combo: string;
@@ -205,7 +212,7 @@ export function KeyCaptureInput({ combo, onCommit }: KeyCaptureInputProps) {
           setError(null);
         }}
         data-testid="key-capture-input"
-        className="w-16 py-1 rounded text-xs text-center text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border border-edge-input transition-colors"
+        className={`${REBIND_BUTTON_BOX_CLASS} rounded text-center text-fg-muted hover:text-fg-secondary hover:bg-surface-hover border-edge-input transition-colors`}
       >
         <Trans>Rebind</Trans>
       </button>

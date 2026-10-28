@@ -8,39 +8,47 @@ msgstr ""
 "Language: cs\n"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Cancel"
-msgstr ""
+msgstr "Zrušit"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change and restart"
-msgstr ""
+msgstr "Změnit a restartovat"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Change the display language to {language}?"
-msgstr ""
+msgstr "Změnit jazyk zobrazení na {language}?"
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Couldn't restart"
-msgstr ""
+msgstr "Restart se nezdařil"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Kangentic restarts to change the language."
-msgstr ""
+msgstr "Kangentic se kvůli změně jazyka restartuje."
 
 #: src/renderer/components/language/useLanguageRestart.ts
+#, fuzzy
 msgid "Restart Kangentic to apply the change."
-msgstr ""
+msgstr "Změna se projeví po restartu aplikace Kangentic."
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Restart now"
-msgstr ""
+msgstr "Restartovat nyní"
 
 #: src/renderer/components/language/language-messages.ts
+#, fuzzy
 msgctxt "Display language prompt"
 msgid "Switch to {language}?"
-msgstr ""
+msgstr "Přepnout na {language}?"

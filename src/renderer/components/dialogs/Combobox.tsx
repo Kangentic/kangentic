@@ -309,6 +309,7 @@ export function Combobox({
               disabled={disabled}
               className="p-1.5 text-fg-muted hover:text-fg transition-colors flex-shrink-0 border-l border-edge-input disabled:cursor-not-allowed"
               aria-label={dropdownToggleLabel}
+              data-testid={`${testId}-toggle`}
             >
               <ChevronDown
                 size={16}

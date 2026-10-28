@@ -8,131 +8,163 @@ msgstr ""
 "Language: cs\n"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{place}. Stalled: {reason}"
-msgstr ""
+msgstr "{place}. Zaseknuto: {reason}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{place}. Waiting on you: {reason}"
-msgstr ""
+msgstr "{place}. Čeká na vás: {reason}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{projectName}: {workflowName}"
-msgstr ""
+msgstr "{projectName}: {workflowName}"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
-msgstr ""
+msgstr "{provider} blokuje přihlášení z aplikací s vloženým prohlížečem, což tu bývá obvyklou příčinou. Přihlašovací stránku můžete otevřít ve výchozím prohlížeči, ale přihlášení tam vás nepřihlásí v tomto panelu. Chcete-li používat samotný panel, přihlaste se na tomto webu jiným způsobem."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} returned a sign-in error"
-msgstr ""
+msgstr "{provider} vrátil chybu přihlášení"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "{provider} would not complete this sign-in."
-msgstr ""
+msgstr "{provider} toto přihlášení nedokončil."
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
-msgstr ""
+msgstr "Pracovní postup {workflowTitle}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "A project"
-msgstr ""
+msgstr "Projekt"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "A task"
-msgstr ""
+msgstr "Úloha"
 
 #: src/main/diagnostics/renderer-recovery.ts
+#, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
-msgstr ""
+msgstr "Dostupná systémová paměť v daném okamžiku: {availableMb} MB."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Zavřít"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Command Terminal"
-msgstr ""
+msgstr "Příkazový terminál"
 
 #: src/main/index.ts
+#, fuzzy
 msgctxt "Action"
 msgid "Copy"
-msgstr ""
+msgstr "Kopírovat"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Copy Image"
-msgstr ""
+msgstr "Kopírovat obrázek"
 
 #: src/main/diagnostics/renderer-recovery.ts
+#, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
-msgstr ""
+msgstr "Volná systémová paměť (commit) v daném okamžiku: {remainingMb} MB."
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Kangentic can't read its database"
-msgstr ""
+msgstr "Kangentic nemůže načíst svou databázi"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Kangentic's window stopped responding"
-msgstr ""
+msgstr "Okno aplikace Kangentic přestalo reagovat"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Needs permission: {place}"
-msgstr ""
+msgstr "Vyžaduje oprávnění: {place}"
 
 #: src/main/window-open-policy.ts
+#, fuzzy
 msgid "Not secure - {host}"
-msgstr ""
+msgstr "Nezabezpečeno – {host}"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "OK"
-msgstr ""
+msgstr "OK"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Open in my browser"
-msgstr ""
+msgstr "Otevřít v prohlížeči"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Paste"
-msgstr ""
+msgstr "Vložit"
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "Quit"
-msgstr ""
+msgstr "Ukončit"
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgctxt "Action"
 msgid "Retry"
-msgstr ""
+msgstr "Zkusit znovu"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Running agents are resuming."
-msgstr ""
+msgstr "Spuštění agenti se obnovují."
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Select All"
-msgstr ""
+msgstr "Vybrat vše"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Session crashed: {label}"
-msgstr ""
+msgstr "Relace spadla: {label}"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "Terminals restarted"
-msgstr ""
+msgstr "Terminály restartovány"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
-msgstr ""
+msgstr "Okno spadlo ({crashReason}) a nepodařilo se ho obnovit ani po {attempts, plural, one {# pokusu} few {# pokusech} many {# pokusu} other {# pokusech}} během {minutes, plural, one {# minuty} few {# minut} many {# minuty} other {# minut}}."
 
 #: src/main/db/global-db-dialog.ts
+#, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
-msgstr ""
+msgstr "Obvykle to znamená, že soubor drží jiný program: antivirová kontrola, synchronizace OneDrive nebo Dropbox, případně selhávající disk."
 
 #: src/main/window-open-policy.ts
+#, fuzzy
 msgid "Unknown site"
-msgstr ""
+msgstr "Neznámý web"
 
 #: src/main/index.ts
+#, fuzzy
 msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."
-msgstr ""
+msgstr "Vaši agenti stále běží na pozadí. Restartujte Kangentic, abyste se k nim znovu připojili."

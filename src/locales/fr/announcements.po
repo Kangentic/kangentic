@@ -8,25 +8,31 @@ msgstr ""
 "Language: fr\n"
 
 #: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+#, fuzzy
 msgid "Announcements"
-msgstr ""
+msgstr "Annonces"
 
 #: src/renderer/components/announcements/AnnouncementDialog.tsx
+#, fuzzy
 msgid "Close"
-msgstr ""
+msgstr "Fermer"
 
 #: src/renderer/components/announcements/AnnouncementBanner.tsx
+#, fuzzy
 msgid "Dismiss announcement"
-msgstr ""
+msgstr "Ignorer l'annonce"
 
 #: src/renderer/components/announcements/AnnouncementBanner.tsx
+#, fuzzy
 msgid "Learn more"
-msgstr ""
+msgstr "En savoir plus"
 
 #: src/renderer/components/announcements/AnnouncementHistoryDialog.tsx
+#, fuzzy
 msgid "No announcements yet. Product news shows up here as it is published."
-msgstr ""
+msgstr "Aucune annonce pour le moment. Les actualités du produit s'afficheront ici dès leur publication."
 
 #: src/renderer/components/announcements/AnnouncementDialog.tsx
+#, fuzzy
 msgid "QR code: {linkLabel}"
-msgstr ""
+msgstr "Code QR : {linkLabel}"
