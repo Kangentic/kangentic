@@ -33,14 +33,15 @@ module's `resolveEffectivePermissionMode` (a lane forcing `plan` always wins, el
 
 | Entry point | Trigger | Route |
 |---|---|---|
-| Task move (Phase 3 deferred spawn) | drag into an auto_spawn column | `spawnAgent` (`src/main/ipc/helpers/agent-spawn.ts`), `settingsSourceLane` = source lane |
+| Task move (Phase 3 deferred spawn) | drag into an auto_spawn column | `spawnAgent` (`src/main/ipc/helpers/agent-spawn.ts`), `settingsSourceLane` = source lane. A task whose agent is held paused spawns nothing: Priority 4 runs the column's enter rows with `agentPaused` instead, after the cross-agent override clear. A recovery move out of Done keeps the plan, so the worktree Done removed comes back and `spawnAgent` refuses the pause, as an unarchive does |
 | Create into a spawn column | New Task dialog / `TASK_CREATE` | `spawnAgent`, `fromSwimlaneId: '*'` |
 | Backlog promote | promote from Backlog panel | `spawnAgent`, `fromSwimlaneId: '*'` |
 | MCP create (`kangentic_create_task`) | `autoSpawnForTask` | `spawnAgent` |
 | Column auto-spawn switched on | a column edit or a Board Profile edit, from either the Board Manager or the MCP `update_column` / profile tools, via `reconcileAutoSpawnChange` | `autoSpawnForTask` -> `spawnAgent` (sequential, skips user-paused, active project only) |
 | Unarchive (single + bulk) | Completed Tasks restore / `TASK_UNARCHIVE` | `spawnAgent`, `skipPromptTemplate` + `suppressAutoCommand` (recovery move) |
 | Phone Start (`start-session` verb) | "Start again" from the phone's ended state, via `startTaskSession` (`handlers/session-start.ts`), for a task with no session or an exited one | `autoSpawnForTask` -> `spawnAgent`, `explicitStart` (lifts the column's `auto_spawn` default and a user pause, as the desktop Resume button does; the role gate stays) |
-| Phone Resume (`start-session` verb) | the same verb for a PAUSED task (a `suspended` registry row), via `startTaskSession` | `resumeTaskSession` (`handlers/session-resume.ts`), the Resume button's own path: no enter automations, no column message |
+| Phone Resume (`start-session` verb) | the same verb for a PAUSED task (a `suspended` registry row), via `startTaskSession` | `resumeTaskSession` (`handlers/session-resume.ts`), the Resume button's own path: no enter automations, no column message, unless the task entered its column after the pause (the next row) |
+| Resume after an entry while paused | any Resume (desktop, phone, workflow) of a task that entered its auto_spawn column after its pause | `resumeTaskSession` -> `spawnAgent`, `resumesEntry` (lifts only the held-pause check; the column's own strategy and its enter rows that need the agent). An entry out of Done, a drag back or an unarchive, adds `suppressAutoCommand`, because a recovery move sends the agent nothing |
 | Startup crash recovery | project open, `resumeSuspendedSessions` | `prepareAgentSpawn` (`session-startup/prepare-spawn.ts`) |
 | Startup reconcile | project open, `autoSpawnTasks` | `prepareAgentSpawn` for a task with session history; a task with none goes to `autoSpawnForTask` -> `spawnAgent` (worktree, then the column's prompt and enter automations), unless those automations already ran this visit. A task a move or a resume is working on is left to it, and so is a task in a paused workflow, except in a pty-host-loss pass (`isTaskWorkflowPaused`). See [Crash recovery](crash-recovery.md) step 8 |
 

@@ -126,6 +126,15 @@ export interface RunAutomationsOptions {
    */
   suppressAgentMessages?: boolean;
   /**
+   * The task's agent is paused, and a move never starts a paused agent: only
+   * the user's Resume does. Its rows that need the agent are skipped with that
+   * reason, and every other row runs as on any entry. Resume in this column
+   * then runs the skipped rows (`TransitionEngine.executeTransition`'s
+   * `onlyRowsNeedingAgent`). Passed by the move path for a task whose agent is
+   * held paused.
+   */
+  agentPaused?: boolean;
+  /**
    * The adapters to dispatch through. Defaults to the real singleton; a test
    * passes its own so it can drive the runner's guarantees (isolation, budget,
    * retry, the agent start) without a PTY or a network.
@@ -194,11 +203,16 @@ export function textMatchNotMetReason(match: FinalLineMatch): string {
 /** Why a Text match row was skipped when the caller had no final message to give it. */
 export const TEXT_MATCH_NO_TURN_REASON = 'A text match is checked only at an agent turn end.';
 
+/** Why a row that needs the agent did not run on a move of a task whose agent is paused (`agentPaused`). */
+export const AGENT_PAUSED_REASON = 'The agent is paused. This row runs if the agent is resumed in this column.';
+
 export async function runAutomations(options: RunAutomationsOptions): Promise<AutomationRunSummary> {
   const { automations, column, context, runs, signal } = options;
   const registry = options.registry ?? automationRegistry;
   const summary: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
   if (automations.length === 0) return summary;
+  const needsAgent = (automation: ColumnAutomation): boolean =>
+    registry.get(automation.type)?.manifest.needs.includes('agent') === true;
 
   const groupBudgetMs = options.groupBudgetMs
     ?? (context.trigger === 'exit' ? EXIT_GROUP_BUDGET_MS : null);
@@ -228,6 +242,8 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
   const unanswered = automations.filter((automation) => hasCondition(automation)
     && !conditionAnswers.has(automation.id)
     && registry.get(automation.type) !== undefined
+    // A row a paused agent cannot take is skipped before its Condition is asked.
+    && !(options.agentPaused && needsAgent(automation))
     && canColumnRun(automation.type, { autoSpawn: column.auto_spawn, role: column.role }, automation.trigger).ok
     && frequencyLimitReason(automation, runs, context.task.id) === null);
   if (unanswered.length > 0 && options.checkConditions) {
@@ -302,6 +318,12 @@ export async function runAutomations(options: RunAutomationsOptions): Promise<Au
       const reason = 'Restoring a task from Done does not message the agent. The next move does.';
       runs.recordSkipped(started, reason);
       record('skipped', reason);
+      continue;
+    }
+
+    if (options.agentPaused && needsAgent(automation)) {
+      runs.recordSkipped(started, AGENT_PAUSED_REASON);
+      record('skipped', AGENT_PAUSED_REASON);
       continue;
     }
 

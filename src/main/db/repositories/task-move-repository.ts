@@ -14,6 +14,8 @@ export type TaskVisit = Pick<TaskMoveRecord, 'at' | 'origin' | 'from_swimlane_id
  * - when the task's current visit to a column began (`visitStartedAt`), which
  *   is the boundary a turn-end automation's "has it run this visit" counts
  *   from, and which move opened it (`currentVisit`);
+ * - which column the task was in at a given moment (`columnAt`), for the
+ *   column an agent's turn began in;
  * - the task's step history (`listForTask`), for a workflow task's route.
  */
 interface TaskMoveRow {
@@ -49,6 +51,18 @@ export class TaskMoveRepository {
       .prepare('SELECT at, origin, from_swimlane_id FROM task_moves WHERE task_id = ? AND to_swimlane_id = ? ORDER BY at DESC, rowid DESC LIMIT 1')
       .get(taskId, swimlaneId) as { at: string; origin: string; from_swimlane_id: string | null } | undefined;
     return row ? { at: row.at, origin: row.origin as TaskMoveRecordOrigin, from_swimlane_id: row.from_swimlane_id } : null;
+  }
+
+  /**
+   * The column the task was in at `atIso`: where the last move recorded at or
+   * before it took the task. Null when no move was recorded by then (a task
+   * placed before moves were recorded), which tells the caller nothing.
+   */
+  columnAt(taskId: string, atIso: string): string | null {
+    const row = this.db
+      .prepare('SELECT to_swimlane_id FROM task_moves WHERE task_id = ? AND at <= ? ORDER BY at DESC, rowid DESC LIMIT 1')
+      .get(taskId, atIso) as { to_swimlane_id: string } | undefined;
+    return row?.to_swimlane_id ?? null;
   }
 
   /**

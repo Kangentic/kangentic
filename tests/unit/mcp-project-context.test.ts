@@ -271,6 +271,20 @@ describe('buildCommandContextForProject', () => {
     expect(typeof context!.onBacklogChanged).toBe('function');
     expect(typeof context!.onLabelColorsChanged).toBe('function');
   });
+
+  // #929. The move tool refuses a stale "next" from the column the agent's turn
+  // began in; without this wiring the refusal is dead in production while every
+  // handler test, which injects the accessor, stays green.
+  it('answers when a session\'s turn began from the session manager\'s work-turn stamp', () => {
+    const workTurnStartedAt = vi.fn((sessionId: string) => (sessionId === 'session-own' ? 1_700_000_000_000 : null));
+    const ipcContext = Object.assign(makeIpcContext(makeProject({ id: DEFAULT_ID })), { sessionManager: { workTurnStartedAt } });
+
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    expect(context!.getSessionTurnStartedAt?.('session-own')).toBe(1_700_000_000_000);
+    expect(context!.getSessionTurnStartedAt?.('session-other')).toBeNull();
+    expect(workTurnStartedAt).toHaveBeenCalledWith('session-own');
+  });
 });
 
 // The move tool names the task's own agent and its live session; a move that

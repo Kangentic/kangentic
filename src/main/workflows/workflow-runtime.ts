@@ -18,3 +18,8 @@ export function requireWorkflowRuntimeContext(): IpcContext {
   if (!runtimeContext) throw new Error('Workflows are not ready yet. Try again in a moment.');
   return runtimeContext;
 }
+
+/** The same context for a reader that degrades without it: null before the engine registers. */
+export function workflowRuntimeContext(): IpcContext | null {
+  return runtimeContext;
+}

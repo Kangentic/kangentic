@@ -6,17 +6,29 @@
  * reconcile, eligibility gate, worktree ensure, label, and engine call.
  *
  * What it deliberately does NOT do is run the column's enter automations or
- * deliver its message. Those run only inside `spawnAgent`
- * (`engine.executeTransition(task, toLane, 'enter', ...)`), which a resume
- * never calls: `engine.resumeSuspendedSession` resumes the conversation idle,
- * with the column's model, effort and permission. A Resume on a paused task in
- * Code Review therefore does not send `/code-review` again, on the desktop or
- * from a phone.
+ * deliver its message for a task that has not changed column since its pause:
+ * `engine.resumeSuspendedSession` resumes the conversation idle, with the
+ * column's model, effort and permission. A Resume on a paused task in Code
+ * Review therefore does not send `/code-review` again, on the desktop or from
+ * a phone.
+ *
+ * A task that ENTERED its column after its agent was paused is the exception.
+ * A move never starts a paused agent, so that entry ran only its rows that
+ * need no agent (`agentPaused` on the move). The Resume then goes through
+ * `spawnAgent` with `resumesEntry` and does the rest of what the entry would
+ * have done: the column's own session strategy (a fresh conversation in Code
+ * Review, the main conversation resumed in Executing) and its rows that need
+ * the agent, such as the `/code-review` message. An entry out of Done (a drag
+ * back or an unarchive) is a recovery move: it ran none of the rows, and the
+ * Resume sends the agent nothing (`suppressAutoCommand`), so they stay unrun.
  */
+import type Database from 'better-sqlite3';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
-import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
+import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, spawnAgent } from '../helpers';
+import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
+import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -28,6 +40,25 @@ import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/se
 import type { Session, Task } from '../../../shared/types';
 import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
+
+/**
+ * The move that put the task in its current column, when it came after the
+ * task's agent was paused: the conversation a plain Resume would reopen is
+ * from before that entry. Null when the task has not changed column since the
+ * pause (a reorder within it records no move), or when the pause or the entry
+ * has no recorded time.
+ */
+function columnEnteredWhilePaused(
+  db: Database.Database,
+  sessionRepo: SessionRepository,
+  task: Task,
+): { fromSwimlaneId: string | null } | null {
+  const paused = sessionRepo.getLatestForTask(task.id);
+  if (paused?.status !== 'suspended' || !paused.suspended_at) return null;
+  const entry = new TaskMoveRepository(db).currentVisit(task.id, task.swimlane_id);
+  if (!entry || entry.at <= paused.suspended_at) return null;
+  return { fromSwimlaneId: entry.from_swimlane_id };
+}
 
 /** The two steps an accepted resume can fail at. */
 export type ResumeFailureStep = Extract<SpawnFailureStep, 'worktree' | 'agent'>;
@@ -216,11 +247,48 @@ export function resumeTaskSession(
                 resolvedProjectId, resolvedProjectPath,
               );
               const project = context.projectRepo.getById(resolvedProjectId);
-              // A Resume brings back the conversation that was paused. An
-              // 'always_spawn_new' column forces a fresh one on ENTRY only;
-              // forwarding that here retired the paused conversation.
-              const overrides = { ...resolveSpawnOverrides(current, currentLane, project), forceFresh: false };
-              await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
+              const entryWhilePaused = currentRow && currentLane?.auto_spawn
+                ? columnEnteredWhilePaused(db, sessionRepo, current)
+                : null;
+              if (currentRow && entryWhilePaused) {
+                // The task entered this column after its agent was paused, and
+                // a move never starts a paused agent. This Resume does what that
+                // entry would have: the column's own session strategy (a fresh
+                // conversation in a column that always starts new), then its
+                // enter rows that need the agent. The other rows ran at the entry.
+                // An entry out of Done (a drag back or an unarchive) is a
+                // recovery move: it ran no rows and sends the agent nothing, so
+                // this start sends it nothing either.
+                const enteredFromDone = entryWhilePaused.fromSwimlaneId !== null
+                  && doneColumn(swimlanes.list())?.id === entryWhilePaused.fromSwimlaneId;
+                await spawnAgent({
+                  context, engine, tasks, sessionRepo, task: current,
+                  fromSwimlaneId: entryWhilePaused.fromSwimlaneId ?? '*',
+                  toLane: currentRow,
+                  projectId: resolvedProjectId,
+                  projectPath: resolvedProjectPath,
+                  attachments: attachmentRepo,
+                  signal,
+                  skipPromptTemplate: true,
+                  suppressAutoCommand: enteredFromDone,
+                  continuationPrompt: options.resumePrompt,
+                  resumesEntry: true,
+                });
+                // `spawnAgent` reports a start that failed itself (the spawn-blocked
+                // notice), as it does for a move, so a Resume that started nothing
+                // resolves null rather than raising a second notice for it.
+                const started = tasks.getById(taskId)?.session_id;
+                if (!started) {
+                  console.log(`[SESSION_RESUME] Task ${taskId.slice(0, 8)}: the column's start after its entry while paused did not start an agent`);
+                  return null;
+                }
+              } else {
+                // A Resume brings back the conversation that was paused. An
+                // 'always_spawn_new' column forces a fresh one on ENTRY only;
+                // forwarding that here retired the paused conversation.
+                const overrides = { ...resolveSpawnOverrides(current, currentLane, project), forceFresh: false };
+                await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
+              }
 
               const updated = tasks.getById(taskId);
               if (!updated?.session_id) throw new Error('Session resume failed - no session_id on task');

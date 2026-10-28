@@ -35,7 +35,15 @@ place**, in the task's current column. Its body is `resumeTaskSession`
 (`handlers/session-resume.ts`), which the phone's `start-session` verb also calls for a paused
 task, so a phone Resume is the same resume: it cancels a resume already in flight for the task,
 labels the task "Resuming session...", resumes the conversation idle, and runs no enter
-automations or column message. The read-stream feed tells the phone when that promise holds
+automations or column message. The exception is a task that entered its column after it was
+paused (its current visit's `task_moves.at` is later than the record's `suspended_at`) in a column
+that starts an agent. A move never starts a paused agent, so that entry ran only its rows that need
+no agent. The Resume then calls `spawnAgent` with `resumesEntry` instead of the engine: the column's
+own strategy (a fresh conversation in an always-new column) and its enter rows that need the agent.
+An entry out of Done, a drag back or an unarchive, is a recovery move, which sends the agent
+nothing, so that start passes `suppressAutoCommand` too. A drag out of Done does not stop at the
+paused branch: Done removed the worktree, so the move restores it, as an unarchive does.
+The read-stream feed tells the phone when that promise holds
 (`resumable`, see [Data feeds](../../integrations/mobile-bridge/data-feeds.md)). It is refused for three states, resolved by one shared
 rule (`sessionToggleOffer` in `src/shared/session-resume-eligibility.ts`, over `resumeBlockReasonForTask`)
 that the main-process handler, the task detail, the card menu row, and the phone's `startTaskSession`

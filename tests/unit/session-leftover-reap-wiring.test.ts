@@ -50,8 +50,11 @@ import type { TaskRepository } from '../../src/main/db/repositories/task-reposit
 // Shared call-order tracker. Reset per test.
 // ---------------------------------------------------------------------------
 
-const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks } = vi.hoisted(() => ({
+const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, latestSession } = vi.hoisted(() => ({
   callOrder: [] as string[],
+  // The task's newest session record, as `getLatestForTask` answers it. Null
+  // (no record) unless a test sets one; a held pause keeps a move from spawning.
+  latestSession: { record: null as unknown },
   // The WSL distro lookup (`wslCliDistrosOf` in task-cleanup.ts): the project's
   // open database, and the `cli_target` rows its sessions recorded.
   mockGetOpenProjectDb: vi.fn((_projectId: string): unknown => null),
@@ -78,7 +81,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     // No own-record row, so the capture sites fall back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
     listCliTargetsOfTasks = (taskIds: readonly string[]) => mockListCliTargetsOfTasks(taskIds);
-    getLatestForTask = vi.fn(() => null);
+    getLatestForTask = vi.fn(() => latestSession.record);
     getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();
     updateAppliedSettings = vi.fn();
@@ -178,6 +181,7 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   autoSpawnForTask: vi.fn(async () => {}),
   reapTaskLeftovers: (...args: unknown[]) => mockReapTaskLeftovers(...args),
   scheduleDoneWorktreeRemovalRetry: (...args: unknown[]) => mockScheduleDoneWorktreeRemovalRetry(...args),
+  reportAutomationFailures: vi.fn(),
 }));
 
 // Both task-move.ts and task-cleanup.ts import the window close from its own
@@ -195,6 +199,7 @@ vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
 
 import { cleanupTaskSession, cleanupTaskResources, reapTaskLeftovers, leftoverSweepOptions } from '../../src/main/ipc/helpers/task-cleanup';
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
+import { clearSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
 
 // ---------------------------------------------------------------------------
 // Shared factories
@@ -285,6 +290,7 @@ function makeSessionManager(): MockSessionManager {
 beforeEach(() => {
   vi.clearAllMocks();
   callOrder.length = 0;
+  latestSession.record = null;
   mockRemoveWorktree.mockClear();
   mockRemoveWorktree.mockResolvedValue(true);
   mockPrepareWorktreeForRemoval.mockClear();
@@ -841,6 +847,176 @@ describe('handleTaskMove: auto_spawn=false negative (Priority 2.5)', () => {
     expect(mockDeleteTaskWorktree).not.toHaveBeenCalled();
     // A parked task keeps its pop-outs: the user may still be testing in them.
     expect(mockCloseTaskWindows).not.toHaveBeenCalled();
+  });
+});
+
+// #929. A move never starts a paused agent: only the user's Resume does. The
+// destination's enter rows still run, with the agent paused, so a row that
+// needs no agent runs and one that needs the agent waits for a Resume there.
+// The same shape as Priority 2.5: no worktree work and no spawn.
+describe('handleTaskMove: a task whose agent is paused (Priority 4)', () => {
+  const REVIEW_LANE_ID = 'lane-review';
+  const HELD_PAUSE_RECORD = { id: 'rec-paused', status: 'suspended', suspended_by: 'user' };
+  let executeTransition: ReturnType<typeof vi.fn>;
+
+  beforeEach(() => {
+    // Each trigger the engine runs and each label clear lands in `callOrder`,
+    // so a test can tell WHICH clear fired: the exit group's own `finally` also
+    // clears the label on this path, so a bare "was cleared" cannot.
+    executeTransition = vi.fn(async (_task: unknown, _lane: unknown, trigger: string) => {
+      callOrder.push(`transition:${trigger}`);
+      return { outcomes: [], failures: [], startedAgent: false };
+    });
+    mockCreateTransitionEngine.mockImplementation(() => ({ executeTransition }));
+    vi.mocked(clearSpawnProgress).mockImplementation(() => { callOrder.push('clearSpawnProgress'); });
+  });
+
+  afterEach(() => {
+    mockCreateTransitionEngine.mockImplementation(() => ({}));
+    vi.mocked(clearSpawnProgress).mockImplementation(() => {});
+  });
+
+  interface PausedMoveScenario {
+    /** The column the task leaves. Defaults to an ordinary column. */
+    sourceLane?: Swimlane;
+    taskOverrides?: Partial<Task>;
+    destinationOverrides?: Partial<Swimlane>;
+  }
+
+  async function movePausedTask(record: unknown, scenario: PausedMoveScenario = {}) {
+    latestSession.record = record;
+    const sourceLane = scenario.sourceLane ?? makeSwimlane(SOURCE_LANE_ID, { role: null });
+    const reviewLane = makeSwimlane(REVIEW_LANE_ID, { role: null, auto_spawn: true, ...scenario.destinationOverrides });
+    const task = makeTask({
+      id: 'task-paused-1',
+      swimlane_id: sourceLane.id,
+      session_id: null,
+      worktree_path: '/mock/project/.kangentic/worktrees/task-paused-1',
+      ...scenario.taskOverrides,
+    });
+    // The move lands the row in its destination, as the database does, so
+    // Phase 3's re-check finds the task there and reaches `spawnAgent`.
+    const taskRepo = {
+      ...makeTaskRepo(task),
+      move: vi.fn((moveInput: { targetSwimlaneId: string }) => { task.swimlane_id = moveInput.targetSwimlaneId; }),
+      clearArchived: vi.fn(),
+    };
+    const context = makeTaskMoveContext(taskRepo, makeSwimlaneRepo([sourceLane, reviewLane]));
+
+    await handleTaskMove(
+      context as never,
+      { taskId: task.id, targetSwimlaneId: REVIEW_LANE_ID, targetPosition: 0 },
+      'mobile',
+    );
+    return { task, reviewLane, taskRepo, context };
+  }
+
+  it.each([['user'], ['auto']])('starts no agent for a %s pause and runs the enter rows with the agent paused', async (suspendedBy) => {
+    const { task, reviewLane } = await movePausedTask({ id: 'rec-paused', status: 'suspended', suspended_by: suspendedBy });
+
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(executeTransition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: task.id }),
+      reviewLane,
+      'enter',
+      expect.objectContaining({ agentPaused: true }),
+    );
+  });
+
+  it('takes the spawn path as before when the last suspend holds nothing (a system suspend)', async () => {
+    const { task } = await movePausedTask({ id: 'rec-moved', status: 'suspended', suspended_by: 'system' });
+
+    // Phase 2's worktree work is the spawn plan's: the paused branch returns
+    // before it. The row lands in the new column, so Phase 3 reaches `spawnAgent`.
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ task: expect.objectContaining({ id: task.id }) }));
+    expect(executeTransition).not.toHaveBeenCalledWith(expect.anything(), expect.anything(), 'enter', expect.anything());
+  });
+
+  it('retires the spawn-progress label and arms the enter group with nothing delivered', async () => {
+    const { task, reviewLane, context } = await movePausedTask(HELD_PAUSE_RECORD);
+
+    expect(executeTransition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: task.id }),
+      reviewLane,
+      'enter',
+      // The branch injected no column message, so no row counts as delivered.
+      expect.objectContaining({ agentPaused: true, alreadyDelivered: undefined }),
+    );
+    expect(clearSpawnProgress).toHaveBeenCalledWith(context.mainWindow, task.id);
+    // Two clears sit between the exit group and the enter group: the exit
+    // group's own `finally`, then this branch's. Dropping the branch's leaves
+    // the label an earlier step set to strand until its 120s TTL, since this
+    // move never reaches Phase 3's clear.
+    const exitIndex = callOrder.indexOf('transition:exit');
+    const enterIndex = callOrder.indexOf('transition:enter');
+    expect(exitIndex).toBeGreaterThan(-1);
+    expect(enterIndex).toBeGreaterThan(exitIndex);
+    expect(callOrder.slice(exitIndex + 1, enterIndex)).toEqual(['clearSpawnProgress', 'clearSpawnProgress']);
+  });
+
+  // The Resume of a held pause starts THIS column's agent, so the overrides
+  // that were picked for the task's old agent must not carry across to it. The
+  // clear runs before the held-pause branch returns, or a task paused through
+  // an agent change would keep the old agent's model name for that Resume.
+  it.each([
+    ['model_override', { model_override: 'claude-sonnet-4-6' }],
+    ['effort_override', { effort_override: 'high' }],
+  ])('clears the %s of a held-pause task moved to a column with another agent, and still starts no agent', async (_overrideField, taskOverrides) => {
+    // The project default is claude and the task has no agent of its own, so it
+    // is a Claude task moving into a Codex column.
+    const { task, reviewLane, taskRepo } = await movePausedTask(HELD_PAUSE_RECORD, {
+      taskOverrides,
+      destinationOverrides: { agent_override: 'codex' },
+    });
+
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: task.id, model_override: null, effort_override: null });
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+    expect(mockEnsureTaskWorktree).not.toHaveBeenCalled();
+    expect(executeTransition).toHaveBeenCalledWith(
+      expect.objectContaining({ id: task.id }),
+      reviewLane,
+      'enter',
+      expect.objectContaining({ agentPaused: true }),
+    );
+  });
+
+  it('keeps the overrides of a held-pause task moved to a column with the same agent', async () => {
+    const { taskRepo } = await movePausedTask(HELD_PAUSE_RECORD, {
+      taskOverrides: { model_override: 'claude-sonnet-4-6' },
+      destinationOverrides: { agent_override: 'claude' },
+    });
+
+    expect(taskRepo.update).not.toHaveBeenCalled();
+    expect(mockSpawnAgent).not.toHaveBeenCalled();
+  });
+
+  it('restores a held-pause task moved out of Done: the worktree is made and the agent spawn is asked, not held', async () => {
+    // Done removed the worktree and archived the task. This is the recovery
+    // move, so the plan runs, as an unarchive does: `spawnAgent` is handed
+    // `suppressAutoCommand` and starts nothing for a paused agent by itself
+    // (its own held-pause check, not this branch's).
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const { task } = await movePausedTask(HELD_PAUSE_RECORD, {
+      sourceLane: doneLane,
+      taskOverrides: { worktree_path: null, archived_at: '2025-01-02T00:00:00.000Z' },
+    });
+
+    expect(mockEnsureTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+      task: expect.objectContaining({ id: task.id }),
+      suppressAutoCommand: true,
+    }));
+    // Phase 1 does not arm a paused enter group here: the entry goes to
+    // `spawnAgent` with the plan instead.
+    expect(executeTransition).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.anything(),
+      'enter',
+      expect.objectContaining({ agentPaused: true }),
+    );
   });
 });
 

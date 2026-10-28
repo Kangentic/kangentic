@@ -131,6 +131,7 @@ move's own transaction, so a move cannot land without its record.
 |--------|-------------|
 | `visitStartedAt(taskId, swimlaneId)` | When the task last entered this column (the newest row, rowid breaking a same-millisecond tie), or null when no entry was recorded. The visit boundary `hasRunSince` and `hasSkipSince` count from. It is `currentVisit`'s `at`. |
 | `currentVisit(taskId, swimlaneId)` | The same newest row as `{ at, origin, from_swimlane_id }`, or null. The turn-end runner reads the origin so a plan approval's `auto-move` does not drop the turn it lands in as carried in from the last column, and the column the move came from so a drag into that column's plan exit target, made after the agent left plan mode, does not either. The startup To Do sweep reads it too, and keeps the worktree and branch of a task whose visit opened with `unarchive`. |
+| `columnAt(taskId, atIso)` | The column the task's last recorded move at or before `atIso` took it to (rowid breaking a same-millisecond tie), or null when no move was recorded by then. `kangentic_move_task` reads it to find the column an agent's current turn began in, and refuses a `"next"` from the task's own agent once the task has left it. |
 | `listForTask(taskId)` | Every recorded move of one task, oldest first |
 | `recentFinishedColumnVisits(doneSwimlaneId, limit)` | For the `limit` tasks that most recently entered Done, how many entered each column on the way. What `{{columns}}` tells a workflow's agent about how work moves through this board. |
 

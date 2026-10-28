@@ -526,6 +526,11 @@ export class SessionManager extends EventEmitter {
   /** The anchor of each session's current turn (see noteTurnStarted). */
   private turnTranscriptAnchors = new Map<string, TurnTranscriptAnchor>();
   /**
+   * When each session's current turn was started by its spawn or by new input,
+   * never by a plan approval (see workTurnStartedAt).
+   */
+  private workTurnStarts = new Map<string, number>();
+  /**
    * Pending resting-grid restores, keyed by session. See
    * scheduleRestingGridRestore.
    */
@@ -1566,6 +1571,7 @@ export class SessionManager extends EventEmitter {
    * text then has an empty reply, never an earlier turn's.
    */
   private noteTurnStarted(sessionId: string, turnStartedAt: number, cause: TurnStartCause): void {
+    if (cause !== 'plan-approval') this.workTurnStarts.set(sessionId, turnStartedAt);
     let anchor: TranscriptAnchor | null;
     let mayStillMove: boolean;
     switch (cause) {
@@ -1603,6 +1609,7 @@ export class SessionManager extends EventEmitter {
   private forgetTranscriptAnchors(sessionId: string): void {
     this.idleTranscriptAnchors.delete(sessionId);
     this.turnTranscriptAnchors.delete(sessionId);
+    this.workTurnStarts.delete(sessionId);
   }
 
   /**
@@ -3722,6 +3729,18 @@ export class SessionManager extends EventEmitter {
    */
   currentTurnAnchor(sessionId: string): TranscriptAnchor | null {
     return this.turnTranscriptAnchors.get(sessionId)?.anchor ?? null;
+  }
+
+  /**
+   * When the session's current turn began as work: at its spawn, or when new
+   * input took it out of idle. Null for an unknown session or one with no turn
+   * yet. A plan approval re-stamps `turnStartedAt` but not this: the approval's
+   * plan-exit move commits before that re-stamp when the task lock is free, so
+   * the re-stamp would place the turn in the column the move just entered. The
+   * agent's own "next" is judged from here (`kangentic_move_task`).
+   */
+  workTurnStartedAt(sessionId: string): number | null {
+    return this.workTurnStarts.get(sessionId) ?? null;
   }
 
   /**

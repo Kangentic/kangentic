@@ -80,7 +80,7 @@ describe('mapHandoffSessionPath', () => {
 });
 
 describe('buildWorkflowXml background command line', () => {
-  const WORKFLOW = { title: 'Usage budgets', route: ['Executing', 'Done'], waitsFor: [], blocks: [] };
+  const WORKFLOW = { title: 'Usage budgets', route: ['Executing', 'Done'], column: 'Executing', planExitTo: null, waitsFor: [], blocks: [] };
 
   // The mark tool is offered only to an agent that reports its background
   // commands (AgentAdapter.backgroundCommands), and the facts this block is built

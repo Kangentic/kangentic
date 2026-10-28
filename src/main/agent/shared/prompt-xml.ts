@@ -110,6 +110,13 @@ export interface WorkflowXmlInput {
   title: string;
   /** This task's route: the columns it visits, in order, ending with the board's Done column. */
   route: string[];
+  /** The column the task is in as the prompt is built, or null when it cannot be read. */
+  column: string | null;
+  /**
+   * Where approving a plan in `column` moves the task (the next column on its
+   * route), or null when `column` does not run the task in plan mode.
+   */
+  planExitTo: string | null;
   /** What this task waited for, each already in Done when it starts. */
   waitsFor: Array<{ number: number; title: string; column: string; branch: string | null; prUrl: string | null }>;
   /** What waits for this task, so the agent keeps what they depend on stable. */
@@ -130,6 +137,7 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   const lines: string[] = ['<workflow>'];
   lines.push(`  <name>${escapeXml(input.title)}</name>`);
   if (input.route.length > 0) lines.push(`  <route>${escapeXml(input.route.join(', '))}</route>`);
+  if (input.column) lines.push(`  <column>${escapeXml(input.column)}</column>`);
   if (input.waitsFor.length > 0) {
     lines.push('  <built_on>');
     for (const blocker of input.waitsFor) {
@@ -149,7 +157,14 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   lines.push('This task is one step of a workflow that runs without anyone watching. When your turn ends, an agent reads your final message to judge whether this column\'s work is done; if it is, the task moves on to the next column of its route by itself.');
   lines.push('- End your turn only when this column\'s work is done (say what you did in your final message), or when you need the user (ask your question in it). A turn that ends on a progress note stops the workflow until someone notices.');
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
-  lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
+  // A plan column's work ends at the plan's approval, which moves the task on
+  // by itself while the conversation carries on. An agent told it may move the
+  // task itself read that approval as the cue to do so, and skipped a column.
+  if (input.column && input.planExitTo) {
+    lines.push(`- ${escapeXml(input.column)} plans the work. Approving your plan moves the task on to ${escapeXml(input.planExitTo)}, so do not move it yourself.`);
+  } else {
+    lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
+  }
   if (input.blocks.length > 0) lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
   // Conditional, because the tool is offered only to an agent that reports its
   // background commands (`AgentAdapter.backgroundCommands`), and the facts this

@@ -149,10 +149,13 @@ to Done, unless the plan took it in.
 
 Pause every agent in a running workflow at once, a task with paused automations included (a
 mid-board suspend: nothing is reaped). The workflow then starts, judges and moves nothing until it
-is resumed. A card a person works meanwhile (an agent resumed by hand, a drag) runs its column
-automations as any card does, and its own agent may move it. The reply counts the agents paused and
-names each task whose agent could not be paused; the phone gets the same counts as the result's
-`paused`, `notLive` and `failed`.
+is resumed. A person may still work a card meanwhile (resume its agent by hand, drag it), and an
+agent resumed by hand may move its own card. A paused agent stays paused through any move: the
+destination's On task enter rows that need no agent run, if the task's automations are on, and
+the rows that need the agent are recorded as skipped with "The agent is paused. This row runs if
+the agent is resumed in this column." The reply counts the agents paused and names each task
+whose agent could not be paused; the phone gets the same counts as the result's `paused`,
+`notLive` and `failed`.
 
 When a member's own agent makes the call, its own session pauses only after the turn that made the
 call ends, and the reply says "Your own session pauses when this turn ends." Every other member
@@ -168,8 +171,13 @@ it does not pause the workflow again. See
 ## kangentic_resume_workflow
 
 Resume a paused workflow. Each paused agent resumes in the column its task is in now, in any
-working column. A task in an agent column with no agent gets one started, with the column's
-message, unless its automations are paused. An agent already running is left alone. Waiting tasks
+working column. When the task entered that column after its agent was paused, the resume does what
+that entry would have done: a column that always starts new starts a fresh conversation, one that
+resumes brings the conversation back with the column's settings, and then the column's On task
+enter rows that need the agent run (not the others, which ran at the entry). A task that has not
+changed column since the pause continues the same conversation with no column message. A task in an
+agent column with no agent gets one started, with the column's message, unless its automations are
+paused. An agent already running is left alone. Waiting tasks
 start as their blockers reach Done. The reply counts the agents resumed, started and already
 running, and names any that failed; the phone gets them as `resumed`, `started`, `alreadyRunning`
 and `failed`.

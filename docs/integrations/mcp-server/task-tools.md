@@ -163,8 +163,30 @@ board.
 Naming the task's current column with no `position` moves nothing and answers `Task "<title>" is
 already in <column>.` That is a success, not an error, so an agent that repeats a move it already
 made gets a harmless answer. A `message` on that call is refused for any caller but the task's own
-agent, which gets the same answer plus "Nothing moved, so the message was not sent." `column:
-"next"` is relative to where the task is now, so repeating it moves the task again.
+agent, which gets the same answer plus "Nothing moved, so the message was not sent."
+
+`column: "next"` resolves from where the task is now. For the task's own agent it is first checked
+against the column the agent's current turn began in: the turn's start, from its spawn or from new
+input (`SessionManager.workTurnStartedAt`), and the column the task's last recorded move before that
+instant took it to (`TaskMoveRepository.columnAt`). A plan approval does not move that start. When
+the task has since left that column, "next" is refused, because the agent judged the earlier
+column's work done and "next" from the new one would skip a column. That happened to #919: its
+plan approval moved it from Planning to Executing while the same turn carried on, and the turn's
+"next" landed it in Code Review. The refusal names both columns:
+
+- In a column that carries the session on (main, resumes its conversation): `#919 already moved
+  from Planning to Executing, so this turn is doing Executing's step now. When that work is done,
+  move it with column "Code Review".` A workflow task is also told it can end its turn and let the
+  workflow move it.
+- In a column that ends the session (Done, To Do, no agent, isolated or always fresh), such as a
+  repeated "next" after the agent's own move: `#919 already moved from Executing to Code Review.
+  Your session ends when this turn does.`
+
+Another task's agent, a caller with no session, a session with no turn yet, and a task with no
+recorded move by the turn's start resolve "next" as before. A column named outright is never
+refused this way. Any move under a live turn counts, a person's drag or an automation's included,
+even when the destination's column message reaches the agent inside that same turn: the turn
+began in the earlier column, and the refusal names the column to move to.
 
 When the task's own agent moves it and the move ends that agent's session (Done, a column with no
 agent, an isolated or always-fresh column, an agent or model change), the session ends only after

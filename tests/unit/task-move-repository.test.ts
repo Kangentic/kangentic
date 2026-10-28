@@ -180,4 +180,38 @@ describe('TaskMoveRepository.currentVisit and visitStartedAt', () => {
       expect(moves.visitStartedAt(taskId, columnId), name).toBe(moves.currentVisit(taskId, columnId)?.at ?? null);
     }
   });
+
+  // kangentic_move_task asks which column the task was in when its agent's turn
+  // began, to refuse a "next" the task has since moved past (#929).
+  describe('columnAt', () => {
+    it('is null when no move was recorded at or before the instant', () => {
+      recordMove('move-later', columnId, 'renderer', SECOND_INSTANT);
+
+      expect(moves.columnAt(taskId, FIRST_INSTANT)).toBeNull();
+    });
+
+    it('is the column the last move at or before the instant took the task to, never a later one', () => {
+      recordMove('move-first', columnId, 'create', FIRST_INSTANT);
+      recordMove('move-third', columnId, 'agent', THIRD_INSTANT, taskId, otherColumnId);
+      recordMove('move-second', otherColumnId, 'auto-move', SECOND_INSTANT, taskId, columnId);
+
+      expect(moves.columnAt(taskId, FIRST_INSTANT)).toBe(columnId);
+      expect(moves.columnAt(taskId, SECOND_INSTANT)).toBe(otherColumnId);
+      expect(moves.columnAt(taskId, '2026-09-01T09:07:00.000Z')).toBe(otherColumnId);
+      expect(moves.columnAt(taskId, THIRD_INSTANT)).toBe(columnId);
+    });
+
+    it('breaks a same-millisecond tie toward the later-inserted move', () => {
+      recordMove('move-z-first-inserted', columnId, 'renderer', SECOND_INSTANT);
+      recordMove('move-a-second-inserted', otherColumnId, 'auto-move', SECOND_INSTANT, taskId, columnId);
+
+      expect(moves.columnAt(taskId, SECOND_INSTANT)).toBe(otherColumnId);
+    });
+
+    it('does not read another task\'s moves', () => {
+      recordMove('move-other-task', columnId, 'renderer', FIRST_INSTANT, otherTaskId);
+
+      expect(moves.columnAt(taskId, SECOND_INSTANT)).toBeNull();
+    });
+  });
 });

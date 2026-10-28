@@ -15,7 +15,7 @@ import type {
   NotificationInput,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
-import { canTaskRunAutomations } from '../../shared/automation-manifest';
+import { automationNeedsAgent, canTaskRunAutomations } from '../../shared/automation-manifest';
 import { englishText } from '../../shared/i18n/english';
 import type { AutomationContext } from '../automations/shared/automation-adapter';
 import type { ConditionCheckCall, ConditionCheckLimits, ConditionCheckOutcome } from '../automations/condition-check/condition-check';
@@ -168,6 +168,8 @@ interface AutomationGroupOptions {
   alreadyDelivered?: ReadonlySet<string>;
   /** A recovery move out of Done. See `RunAutomationsOptions`. */
   suppressAgentMessages?: boolean;
+  /** The task's agent is paused. See `RunAutomationsOptions`. */
+  agentPaused?: boolean;
   groupBudgetMs?: number;
   /** Turn end only: the agent's final message of the turn, for `{{agentReply}}` and Conditions. */
   agentReply?: string | null;
@@ -248,13 +250,21 @@ export class TransitionEngine {
        * runs the whole group.
        */
       onlyIds?: ReadonlySet<string>;
+      /**
+       * Run only the rows that need the agent, and record nothing for the
+       * rest: the Resume of an agent that was paused when its task entered this
+       * column, whose other rows ran at that entry (`agentPaused`). A recovery
+       * entry out of Done ran none, and its Resume sends the agent nothing.
+       */
+      onlyRowsNeedingAgent?: boolean;
     },
   ): Promise<AutomationRunSummary> {
     const empty: AutomationRunSummary = { outcomes: [], failures: [], startedAgent: false };
     if (!this.automationRepo || !this.automationRunRepo) return empty;
 
     const all = this.automationRepo.getForTrigger(column.id, trigger);
-    const automations = options.onlyIds ? all.filter((row) => options.onlyIds!.has(row.id)) : all;
+    const automations = all.filter((row) => (!options.onlyIds || options.onlyIds.has(row.id))
+      && (!options.onlyRowsNeedingAgent || automationNeedsAgent(row.type)));
     if (automations.length === 0) return empty;
 
     // The task's own switch, read fresh rather than from the caller's object:
@@ -455,6 +465,7 @@ export class TransitionEngine {
       startAgent: options.startAgent,
       alreadyDelivered: options.alreadyDelivered,
       suppressAgentMessages: options.suppressAgentMessages,
+      agentPaused: options.agentPaused,
       groupBudgetMs: options.groupBudgetMs,
       conditionAnswers: options.conditionAnswers,
       conditionUnavailableReason: options.conditionUnavailableReason,

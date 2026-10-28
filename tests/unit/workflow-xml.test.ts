@@ -24,6 +24,8 @@ function task(overrides: Partial<Task> = {}): Task {
 const WORKFLOW = {
   title: 'Usage <budgets> & limits',
   route: ['Executing', 'Code Review', 'Done'],
+  column: 'Executing' as string | null,
+  planExitTo: null as string | null,
   waitsFor: [{ number: 411, title: 'Budgets API', column: 'Done', branch: 'budgets-api', prUrl: 'https://example.com/pr/1' }],
   blocks: [{ number: 417, title: 'Budgets docs', column: 'To Do' }],
 };
@@ -56,6 +58,27 @@ describe('{{workflow_xml}}', () => {
     expect(xml).toContain('End your turn only when this column\'s work is done');
     expect(xml).toContain('kangentic_move_task');
     expect(xml).toContain('kangentic_mark_background_service');
+  });
+
+  // #929. The block reaches the agent once, as its task enters its first
+  // column. Naming that column, and saying a plan column's approval moves the
+  // task on, keeps the agent from moving it again after the approval did.
+  it('names the column the task is in, escaped', () => {
+    expect(buildWorkflowXml(WORKFLOW)).toContain('<column>Executing</column>');
+    expect(buildWorkflowXml({ ...WORKFLOW, column: 'Review & <QA>' })).toContain('<column>Review &amp; &lt;QA&gt;</column>');
+    expect(buildWorkflowXml({ ...WORKFLOW, column: null })).not.toContain('<column>');
+  });
+
+  it('offers "next" outside a plan column', () => {
+    const xml = buildWorkflowXml(WORKFLOW);
+    expect(xml).toContain('you may move the task on yourself with kangentic_move_task, column "next"');
+    expect(xml).not.toContain('Approving your plan');
+  });
+
+  it('says a plan column\'s approval moves the task on, and does not offer "next" there', () => {
+    const xml = buildWorkflowXml({ ...WORKFLOW, route: ['Planning', 'Executing', 'Done'], column: 'Planning', planExitTo: 'Executing' });
+    expect(xml).toContain('- Planning plans the work. Approving your plan moves the task on to Executing, so do not move it yourself.');
+    expect(xml).not.toContain('column "next"');
   });
 
   it('mentions waiting tasks only when something waits on this one', () => {

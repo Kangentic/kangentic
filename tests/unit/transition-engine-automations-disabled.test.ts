@@ -37,7 +37,7 @@ import { AutomationRunRepository } from '../../src/main/db/repositories/automati
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
-import { SENT_WITH_THE_MOVE } from '../../src/main/automations/automation-runner';
+import { AGENT_PAUSED_REASON, SENT_WITH_THE_MOVE } from '../../src/main/automations/automation-runner';
 import { AUTOMATIONS_DISABLED_REASON as AUTOMATIONS_DISABLED_REASON_DESCRIPTOR } from '../../src/shared/automation-manifest';
 import { englishText } from '../../src/shared/i18n/english';
 
@@ -130,7 +130,7 @@ describe('TransitionEngine and a task with its automations disabled', () => {
     });
   }
 
-  function groupOptions(extra: { onlyIds?: ReadonlySet<string>; alreadyDelivered?: ReadonlySet<string> } = {}) {
+  function groupOptions(extra: { onlyIds?: ReadonlySet<string>; alreadyDelivered?: ReadonlySet<string>; onlyRowsNeedingAgent?: boolean; agentPaused?: boolean } = {}) {
     return {
       signal: new AbortController().signal,
       startAgent,
@@ -187,6 +187,77 @@ describe('TransitionEngine and a task with its automations disabled', () => {
       const recorded = runs.listForTask(task.id);
       expect(recorded.map((run) => run.automation_id)).toEqual([secondRow.id]);
       expect(recorded.some((run) => run.automation_id === firstRow.id)).toBe(false);
+    });
+  });
+
+  // #929. A Resume of an agent that was paused when its task entered the column
+  // runs only the enter rows that need the agent: the others ran at the entry.
+  describe('an enter group narrowed to the rows that need the agent', () => {
+    it('runs only those rows for an enabled task, and records nothing for the rest', async () => {
+      const task = createTask(false);
+      const [pingRow, messageRow] = rowsByTrigger.enter;
+
+      const summary = await engine.executeTransition(task, column, 'enter', groupOptions({ onlyRowsNeedingAgent: true }));
+
+      expect(summary.outcomes.map((outcome) => outcome.automationId)).toEqual([messageRow.id]);
+      expect(showNotification).not.toHaveBeenCalled();
+      expect(startAgent).toHaveBeenCalledTimes(1);
+      expect(runs.listForTask(task.id).some((run) => run.automation_id === pingRow.id)).toBe(false);
+    });
+
+    it('records the hold only on those rows for a disabled task', async () => {
+      const task = createTask(true);
+      const [, messageRow] = rowsByTrigger.enter;
+
+      const summary = await engine.executeTransition(task, column, 'enter', groupOptions({ onlyRowsNeedingAgent: true }));
+
+      expect(summary.outcomes.map((outcome) => [outcome.automationId, outcome.detail])).toEqual([[messageRow.id, AUTOMATIONS_DISABLED_REASON]]);
+      expect(runs.listForTask(task.id).map((run) => run.automation_id)).toEqual([messageRow.id]);
+    });
+  });
+
+  // #929. A move never starts a paused agent. The engine forwards `agentPaused`
+  // to the runner, which skips the rows that need the agent with the reason and
+  // runs the rest, so the entry does what it can without the agent and the
+  // user's Resume runs what is owed.
+  describe('an enter group for a task whose agent is paused', () => {
+    it('skips the row that needs the agent with the paused reason, starts no agent, and still runs the other row', async () => {
+      const task = createTask(false);
+      const [pingRow, messageRow] = rowsByTrigger.enter;
+
+      const summary = await engine.executeTransition(task, column, 'enter', groupOptions({ agentPaused: true }));
+
+      expect(summary.outcomes.map((outcome) => [outcome.automationId, outcome.status])).toEqual([
+        [pingRow.id, 'succeeded'],
+        [messageRow.id, 'skipped'],
+      ]);
+      expect(summary.outcomes[1].detail).toBe(AGENT_PAUSED_REASON);
+      expect(summary.failures).toEqual([]);
+      expect(summary.startedAgent).toBe(false);
+      expect(startAgent).not.toHaveBeenCalled();
+      expect(deliverToAgent).not.toHaveBeenCalled();
+      expect(showNotification).toHaveBeenCalledTimes(1);
+
+      // The run log, read back: the skip carries the reason and counts as no attempt.
+      const messageRuns = runs.listForTask(task.id).filter((run) => run.automation_id === messageRow.id);
+      expect(messageRuns).toHaveLength(1);
+      expect(messageRuns[0]).toMatchObject({ status: 'skipped', detail: AGENT_PAUSED_REASON, attempts: 0, trigger: 'enter' });
+      const pingRuns = runs.listForTask(task.id).filter((run) => run.automation_id === pingRow.id);
+      expect(pingRuns).toHaveLength(1);
+      expect(pingRuns[0].status).toBe('succeeded');
+    });
+
+    it('starts the agent for the same group when it is not paused', async () => {
+      // The paired half: without `agentPaused` the message row is the one that
+      // makes the runner start the agent, so the skip above is the flag's doing.
+      const task = createTask(false);
+
+      const summary = await engine.executeTransition(task, column, 'enter', groupOptions());
+
+      expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['succeeded', 'succeeded']);
+      expect(summary.startedAgent).toBe(true);
+      expect(startAgent).toHaveBeenCalledTimes(1);
+      expect(runs.listForTask(task.id).some((run) => run.detail === AGENT_PAUSED_REASON)).toBe(false);
     });
   });
 

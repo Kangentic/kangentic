@@ -21,7 +21,10 @@ import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repo
 import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../../src/main/db/repositories/task-link-repository';
 import { readWorkflowPromptFacts } from '../../src/main/workflows/workflow-prompt-facts';
-import type { Task } from '../../src/shared/types';
+import { planExitTargetFor } from '../../src/main/ipc/helpers/plan-exit-target';
+import { setWorkflowRuntimeContext } from '../../src/main/workflows/workflow-runtime';
+import type { IpcContext } from '../../src/main/ipc/ipc-context';
+import type { BoardProfile, Task } from '../../src/shared/types';
 
 const PROJECT_IDS = ['home', 'member', 'idle', 'missing'];
 
@@ -85,6 +88,108 @@ describe('readWorkflowPromptFacts', () => {
       .toEqual([{ number: blocker.display_id, title: 'Ship the schema', column: 'Done' }]);
     expect(facts!.blocks).toEqual([{ number: dependent.display_id, title: 'Wire the settings page', column: 'To Do' }]);
     expect(filesPresent('missing')).toBe(0);
+  });
+
+  // #929. The default board's Planning runs in plan mode, and its approval
+  // moves a workflow task to the next column on its route.
+  it('names the task\'s column, and where a plan column\'s approval moves it', () => {
+    const workflows = new WorkflowRepository(getProjectDb('home'));
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    workflows.markStarted(workflow.id);
+
+    const planning = readWorkflowPromptFacts(workflowTask('home', 'Planning', 'Plan the budgets', workflow.id, 'home'), 'home');
+    expect(planning).toMatchObject({ column: 'Planning', planExitTo: 'Executing' });
+
+    const executing = readWorkflowPromptFacts(workflowTask('home', 'Executing', 'Build the budgets', workflow.id, 'home'), 'home');
+    expect(executing).toMatchObject({ column: 'Executing', planExitTo: null });
+  });
+
+  it('follows the route past a skipped column for the plan column\'s approval', () => {
+    const workflows = new WorkflowRepository(getProjectDb('home'));
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    workflows.markStarted(workflow.id);
+    const task = new TaskRepository(getProjectDb('home')).create({
+      title: 'Plan the budgets',
+      description: '',
+      swimlane_id: laneOf('home', 'Planning'),
+      workflow: {
+        workflow_id: workflow.id,
+        workflow_project_id: 'home',
+        route_start_swimlane_id: null,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: [laneOf('home', 'Executing')],
+        canvas_x: null,
+        canvas_y: null,
+      },
+    });
+
+    expect(readWorkflowPromptFacts(task, 'home')).toMatchObject({ column: 'Planning', planExitTo: 'Code Review' });
+  });
+
+  // The block tells the agent where its plan approval will move it, and the
+  // approval moves it with `planExitTargetFor`. Two answers to one question: they
+  // must agree, or the agent is told a column the approval does not take it to.
+  it.each([
+    { label: 'the default route', skippedLaneNames: [] as string[] },
+    { label: 'a route that skips Executing', skippedLaneNames: ['Executing'] },
+  ])('names the column the plan approval moves the task to, on $label', ({ skippedLaneNames }) => {
+    const workflows = new WorkflowRepository(getProjectDb('home'));
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    workflows.markStarted(workflow.id);
+    const task = new TaskRepository(getProjectDb('home')).create({
+      title: 'Plan the budgets',
+      description: '',
+      swimlane_id: laneOf('home', 'Planning'),
+      workflow: {
+        workflow_id: workflow.id,
+        workflow_project_id: 'home',
+        route_start_swimlane_id: null,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: skippedLaneNames.map((laneName) => laneOf('home', laneName)),
+        canvas_x: null,
+        canvas_y: null,
+      },
+    });
+
+    const facts = readWorkflowPromptFacts(task, 'home');
+    // For a workflow task `planExitTargetFor` never reads the context, so an empty one will do.
+    const approvalTarget = planExitTargetFor({} as unknown as IpcContext, task, task.swimlane_id, new SwimlaneRepository(getProjectDb('home')), '/mock/home');
+
+    expect(facts).not.toBeNull();
+    // Both name a column, so two nulls cannot satisfy the equality below.
+    expect(approvalTarget).not.toBeNull();
+    expect(facts!.planExitTo).toBe(approvalTarget!.name);
+  });
+
+  it('reads plan mode through the task\'s Board Profile, as the spawn does', () => {
+    const workflows = new WorkflowRepository(getProjectDb('home'));
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    workflows.markStarted(workflow.id);
+    // The profile turns plan mode off in Planning and on in Executing.
+    const profile: BoardProfile = {
+      id: 'profile-plan-late',
+      name: 'Plan late',
+      columns: {
+        [laneOf('home', 'Planning')]: { permissionMode: 'acceptEdits' },
+        [laneOf('home', 'Executing')]: { permissionMode: 'plan' },
+      },
+    };
+    setWorkflowRuntimeContext({
+      projectRepo: { getById: () => ({ id: 'home', path: '/mock/home' }) },
+      boardConfigManager: { getBoardProfiles: () => [profile] },
+    } as unknown as IpcContext);
+    try {
+      const tasks = new TaskRepository(getProjectDb('home'));
+      const inPlanning = workflowTask('home', 'Planning', 'Plan the budgets', workflow.id, 'home');
+      tasks.update({ id: inPlanning.id, profile_id: profile.id });
+      const inExecuting = workflowTask('home', 'Executing', 'Build the budgets', workflow.id, 'home');
+      tasks.update({ id: inExecuting.id, profile_id: profile.id });
+
+      expect(readWorkflowPromptFacts(tasks.getById(inPlanning.id)!, 'home')).toMatchObject({ column: 'Planning', planExitTo: null });
+      expect(readWorkflowPromptFacts(tasks.getById(inExecuting.id)!, 'home')).toMatchObject({ column: 'Executing', planExitTo: 'Code Review' });
+    } finally {
+      setWorkflowRuntimeContext(null);
+    }
   });
 
   it('returns no facts for a task whose workflow home is gone, and creates no database for it', () => {

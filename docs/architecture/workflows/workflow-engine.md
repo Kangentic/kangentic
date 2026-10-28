@@ -314,14 +314,24 @@ src/main/workflows/
 
   Hands, the `automation` and `auto-move` origins and the task's own agent still pass the lock. A
   card a person works during a pause is an ordinary card and may run on through its board (decided
-  2026-10-27, task #925). A card the Pause stopped stays paused through a drag, because `spawnAgent`
-  respects its held pause.
+  2026-10-27, task #925). A card the Pause stopped stays paused through any move (decided
+  2026-10-28, task #929). `handleTaskMove`'s Priority 4 finds the held pause
+  (`isHeldPause(getLatestForTask)`) and, the way Priority 2.5 does, arms the destination's enter
+  rows with `agentPaused` and spawns nothing. The rows that need no agent run, and the runner
+  records each row that needs the agent as skipped with "The agent is paused. This row runs if the
+  agent is resumed in this column." `spawnAgent` still refuses a held pause for every other caller.
+  A recovery move out of Done skips that branch: the move restores the worktree Done removed and
+  `spawnAgent` refuses the pause, and the later Resume sends the agent nothing.
 - **Resume** (`resumeWorkflow`) decides each task in a working column under its lock. A live agent
   is left running, and its last reply goes to the turn-end catch-up (`requestWorkflowCatchUp`,
   which the runner registers with `setWorkflowCatchUp`): a person may have worked it to the end of
   its column during the pause, and an idle agent ends no turn that would be judged. A paused one (a
   `suspended` registry row or record) comes back through
-  `resumeTaskSession`, in any column, and is awaited (all tasks at once). A task with none, its
+  `resumeTaskSession`, in any column, and is awaited (all tasks at once). When the task entered its
+  column after that record was suspended (`currentVisit(...).at` later than `suspended_at`) and the
+  column starts an agent, `resumeTaskSession` goes through `spawnAgent` with `resumesEntry`: the
+  column's own strategy (fresh in an always-new column, so #919's resume in Code Review would have
+  opened a new conversation) and only its enter rows that need the agent. A task with none, its
   automations on and its column's profile-folded `auto_spawn` on, gets `autoSpawnForTask` without
   `explicitStart`, so a held pause still decides, and the column's enter list runs. That start is
   counted on acceptance and not awaited: an enter list can run a script for minutes, and the

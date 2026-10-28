@@ -264,6 +264,275 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
     });
   });
 
+  // #929. A plan exit moved #919 from Planning to Executing while its agent's
+  // turn carried on, and that turn's "next" then resolved from Executing and
+  // skipped it. "next" from the task's own agent is judged from the column its
+  // turn began in.
+  describe('a "next" from the task\'s own agent after the task left its turn\'s column', () => {
+    const OWN_SESSION_ID = 'session-own-929';
+    const ENTERED_PLANNING = '2026-10-28T03:03:28.235Z';
+    const TURN_STARTED = Date.parse('2026-10-28T03:10:00.000Z');
+    const PLAN_EXIT_MOVE = '2026-10-28T03:17:45.288Z';
+
+    /** A workflow task whose route runs Planning, Executing, Code Review, Testing, Merge. */
+    function routedTask(): Task {
+      return tasks.create({
+        title: 'Multiple languages',
+        description: '',
+        swimlane_id: laneIds['Planning'],
+        workflow: {
+          workflow_id: workflowId,
+          workflow_project_id: PROJECT_ID,
+          route_start_swimlane_id: null,
+          route_last_swimlane_id: null,
+          skipped_swimlane_ids: [],
+          canvas_x: null,
+          canvas_y: null,
+        },
+      });
+    }
+
+    function stampMove(taskId: string, toLaneName: string, at: string): void {
+      database.prepare('UPDATE task_moves SET at = ? WHERE task_id = ? AND to_swimlane_id = ?').run(at, taskId, laneIds[toLaneName]);
+    }
+
+    /**
+     * The task entered Planning before its agent's turn began, and was moved to
+     * `toLaneName` during that turn, as a plan exit does. The caller is the
+     * task's own live session.
+     */
+    function movedDuringTurn(task: Task, toLaneName = 'Executing'): Task {
+      stampMove(task.id, 'Planning', ENTERED_PLANNING);
+      tasks.move({ taskId: task.id, targetSwimlaneId: laneIds[toLaneName], targetPosition: 0 }, { origin: 'auto-move' });
+      stampMove(task.id, toLaneName, PLAN_EXIT_MOVE);
+      tasks.update({ id: task.id, session_id: OWN_SESSION_ID });
+      context.callerTaskId = task.id;
+      context.callerSessionId = OWN_SESSION_ID;
+      context.getSessionTurnStartedAt = (sessionId) => (sessionId === OWN_SESSION_ID ? TURN_STARTED : null);
+      return tasks.getById(task.id) as Task;
+    }
+
+    it('refuses it, naming both columns and the way on, and moves nothing', () => {
+      const task = movedDuringTurn(routedTask());
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response).toMatchObject({
+        success: false,
+        error: `#${task.display_id} already moved from Planning to Executing, so this turn is doing Executing's step now.`
+          + ' When that work is done, end your turn and the workflow moves it on, or move it with column "Code Review".',
+      });
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('words the way on without the workflow for an ordinary task', () => {
+      const task = movedDuringTurn(ordinaryTask());
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response).toMatchObject({
+        success: false,
+        error: `#${task.display_id} already moved from Planning to Executing, so this turn is doing Executing's step now.`
+          + ' When that work is done, move it with column "Code Review".',
+      });
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('says the session ends when the task now sits in a column that starts its own', () => {
+      new SwimlaneRepository(database).update({ id: laneIds['Code Review'], session_target: 'isolated' });
+      const task = movedDuringTurn(ordinaryTask(), 'Code Review');
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response).toMatchObject({
+        success: false,
+        error: `#${task.display_id} already moved from Planning to Code Review. Your session ends when this turn does.`,
+      });
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('says the session ends when the task now sits in a column that starts every entry fresh', () => {
+      // Still the main track, so only the spawn strategy keeps the session from carrying on.
+      new SwimlaneRepository(database).update({ id: laneIds['Executing'], session_spawn_strategy: 'always_spawn_new' });
+      const task = movedDuringTurn(ordinaryTask());
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe(`#${task.display_id} already moved from Planning to Executing. Your session ends when this turn does.`);
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('says the session ends when the task now sits in a column with auto spawn off', () => {
+      new SwimlaneRepository(database).update({ id: laneIds['Executing'], auto_spawn: false });
+      const task = movedDuringTurn(ordinaryTask());
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe(`#${task.display_id} already moved from Planning to Executing. Your session ends when this turn does.`);
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    // Auto spawn is switched ON for both, so the column's role is the only thing
+    // that keeps a session from carrying on there.
+    it.each(['To Do', 'Done'])('says the session ends when the task now sits in %s, whatever its auto spawn', (laneName) => {
+      new SwimlaneRepository(database).update({ id: laneIds[laneName], auto_spawn: true });
+      const task = movedDuringTurn(ordinaryTask(), laneName);
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe(`#${task.display_id} already moved from Planning to ${laneName}. Your session ends when this turn does.`);
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('names the turn\'s column "another column" when it is no longer on the board', () => {
+      const task = movedDuringTurn(ordinaryTask());
+      // task_moves keeps no foreign key to swimlanes, so a deleted column's id
+      // stays in a task's history. Point the entry the turn began in at one.
+      database
+        .prepare('UPDATE task_moves SET to_swimlane_id = ? WHERE task_id = ? AND to_swimlane_id = ?')
+        .run('column-deleted-929', task.id, laneIds['Planning']);
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe(
+        `#${task.display_id} already moved from another column to Executing, so this turn is doing Executing's step now.`
+          + ' When that work is done, move it with column "Code Review".',
+      );
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    describe('with no column after the one the task now sits in', () => {
+      beforeEach(() => {
+        // A ghost Done column is no Done column to the board or to a route, so
+        // nothing follows Merge, the last column before it.
+        new SwimlaneRepository(database).update({ id: laneIds['Done'], is_ghost: true });
+      });
+
+      it('ends a workflow task\'s text on the workflow moving it on, with no way to move it', () => {
+        const task = movedDuringTurn(routedTask(), 'Merge');
+
+        const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toBe(
+          `#${task.display_id} already moved from Planning to Merge, so this turn is doing Merge's step now.`
+            + ' When that work is done, end your turn and the workflow moves it on.',
+        );
+        expect(onTaskMove).not.toHaveBeenCalled();
+      });
+
+      it('ends an ordinary task\'s text on what the turn is doing, with nothing after it', () => {
+        const task = movedDuringTurn(ordinaryTask(), 'Merge');
+
+        const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+        expect(response.success).toBe(false);
+        expect(response.error).toBe(`#${task.display_id} already moved from Planning to Merge, so this turn is doing Merge's step now.`);
+        expect(onTaskMove).not.toHaveBeenCalled();
+      });
+    });
+
+    it('resolves "next" from the column the turn began in when the task is still there', () => {
+      const task = routedTask();
+      stampMove(task.id, 'Planning', ENTERED_PLANNING);
+      context.callerTaskId = task.id;
+      context.getSessionTurnStartedAt = () => TURN_STARTED;
+      context.callerSessionId = OWN_SESSION_ID;
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Executing'] }),
+        { moverIsTaskAgent: true },
+      );
+    });
+
+    it('lets a column named outright through', () => {
+      const task = movedDuringTurn(routedTask());
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+      );
+    });
+
+    it('resolves from where the task is when the turn\'s start is unknown', () => {
+      const task = movedDuringTurn(routedTask());
+      context.getSessionTurnStartedAt = () => null;
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ targetSwimlaneId: laneIds['Code Review'] }),
+        expect.anything(),
+      );
+    });
+
+    it('resolves from where the task is when no move was recorded by the turn\'s start', () => {
+      const task = movedDuringTurn(routedTask());
+      database.prepare('DELETE FROM task_moves WHERE task_id = ? AND at <= ?').run(task.id, ENTERED_PLANNING);
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ targetSwimlaneId: laneIds['Code Review'] }),
+        expect.anything(),
+      );
+    });
+
+    it.each([['a null session', null], ['no session', undefined]])(
+      'resolves from where the task is when the call carries %s',
+      (_label, callerSessionId) => {
+        const task = movedDuringTurn(routedTask());
+        context.callerSessionId = callerSessionId;
+        // Answers for any id, null included, so only the handler's own guard on a
+        // missing session keeps this call out of a refusal.
+        context.getSessionTurnStartedAt = () => TURN_STARTED;
+
+        const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+        expect(response.success).toBe(true);
+        expect(onTaskMove).toHaveBeenCalledWith(
+          expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
+          { moverIsTaskAgent: true },
+        );
+      },
+    );
+
+    it('resolves from where the task is when the context cannot report a turn start', () => {
+      const task = movedDuringTurn(routedTask());
+      delete context.getSessionTurnStartedAt;
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+      );
+    });
+
+    it('leaves another task\'s agent alone: "next" from where the task is', () => {
+      const task = movedDuringTurn(ordinaryTask());
+      context.callerTaskId = ordinaryTask().id;
+
+      const response = handleMoveTask({ taskId: task.id, column: 'next' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ targetSwimlaneId: laneIds['Code Review'] }));
+    });
+  });
+
   describe('an ordinary task', () => {
     it('resolves "next" to the next column on the board', () => {
       const task = ordinaryTask();

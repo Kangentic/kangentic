@@ -565,6 +565,16 @@ export function isAutomationType(value: string): value is AutomationType {
 }
 
 /**
+ * Does a row of this type need the task's agent (`needs` holds `'agent'`)?
+ * Asked of the manifest, never of the type's name: a Resume after the task
+ * entered its column while its agent was paused runs only these rows, since
+ * the rest ran at the entry. False for a type this build does not know.
+ */
+export function automationNeedsAgent(type: string): boolean {
+  return isAutomationType(type) && AUTOMATION_MANIFEST[type].needs.includes('agent');
+}
+
+/**
  * Does a row of this type move the task when it runs (`endsGroup`)? Asked of
  * the manifest, never of the type's name: Run again runs such a row outside the
  * task lock, and a workflow's step check reads its Text match as the column's

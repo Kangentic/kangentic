@@ -457,3 +457,39 @@ describe('spawn entry-point parity: explicitStart is a user-gesture option', () 
     expect(callerReferences.length).toBeGreaterThan(0);
   });
 });
+
+describe('spawn entry-point parity: resumesEntry belongs to the Resume path', () => {
+  /**
+   * `resumesEntry` lifts spawnAgent's held-pause guard for the user's Resume of
+   * an agent that was paused when its task entered its column (#929): the
+   * entry ran only its rows that need no agent, and the Resume does the rest.
+   * The declaration, the gate, and the forward live in agent-spawn.ts; the one
+   * caller is `resumeTaskSession`, the body every Resume (desktop, phone,
+   * workflow) shares. A move, startup or reconcile path growing it would start
+   * a paused agent nobody resumed.
+   */
+  const RESUMES_ENTRY_FILES = new Set([
+    'src/main/ipc/helpers/agent-spawn.ts',
+    'src/main/ipc/handlers/session-resume.ts',
+  ]);
+
+  it('resumesEntry is referenced only by agent-spawn.ts and the Resume body', () => {
+    const outsideReferences = collectSinkCalls(/\bresumesEntry\b/)
+      .filter((reference) => !RESUMES_ENTRY_FILES.has(reference.relativePath))
+      .map((reference) => reference.location);
+    expect(
+      outsideReferences,
+      `resumesEntry referenced outside its two classified files:\n`
+        + `${outsideReferences.join('\n')}\n\n`
+        + `The option bypasses the held-pause guard, so only the user's Resume may pass it. `
+        + `A move never starts a paused agent. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('the one caller still passes it, so the scan is not vacuous', () => {
+    expect(fileHasNonCommentCall('src/main/ipc/handlers/session-resume.ts', 'spawnAgent')).toBe(true);
+    const callerReferences = collectSinkCalls(/resumesEntry:\s*true/)
+      .filter((reference) => reference.relativePath === 'src/main/ipc/handlers/session-resume.ts');
+    expect(callerReferences.length).toBeGreaterThan(0);
+  });
+});

@@ -225,6 +225,20 @@ export interface AgentSpawnOptions {
    * flip would silently un-pause a task the user paused.
    */
   explicitStart?: boolean;
+  /**
+   * The user's Resume of an agent that was paused when its task entered this
+   * column (`resumeTaskSession`). A move never starts a paused agent, so the
+   * entry ran only its rows that need no agent; this start does the rest of
+   * what the entry would have: the column's own session strategy (a fresh
+   * conversation in a column that always starts new, the conversation resumed
+   * in one that resumes) and the enter rows that need the agent. After an entry
+   * out of Done the caller adds `suppressAutoCommand`, as a recovery move does.
+   *
+   * It lifts only the held-pause check, which is the pause this Resume ends.
+   * The column's `auto_spawn` and the To Do / Done role gate still apply.
+   * Passed only by `resumeTaskSession`.
+   */
+  resumesEntry?: boolean;
 }
 
 /**
@@ -308,10 +322,11 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
 
   // Guard: if the task is held paused (the user paused it, or Kangentic did
   // while it waited on the user), don't auto-resume. Only an explicit user
-  // gesture restarts it: the desktop's Resume button (SESSION_RESUME) or a
+  // gesture restarts it: the desktop's Resume button (SESSION_RESUME, which
+  // reaches here with `resumesEntry` after the task changed column) or a
   // caller passing `explicitStart` (the phone's start-session verb).
   const latestSession = sessionRepo.getLatestForTask(task.id);
-  if (isHeldPause(latestSession) && !options.explicitStart) {
+  if (isHeldPause(latestSession) && !options.explicitStart && !options.resumesEntry) {
     console.log(`[spawnAgent] Skipping auto-spawn for task ${task.id.slice(0, 8)} (paused until the user resumes it)`);
     return;
   }
@@ -683,6 +698,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // The runner records the skip. `deliverToAgent`'s own early return would
       // leave `send_message` reporting "Delivered" for a message nobody got.
       suppressAgentMessages: options.suppressAutoCommand,
+      // The entry this Resume completes already ran the rows that need no agent.
+      onlyRowsNeedingAgent: options.resumesEntry,
       deliverToAgent,
       legacySpawnAgent: async (legacyConfig) => {
         const outcome = await engine.runLegacySpawnAgent(

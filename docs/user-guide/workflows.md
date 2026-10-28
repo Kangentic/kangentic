@@ -109,7 +109,11 @@ with a Move to column automation that moves the task forward on the agent's last
 such as "Verdict: Ready") has said what finishes it. There a task moves on only when that last line
 matches a forward one. A reply that matches none of them, or matches only one that sends the task
 back, is treated as not finished, whatever the Automation agent made of it. A task
-that finishes a plan moves on when its plan is approved. Who approves is the task's own **Plan
+that finishes a plan moves on when its plan is approved, and its agent's first prompt says so. The
+agent may also move its task on itself with `kangentic_move_task` and "next", except in a plan
+column, where its prompt says the approval does it, and not from a column its task already left
+during that turn: after an approval moved the task on, the agent is told it is now doing the next
+column's step instead. Who approves is the task's own **Plan
 approval**, at the top of its panel in the inspector and in task detail's Workflow panel:
 **Automatic** has Kangentic approve the task's plan, and **Manual** leaves it to you. Left alone,
 a task follows the plan columns on its own route: Automatic only when every one is set to
@@ -214,17 +218,23 @@ stays in its conversation. While paused, the workflow does nothing by itself: it
 nothing and moves no card. You still can. Resume one card's agent to look into it, drag cards, or
 approve a plan. A card you work this way is an ordinary card. Its column's automations run, and its
 agent's own `kangentic_move_task` moves it, so it can run on through its board. A card whose agent
-the Pause stopped stays paused when you drag it, until you resume it.
+the Pause stopped stays paused when you drag it, until you resume it. Its new column's automations
+that need no agent (a script, a webhook, a notification) still run, and the ones that need the
+agent, such as a column message, wait for its Resume. The automation log says so on each one.
 
 Resume brings back every agent the Pause stopped, each in the column its task is in now, and starts
 one, with the column's message, for a task in an agent column that has none. An agent already
 running is left running, and its last reply is judged, so a card you worked to the end of its
 column moves on. A task with paused automations gets its stopped agent back, still held, and never
 a new one. The workflow then carries on from the board as it is: a task you finished while it was
-paused lets what waits for it start. A paused agent you dragged to a new column comes back idle
-there, without that column's message. Its last reply belongs to the column it left, so the workflow
-does not judge it there: about five minutes later it tells the agent to carry on with the new
-column's step.
+paused lets what waits for it start. A paused agent you dragged to a new column comes back the way
+that move would have started it: a fresh conversation in a column that always starts new (an
+isolated Code Review, even one the card left and came back to), its conversation with the column's
+settings in one that resumes, and then the column's message. A card you did not move comes back in
+the same conversation, with no message. In a column that starts no agent, the paused conversation
+comes back as it was. An agent that comes back with no message has its last reply from the column
+it left, so the workflow does not judge it there: about five minutes later it tells the agent to
+carry on with the new column's step. The same holds for Resume on the card itself.
 
 The idle timeout can pause an agent while its workflow runs, and the card then reads Paused. Resume
 on its card brings it back. Pausing and resuming the whole workflow does too, but that interrupts

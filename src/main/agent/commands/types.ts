@@ -118,6 +118,14 @@ export interface CommandContext {
    */
   callerSessionId?: string | null;
   /**
+   * When a session's current turn began as work, never moved by a plan
+   * approval (`SessionManager.workTurnStartedAt`), or null when unknown. A
+   * task's own agent asking for "next" is refused when the task left the column
+   * that turn began in. Optional because test suites hand-build a context;
+   * absent reads as unknown, which refuses nothing.
+   */
+  getSessionTurnStartedAt?: (sessionId: string) => number | null;
+  /**
    * Set to `'phone'` by the phone's board-tool path, which calls these
    * handlers directly, and unset for every MCP call. Only for naming the caller
    * in a log line; never a permission.
