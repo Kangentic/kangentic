@@ -99,7 +99,7 @@ export function readJsonResult(stdout) {
 /**
  * A Claude caller for one model and effort: `ask({ system, user, schema })`
  * resolves the parsed JSON reply and the call's usage, and throws on a failed
- * call. `close()` removes the settings folder.
+ * call with the call's `costUsd` on the error. `close()` removes the settings folder.
  */
 export function createClaudeCaller({ cli = 'claude', model = DEFAULT_CLAUDE_MODEL, effort = DEFAULT_CLAUDE_EFFORT } = {}) {
   assertCliStarts(cli);
@@ -115,7 +115,8 @@ export function createClaudeCaller({ cli = 'claude', model = DEFAULT_CLAUDE_MODE
       });
       const result = readJsonResult(outcome.stdout);
       if (outcome.code !== 0 || result.isError) {
-        throw new Error(`claude exited ${outcome.code}: ${(result.answer ?? outcome.stderr).slice(-400)}`);
+        // A failed call can still be billed (a reply that fails the schema is), so the error carries its cost.
+        throw Object.assign(new Error(`claude exited ${outcome.code}: ${(result.answer ?? outcome.stderr).slice(-400)}`), { costUsd: result.costUsd });
       }
       const reply = result.structured ?? JSON.parse(result.answer ?? '');
       return {
