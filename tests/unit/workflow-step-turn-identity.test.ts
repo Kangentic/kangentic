@@ -459,6 +459,45 @@ describe('the workflow step and the turn it judged', () => {
         detail: 'Step done, but the move to Code Review failed: The board is read-only.',
       }));
     });
+
+    // A Pause that lands while the step's move waits for the task lock: the
+    // lock then refuses the workflow's own move (WORKFLOW_REFUSALS.pausedForAgents),
+    // so the move throws. The Pause is working, not a failed move. The workflow
+    // flips inside the move, after the check's own `settled()` read it running.
+    describe('when the move throws', () => {
+      const PAUSED_REFUSAL = '#12 is in Release flow, which is paused. Resume it to move its tasks.';
+
+      it('records no failed-move row and reports no verdict when the workflow was paused meanwhile', async () => {
+        hoisted.handleTaskMove.mockImplementationOnce(async () => {
+          hoisted.workflowState = 'paused';
+          throw new Error(PAUSED_REFUSAL);
+        });
+
+        // Nothing to recover: the reply is judged again after Resume.
+        await expect(runStep()).resolves.toBeUndefined();
+
+        expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
+        expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+      });
+
+      it('still records the failed move and reports it when the workflow is running', async () => {
+        hoisted.handleTaskMove.mockImplementationOnce(async () => {
+          throw new Error('Column is full.');
+        });
+
+        await expect(runStep()).resolves.toEqual({
+          verdict: 'move-failed',
+          reason: 'the move to Code Review failed: Column is full.',
+          workSerial: TURN_WORK_SERIAL,
+        });
+
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+          met: true,
+          detail: 'Step done, but the move to Code Review failed: Column is full.',
+        }));
+      });
+    });
   });
 
   // Not done gets a second ask of why the agent stopped, so recovery can tell a
