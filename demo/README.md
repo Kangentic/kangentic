@@ -164,6 +164,21 @@ sweep there by hand, as you would a change to the choreography. A quick check in
 Grammarly: the G button never shows while `new-task` types, and
 `Boolean(document.querySelector('[data-gramm="false"]'))`, run in the frame's console, is `true`.
 
+## Focus rings
+
+Chromium outlines an element a script focuses (`:focus-visible`) unless the last input it saw was
+a mouse, and it counts only trusted input. Every click a frame makes on its own, a boot step or a
+choreography, is synthesized. So a dialog that focuses its first button on open drew a ring that the
+same click on the desktop does not. Measured on the Language picker: a trusted pick leaves the
+restart prompt's close button focused with no ring, and the synthesized pick ringed it, as
+`board-config-change` ringed its dialog's close button. `demo/boot.js` therefore marks the page
+`data-demo-untouched` and draws no focus outline under it. The mark goes at a visitor's first
+trusted press or key, caught in the capture phase, so a first Tab already draws its ring, and from
+then on Chromium decides. A text field keeps its outline, because Chromium matches it after a mouse
+click too, so the outline a boot click into a field draws is the desktop's. Only the outline is
+suppressed, since a `ring` utility is box-shadow, which a selected element can carry too.
+`:focus-visible` still matches underneath, so nothing that reads it changes.
+
 ## The URL contract
 
 All parameters are optional; `demo/boot.js` reads them once, before the mock loads.
@@ -380,7 +395,7 @@ lists it, with no other file touched. What the catalog holds, and where each com
 | `knowledge-graph` | boot | the title-bar button, then the Projects picker, All, and the picker again to close its menu (the open flag and the scope are store state); the map is the one main's pipeline built over the recorded conversations, and the rig waits for it to `settle` (Knowledge Graph below). Under `loop=1` it drags one orbit around the map and one over it, then Reset view flies the camera back to the framing it opened on |
 | `knowledge-graph-<project>` | boot | one per sample project, generated from the dataset: the title-bar button alone for the open project (contoso-web), and for the others the picker, that project's row, the open project's row to untick it, and the picker again. A single map frames close enough for each conversation's title to show. Under `loop=1` each plays the same orbit and Reset view as `knowledge-graph` |
 | `quick-find-results` | boot | the palette, then `type` a query; the seed answers with a keyword match over its own rows (Quick Find below). Under `loop=1` it arrows down the results and narrows the query to `auth middleware`, then the frame cuts and `auth` comes back behind the veil with its first result selected; the pointer stays out of it, since a result under the pointer takes the selection |
-| `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch. Every entry carries a choreography that works its tab's own controls under `loop=1` and puts them back: a project tab (General, Agent) takes the panel's project switcher to spring-petclinic and back; Theme picks the first tile that is not the frame's theme, re-theming the frame, and then the frame's own tile again (named by the player's `data-demo-rest` mark, since the host passes the theme); Board steps column width through Narrow and Wide; Terminal steps the cursor style, which the panel's terminals take live; Developer turns the debug overlay on and closes it with the overlay's own control; Hotkeys opens a Rebind capture box and clicks away from it; Privacy scrolls to its contact line and back. Dictation and Knowledge Graph step a segmented choice through its options back to their own; Git, Task, MCP Server, Browser, Changes, Behavior, Performance, Notifications and Agent Browser make their edit forward (a branch picked, a switch flipped, groups folded to reach Diagnostics) and end on a cut, which puts the values back behind the veil; Shortcuts opens its Presets menu and Workflows its Template variable menu, and each closes it. Mobile Devices only hovers its two guides: the bridge switch would start a pairing no visitor can finish |
+| `settings-<tab>`, one per tab in `settings-tabs.ts` | boot | the gear, then the tab button; generated from one tab-to-alt map the unit test pins to `SETTINGS_TABS`. An entry may carry config: `settings-dictation` switches dictation on, since off it greys out every row below the switch. Every entry carries a choreography that works its tab's own controls under `loop=1` and puts them back: a project tab (General, Agent) takes the panel's project switcher to spring-petclinic and back; Theme picks the first tile that is not the frame's theme, re-theming the frame, and then the frame's own tile again (named by the player's `data-demo-rest` mark, since the host passes the theme); Board steps column width through Narrow and Wide; Terminal steps the cursor style, which the panel's terminals take live; Developer turns the debug overlay on and closes it with the overlay's own control; Hotkeys opens a Rebind capture box and clicks away from it; Language picks Deutsch and holds its restart prompt as the pose, and its `focus` names the prompt beside the panel, then Restart now switches the frame to German in place and the cut switches it back (Display language below); Privacy scrolls to its contact line and back. Dictation and Knowledge Graph step a segmented choice through its options back to their own; Git, Task, MCP Server, Browser, Changes, Behavior, Performance, Notifications and Agent Browser make their edit forward (a branch picked, a switch flipped, groups folded to reach Diagnostics) and end on a cut, which puts the values back behind the veil; Shortcuts opens its Presets menu and Workflows its Template variable menu, and each closes it. Mobile Devices only hovers its two guides: the bridge switch would start a pairing no visitor can finish |
 | `card-drag`, `card-menu`, `window-dock` | boot | a choreography whose pose is the gesture in flight: Add user auth flow lifted from To Do and held over Executing (To Do, because a card dropped back there ends its session as main does, which a loop needs), a right-click on a card, a window dragged to the right edge. Under `loop=1` each completes the gesture and comes back to it: the card is dropped and its agent starts from the recorded boot, then the frame cuts and the card goes back to the top of To Do behind the veil; the pointer runs down the menu's items and a click on empty board closes it; the window is dropped and docks to the right half, then the frame cuts and it is dragged back out to float again behind the veil |
 | `board-workflow-links` | boot | the `board-workflow` seed and a choreography that rests the pointer on Refactor API error handling through the board's dwell: the board draws a workflow card's links only while the pointer rests on it, so no click reaches them. Under `loop=1` the pointer moves to Add user auth flow, which draws its one link, and back |
 
@@ -875,6 +890,30 @@ and is unaffected by either. A third is a test browser, not a host: Playwright's
 Windows has neither `navigator.mediaDevices` nor Web Audio, even on a secure page, so neither
 dictation scene can be checked there (measured 2026-10-17). Safari has both; check the two scenes
 in WebKit on macOS or Linux.
+
+### Display language
+
+On the desktop, Restart now in Settings > Language saves the language and restarts the app, which
+comes back in it (`docs/architecture/i18n.md`). A page cannot restart, so the frame switches in
+place. `demo/boot.js` wraps `language.setLanguageAndRestart`. The mock's own call still checks that
+the language ships, saves it to config, and records the request. The wrapper then loads
+`demo/language.ts`, through the loader `demo/language-entry.ts` defines, which runs the renderer's
+own `activateLocale` and sets `<html lang>`, as `src/renderer/index.tsx` does at boot. The call
+resolves once the switch has landed, so the prompt closes on the switched frame. The renderer is
+not told it is in a demo: it asked main to restart, and the frame answered by switching.
+
+Every frame loads the one-line loader (`demo/language-entry.ts`), but none fetches the switch
+chunk (`demo/language.ts`) or a catalog until a switch is confirmed, so a still, a board and the
+heap budget are unchanged. Every label follows the switch because Lingui re-renders its subscribers
+(`useLingui()`, `<Trans>`) and everything they render. A component that shows translated text and
+sits outside that re-render would keep the old language. `tests/demo/static-demo.spec.ts` switches
+`settings-language` to German and fails on any visible text that is still an English message the
+German catalog translates. It skips terminals, cards and column names, which stay English by design,
+and checks first that the same scan finds the frame's labels while it is still in English.
+
+`settings-language` plays it. Deutsch's restart prompt is the pose, so the poster is the prompt.
+Live, Restart now switches the frame to German, and the cut switches it back to English behind the
+veil, picker and prompt alike.
 
 ### scenes.json, the hand-off to the site
 
@@ -1997,6 +2036,7 @@ every bridge method (`tests/unit/mock-electron-api-parity.test.ts` keeps that tr
 | Folder pill, PR links, external links | Inert: `shell.openPath` and `openExternal` are logged by the mock. |
 | Pop-out (Monitor, Changes, Stats) | Inert: the in-app surface stays where it is. |
 | Dictation | The whole renderer pipeline runs on a press, over a silent microphone `demo/boot.js` supplies (the mic is never requested), and the chip shows its live state over a terminal or a text field. What it hears is one recorded utterance, typed into a focused text field as it streams; a terminal shows nothing typed (Dictation below). |
+| Display language | Restart now switches the frame in place, since a page cannot restart: the picked catalog loads and every label follows (Display language above). |
 | Updater | Silent: no update is ever "downloaded". |
 
 Two things stay out of reach of a live frame: the Browser pane's REAL guest (a page the agent is driving) and a dictated transcript landing in the terminal.

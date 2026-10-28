@@ -270,7 +270,9 @@ name, no sourcemaps), and writes `dist/demo/`, which is gitignored and outside e
 glob. One plugin injects five classic scripts ahead of the module bundle: the scene registry, the
 boot script (`demo/boot.js`: the URL contract, config overrides, still and embed styles, the
 hand-over to `demo/stage.html` that hosts a direct visit at the site's 1600 by 1000, the
-pre-reveal step runner, a silent microphone in place of `getUserMedia`, and, for each scene-only
+pre-reveal step runner, a silent microphone in place of `getUserMedia`, the in-place display
+language switch that stands in for a restart (`demo/language.ts`), a focus outline held back
+until a visitor's first input, and, for each scene-only
 row a frame names, a `document.write` of that row's own script, so it runs ahead of the seed), the webview shim
 (`demo/webview-shim.js`: an iframe standing in for Electron's `<webview>` in the Browser pane,
 onto a bundled page with the project's own data at its dev URL), `tests/ui/mock-electron-api.js`
@@ -452,7 +454,9 @@ npm run test:demo
   message carries a dialog scene's focus rect, Escape posts `kangentic-demo-escape` when the app
   has nothing of its own to close and stays silent when it does, a task window takes the first
   Escape even with its terminal under the pointer, Escape posts from a Command Terminal, from the
-  bottom panel's terminal, and after a window parks, `embed=1` hides the window
+  bottom panel's terminal, and after a window parks, `settings-language`'s Restart now switches
+  the frame to German in place with no English message left on screen and back again, a frame
+  draws no focus outline for its own clicks until a visitor's first key, `embed=1` hides the window
   controls, `theme=` applies, an unknown
   scene shows the error card, a `state=` blob naming only part of a nested config block is
   refused, the console stays clean, and boot makes no request off the serving

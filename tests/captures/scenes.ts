@@ -853,7 +853,18 @@ const PROJECT_SWITCHER_ROUND_TRIP: ChoreographyStep[] = [
   { choose: { in: '[data-testid="settings-project-switcher"]', value: projectPath(PROJECT_CONTOSO) }, ms: 900 },
 ];
 
-const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
+/** The Language tab's picker and the restart prompt a pick opens, by test id: every label in them changes with the language. */
+const LANGUAGE_TOGGLE = '[data-testid="display-language-toggle"]';
+const LANGUAGE_MENU = '[data-testid="display-language-menu"]';
+const languageOption = (locale: string): string => `[data-testid="display-language-option-${locale}"]`;
+const LANGUAGE_PROMPT = '[data-testid="language-restart-confirm"]';
+const LANGUAGE_RESTART_NOW = '[data-testid="language-restart-confirm-confirm"]';
+/** The prompt up, and the menu that opened it gone rather than closing. */
+const LANGUAGE_PROMPT_SHOWN = `body:not(:has(${LANGUAGE_MENU})) ${LANGUAGE_PROMPT}`;
+/** The frame switched to a language: `<html lang>` follows the switch, and the prompt has closed. */
+const switchedTo = (locale: string): string => `html[lang="${locale}"]:not(:has(${LANGUAGE_PROMPT}))`;
+
+const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?: string; config?: Record<string, unknown>; note?: string; choreography?: ChoreographyStep[] }> = {
   general: {
     ready: '[data-testid="setting-row-project.location"]',
     alt: 'Settings on the General tab: the project\'s folder on disk, with a control to move it.',
@@ -908,16 +919,29 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; config?
       { click: '[data-testid="shortcut-presets"]', waitFor: gone('[data-testid="shortcut-presets-menu"]'), ms: 1000 },
     ],
   },
-  // The Language picker opened from its chevron and closed from it again: the menu lists each
-  // shipped language by its own name and code, with the current one checked. The chevron is
-  // found by its test id, since its name is translated in every language but English. Never a
-  // pick, which asks to restart the app.
+  // Deutsch picked from the Language picker, whose menu lists each shipped language by its own
+  // name and code. The restart prompt it opens is the pose, so the poster, a still and the rest
+  // are the Switch to Deutsch? prompt. Live, Restart now switches the whole frame to German in
+  // place (demo/language.ts stands in for the desktop's restart), and then the cut switches it
+  // back to English behind the veil the same way. Every control is found by its test id, since
+  // its label changes with the language. Deutsch because the site's Language page names it, and
+  // a Latin script needs no CJK font on the runner that shoots the posters.
   language: {
     ready: '[data-testid="setting-row-displayLanguage"]',
-    alt: 'Settings on the Language tab: the Display language card, whose Language picker lists each language Kangentic ships by its own name and code, with a check on the current one.',
+    alt: 'Settings on the Language tab, its Display language card under a Switch to Deutsch? prompt that says Kangentic restarts to change the language, with Cancel and Restart now.',
+    focus: `${SETTINGS_PANEL}, ${LANGUAGE_PROMPT}`,
+    note: 'Deutsch is picked and its restart prompt held. Under loop=1, Restart now switches the frame to German in place, where the desktop restarts in the new language, which a page cannot do. The cut switches it back.',
     choreography: [
-      { click: '[data-testid="display-language-toggle"]', waitFor: '[data-testid="display-language-menu"]', ms: 2400 },
-      { click: '[data-testid="display-language-toggle"]', waitFor: gone('[data-testid="display-language-menu"]'), ms: 900 },
+      { click: LANGUAGE_TOGGLE, waitFor: LANGUAGE_MENU, ms: 900 },
+      { hover: languageOption('de'), ms: 800 },
+      { click: languageOption('de'), waitFor: LANGUAGE_PROMPT_SHOWN },
+      { pose: true },
+      { hover: LANGUAGE_RESTART_NOW, ms: 600 },
+      { click: LANGUAGE_RESTART_NOW, waitFor: switchedTo('de'), ms: 3600 },
+      { cut: true },
+      { click: LANGUAGE_TOGGLE, waitFor: LANGUAGE_MENU },
+      { click: languageOption('en'), waitFor: LANGUAGE_PROMPT_SHOWN },
+      { click: LANGUAGE_RESTART_NOW, waitFor: switchedTo('en') },
     ],
   },
   // Column width through Narrow and Wide, which redraws the board's columns beside the panel, and back.
@@ -1124,7 +1148,7 @@ function settingsScenes(): Record<string, SceneDefinition> {
       ...(entry.config ? { config: entry.config } : {}),
       ...(entry.choreography ? { choreography: entry.choreography } : {}),
       ready: entry.ready,
-      focus: SETTINGS_PANEL,
+      focus: entry.focus ?? SETTINGS_PANEL,
       steps: [
         { click: '[data-testid="settings-button"]', waitFor: SETTINGS_PANEL },
         { click: `[data-testid="settings-tab-${tab}"]`, waitFor: entry.ready },

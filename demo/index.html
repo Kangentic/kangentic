@@ -15,17 +15,19 @@
         demo-seed-<hash>.js         the sample install and the scene applier (generated at build time)
       On a frame whose scene names a scene-only row, demo-boot writes one more right after itself,
       scene-rows/<task>-<hash>.js, the row's recorded sessions, so they load before the seed.
-      A classic script runs while the parser reaches it; the module script is deferred, so the
-      bridge is always in place before the first renderer module evaluates. The first two modules
+      A classic script runs while the parser reaches it; the module scripts are deferred, so the
+      bridge is always in place before the first renderer module evaluates. The first three modules
       only define loaders: the one the seed fetches its replay emulator with
-      (demo/replay-emulator.ts), and the one boot.js fetches a scene's choreography player with
-      (demo/choreography.ts). A module runs before DOMContentLoaded, where boot.js starts.
+      (demo/replay-emulator.ts), the one boot.js fetches a scene's choreography player with
+      (demo/choreography.ts), and the one boot.js fetches the in-place language switch with
+      (demo/language.ts). A module runs before DOMContentLoaded, where boot.js starts.
     -->
   </head>
   <body class="bg-surface text-fg overflow-hidden">
     <div id="root"></div>
     <script type="module" src="/demo/replay-emulator-entry.ts"></script>
     <script type="module" src="/demo/choreography-entry.ts"></script>
+    <script type="module" src="/demo/language-entry.ts"></script>
     <script type="module" src="/src/renderer/index.tsx"></script>
   </body>
 </html>

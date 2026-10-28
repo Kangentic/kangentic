@@ -16,8 +16,9 @@
  */
 import { test, expect, chromium, type Browser, type Frame, type Page, type Locator } from '@playwright/test';
 import path from 'node:path';
-import { readdirSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
 import { transformSync } from 'esbuild';
+import { parsePoFile } from '@lingui/format-po';
 import { startDemoServer } from '../../demo/static-server.mjs';
 import { isBenignRendererError } from '../ui/helpers';
 import { PLANNED_BILLING_PAGE, SCENES, playsCycle, type SceneDefinition } from '../captures/scenes';
@@ -1132,6 +1133,207 @@ test('a scene the site embeds under its earlier name lands on the renamed one', 
   await gotoScene(page, { view: 'settings-memory', embed: '1', still: '1' });
   await expect(page.locator('html')).toHaveAttribute('data-demo-scene', 'settings-knowledgeGraph');
   await expect(page.locator('[data-testid="demo-error"]')).toHaveCount(0);
+});
+
+// ---- the display language switch ---------------------------------------------------------------
+// A page cannot restart, so Restart now on a display language switches the frame in place
+// (demo/README.md, Display language). Lingui re-renders its subscribers and everything they render;
+// a component outside that re-render would keep its English, which the scan below catches.
+
+const GERMAN_CATALOG_DIR = path.resolve(__dirname, '..', '..', 'src', 'locales', 'de');
+
+/**
+ * The German renderer catalogs (main's src-main.po never loads in a window), as English message to
+ * German text, for the messages with no context that German renders differently.
+ */
+function readGermanCatalog(): Map<string, string> {
+  const catalog = new Map<string, string>();
+  for (const file of readdirSync(GERMAN_CATALOG_DIR)) {
+    if (!file.endsWith('.po') || file === 'src-main.po') continue;
+    for (const item of parsePoFile(readFileSync(path.join(GERMAN_CATALOG_DIR, file), 'utf8')).items) {
+      const translation = item.msgstr[0] ?? '';
+      if (item.obsolete || item.msgctxt !== null || translation === '' || translation === item.msgid) continue;
+      if (!catalog.has(item.msgid)) catalog.set(item.msgid, translation);
+    }
+  }
+  return catalog;
+}
+
+/**
+ * Visible text in the frame that is still an English message German translates: a component the
+ * switch did not re-render. Only a message that renders as written is looked for, so none with a
+ * placeholder, a tag, or an ICU quote. Agent text and persisted names stay English by design
+ * (docs/architecture/i18n.md, What stays English), so terminals, cards and the board's column
+ * names are skipped.
+ */
+async function textStillInEnglish(page: Page, englishMessages: string[]): Promise<string[]> {
+  return page.evaluate((messages) => {
+    const english = new Set(messages.filter((message) => !/[{}<>']/.test(message)));
+    const columnNames = new Set(Array.from(document.querySelectorAll('[data-swimlane-name]')).map((lane) => lane.getAttribute('data-swimlane-name')));
+    const where = (element: Element): string => element.closest('[data-testid]')?.getAttribute('data-testid') ?? element.tagName.toLowerCase();
+    const found: string[] = [];
+    const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT);
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const text = (node.textContent ?? '').trim();
+      const parent = node.parentElement;
+      if (!parent || !english.has(text) || columnNames.has(text) || parent.closest('.xterm, [data-task-id]')) continue;
+      if (!parent.checkVisibility({ opacityProperty: true, visibilityProperty: true })) continue;
+      found.push(`"${text}" in ${where(parent)}`);
+    }
+    for (const field of Array.from(document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>('input[placeholder], textarea[placeholder]'))) {
+      if (english.has(field.placeholder) && field.checkVisibility()) found.push(`placeholder "${field.placeholder}" of ${where(field)}`);
+    }
+    return found;
+  }, englishMessages);
+}
+
+interface LanguageRequestsWindow { __mockLanguageRestartRequests?: string[] }
+
+const readLanguageRequests = (page: Page): Promise<string[]> =>
+  page.evaluate(() => (window as unknown as LanguageRequestsWindow).__mockLanguageRestartRequests ?? []);
+
+test('settings-language: a still holds the Switch to Deutsch? prompt and switches nothing', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'settings-language', embed: '1', still: '1' });
+  await expect(page.locator('[data-testid="language-restart-confirm"] h3')).toHaveText('Switch to Deutsch?');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  expect(await readLanguageRequests(page)).toEqual([]);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+test('settings-language: Restart now switches the whole frame to German in place, and back to English', async ({ page }) => {
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  const germanCatalog = readGermanCatalog();
+  const germanLanguageLabel = germanCatalog.get('Language');
+  expect(germanLanguageLabel, 'the German settings catalog translates the Language tab').toBeTruthy();
+  await gotoScene(page, { view: 'settings-language', embed: '1' });
+  const html = page.locator('html');
+  const languageTab = page.locator('[data-testid="settings-tab-language"]');
+  const prompt = page.locator('[data-testid="language-restart-confirm"]');
+  const restartNow = page.locator('[data-testid="language-restart-confirm-confirm"]');
+  // The live frame boots to the pose: Deutsch picked, its prompt up, nothing switched yet.
+  await expect(prompt).toBeVisible();
+  await expect(languageTab).toContainText('Language');
+  // In English the scan finds the frame's own labels, so an empty answer after the switch means
+  // they changed rather than that the scan read nothing.
+  expect((await textStillInEnglish(page, [...germanCatalog.keys()])).length).toBeGreaterThan(20);
+
+  await restartNow.click();
+  await expect(html).toHaveAttribute('lang', 'de');
+  await expect(prompt).toHaveCount(0);
+  await expect(languageTab).toContainText(germanLanguageLabel ?? '');
+  await expect.poll(() => textStillInEnglish(page, [...germanCatalog.keys()]), { timeout: 5000 }).toEqual([]);
+
+  await page.locator('[data-testid="display-language-toggle"]').click();
+  await page.locator('[data-testid="display-language-option-en"]').click();
+  await restartNow.click();
+  await expect(html).toHaveAttribute('lang', 'en');
+  await expect(prompt).toHaveCount(0);
+  await expect(languageTab).toContainText('Language');
+  // The mock's own call ran under the switch both times: it saved each language as main would.
+  expect(await readLanguageRequests(page)).toEqual(['de', 'en']);
+  expect(getUnexpectedErrors()).toEqual([]);
+});
+
+interface DemoLanguageLoaderWindow { __demoLoadLanguage?: unknown }
+
+test('settings-language: a switch that cannot load surfaces the restart failure toast and leaves the frame in English', async ({ page }) => {
+  // boot.js wraps the mock's setLanguageAndRestart. The mock runs first, then the switch loads. A
+  // build without the loader (demo/language-entry.ts) must throw, so the renderer's own failure
+  // path runs. A wrapper that swallowed the error, or resolved before the switch landed, would
+  // close the prompt in silence on a frame that is still English.
+  const getUnexpectedErrors = collectUnexpectedErrors(page);
+  await gotoScene(page, { view: 'settings-language', embed: '1' });
+  const html = page.locator('html');
+  const prompt = page.locator('[data-testid="language-restart-confirm"]');
+  await expect(prompt).toBeVisible();
+  await expect(html).toHaveAttribute('lang', 'en');
+
+  await page.evaluate(() => { delete (window as unknown as DemoLanguageLoaderWindow).__demoLoadLanguage; });
+  await page.locator('[data-testid="language-restart-confirm-confirm"]').click();
+
+  const failureToast = page.locator('[data-testid="toast"][data-variant="error"]');
+  await expect(failureToast.locator('[data-testid="toast-title"]')).toHaveText("Couldn't restart");
+  await expect(prompt).toHaveCount(0);
+  await expect(html).toHaveAttribute('lang', 'en');
+  // The mock ran first: it recorded the request before the missing loader failed the switch.
+  expect(await readLanguageRequests(page)).toEqual(['de']);
+
+  // The toast alone does not pin the wrapper's own throw: a bare return in its place would reject
+  // later, on the missing module, and raise the same toast. The renderer logs the rejection it
+  // received, so that line names the wrapper's message. It is the one console error allowed here.
+  const isRestartFailureLog = (entry: string): boolean => entry.startsWith('console.error: Display language restart failed:');
+  await expect.poll(() => getUnexpectedErrors().filter(isRestartFailureLog)).toHaveLength(1);
+  const errors = getUnexpectedErrors();
+  expect(errors.find(isRestartFailureLog)).toContain('this build carries no language switch');
+  expect(errors.filter((entry) => !isRestartFailureLog(entry))).toEqual([]);
+});
+
+test('a frame draws no focus outline for its own clicks, and a visitor\'s first key brings it back', async ({ page }) => {
+  // The language scene's pose opens the restart prompt with synthesized clicks, and BaseDialog's
+  // focus trap focuses its close button. Chromium counts only trusted input, so it matches
+  // :focus-visible there, where a desktop mouse pick does not (demo/README.md, Focus rings).
+  await gotoScene(page, { view: 'settings-language', embed: '1', still: '1' });
+  const readFocus = () => page.evaluate(() => {
+    const active = document.activeElement;
+    return {
+      inPrompt: Boolean(active?.closest('[data-testid="language-restart-confirm"]')),
+      focusVisible: Boolean(active?.matches(':focus-visible')),
+      outline: active ? getComputedStyle(active).outlineStyle : '',
+    };
+  });
+  expect(await readFocus()).toEqual({ inPrompt: true, focusVisible: true, outline: 'none' });
+  // A text field keeps its outline, since Chromium draws one after a mouse click too: a field and
+  // a button styled alike, each focused by script, before and after the visitor's key.
+  const probeOutlines = () => page.evaluate(() => {
+    if (!document.getElementById('outline-probe-field')) {
+      const style = document.createElement('style');
+      style.textContent = '#outline-probe-field:focus-visible, #outline-probe-button:focus-visible { outline: 2px solid rgb(255, 0, 0); }';
+      document.head.appendChild(style);
+      const field = document.createElement('input');
+      field.id = 'outline-probe-field';
+      const button = document.createElement('button');
+      button.id = 'outline-probe-button';
+      button.textContent = 'probe';
+      document.body.append(field, button);
+    }
+    const outlineOf = (id: string): string => {
+      const element = document.getElementById(id) as HTMLElement;
+      element.focus({ preventScroll: true });
+      return getComputedStyle(element).outlineStyle;
+    };
+    return { field: outlineOf('outline-probe-field'), button: outlineOf('outline-probe-button') };
+  });
+  expect(await probeOutlines()).toEqual({ field: 'solid', button: 'none' });
+  await page.keyboard.press('Shift');
+  await expect.poll(probeOutlines).toEqual({ field: 'solid', button: 'solid' });
+});
+
+test('a synthesized pointer or key does not lift the focus outline suppression, a real mouse press does', async ({ page }) => {
+  // The mark comes off on the first TRUSTED pointerdown or keydown (demo/boot.js, Focus rings).
+  // The key half is the test above; this holds the pointer half and the isTrusted guard that keeps
+  // a scene's own synthesized events (its boot click, a choreography) from lifting it. It reads the
+  // mark itself rather than an outline, because after a mouse input Chromium stops matching :focus-visible
+  // for a script focus, so an outline read would pass with or without the suppression.
+  await gotoScene(page, { view: 'settings-language', embed: '1', still: '1' });
+  const html = page.locator('html');
+  await expect(html).toHaveAttribute('data-demo-untouched', '');
+
+  // The listeners are synchronous, so the read in the same evaluate is the answer.
+  const untouchedAfterSynthesizedInput = await page.evaluate(() => {
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, composed: true }));
+    document.body.dispatchEvent(new KeyboardEvent('keydown', { key: 'Shift', bubbles: true, composed: true }));
+    return document.documentElement.hasAttribute('data-demo-untouched');
+  });
+  expect(untouchedAfterSynthesizedInput).toBe(true);
+
+  // A press on the prompt's heading does nothing: it is neither a control nor the backdrop.
+  const heading = await page.locator('[data-testid="language-restart-confirm"] h3').boundingBox();
+  if (!heading) throw new Error('the restart prompt has no heading to press');
+  await page.mouse.move(heading.x + heading.width / 2, heading.y + heading.height / 2);
+  await page.mouse.down();
+  await page.mouse.up();
+  await expect(html).not.toHaveAttribute('data-demo-untouched');
 });
 
 test('view=nope renders the error card, logs the unknown scene, and never marks ready', async ({ page }) => {

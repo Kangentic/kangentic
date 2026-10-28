@@ -3,8 +3,10 @@
  *
  * Runs as a classic script BEFORE tests/ui/mock-electron-api.js, so it owns everything the mock
  * reads at load time (window.__mockConfigOverrides) and everything the demo adds around the
- * renderer: the URL contract, the theme class, the still and embed styles, the scene applier
- * the seed script calls back into, and the boot-step runner that reveals the frame. On a frame
+ * renderer: the URL contract, the theme class, the still and embed styles, the focus outline it
+ * holds back until a visitor's first input (demo/README.md, Focus rings), the scene applier
+ * the seed script calls back into, the in-place language switch that stands in for a restart
+ * (demo/language.ts), and the boot-step runner that reveals the frame. On a frame
  * whose scene names a scene-only row it also writes that row's script in right after itself,
  * so the row's recorded sessions are on the page before the seed runs. It also keeps a visitor's
  * browser extensions out of the frame: each vendor's opt-out on every text field, and a sweep that
@@ -431,6 +433,31 @@
     injectStyle('[data-testid="window-controls"] { display: none !important; }');
   }
 
+  // ---------------------------------------------------------------- focus rings
+  // Chromium outlines a focus a script moves (`:focus-visible`) unless the last input it saw was a
+  // mouse, and it counts only trusted input. Every click a frame makes on its own (a boot step, a
+  // choreography) is synthesized, so a dialog that focuses its first button on open drew a ring
+  // that the same click on the desktop does not. A trusted pick in the Language picker leaves the
+  // restart prompt's close button focused with no ring, and the synthesized one ringed it. Until
+  // a visitor's own first press or key, the frame draws no focus outline on such an element; from
+  // then on Chromium decides, as it does on the desktop. A text field is left out, because Chromium
+  // matches it after a mouse click too, so its outline is the desktop's. The rule clears only the
+  // outline, since a `ring` utility is box-shadow, which a selected element can carry too. The
+  // capture listener runs before the key's own default, so a visitor's first Tab already draws its
+  // ring.
+  //
+  // Every text field, here and in the extension opt-outs below.
+  var TEXT_FIELD_SELECTOR = 'input, textarea, [contenteditable]:not([contenteditable="false"])';
+  injectStyle('html[data-demo-untouched] :focus-visible:not(' + TEXT_FIELD_SELECTOR + ') { outline: none !important; }');
+  document.documentElement.setAttribute('data-demo-untouched', '');
+  var FIRST_INPUT_EVENTS = ['pointerdown', 'keydown'];
+  function noteFirstInput(event) {
+    if (!event.isTrusted) return;
+    document.documentElement.removeAttribute('data-demo-untouched');
+    FIRST_INPUT_EVENTS.forEach(function (type) { window.removeEventListener(type, noteFirstInput, true); });
+  }
+  FIRST_INPUT_EVENTS.forEach(function (type) { window.addEventListener(type, noteFirstInput, true); });
+
   // ---------------------------------------------------------------- browser extensions
   // A visitor's extensions run inside this frame whatever the page says: no web API turns them
   // off, and a content script ignores the CSP. So the frame does two things, here and never in
@@ -468,7 +495,6 @@
     ['data-bwignore', 'true'],
     ['data-form-type', 'other'],
   ];
-  var TEXT_FIELD_SELECTOR = 'input, textarea, [contenteditable]:not([contenteditable="false"])';
   var FOREIGN_ATTRIBUTE = 'data-demo-foreign';
   var HTML_NAMESPACE = 'http://www.w3.org/1999/xhtml';
 
@@ -638,6 +664,20 @@
     // open the What's New dialog behind the error card.
     window.electronAPI.app.getVersion = function () { return Promise.resolve(version); };
     if (errors.length > 0) return;
+    // Restart now on a display language. The desktop saves the language and restarts in it; a
+    // page cannot restart, so the frame switches in place (demo/language.ts). The mock's own call
+    // runs first, so its ship check, the saved config, and the recorded request are unchanged.
+    // It resolves once the switch has landed, so the prompt closes on the switched frame, and a
+    // failure reaches the renderer's own "Couldn't restart" toast.
+    var restartInLanguage = window.electronAPI.language.setLanguageAndRestart;
+    window.electronAPI.language.setLanguageAndRestart = function (locale) {
+      return restartInLanguage.apply(this, arguments).then(function () {
+        if (typeof window.__demoLoadLanguage !== 'function') {
+          throw new Error('this build carries no language switch (demo/language-entry.ts)');
+        }
+        return window.__demoLoadLanguage();
+      }).then(function (module) { return module.switchLanguage(locale); });
+    };
     // A row whose script did not load (a 404, a blocked request, no URL in the build) leaves the
     // seed nothing to fold in, so the frame refuses to boot rather than show the scene without its
     // card.

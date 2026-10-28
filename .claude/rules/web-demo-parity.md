@@ -28,8 +28,11 @@ three things staying in step, and each is enforced rather than remembered.
   still and embed styles, and the scene applier are `demo/boot.js` and the scene registry
   (`tests/captures/scenes.ts`); the fixed-size host a direct visit lands on is `demo/stage.html`.
   Renderer code never reads `location`, never checks a demo flag,
-  and never branches on being embedded. The one renderer concession is a `data-testid` on the
-  window-controls cluster so the demo can hide it by selector.
+  and never branches on being embedded. The renderer's concessions are `data-testid`s the demo
+  targets by selector: the window-controls cluster it hides, and the `<testId>-confirm` and
+  `<testId>-cancel` buttons ConfirmDialog derives, which a scene clicks because their labels
+  change with the language. The in-place language switch (`demo/language.ts`) is demo behaviour
+  too: boot.js wraps `language.setLanguageAndRestart`, and the renderer is not told.
 - **A visitor's browser extensions stay out of the frame, and `demo/boot.js` keeps them out.**
   Every text field carries each vendor's documented opt-out. A sweep hides what an isolated world
   adds: a hyphenated tag the page never defined, or an element under `<html>` or `<body>` that the
@@ -336,7 +339,10 @@ three things staying in step, and each is enforced rather than remembered.
   terminal and turns it to working, and that the cut repaints the frame it rested on and sets it
   needs-you only under the veil, with a still of it painting that frame and fetching nothing, that
   the frame's own script loads only on that scene and never on a board, and that a frame whose
-  script does not load shows the error card naming the session, that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
+  script does not load shows the error card naming the session, that `settings-language`'s Restart
+  now switches the frame to German in place with no English message left on screen and back again,
+  since a page cannot restart, that a frame draws no focus outline for its own synthesized clicks
+  until a visitor's first trusted press or key, that a visitor's own click stops it and lets go of a held pose, that a reduced-motion
   visitor gets the rest held with no pointer, that a still with a pose
   draws no pointer and a still without one fetches no player, that a script's Escape never posts,
   that `task-mcp`'s timeline moves its card to Testing and the restart puts it back, that `scenes.json` is served, lists exactly
