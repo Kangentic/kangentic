@@ -232,6 +232,11 @@ export async function runWorkflowStep(
       { moveReason: 'Step done', fromTurnEndGroup: true },
     );
   } catch (error) {
+    // Paused while the move waited for the task lock, which then refused the
+    // workflow's own move: the Pause working, as `settled` reads one pressed
+    // during the check. Nothing is recorded, so the reply is judged again
+    // after Resume.
+    if (!workflowStepApplies(task, payload.projectId)) return;
     const message = error instanceof Error ? error.message : String(error);
     record({ met: true, reason: answer.reason, detail: `Step done, but the move to ${next.name} failed: ${message}`, backgroundCallId: answerCallId });
     // Logged here, not thrown: the caller retries the move on recovery's schedule.
