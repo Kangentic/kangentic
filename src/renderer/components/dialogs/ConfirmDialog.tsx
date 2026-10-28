@@ -12,7 +12,8 @@ interface ConfirmDialogProps {
   showDontAskAgain?: boolean;
   dontAskAgainLabel?: string;
   /** `data-testid` for the dialog, forwarded to BaseDialog, so one confirm among several open
-   *  dialogs is addressable by name rather than by its title text. */
+   *  dialogs is addressable by name rather than by its title text. Its two buttons take
+   *  `<testId>-cancel` and `<testId>-confirm`, since their labels change with the language. */
   testId?: string;
   /** Replaces the variant's warning triangle, for a confirmation that is not a warning (a
    *  restart). Color it the way the variant would, e.g. `text-accent-fg` for `default`. */
@@ -107,6 +108,7 @@ export function ConfirmDialog({
           <div className="flex justify-end gap-3 ml-auto">
             <button
               onClick={onCancel}
+              data-testid={testId ? `${testId}-cancel` : undefined}
               className="px-4 py-1.5 text-xs text-fg-muted hover:text-fg-secondary border border-edge-input hover:border-fg-faint rounded transition-colors"
             >
               {cancelText}
@@ -125,6 +127,7 @@ export function ConfirmDialog({
               // BaseDialog's focus trap moves focus here on open. Not autoFocus,
               // which would land first and leave the trap nothing to restore.
               data-initial-focus={hasSecondaryAction || undefined}
+              data-testid={testId ? `${testId}-confirm` : undefined}
               className={`px-4 py-1.5 text-xs rounded transition-colors ${confirmIcon ? 'inline-flex items-center gap-1.5' : ''} ${confirmStyles[variant]}`}
             >
               {confirmIcon}

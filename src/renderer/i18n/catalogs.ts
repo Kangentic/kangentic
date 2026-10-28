@@ -8,8 +8,9 @@
  * English is bundled into the entry and active from this module's first
  * evaluation, so the first render never waits on it, I18nProvider (which renders
  * nothing until a locale is active) can never paint blank, and the web demo,
- * which runs English only, fetches no catalog. Every other locale is one lazy
- * chunk per area, fetched only when that language runs or is offered.
+ * which boots in English, fetches no catalog until a visitor switches language
+ * (demo/language.ts). Every other locale is one lazy chunk per area, fetched only
+ * when that language runs or is offered.
  * `src-main.po` is main's, compiled to JSON by `lingui compile`, and never loads here.
  * See docs/architecture/i18n.md.
  */
