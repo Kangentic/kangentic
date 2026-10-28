@@ -23,7 +23,8 @@ import path from 'node:path';
 // The i18n catalogs (src/locales/<locale>/*.po) split the same way. The English catalog is
 // authored English, so it is scanned. Every other locale's is a translation, where the rule's
 // characters are correct punctuation (Chinese and Japanese use long dashes and curly quotes), so
-// those folders are skipped.
+// those folders are skipped. The translated READMEs (README.<locale>.md) are skipped for the same
+// reason. SCAN_ROOT_FILES names README.md and CLAUDE.md, not the translations.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['src', 'scripts', 'docs', 'demo', '.claude/rules', '.claude/skills', '.claude/agents'];

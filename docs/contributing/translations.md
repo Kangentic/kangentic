@@ -1,10 +1,12 @@
 ---
 type: Guide
 title: Translations
-description: "How Kangentic's UI translations are drafted and reviewed: the translation harness that fills the PO catalogs with Claude or a local model, the fuzzy review mark, refining a translation by hand, running a refill after rewording, the glossary, and the local model bake-off."
-tags: [i18n, translation, lingui, glossary, local-model]
+description: "How Kangentic's translations are drafted and reviewed: the translation harness that fills the PO catalogs with Claude or a local model, the fuzzy review mark, refining a translation by hand, running a refill after rewording, the glossary, the local model bake-off, and the translated READMEs with their stamp and release refresh."
+tags: [i18n, translation, lingui, glossary, local-model, readme]
 sources:
   - resource: scripts/i18n/translate.mjs
+  - resource: scripts/i18n/translate-readme.mjs
+  - resource: scripts/i18n/readme.mjs
   - resource: scripts/i18n/cli.mjs
   - resource: scripts/i18n/translate-catalog.mjs
   - resource: scripts/i18n/messages.mjs
@@ -25,7 +27,8 @@ sources:
 
 Kangentic's UI text lives in Lingui PO catalogs, one file per area per locale
 (`src/locales/<locale>/<area>.po`). [Display language and i18n](../architecture/i18n.md) covers the
-layout and the runtime. This guide covers how the translations in those files get written.
+layout and the runtime. This guide covers how the translations in those files get written, and how
+the translated READMEs are made.
 
 A machine drafts every translation first, and people correct it. Claude drafts the first pass for
 every language. A local model refills the strings that change after that, so a contributor who
@@ -171,6 +174,70 @@ terminal's cursor.
 A fixed term that inflects gives the part every form contains as `match`: Polish "gałąź" becomes
 "gałęzi", so it matches "gał".
 
+## Translated READMEs
+
+`README.md` is English and canonical. Each shipped language but English also has
+`README.<locale>.md` at the repo root. Every README carries a language switcher under the Live demo
+row, with each language in `SHIPPED_LOCALES` order under its `LOCALE_NATIVE_NAMES` name. The current
+language is plain text and the others link to their README. The files sit at the root, not in
+`docs/<locale>/`, so their relative links (`LICENSE`, `CONTRIBUTING.md`, `docs/...`) work unchanged.
+`docs/` is also the concept bundle, and the writing-style scan reads all of it, where Chinese and
+Japanese punctuation would fail.
+
+`npm run i18n:translate-readme` writes them with the Claude engine, one call per language. The
+switcher sits between `<!-- language-switcher -->` markers. The script empties that block before the
+call and renders a fresh one after, so the model never writes it. Each reply is checked against the
+English before anything is written:
+
+- the same lines, each starting with the same Markdown or HTML, so the same headings;
+- every fenced block, inline code span, URL, link target, email address, HTML comment and HTML tag
+  unchanged, with only `alt` text translated, and the empty switcher block in place;
+- every number and version the English prose holds;
+- the glossary's kept names and fixed terms, plus `README_KEEP` in `scripts/i18n/readme.mjs`: the
+  agent CLIs as the Supported agents list names them, other products, files, and the
+  `Settings > Language` path, which stays English because Kangentic starts in English.
+
+A reply that fails goes back with its problems, up to two more times. The run writes nothing unless
+every language passes, so a failed run leaves the tree as it was. `--locales de,ja` limits it,
+`--stale` translates only the missing and stale files, and `--check` lists each file's state without
+calling anything. `--check` is the one mode that runs when `CI` is set.
+
+### The stamp
+
+Each translation opens with a hidden marker naming the README.md blob it came from,
+`<!-- readme-translation source-blob=<hash> -->`, then a line in its own language saying it is a
+machine translation of README.md at that revision and that the English version is canonical. The
+hash is what `git hash-object README.md` prints, and `git show <hash>` prints the English it came
+from.
+
+A commit SHA would not hold. Pull requests land by rebase, so a SHA stamped on a branch does not
+exist on `main`. A translation made in the same commit as its README edit cannot name that commit
+either.
+
+A translation whose stamped README differs from the current one only in the switcher is restamped
+without a model call, so adding a language does not make every other translation stale.
+
+### Freshness and the release refresh
+
+Nothing fails when a translation falls behind. Feature commits edit README.md in passing (16 since
+2026-07-28, for agent counts and requirements), and a gate would force a 14-language run on each of
+them. A stale translation still helps its reader, the way an untranslated UI string falls back to
+English.
+
+`/release` catches them up. Its Step 1.6 runs `--stale` and stops the release when a translation
+cannot be made, so a refresh never skips quietly.
+
+`tests/unit/readme-translations.test.ts` holds the files to `SHIPPED_LOCALES`: one translation per
+shipped language and no other, every switcher listing exactly the shipped languages in order, a
+stamp on every translation, and links that resolve. Adding a language fails it until
+`npm run i18n:translate-readme -- --locales <code>` has run.
+
+### Correcting a translation
+
+Edit the file. The fix lasts until README.md changes and a release redrafts that file. A fix that
+should last goes where the drafts come from: a name in `README_KEEP` or the glossary, or a rule in
+the system prompt in `scripts/i18n/translate-readme.mjs`.
+
 ## Local model bake-off
 
 The bake-off picks the local refill model. `scripts/i18n/bake-off/run.mjs` runs it in three steps:
@@ -269,3 +336,10 @@ it as "needs review".
 
 **The reworded-string hint comes from git.** The catalog gate runs `check sync --clean`, so a
 committed catalog never holds an obsolete entry to offer. The base branch's PO file still has it.
+
+**Translated READMEs at the root as `README.<locale>.md`** (2026-10-28). The other common layout
+is `docs/<locale>/README.md`. It was rejected because relative links would break, `docs/` is the
+concept bundle, and the writing-style scan reads all of `docs/`.
+
+**A blob hash stamp over a commit SHA** (2026-10-28). A rebase merge replaces a branch's SHAs, and
+a blob's hash is known before its commit exists.

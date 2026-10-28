@@ -1,8 +1,9 @@
 /**
  * Every `docs/...md` path the repo cites must exist. Source comments, skills, rules, agents, user
- * strings and the root markdown name doc files by path, and a moved doc (task 889 moved
- * agent-integration.md into docs/integrations/agents/) leaves each of those citations pointing at
- * nothing, with no link checker anywhere to say so. A GitHub URL into this repo's docs counts too.
+ * strings and the root markdown (the translated READMEs included) name doc files by path, and a
+ * moved doc (task 889 moved agent-integration.md into docs/integrations/agents/) leaves each of
+ * those citations pointing at nothing, with no link checker anywhere to say so. A GitHub URL into
+ * this repo's docs counts too.
  *
  * docs/ is scanned too: okf-docs-conformance.test.ts resolves its markdown links, but a doc that
  * names another as a backticked path is not a link, and one such citation outlived the move.
@@ -23,6 +24,8 @@ import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
+/** The translated READMEs (README.<locale>.md), which link the docs the way README.md does. */
+const TRANSLATED_README = /^README\.[\w-]+\.md$/;
 const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
 /**
  * A retired path a file names on purpose, keyed `<file> cites <path>`. release-changelog.mjs matches
@@ -41,7 +44,7 @@ function scannedFiles(): string[] {
     .split('\n')
     .map((line) => line.trim())
     .filter(Boolean)
-    .filter((file) => /^(src|scripts|\.claude|demo|docs)\//.test(file) || /^packages\/[^/]+\/README\.md$/.test(file) || ROOT_FILES.has(file))
+    .filter((file) => /^(src|scripts|\.claude|demo|docs)\//.test(file) || /^packages\/[^/]+\/README\.md$/.test(file) || ROOT_FILES.has(file) || TRANSLATED_README.test(file))
     .filter((file) => !SKIPPED.some((pattern) => pattern.test(file)))
     .filter((file) => fs.existsSync(path.join(ROOT, file)));
 }
@@ -61,6 +64,13 @@ describe('docs path citations', () => {
   it('skips a git object spec, which names a file at a commit, and still checks a bare path beside it', () => {
     expect(citedDocsPaths("value('--flat', '492f0c474:docs/agent-integration.md') and docs/mcp-server.md")).toEqual(['docs/mcp-server.md']);
     expect(citedDocsPaths('see docs/agent-integration.md')).toEqual(['docs/agent-integration.md']);
+  });
+
+  it('scans the translated READMEs at the repo root, hyphenated locales included', () => {
+    const files = scannedFiles();
+    expect(files).toContain('README.md');
+    expect(files).toContain('README.de.md');
+    expect(files).toContain('README.pt-BR.md');
   });
 
   it('cites only docs files that exist', () => {

@@ -31,6 +31,26 @@
   <a href="https://www.kangentic.com/overview/">Documentation</a>
 </p>
 
+<!-- language-switcher -->
+<p align="center">
+  English |
+  <a href="README.zh-CN.md">中文(简体)</a> |
+  <a href="README.zh-TW.md">中文(繁體)</a> |
+  <a href="README.fr.md">Français</a> |
+  <a href="README.de.md">Deutsch</a> |
+  <a href="README.it.md">Italiano</a> |
+  <a href="README.es.md">Español</a> |
+  <a href="README.ja.md">日本語</a> |
+  <a href="README.ko.md">한국어</a> |
+  <a href="README.ru.md">Русский</a> |
+  <a href="README.pt-BR.md">Português (Brasil)</a> |
+  <a href="README.tr.md">Türkçe</a> |
+  <a href="README.pl.md">Polski</a> |
+  <a href="README.cs.md">Čeština</a> |
+  <a href="README.hu.md">Magyar</a>
+</p>
+<!-- /language-switcher -->
+
 ## What it does
 
 A coding agent can carry a task on its own, and git worktrees let several run at once. The limit then becomes you: which agent is waiting on a prompt, which one finished, and where each branch went. Kangentic puts every session on one board and marks the ones that need you.
@@ -94,6 +114,7 @@ WSL users install the Windows version and can pick a WSL distro as the terminal 
 3. **Drag to run.** Kangentic creates the worktree, applies the column's permission mode, and starts the agent.
 4. **Watch it code.** Follow the agent in its live terminal, answer when it asks, and drag the card on when it is done.
 
+<a name="supported-agents"></a>
 ## Supported agents
 
 [Claude Code](https://docs.anthropic.com/en/docs/claude-code), [Codex CLI](https://developers.openai.com/codex/cli), [Gemini CLI](https://github.com/google-gemini/gemini-cli), [Cursor CLI](https://cursor.com/docs/cli/overview), [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli/cli-getting-started), [Grok Build](https://github.com/xai-org/grok-build), [Antigravity CLI](https://antigravity.google/docs/cli/getting-started), [Goose CLI](https://github.com/aaif-goose/goose), [OpenCode](https://opencode.ai/docs), [Aider](https://aider.chat/), [Qwen Code](https://github.com/QwenLM/qwen-code), [Kimi Code](https://github.com/MoonshotAI/kimi-cli), [Factory Droid](https://docs.factory.ai/cli/getting-started/overview), [Warp (Oz CLI)](https://docs.warp.dev/reference/cli/cli), and [Ollama](https://ollama.com) for local models as single-turn chat.
@@ -102,7 +123,7 @@ Resuming after a restart, the MCP board tools, and handing history to the next a
 
 ## Languages
 
-Kangentic's interface is available in English, 中文(简体), 中文(繁體), Français, Deutsch, Italiano, Español, 日本語, 한국어, Русский, Português (Brasil), Türkçe, Polski, Čeština and Magyar. Change it under Settings > Language, and Kangentic restarts in it. The translations are machine-made and open to review. Each language's PO files are under `src/locales/<code>/`, and [Translations](docs/contributing/translations.md) explains how to correct one.
+Kangentic's interface comes in each language listed at the top of this page. Change it under Settings > Language, and Kangentic restarts in it. The translations are machine-made and open to review, and [Translations](docs/contributing/translations.md) explains how to correct one.
 
 ## Data and privacy
 
