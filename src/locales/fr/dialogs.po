@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# ligne ajoutée} many {# de lignes ajoutées}
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# ligne supprimée} many {# de lignes supprimées} other {# lignes supprimées}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {# fenêtre de diff de fichier est ouverte. Fermez-la pour en ouvrir une autre.} many {# de fenêtres de diff de fichier sont ouvertes. Fermez-en une pour en ouvrir une autre.} other {# fenêtres de diff de fichier sont ouvertes. Fermez-en une pour en ouvrir une autre.}}"
@@ -1020,7 +1020,7 @@ msgstr "Impossible de récupérer {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Impossible d'ouvrir « {filename} »"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Impossible d'ouvrir le diff du fichier"
@@ -3045,7 +3045,7 @@ msgstr "Impossible de lire les modifications de la tâche"
 msgid "The task's changes could not be read."
 msgstr "Impossible de lire les modifications de la tâche."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Impossible de créer la fenêtre."
@@ -3369,7 +3369,7 @@ msgstr "Exemples de caractères génériques"
 msgid "Wildcard examples. {rows}"
 msgstr "Exemples de caractères génériques. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Limite de fenêtres atteinte"

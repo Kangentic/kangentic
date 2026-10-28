@@ -158,7 +158,7 @@ src/
       DescriptionEditor.tsx # Markdown editor with preview toggle
       FilterPopover.tsx    # Reusable filter dropdown popover
       LabelInput.tsx       # Tag-style label input with autocomplete
-      MarkdownRenderer.tsx # Renders markdown to sanitized HTML
+      MarkdownRenderer.tsx # Renders GFM markdown with HTML shown as text; the Changes panel preview's document variant renders sanitized HTML
     hooks/
       useTerminal.ts       # xterm lifecycle, resize, scrollback restoration
     stores/                # Zustand state management

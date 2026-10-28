@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, one {{taskCount, plural, one {# göreve} other {# g�
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} dk {seconds} sn"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} bu görünümde değişiklik içermiyor"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "engellendi"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "Yapılacaklar taşınamaz"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "Dikkat"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "Açık bir penceresi var."
 msgid "Hide workflow"
 msgstr "İş akışını gizle"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "Önemli"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "Herhangi bir neden belirtilmedi."
 #, fuzzy
 msgid "Not a git repository"
 msgstr "Git deposu değil"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "Not"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "Bu işlem, bu görev için yalıtılmış bir çalışma ağacı oluştu
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "Bu işlem görevi, oturum geçmişini ve ilişkili tüm çalışma ağaçlarını kalıcı olarak siler."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "İpucu"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "Güncellemeler engellendi"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "{version} sürümü yüklenmeye hazır."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "Uyarı"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy

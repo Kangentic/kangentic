@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# řádek přidán} few {# řádky přidány} 
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# řádek odebrán} few {# řádky odebrány} many {# řádku odebráno} other {# řádků odebráno}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {Je otevřeno # okno s rozdílem souboru. Zavřete ho, chcete-li otevřít další.} few {Jsou otevřena # okna s rozdíly souborů. Zavřete jedno, chcete-li otevřít další.} many {Je otevřeno # okna s rozdíly souborů. Zavřete jedno, chcete-li otevřít další.} other {Je otevřeno # oken s rozdíly souborů. Zavřete jedno, chcete-li otevřít další.}}"
@@ -1020,7 +1020,7 @@ msgstr "Nepodařilo se načíst {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Nelze otevřít „{filename}“"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Rozdíl souboru nelze otevřít"
@@ -3045,7 +3045,7 @@ msgstr "Změny úkolu nelze načíst"
 msgid "The task's changes could not be read."
 msgstr "Změny úlohy nebylo možné načíst."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Okno se nepodařilo vytvořit."
@@ -3369,7 +3369,7 @@ msgstr "Příklady zástupných znaků"
 msgid "Wildcard examples. {rows}"
 msgstr "Příklady zástupných znaků. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Dosažen limit oken"

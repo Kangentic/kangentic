@@ -1,11 +1,13 @@
-import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { PanelErrorBoundary } from '../../components/PanelErrorBoundary';
 import type { PopOutChangesFileParams } from '../../../shared/pop-out';
 import type { GitDiffFileEntry } from '../../../shared/types';
 // No Monaco in this module's graph, so the root chunk stays light.
-import { fetchDiffContent, type DiffContent } from '../../components/dialogs/task-detail/changes/diff-content';
+import { fetchDiffContent, type DiffContent, type DiffContentScope } from '../../components/dialogs/task-detail/changes/diff-content';
+import { openChangesFileWindow } from '../../components/dialogs/task-detail/changes/open-file-window';
+import type { DiffLinkedFiles } from '../../components/dialogs/task-detail/changes/DiffViewer';
 
 const ChangesFileDiffPane = lazy(() =>
   import('./ChangesFileDiffPane').then((module) => ({ default: module.ChangesFileDiffPane })),
@@ -65,6 +67,9 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
   const [entry, setEntry] = useState<GitDiffFileEntry | null>(() => buildSeedEntry(params));
   const [content, setContent] = useState<DisplayedFileDiffContent | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
+  // The whole file list from the latest reconcile: the files a link in this
+  // window's markdown preview can open, each in a window of its own.
+  const [listedFiles, setListedFiles] = useState<GitDiffFileEntry[]>([]);
 
   // Guard out-of-order resolutions: only the newest fetch may commit state.
   const fetchGenerationRef = useRef(0);
@@ -105,6 +110,7 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
       const filesResult = await window.electronAPI.git.diffFiles({ worktreePath, projectPath, baseBranch, scope, commitOid, range: fetchRange });
       if (seededContent) await seededContent;
       if (generation !== fetchGenerationRef.current) return;
+      setListedFiles(filesResult.files);
       const matched = filesResult.files.find((file) => file.path === filePath) ?? null;
       setEntry(matched);
       if (!matched) {
@@ -158,6 +164,38 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
     };
   }, [worktreePath, projectPath, commitOid, isRange]);
 
+  // What the diff is read against, for the images the markdown preview loads.
+  const contentScope = useMemo<DiffContentScope>(() => ({
+    worktreePath,
+    projectPath,
+    baseBranch,
+    scope,
+    commitOid,
+    range: rangeBase && rangeHead ? { base: rangeBase, head: rangeHead } : undefined,
+  }), [worktreePath, projectPath, baseBranch, scope, commitOid, rangeBase, rangeHead]);
+
+  // This window shows one file, so a link to another listed file opens that
+  // file in its own window (or focuses the one already open), at this
+  // window's scope. Keyed on the paths so a refresh that changed only counts
+  // does not re-render the preview; the entry is looked up when the link is
+  // followed. NUL joins the paths because no git path holds one.
+  const listedFilesRef = useRef(listedFiles);
+  useLayoutEffect(() => {
+    listedFilesRef.current = listedFiles;
+  });
+  const listedPathsKey = useMemo(() => listedFiles.map((file) => file.path).join('\0'), [listedFiles]);
+  const linkedFiles = useMemo<DiffLinkedFiles>(() => {
+    const listedPaths = new Set(listedPathsKey.split('\0'));
+    return {
+      isListed: (path) => listedPaths.has(path),
+      open: (path) => {
+        const target = listedFilesRef.current.find((file) => file.path === path);
+        if (!target) return;
+        void openChangesFileWindow({ ...params, filePath: path, status: target.status, oldPath: target.oldPath, binary: target.binary });
+      },
+    };
+  }, [listedPathsKey, params]);
+
   if (!entry) {
     return (
       <div className="flex items-center justify-center h-full text-sm text-fg-disabled" data-testid="changes-file-popout-empty">
@@ -189,6 +227,8 @@ export function PopOutChangesFileRoot({ params }: { params: PopOutChangesFilePar
             projectPath={projectPath}
             worktreePath={worktreePath}
             scrollKey={params.taskId}
+            contentScope={contentScope}
+            linkedFiles={linkedFiles}
           />
         )}
       </Suspense>

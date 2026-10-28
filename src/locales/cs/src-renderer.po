@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, one {# proces z {taskCount, plural, one {# úlohy} f
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} min {seconds} s"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} nemá v tomto zobrazení žádné změny"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "blokováno"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "Sloupec K provedení nelze přesunout"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "Výstraha"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "Má otevřené okno."
 msgid "Hide workflow"
 msgstr "Skrýt pracovní postup"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "Důležité"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "Nebyl uveden žádný důvod."
 #, fuzzy
 msgid "Not a git repository"
 msgstr "Není úložiště git"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "Poznámka"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "Pro tuto úlohu se vytvoří izolovaný pracovní strom. Historie relace
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "Tímto trvale odstraníte úlohu, historii její relace a případný přidružený pracovní strom."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "Tip"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "Aktualizace zablokovány"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "Verze {version} je připravena k instalaci."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "Upozornění"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy

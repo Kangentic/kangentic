@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, one {# proces z {taskCount, plural, one {# zadania} 
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} min {seconds} s"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} nie ma zmian w tym widoku"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "zablokowany"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "Nie można przenieść kolumny Do zrobienia"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "Przestroga"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "Ma otwarte okno."
 msgid "Hide workflow"
 msgstr "Ukryj przepływ pracy"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "Ważne"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "Nie podano przyczyny."
 #, fuzzy
 msgid "Not a git repository"
 msgstr "To nie jest repozytorium git"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "Uwaga"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "Spowoduje to utworzenie izolowanego drzewa roboczego dla tego zadania. H
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "Spowoduje to trwałe usunięcie zadania, jego historii sesji i powiązanego drzewa roboczego."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "Wskazówka"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "Aktualizacje zablokowane"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "Wersja {version} jest gotowa do instalacji."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "Ostrzeżenie"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy

@@ -281,6 +281,12 @@ async function uploadNativeDebugFiles() {
  *   5. The same pair for `xyflow-*.js` (React Flow), reachable only through
  *      LazyWorkflowsView, so the board and the web demo pay nothing for the
  *      Workflows canvas until the view first opens.
+ *   6. No chunk in that static closure CONTAINS parse5 (marker-string scan),
+ *      and some lazy chunk does. parse5 is the HTML parser behind the Changes
+ *      panel's markdown document preview, reached only through the dynamic
+ *      import in src/renderer/utils/markdown-document-plugins.ts; every other
+ *      markdown surface (transcripts, descriptions, the web demo's board)
+ *      renders without it.
  * Falls back to asserting index.html carries no reference to the recharts
  * chunk if the manifest is ever unavailable.
  */
@@ -467,7 +473,31 @@ function assertVendorChunksLazy(rendererOutDir) {
       + 'blind (markers rotted on a monaco upgrade?). Update MONACO_MARKERS in scripts/build.js.',
     );
   }
-  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk}, ${xyflowChunk}, ${iconCatalogChunk} and all monaco chunks are reachable only via dynamic import`);
+
+  // parse5: one of its tokenizer error codes, a literal no first-party code
+  // writes. Like monaco it has no named chunk, so it is found by content.
+  const PARSE5_MARKER = 'missing-whitespace-between-doctype-public-and-system-identifiers';
+  let parse5SeenSomewhere = false;
+  for (const [chunkFile, source] of chunkSources) {
+    if (!source.includes(PARSE5_MARKER)) continue;
+    parse5SeenSomewhere = true;
+    if (staticFiles.has(`assets/${chunkFile}`)) {
+      throw new Error(
+        `[build] ${chunkFile} is in the entry's STATIC import closure but contains parse5. `
+        + 'The markdown document pipeline (rehype-raw and the sanitizer) loads only through '
+        + 'loadDocumentPlugins() in src/renderer/utils/markdown-document-plugins.ts; check for a '
+        + 'static import of markdown-document-pipeline.ts or of a rehype package.',
+      );
+    }
+  }
+  if (!parse5SeenSomewhere) {
+    throw new Error(
+      `[build] No chunk contains the parse5 marker "${PARSE5_MARKER}" - the lazy markdown pipeline `
+      + 'assertion has gone blind (the error code was renamed in a parse5 upgrade?). Pick another of '
+      + 'its tokenizer error codes and update PARSE5_MARKER in scripts/build.js.',
+    );
+  }
+  console.log(`[build] Verified ${rechartsChunk}, ${threeChunk}, ${xyflowChunk}, ${iconCatalogChunk}, all monaco chunks and the parse5 chunk are reachable only via dynamic import`);
 }
 
 const esbuildCommon = {

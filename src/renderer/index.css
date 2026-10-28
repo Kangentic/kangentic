@@ -1351,3 +1351,204 @@
   margin-right: 0.5em;
 }
 
+/* ── Markdown document (the Changes panel's preview of a repository file) ──
+   GitHub's README scale and spacing on the theme tokens, so a README reads the
+   way it does on GitHub. Scoped to MarkdownRenderer's document variant: task
+   descriptions and transcripts keep the compact scale above. */
+
+.markdown-body.markdown-document {
+  color: var(--kng-fg-secondary);
+  font-size: 1rem;
+  line-height: 1.5;
+  overflow-wrap: break-word;
+}
+
+.markdown-body.markdown-document p,
+.markdown-body.markdown-document blockquote,
+.markdown-body.markdown-document ul,
+.markdown-body.markdown-document ol,
+.markdown-body.markdown-document dl,
+.markdown-body.markdown-document pre,
+.markdown-body.markdown-document details,
+.markdown-body.markdown-document .md-table-scroll,
+.markdown-body.markdown-document .markdown-alert {
+  margin-top: 0;
+  margin-bottom: 16px;
+}
+
+.markdown-body.markdown-document h1,
+.markdown-body.markdown-document h2,
+.markdown-body.markdown-document h3,
+.markdown-body.markdown-document h4,
+.markdown-body.markdown-document h5,
+.markdown-body.markdown-document h6 {
+  margin-top: 24px;
+  margin-bottom: 16px;
+  line-height: 1.25;
+}
+
+.markdown-body.markdown-document > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body.markdown-document h1,
+.markdown-body.markdown-document h2 {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--kng-edge);
+}
+
+.markdown-body.markdown-document h1 { font-size: 2em; }
+.markdown-body.markdown-document h2 { font-size: 1.5em; }
+.markdown-body.markdown-document h3 { font-size: 1.25em; }
+.markdown-body.markdown-document h4 { font-size: 1em; }
+.markdown-body.markdown-document h5 { font-size: 0.875em; }
+.markdown-body.markdown-document h6 { font-size: 0.85em; color: var(--kng-fg-muted); }
+
+.markdown-body.markdown-document ul,
+.markdown-body.markdown-document ol {
+  padding-left: 2em;
+}
+
+.markdown-body.markdown-document ul ul,
+.markdown-body.markdown-document ul ol,
+.markdown-body.markdown-document ol ol,
+.markdown-body.markdown-document ol ul {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+
+.markdown-body.markdown-document li + li {
+  margin-top: 0.25em;
+}
+
+.markdown-body.markdown-document li {
+  margin-bottom: 0;
+}
+
+/* GFM task lists: the checkbox is the marker. */
+.markdown-body.markdown-document .contains-task-list {
+  list-style-type: none;
+  padding-left: 0.5em;
+}
+
+.markdown-body.markdown-document code {
+  font-size: 85%;
+  padding: 0.2em 0.4em;
+  border-radius: 6px;
+}
+
+/* The preview sits on the task window's frame, which paints surface-raised, so
+   a block and a table stripe take surface to stand apart from it, and the
+   block keeps the base rule's border for the themes where the two are close. */
+.markdown-body.markdown-document pre {
+  padding: 16px;
+  font-size: 85%;
+  line-height: 1.45;
+  background: var(--kng-surface);
+  border-radius: 6px;
+}
+
+.markdown-body.markdown-document pre code {
+  font-size: 100%;
+}
+
+.markdown-body.markdown-document blockquote {
+  padding: 0 1em;
+  color: var(--kng-fg-muted);
+  border-left: 0.25em solid var(--kng-edge-input);
+}
+
+.markdown-body.markdown-document hr {
+  height: 0.25em;
+  margin: 24px 0;
+  border: none;
+  background: var(--kng-edge);
+}
+
+.markdown-body.markdown-document table {
+  width: max-content;
+  max-width: 100%;
+}
+
+.markdown-body.markdown-document th,
+.markdown-body.markdown-document td {
+  padding: 6px 13px;
+}
+
+.markdown-body.markdown-document th {
+  background: transparent;
+}
+
+.markdown-body.markdown-document tr:nth-child(2n) {
+  background: var(--kng-surface);
+}
+
+/* Tailwind's preflight makes every image a block, which stacks a README's
+   centered badges one per line at the left edge. GitHub's images are inline. */
+.markdown-body.markdown-document img,
+.markdown-body.markdown-document picture {
+  display: inline;
+  max-width: 100%;
+  height: auto;
+  border-radius: 0;
+}
+
+.markdown-body.markdown-document img {
+  vertical-align: middle;
+}
+
+/* `<a name="x">` and a refused scheme carry no href: text, not an action. */
+.markdown-body.markdown-document a:not([href]) {
+  color: inherit;
+  cursor: auto;
+}
+
+/* A link to a file the panel does not list: it goes nowhere, so it does not
+   look like it goes somewhere. Its tooltip says why. */
+.markdown-body.markdown-document .md-link-unlisted {
+  color: var(--kng-fg-muted);
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+
+/* A relative image that could not be read: its alt text, where it would have been. */
+.markdown-body.markdown-document .md-image-missing {
+  color: var(--kng-fg-faint);
+  font-style: italic;
+}
+
+.markdown-body.markdown-document summary {
+  cursor: pointer;
+}
+
+/* GitHub alerts (`> [!NOTE]`). The kind's color is on the rule and the icon;
+   the title stays on the body text color so it reads on every theme. */
+.markdown-body.markdown-document .markdown-alert {
+  padding: 0.5em 1em;
+  border-left: 0.25em solid var(--markdown-alert-color);
+}
+
+.markdown-body.markdown-document .markdown-alert > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body.markdown-document .markdown-alert-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5em;
+  margin-bottom: 4px;
+  font-weight: 600;
+  color: var(--kng-fg);
+}
+
+.markdown-body.markdown-document .markdown-alert-title svg {
+  color: var(--markdown-alert-color);
+  flex-shrink: 0;
+}
+
+.markdown-alert-note { --markdown-alert-color: var(--kng-accent-fg); }
+.markdown-alert-tip { --markdown-alert-color: var(--kng-chart-2); }
+.markdown-alert-important { --markdown-alert-color: var(--kng-chart-5); }
+.markdown-alert-warning { --markdown-alert-color: var(--kng-chart-3); }
+.markdown-alert-caution { --markdown-alert-color: var(--kng-danger); }
+

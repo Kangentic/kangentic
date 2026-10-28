@@ -9,7 +9,7 @@ import { translateText } from '../../../../i18n/translate';
 import type { LocalizedText } from '../../../../../shared/i18n/text';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
-import { DiffViewer } from './DiffViewer';
+import { DiffViewer, type DiffLinkedFiles } from './DiffViewer';
 import { DiffViewOptionsMenu } from './DiffViewOptionsMenu';
 import { DiffErrorBoundary } from './DiffErrorBoundary';
 import { ChangesHistorySection, HISTORY_SECTION_HEADER_PX } from './ChangesHistorySection';
@@ -17,14 +17,12 @@ import { CommitSelectionBar } from './CommitSelectionBar';
 import { CommitGraphPanel, type StaticCommitHistory } from '../graph/CommitGraphPanel';
 import { useSessionStore } from '../../../../stores/session-store';
 import { useConfigStore } from '../../../../stores/config-store';
-import { useToastStore } from '../../../../stores/toast-store';
-import { describeIpcError, asSentence } from '../../../../lib/ipc-error';
 import { escapeOwnedElsewhere } from '../../../../utils/escape-ownership';
-import { POP_OUT_SURFACES } from '../../../../../shared/pop-out';
+import { openChangesFileWindow } from './open-file-window';
 import { useKeybinding, useFormattedCombo } from '../../../../hooks/useKeybinding';
 import { MousePointerClick } from 'lucide-react';
 import type { GitBranchSummaryResult, GitCommitGraphCommit, GitDiffFileEntry, GitDiffFilesResult, GitDiffScope, GitFileHistoryCommit, GitTaskChangesResult, Task } from '../../../../../shared/types';
-import { DiffContentCache, EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, type DiffContent } from './diff-content';
+import { DiffContentCache, EMPTY_DIFF_CONTENT, diffContentEqual, fetchDiffContent, type DiffContent, type DiffContentScope } from './diff-content';
 
 // Stable empty set so a task with no viewed files keeps a referentially-constant
 // prop (avoids re-rendering the file tree every render).
@@ -323,8 +321,17 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   }, [worktreePath, projectPath, baseBranch, liveScope, changesSelectedCommit, completed, t]);
 
   // What one file's content is read against: the selected commit, else a
-  // completed task's range, else the live scope.
+  // completed task's range, else the live scope. One value for the diff fetch
+  // and for the images the markdown preview reads, so the two never drift.
   const contentRange = !changesSelectedCommit ? (completed?.range ?? undefined) : undefined;
+  const contentScope = useMemo<DiffContentScope>(() => ({
+    worktreePath,
+    projectPath,
+    baseBranch,
+    scope: liveScope,
+    commitOid: changesSelectedCommit ?? undefined,
+    range: contentRange,
+  }), [worktreePath, projectPath, baseBranch, liveScope, changesSelectedCommit, contentRange]);
 
   const fetchFileContent = useCallback(async (filePath: string) => {
     // Key the cache by selection (commit OID, range or scope) so a file's diffs
@@ -347,15 +354,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       const currentGeneration = cacheGenerationRef.current;
       const fileEntry = filesRef.current.find((entry) => entry.path === filePath);
       fetchDiffContent({
-        worktreePath,
-        projectPath,
-        baseBranch,
+        ...contentScope,
         filePath,
         status: fileEntry?.status ?? 'M',
         oldPath: fileEntry?.oldPath,
-        scope: liveScope,
-        commitOid: changesSelectedCommit ?? undefined,
-        range: contentRange,
       }, fileEntry?.binary ?? false, cached.result).then((freshResult) => {
         contentCache.set(cacheKey, { result: freshResult, generation: currentGeneration });
         // Only update UI if this file is still selected and content actually
@@ -376,15 +378,10 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
 
     try {
       const result = await fetchDiffContent({
-        worktreePath,
-        projectPath,
-        baseBranch,
+        ...contentScope,
         filePath,
         status: file.status,
         oldPath: file.oldPath,
-        scope: liveScope,
-        commitOid: changesSelectedCommit ?? undefined,
-        range: contentRange,
       }, file.binary);
       contentCache.set(cacheKey, { result, generation: cacheGenerationRef.current });
       // Guard against a slow fetch resolving after the user switched away: only
@@ -398,7 +395,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
         setFileContent({ result: EMPTY_DIFF_CONTENT, filePath });
       }
     }
-  }, [worktreePath, projectPath, baseBranch, changesSelectedCommit, contentCache, contentRange, liveScope, scope]);
+  }, [changesSelectedCommit, contentCache, contentRange, contentScope, scope]);
 
   // Lightweight, local-only branch context for the header (name, ahead/behind).
   // Cheap enough to re-run on every fs.watch fire and manual refresh, unlike
@@ -591,6 +588,16 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     fetchFileContentRef.current(filePath);
   }, [setSelectedFile, handleSelectCommit]);
 
+  // What a link in the markdown preview can open: a file in this list, through
+  // the same path a tree click takes. Keyed on the paths rather than the list,
+  // so a refresh that changed only a file's counts does not re-render the
+  // preview. NUL joins them because it is the one character no git path holds.
+  const listedPathsKey = useMemo(() => files.map((file) => file.path).join('\0'), [files]);
+  const linkedFiles = useMemo<DiffLinkedFiles>(() => {
+    const listedPaths = new Set(listedPathsKey.split('\0'));
+    return { isListed: (path) => listedPaths.has(path), open: handleSelectFile };
+  }, [listedPathsKey, handleSelectFile]);
+
   // Escape lets go of a selected commit, as the selection bar's x does. Only
   // while one is selected and this panel's window is focused, in the capture
   // phase so it runs before the window's own Escape (which would close the
@@ -615,7 +622,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
   // seed - paths, the file's list entry, and the task label - so the window
   // fetches and titles itself without waiting on store hydration (see
   // PopOutChangesFileParams). The cap is enforced main-side (maxInstances); a
-  // refused open resolves false and is surfaced as a toast.
+  // refused open resolves false and openChangesFileWindow surfaces it as a toast.
   // task and filePopOutParams are read through a ref / primitives rather than
   // depended on directly: both get a fresh identity on every board-store push
   // (an actively-working task refreshes constantly), and this callback feeds
@@ -633,45 +640,23 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
     if (!filePopOutTaskId || !filePopOutProjectId || !currentTask) return;
     const entry = filesRef.current.find((file) => file.path === filePath);
     if (!entry) return;
-    void (async () => {
-      try {
-        const opened = await window.electronAPI.popOut.open('changes-file', {
-          taskId: filePopOutTaskId,
-          projectId: filePopOutProjectId,
-          filePath,
-          scope: changesSelectedCommit ? undefined : liveScope,
-          commitOid: changesSelectedCommit ?? undefined,
-          range: contentRange,
-          projectPath,
-          worktreePath,
-          baseBranch,
-          status: entry.status,
-          oldPath: entry.oldPath,
-          binary: entry.binary,
-          taskDisplayId: currentTask.display_id,
-          taskTitle: currentTask.title,
-        });
-        if (!opened) {
-          // changes-file always declares a cap; the fallback only satisfies the type.
-          const maxInstances = POP_OUT_SURFACES['changes-file'].maxInstances ?? 0;
-          useToastStore.getState().addToast({
-            title: t`Window limit reached`,
-            message: t`${plural(maxInstances, {
-              one: '# file diff window is open. Close it to open another.',
-              other: '# file diff windows are open. Close one to open another.',
-            })}`,
-            variant: 'info',
-          });
-        }
-      } catch (error) {
-        useToastStore.getState().addToast({
-          title: t`Couldn't open file diff`,
-          message: asSentence(describeIpcError(error, t`The window could not be created.`)),
-          variant: 'error',
-        });
-      }
-    })();
-  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, liveScope, projectPath, worktreePath, baseBranch, contentRange, t]);
+    void openChangesFileWindow({
+      taskId: filePopOutTaskId,
+      projectId: filePopOutProjectId,
+      filePath,
+      scope: changesSelectedCommit ? undefined : liveScope,
+      commitOid: changesSelectedCommit ?? undefined,
+      range: contentRange,
+      projectPath,
+      worktreePath,
+      baseBranch,
+      status: entry.status,
+      oldPath: entry.oldPath,
+      binary: entry.binary,
+      taskDisplayId: currentTask.display_id,
+      taskTitle: currentTask.title,
+    });
+  }, [filePopOutTaskId, filePopOutProjectId, changesSelectedCommit, liveScope, projectPath, worktreePath, baseBranch, contentRange]);
 
   const markChangesFileViewed = useSessionStore((state) => state.markChangesFileViewed);
 
@@ -1251,6 +1236,8 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
                 // Blame reads the working tree's file, so never for a commit,
                 // a completed task, or the staged scope.
                 blameEligible={!changesSelectedCommit && !completed && scope !== 'staged'}
+                contentScope={contentScope}
+                linkedFiles={linkedFiles}
               />
             </DiffErrorBoundary>
           )}

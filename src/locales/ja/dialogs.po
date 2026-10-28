@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, other {# 行追加}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, other {# 行削除}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, other {ファイル差分ウィンドウが # 個開いています。別のウィンドウを開くには、いずれかを閉じてください。}}"
@@ -1020,7 +1020,7 @@ msgstr "{baseBranch} をフェッチできませんでした"
 msgid "Couldn't open \"{filename}\""
 msgstr "「{filename}」を開けませんでした"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "ファイル差分を開けませんでした"
@@ -3045,7 +3045,7 @@ msgstr "タスクの変更を読み取れませんでした"
 msgid "The task's changes could not be read."
 msgstr "タスクの変更を読み込めませんでした。"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "ウィンドウを作成できませんでした。"
@@ -3369,7 +3369,7 @@ msgstr "ワイルドカードの例"
 msgid "Wildcard examples. {rows}"
 msgstr "ワイルドカードの例。{rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "ウィンドウ数の上限に達しました"

@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# dodany wiersz} few {# dodane wiersze} many {
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# usunięty wiersz} few {# usunięte wiersze} many {# usuniętych wierszy} other {# usuniętego wiersza}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {Otwarte jest # okno różnic pliku. Zamknij je, aby otworzyć kolejne.} few {Otwarte są # okna różnic plików. Zamknij jedno, aby otworzyć kolejne.} many {Otwartych jest # okien różnic plików. Zamknij jedno, aby otworzyć kolejne.} other {Liczba otwartych okien różnic plików: #. Zamknij jedno, aby otworzyć kolejne.}}"
@@ -1020,7 +1020,7 @@ msgstr "Nie udało się pobrać {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Nie można otworzyć „{filename}”"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Nie można otworzyć różnic pliku"
@@ -3045,7 +3045,7 @@ msgstr "Nie można odczytać zmian zadania"
 msgid "The task's changes could not be read."
 msgstr "Nie można odczytać zmian zadania."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Nie można utworzyć okna."
@@ -3369,7 +3369,7 @@ msgstr "Przykłady symboli wieloznacznych"
 msgid "Wildcard examples. {rows}"
 msgstr "Przykłady symboli wieloznacznych. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Osiągnięto limit okien"

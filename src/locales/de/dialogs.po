@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# Zeile hinzugefügt} other {# Zeilen hinzugef
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# Zeile entfernt} other {# Zeilen entfernt}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {# Datei-Diff-Fenster ist geöffnet. Schließen Sie es, um ein weiteres zu öffnen.} other {# Datei-Diff-Fenster sind geöffnet. Schließen Sie eines, um ein weiteres zu öffnen.}}"
@@ -1020,7 +1020,7 @@ msgstr "{baseBranch} konnte nicht abgerufen werden"
 msgid "Couldn't open \"{filename}\""
 msgstr "„{filename}“ konnte nicht geöffnet werden"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Datei-Diff konnte nicht geöffnet werden"
@@ -3045,7 +3045,7 @@ msgstr "Die Änderungen der Aufgabe konnten nicht gelesen werden"
 msgid "The task's changes could not be read."
 msgstr "Die Änderungen der Aufgabe konnten nicht gelesen werden."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Das Fenster konnte nicht erstellt werden."
@@ -3369,7 +3369,7 @@ msgstr "Platzhalterbeispiele"
 msgid "Wildcard examples. {rows}"
 msgstr "Platzhalterbeispiele. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Fensterlimit erreicht"

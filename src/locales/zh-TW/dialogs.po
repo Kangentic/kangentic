@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, other {新增 # 行}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, other {移除 # 行}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, other {已開啟 # 個檔案差異視窗。請關閉其中一個以開啟新視窗。}}"
@@ -1020,7 +1020,7 @@ msgstr "無法擷取 {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "無法開啟「{filename}」"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "無法開啟檔案差異"
@@ -3045,7 +3045,7 @@ msgstr "無法讀取工作的變更"
 msgid "The task's changes could not be read."
 msgstr "無法讀取此任務的變更。"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "無法建立視窗。"
@@ -3369,7 +3369,7 @@ msgstr "萬用字元範例"
 msgid "Wildcard examples. {rows}"
 msgstr "萬用字元範例。{rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "已達視窗數量上限"

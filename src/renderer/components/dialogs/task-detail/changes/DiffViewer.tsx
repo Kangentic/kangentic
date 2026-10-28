@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { DiffEditor } from '@monaco-editor/react';
 import type { DiffEditorProps, DiffOnMount, Monaco, MonacoDiffEditor } from '@monaco-editor/react';
 import type { editor as MonacoEditorNamespace } from 'monaco-editor';
@@ -7,7 +7,10 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { translateText } from '../../../../i18n/translate';
 import { FILE_STATUS_CONFIG } from './file-status';
 import { DiffViewOptionsMenu, diffToolbarButtonClass as toolbarButtonClass } from './DiffViewOptionsMenu';
-import { MarkdownRenderer } from '../../../MarkdownRenderer';
+import { MarkdownRenderer, type MarkdownDocumentOptions } from '../../../MarkdownRenderer';
+import { loadDocumentPlugins } from '../../../../utils/markdown-document-plugins';
+import { anchorElementIds } from '../../../../utils/markdown-repo-link';
+import { colorizeFencedCode } from './markdown-preview-highlight';
 import { shownTheme, useConfigStore } from '../../../../stores/config-store';
 import { useKeybinding } from '../../../../hooks/useKeybinding';
 import { Tooltip } from '../../../Tooltip';
@@ -25,7 +28,14 @@ import { registerDiffViewerSnapshotReader } from '../../../../monaco-error-funne
 import { monacoThemeForTheme, selectDiffAlgorithmOptions } from './diff-render-options';
 import { snapshotDiffViewer } from './diff-viewer-snapshot';
 import { ImageDiffView } from './ImageDiffView';
-import { imageCompareState, type DiffImageContent, type ImageCompareMode } from './diff-content';
+import {
+  diffScopeKey,
+  fetchDocumentImage,
+  imageCompareState,
+  type DiffContentScope,
+  type DiffImageContent,
+  type ImageCompareMode,
+} from './diff-content';
 import { imageKindForPath } from '../../../../../shared/image-preview';
 
 interface DiffViewerProps {
@@ -77,6 +87,25 @@ interface DiffViewerProps {
    * against the plain editor background.
    */
   showEditorBootSpinner?: boolean;
+  /**
+   * What this diff is read against. The markdown preview reads the images a
+   * file names at this same revision. Absent, a relative image shows its alt
+   * text.
+   */
+  contentScope?: DiffContentScope;
+  /**
+   * The files a link in the markdown preview can open. Absent, a link to
+   * another repo file is inert.
+   */
+  linkedFiles?: DiffLinkedFiles;
+}
+
+/** How the markdown preview's links reach the host's file list. */
+export interface DiffLinkedFiles {
+  /** Whether the host lists this repo path, so `open` can show it. */
+  isListed: (path: string) => boolean;
+  /** Show a listed file. */
+  open: (path: string) => void;
 }
 
 /**
@@ -196,6 +225,8 @@ export function DiffViewer({
   projectPath,
   blameEligible = true,
   showEditorBootSpinner = true,
+  contentScope,
+  linkedFiles,
 }: DiffViewerProps) {
   // The SHOWN theme, so a Theme tab hover preview re-skins the diff pane with the rest
   // of the app instead of leaving it on the committed theme for the hover's duration.
@@ -261,10 +292,17 @@ export function DiffViewer({
   // held in state rather than a ref, which render may not read) rather than
   // in an effect, so switching files never paints a frame of the previous
   // file's preview or blame.
+  //
+  // The one exception is a link followed from the markdown preview: it names
+  // the file it opens (`linkTargetPath`), and that file lands on its preview,
+  // the way a link on GitHub lands on the rendered page. A tree click or a
+  // roll-in still opens the diff.
+  const [linkTargetPath, setLinkTargetPath] = useState<string | null>(null);
   const [previousFilePath, setPreviousFilePath] = useState(filePath);
   if (previousFilePath !== filePath) {
     setPreviousFilePath(filePath);
-    setShowPreview(false);
+    setShowPreview(linkTargetPath === filePath);
+    setLinkTargetPath(null);
     setBlameOn(false);
   }
 
@@ -273,6 +311,104 @@ export function DiffViewer({
   // starts from the "off by default" state rather than a stale "on". The same
   // render-time adjustment as the file-change reset above.
   if (blameUnavailable && blameOn) setBlameOn(false);
+
+  // The markdown preview renders the file as a document (MarkdownRenderer's
+  // document variant). Its rehype pipeline is a lazy chunk; start loading it
+  // when a markdown file is selected, so the eye toggle renders at once.
+  useEffect(() => {
+    if (isMarkdown) void loadDocumentPlugins().catch(() => {});
+  }, [isMarkdown]);
+
+  const previewScrollRef = useRef<HTMLDivElement | null>(null);
+  // Scrolls the preview pane alone. scrollIntoView would also scroll every
+  // scrollable ancestor (the task window, the panel), which a link should not.
+  // A target is an id or, as READMEs often write it, `<a name="...">`.
+  const scrollToAnchor = useCallback((anchor: string) => {
+    const container = previewScrollRef.current;
+    if (!container) return;
+    for (const candidate of anchorElementIds(anchor)) {
+      const escaped = CSS.escape(candidate);
+      const target = container.querySelector(`[id="${escaped}"], [name="${escaped}"]`);
+      if (!target) continue;
+      container.scrollTop += target.getBoundingClientRect().top - container.getBoundingClientRect().top;
+      return;
+    }
+  }, []);
+
+  // An anchor a followed link names (`README.de.md#install`), applied once the
+  // linked file's preview has rendered. A ref, not state: nothing renders from
+  // it, and the effect below only reads and clears it.
+  const pendingLinkAnchorRef = useRef<{ path: string; anchor: string } | null>(null);
+
+  const isFileListed = useCallback((path: string) => linkedFiles?.isListed(path) ?? false, [linkedFiles]);
+  const openFile = useCallback((path: string, anchor: string | null) => {
+    if (!linkedFiles) return;
+    pendingLinkAnchorRef.current = anchor === null ? null : { path, anchor };
+    setLinkTargetPath(path);
+    linkedFiles.open(path);
+  }, [linkedFiles]);
+
+  // Images a markdown file names, read at the revision its preview shows: the
+  // old side for a deleted file, the new side for every other status. Cached
+  // per scope, file, side and text, so a re-render never re-reads them and a
+  // live edit to the file reads them again. A read that found nothing is not
+  // kept, so the next edit finds an image an agent has written since. Closing
+  // the preview drops the cache and the data URLs it holds.
+  const scopeKey = contentScope ? diffScopeKey(contentScope) : null;
+  const imageSide: 'original' | 'modified' = status === 'D' ? 'original' : 'modified';
+  const previewText = status === 'D' ? original : modified;
+  const imageCacheRef = useRef<{ key: string; text: string; entries: Map<string, Promise<string | null>> } | null>(null);
+  const contentScopeRef = useRef(contentScope);
+  useLayoutEffect(() => {
+    contentScopeRef.current = contentScope;
+  });
+  const loadImage = useCallback((path: string): Promise<string | null> => {
+    const scope = contentScopeRef.current;
+    if (!scope || scopeKey === null) return Promise.resolve(null);
+    const cacheKey = `${scopeKey}\n${filePath}\n${imageSide}`;
+    let cache = imageCacheRef.current;
+    if (cache === null || cache.key !== cacheKey || cache.text !== previewText) {
+      cache = { key: cacheKey, text: previewText, entries: new Map() };
+      imageCacheRef.current = cache;
+    }
+    const entries = cache.entries;
+    const cached = entries.get(path);
+    if (cached) return cached;
+    const read = fetchDocumentImage(scope, path, imageSide).catch(() => null);
+    entries.set(path, read);
+    void read.then((url) => {
+      if (url === null && entries.get(path) === read) entries.delete(path);
+    });
+    return read;
+  }, [scopeKey, filePath, imageSide, previewText]);
+  useEffect(() => {
+    if (!markdownPreviewActive) imageCacheRef.current = null;
+  }, [markdownPreviewActive]);
+
+  const highlight = useCallback(
+    (code: string, fence: string) => colorizeFencedCode(code, fence, monacoTheme),
+    [monacoTheme],
+  );
+
+  const documentOptions = useMemo<MarkdownDocumentOptions>(() => ({
+    baseFilePath: filePath,
+    colorScheme: monacoTheme === 'vs' ? 'light' : 'dark',
+    isFileListed,
+    openFile,
+    scrollToAnchor,
+    loadImage,
+    highlight,
+  }), [filePath, monacoTheme, isFileListed, openFile, scrollToAnchor, loadImage, highlight]);
+
+  // Land a followed link's anchor once the linked file's own content shows.
+  // Whatever happens first, the anchor is spent: a file that opened on its
+  // diff, or a link whose file never came, must not scroll a later preview.
+  useEffect(() => {
+    const pending = pendingLinkAnchorRef.current;
+    if (pending === null || contentFilePath !== filePath) return;
+    pendingLinkAnchorRef.current = null;
+    if (pending.path === filePath && markdownPreviewActive) scrollToAnchor(pending.anchor);
+  }, [filePath, contentFilePath, markdownPreviewActive, scrollToAnchor]);
 
   // Fetch blame when toggled on. The result is stored with the key it was
   // fetched for and `blame` is derived from it, so a switch of file or scope,
@@ -1268,14 +1404,28 @@ export function DiffViewer({
           // content, so preview its old content; every other status previews the
           // new content - including a file legitimately emptied in the working
           // tree, which must render blank rather than fall back to the stale old
-          // text. Reuses the shared MarkdownRenderer so the preview is theme-aware
-          // and routes links through shell.openExternal.
-          <div
-            data-testid="diff-markdown-preview-content"
-            className="h-full overflow-y-auto px-4 py-3"
-          >
-            <MarkdownRenderer content={status === 'D' ? original : modified} />
-          </div>
+          // text. MarkdownRenderer's document variant renders it the way GitHub
+          // shows a repository file (see MarkdownDocumentOptions).
+          //
+          // Like the image view, it waits for THIS file's content: a followed
+          // link keeps the preview on, and the previous document must not paint
+          // under the new file's header. Keyed by file and revision, so each
+          // document opens at its top rather than at the previous one's scroll,
+          // and a revision switch never shows the last revision's images.
+          contentFilePath !== filePath ? (
+            <div className="flex items-center justify-center h-full">
+              <Loader2 size={20} className="animate-spin text-fg-muted" />
+            </div>
+          ) : (
+            <div
+              key={`${filePath}\n${scopeKey ?? ''}`}
+              ref={previewScrollRef}
+              data-testid="diff-markdown-preview-content"
+              className="h-full overflow-y-auto px-6 py-4"
+            >
+              <MarkdownRenderer content={status === 'D' ? original : modified} documentOptions={documentOptions} />
+            </div>
+          )
         ) : (
           // On unmount (panel close, Changes<->Browser switch, file deselect),
           // @monaco-editor/react disposes this DiffEditor's two TextModels

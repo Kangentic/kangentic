@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, other {{taskCount, plural, other {작업 #개}}의 �
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}분 {seconds}초"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "이 보기에서 {path}에 변경 사항이 없습니다"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "차단됨"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "할 일 열을 이동할 수 없음"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "주의"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "열린 창이 있습니다."
 msgid "Hide workflow"
 msgstr "워크플로 숨기기"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "중요"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "사유가 제공되지 않았습니다."
 #, fuzzy
 msgid "Not a git repository"
 msgstr "git 리포지토리가 아님"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "참고"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "이 작업에 대해 격리된 작업 트리를 만듭니다. 세션 기
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "작업, 해당 세션 기록 및 연결된 작업 트리가 영구적으로 삭제됩니다."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "팁"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "업데이트 차단됨"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "버전 {version}을(를) 설치할 준비가 되었습니다."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "경고"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy

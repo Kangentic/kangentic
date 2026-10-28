@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, other {{taskCount, plural, other {# 个任务}}的 #
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} 分 {seconds} 秒"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} 在此视图中没有更改"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "受阻"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "无法移动“待办”"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "小心"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "有打开的窗口。"
 msgid "Hide workflow"
 msgstr "隐藏工作流"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "重要"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "未提供原因。"
 #, fuzzy
 msgid "Not a git repository"
 msgstr "不是 git 仓库"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "注意"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "这将为此任务创建一个独立的工作树。你的会话历史将
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "这将永久删除该任务、其会话历史以及所有关联的工作树。"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "提示"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "更新被阻止"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "版本 {version} 已准备好安装。"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "警告"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
