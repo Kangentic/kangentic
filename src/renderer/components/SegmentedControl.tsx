@@ -88,7 +88,7 @@ interface SegmentedControlProps<T extends string> {
    * Replaces every option's horizontal padding and its gap (icon, label,
    * trailing badge), for a group whose options shed their labels
    * (`labelClassName`): the board toolbar narrows an icon-only option on the
-   * same container query that hides its label, because at the 900px floor the
+   * same collapse step that hides its label, because at the 900px floor the
    * spacing a label needs is width the search field cannot spare. Overrides
    * `tight`.
    */
@@ -182,7 +182,7 @@ export function SegmentedControl<T extends string>({
   /**
    * `slide` is true only when this placement moved the thumb to a different
    * option. Every other re-measure (a count in an option changing width, a project
-   * switch re-populating one, a container query swapping labels for icons, a
+   * switch re-populating one, a collapse step swapping labels for icons, a
    * window resize) is not the user choosing anything, so the thumb takes the new
    * box at once instead of animating there (restore-no-animation-replay.md).
    */

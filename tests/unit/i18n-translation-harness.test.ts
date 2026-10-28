@@ -15,7 +15,7 @@ import {
 import { formErrors, validateReply } from '../../scripts/i18n/validate.mjs';
 import { glossaryErrors, loadGlossary, relevantTerms } from '../../scripts/i18n/glossary.mjs';
 import {
-  applyMachineTranslation, applyOutcomes, hasReviewMark, REVIEW_FLAG, selectEntryIds,
+  applyMachineTranslation, applyOutcomes, hasReviewMark, REVIEW_FLAG, selectEntryIds, sharedTranslations,
 } from '../../scripts/i18n/catalogs.mjs';
 import { createNeighbourFinder, findHint, neighbourMessages, removedEntries } from '../../scripts/i18n/context.mjs';
 import { readReplies, requestItem } from '../../scripts/i18n/prompt.mjs';
@@ -393,6 +393,108 @@ describe('which entries the harness touches', () => {
       { english: manualEnglish, status: 'manual', errors: ['more than one plural or select'], lastReply: null },
       { english: 'Broken {name', status: 'invalid-source', errors: ['Expected a closing brace'], lastReply: null },
     ]);
+  });
+});
+
+describe('one message reads one way across a locale', () => {
+  // The renderer merges a locale's areas and the last one wins, so a message another area
+  // already translates is copied, never drafted again. `otherAreas` is the locale's messages
+  // in every other area, `runDrafts` the id to ICU drafts this run already made.
+  type AreaCopy = { message: string; translation: string; obsolete?: boolean; extra?: { flags: string[]; translatorComments: string[] } };
+
+  /** A copy a person has reviewed: it carries no `fuzzy` flag. */
+  function reviewedCopy(translation: string): AreaCopy {
+    return { message: 'Close', translation, extra: { flags: [], translatorComments: [] } };
+  }
+
+  /** A machine draft still waiting for review: it carries the `fuzzy` flag. */
+  function fuzzyCopy(translation: string): AreaCopy {
+    return { message: 'Close', translation, extra: { flags: [REVIEW_FLAG], translatorComments: [] } };
+  }
+
+  it('takes a reviewed copy over a draft made earlier in this run, with or without a redraft', () => {
+    const otherAreas = [{ closeId: reviewedCopy('Schließen') }];
+    const runDrafts = new Map([['closeId', 'Zumachen']]);
+    for (const redraft of [false, true]) {
+      expect(sharedTranslations(['closeId'], { otherAreas, runDrafts, redraft }).get('closeId'), `redraft ${redraft}`).toBe('Schließen');
+    }
+  });
+
+  it('takes a reviewed copy over a fuzzy copy in another area, whichever area comes first', () => {
+    const runDrafts = new Map<string, string>();
+    for (const redraft of [false, true]) {
+      const fuzzyFirst = [{ closeId: fuzzyCopy('Schliessen') }, { closeId: reviewedCopy('Schließen') }];
+      const reviewedFirst = [{ closeId: reviewedCopy('Schließen') }, { closeId: fuzzyCopy('Schliessen') }];
+      expect(sharedTranslations(['closeId'], { otherAreas: fuzzyFirst, runDrafts, redraft }).get('closeId'), `fuzzy first, redraft ${redraft}`).toBe('Schließen');
+      expect(sharedTranslations(['closeId'], { otherAreas: reviewedFirst, runDrafts, redraft }).get('closeId'), `reviewed first, redraft ${redraft}`).toBe('Schließen');
+    }
+  });
+
+  it('uses a draft made earlier in this run when no area has a reviewed copy, including under a redraft', () => {
+    const runDrafts = new Map([['closeId', 'Zumachen']]);
+    for (const redraft of [false, true]) {
+      expect(sharedTranslations(['closeId'], { otherAreas: [{}], runDrafts, redraft }).get('closeId'), `no copy, redraft ${redraft}`).toBe('Zumachen');
+      expect(sharedTranslations(['closeId'], { otherAreas: [{ closeId: fuzzyCopy('Schliessen') }], runDrafts, redraft }).get('closeId'), `fuzzy copy, redraft ${redraft}`).toBe('Zumachen');
+    }
+  });
+
+  it('copies a fuzzy copy from another area, and ignores it when redrafting', () => {
+    const otherAreas = [{ closeId: fuzzyCopy('Schliessen') }];
+    const runDrafts = new Map<string, string>();
+    expect(sharedTranslations(['closeId'], { otherAreas, runDrafts }).get('closeId'), 'redraft left at its default').toBe('Schliessen');
+    expect(sharedTranslations(['closeId'], { otherAreas, runDrafts, redraft: false }).get('closeId')).toBe('Schliessen');
+    expect(sharedTranslations(['closeId'], { otherAreas, runDrafts, redraft: true }).has('closeId')).toBe(false);
+  });
+
+  it('ignores an obsolete copy, reviewed or drafted', () => {
+    const otherAreas = [{
+      reviewedAlone: { ...reviewedCopy('Schließen'), obsolete: true },
+      fuzzyAlone: { ...fuzzyCopy('Schliessen'), obsolete: true },
+      reviewedBesideFuzzy: { ...reviewedCopy('Schließen'), obsolete: true },
+      reviewedBesideRunDraft: { ...reviewedCopy('Schließen'), obsolete: true },
+    }, {
+      reviewedBesideFuzzy: fuzzyCopy('Schliessen'),
+    }];
+    const runDrafts = new Map([['reviewedBesideRunDraft', 'Zumachen']]);
+    const shared = sharedTranslations(['reviewedAlone', 'fuzzyAlone', 'reviewedBesideFuzzy', 'reviewedBesideRunDraft'], { otherAreas, runDrafts });
+    expect(shared.has('reviewedAlone'), 'an obsolete reviewed copy alone').toBe(false);
+    expect(shared.has('fuzzyAlone'), 'an obsolete fuzzy copy alone').toBe(false);
+    expect(shared.get('reviewedBesideFuzzy'), 'an obsolete reviewed copy beside a live fuzzy one').toBe('Schliessen');
+    expect(shared.get('reviewedBesideRunDraft'), 'an obsolete reviewed copy beside a run draft').toBe('Zumachen');
+  });
+
+  it('ignores a copy with an empty translation, reviewed or drafted', () => {
+    const otherAreas = [{
+      reviewedAlone: reviewedCopy(''),
+      fuzzyAlone: fuzzyCopy(''),
+      reviewedBesideFuzzy: reviewedCopy(''),
+      reviewedBesideRunDraft: reviewedCopy(''),
+      reviewedBesideReviewed: reviewedCopy(''),
+      fuzzyBesideFuzzy: fuzzyCopy(''),
+    }, {
+      reviewedBesideFuzzy: fuzzyCopy('Schliessen'),
+      reviewedBesideReviewed: reviewedCopy('Schließen'),
+      fuzzyBesideFuzzy: fuzzyCopy('Schliessen'),
+    }];
+    const runDrafts = new Map([['reviewedBesideRunDraft', 'Zumachen']]);
+    const ids = ['reviewedAlone', 'fuzzyAlone', 'reviewedBesideFuzzy', 'reviewedBesideRunDraft', 'reviewedBesideReviewed', 'fuzzyBesideFuzzy'];
+    const shared = sharedTranslations(ids, { otherAreas, runDrafts });
+    expect(shared.has('reviewedAlone'), 'an empty reviewed copy alone').toBe(false);
+    expect(shared.has('fuzzyAlone'), 'an empty fuzzy copy alone').toBe(false);
+    expect(shared.get('reviewedBesideFuzzy'), 'an empty reviewed copy beside a live fuzzy one').toBe('Schliessen');
+    expect(shared.get('reviewedBesideRunDraft'), 'an empty reviewed copy beside a run draft').toBe('Zumachen');
+    expect(shared.get('reviewedBesideReviewed'), 'an empty reviewed copy beside a live reviewed one').toBe('Schließen');
+    expect(shared.get('fuzzyBesideFuzzy'), 'an empty fuzzy copy beside a live fuzzy one').toBe('Schliessen');
+  });
+
+  it('leaves an id with no copy out of the map, and finds a copy in any area', () => {
+    const otherAreas = [{ unrelatedId: reviewedCopy('Schließen') }, {}, { laterId: reviewedCopy('Öffnen') }];
+    const shared = sharedTranslations(['missingId', 'laterId'], { otherAreas, runDrafts: new Map<string, string>() });
+    expect(shared.has('missingId')).toBe(false);
+    expect([...shared.keys()]).toEqual(['laterId']);
+    expect(shared.get('laterId')).toBe('Öffnen');
+    // Nothing to look in and nothing drafted gives an empty map, not a map of undefined.
+    expect(sharedTranslations(['missingId'], { otherAreas: [], runDrafts: new Map<string, string>() }).size).toBe(0);
   });
 });
 

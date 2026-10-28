@@ -5,7 +5,9 @@
  * Picks every entry with no translation (and with --redraft, every machine draft
  * still marked for review), translates it with Claude or a local model, checks
  * the result, and writes it marked `fuzzy` for review. A reviewed translation is
- * never touched. docs/contributing/translations.md is the guide.
+ * never touched. A message another area of the locale already translates is
+ * copied from it instead, so one message reads one way in every area.
+ * docs/contributing/translations.md is the guide.
  *
  *   npm run i18n:translate -- --engine claude --locales de,ja --areas settings
  *   npm run i18n:translate -- --engine local --url http://127.0.0.1:9931/v1
@@ -36,7 +38,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { isEntrypoint } from '../lib/is-entrypoint.mjs';
-import { applyOutcomes, loadCatalogs, readCatalogAt, resolveBaseRef, selectEntryIds } from './catalogs.mjs';
+import { applyOutcomes, loadCatalogs, readCatalogAt, resolveBaseRef, selectEntryIds, sharedTranslations } from './catalogs.mjs';
 import { loadAppModules, readFlags, refuseIfAutomated, sourceReader } from './cli.mjs';
 import { removedEntries } from './context.mjs';
 import { loadGlossary } from './glossary.mjs';
@@ -123,38 +125,54 @@ async function main() {
   let wroteAny = false;
   try {
     for (const locale of locales) {
+      // Every area's messages, so a message another area already translates is
+      // copied rather than drafted again (sharedTranslations in catalogs.mjs).
+      const localeMessages = new Map();
+      for (const { area, catalog } of catalogs) localeMessages.set(area, (await catalog.read(locale)) ?? {});
+      const runDrafts = new Map();
       for (const { area, catalog } of selectedCatalogs) {
         if (remaining <= 0) break;
-        const messages = (await catalog.read(locale)) ?? {};
+        const messages = localeMessages.get(area);
         const ids = selectEntryIds(messages, { redraft: options.redraft }).slice(0, remaining);
         if (ids.length === 0) continue;
         remaining -= ids.length;
-        console.log(`[i18n] ${locale} ${area}: ${ids.length} to translate`);
+        const otherAreas = [...localeMessages].filter(([otherArea]) => otherArea !== area).map(([, otherMessages]) => otherMessages);
+        const shared = sharedTranslations(ids, { otherAreas, runDrafts, redraft: options.redraft });
+        const draftIds = ids.filter((id) => !shared.has(id));
+        console.log(`[i18n] ${locale} ${area}: ${ids.length} to translate, ${shared.size} copied from another area`);
         if (options.dryRun) {
-          report.catalogs.push({ locale, area, selected: ids.length, entries: ids.map((id) => messages[id].message) });
+          report.catalogs.push({ locale, area, selected: ids.length, shared: shared.size, entries: ids.map((id) => messages[id].message) });
           continue;
         }
-        const removed = removedEntries(await readCatalogAt(catalog, locale, baseRef, REPO_ROOT), messages);
-        const { outcomes, usage } = await translateEntries({
-          locale,
-          entries: ids.map((id) => ({ id, message: messages[id] })),
-          allMessages: messages,
-          engine,
-          glossary,
-          budgetFor: (message) => budgets.get(message.message) ?? null,
-          widthOfCodepoint: appModules.wcwidthV11,
-          readSource,
-          removed,
-          batchSize: options.batchSize,
-          concurrency: options.concurrency,
-        });
+        let outcomes = new Map();
+        let usage = null;
+        if (draftIds.length > 0) {
+          const removed = removedEntries(await readCatalogAt(catalog, locale, baseRef, REPO_ROOT), messages);
+          ({ outcomes, usage } = await translateEntries({
+            locale,
+            entries: draftIds.map((id) => ({ id, message: messages[id] })),
+            allMessages: messages,
+            engine,
+            glossary,
+            budgetFor: (message) => budgets.get(message.message) ?? null,
+            widthOfCodepoint: appModules.wcwidthV11,
+            readSource,
+            removed,
+            batchSize: options.batchSize,
+            concurrency: options.concurrency,
+          }));
+        }
+        for (const [id, outcome] of outcomes) {
+          if (outcome.status === 'translated') runDrafts.set(id, outcome.icu);
+        }
+        for (const [id, icu] of shared) outcomes.set(id, { status: 'translated', icu });
         const { counts, problems } = applyOutcomes(messages, outcomes);
         if (counts.translated > 0) {
           await catalog.write(locale, messages);
           wroteAny = true;
         }
-        console.log(`[i18n] ${locale} ${area}: ${counts.translated} translated, ${counts.flagged} flagged, ${counts.manual} left for a person`);
-        report.catalogs.push({ locale, area, selected: ids.length, ...counts, usage, problems });
+        console.log(`[i18n] ${locale} ${area}: ${counts.translated} translated (${shared.size} copied), ${counts.flagged} flagged, ${counts.manual} left for a person`);
+        report.catalogs.push({ locale, area, selected: ids.length, shared: shared.size, ...counts, usage, problems });
       }
     }
   } finally {
