@@ -335,6 +335,10 @@ describe('every tests/unit scan reads its marker through this module', () => {
       'native-title.test.ts',
       'names the retired native-title-ok marker only in a probe proving it no longer exempts a title; the scan reads no marker at all',
     ],
+    [
+      'settings-card-design.test.ts',
+      'names choice-select-ok only in fixture snippets and comments; the scan itself lives in helpers/settings-card-scan.ts, which reads the marker through hasJsxOptOutMarker',
+    ],
   ]);
 
   type ScannedFile = { name: string; contents: string };
