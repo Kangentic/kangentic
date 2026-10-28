@@ -203,7 +203,7 @@ describe('resolveSessionTranscript', () => {
     expect(result!.sourcePath).toBe('/history/session-1.jsonl');
     expect(result!.taskTitle).toBe('Wire the auth flow');
     expect(result!.agentName).toBe('Claude Code');
-    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-abc', '/work/project', null, undefined);
     const [entry] = result!.entries;
     expect(entry.kind).toBe('user');
     // The clamp caps the span and appends a truncation marker rather than
@@ -239,7 +239,7 @@ describe('resolveSessionTranscript', () => {
     // The third argument is where the parser looks for the history: the row's
     // distro and its homes. A null here reads this machine's home, which holds
     // none of a distro session's files.
-    expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE, undefined);
   });
 
   it("falls back to the index when the live parser throws, and reconstructs entries per chunk role", async () => {
@@ -487,7 +487,7 @@ describe('resolveSessionTranscript for a workflow agent\'s conversation id', () 
     expect(result!.source).toBe('live');
     // The third argument is where the parser looks for the history. A null here
     // reads this machine's home, which holds none of a distro agent's files.
-    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-wsl', '/home/dev/project', EXPECTED_WSL_PLACE, null);
   });
 
   it('parses the conversation on this machine when the workflow recorded no target', async () => {
@@ -498,7 +498,7 @@ describe('resolveSessionTranscript for a workflow agent\'s conversation id', () 
     const result = await resolveSessionTranscript(database, 'conv-wf-host');
 
     expect(result!.source).toBe('live');
-    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-host', '/home/dev/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf-host', '/home/dev/project', null, null);
   });
 });
 

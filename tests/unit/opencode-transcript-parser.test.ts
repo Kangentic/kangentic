@@ -97,21 +97,25 @@ describe('the tail and history pages of a session', () => {
     database.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
     const insertMessage = database.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)');
     const insertPart = database.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)');
-    for (const session of [SESSION, 'ses_other']) {
-      for (let turn = 0; turn < turns; turn += 1) {
-        const time = 1_000 + turn * 10;
-        const user = `${session}_m${String(turn).padStart(3, '0')}_user`;
-        const assistant = `${session}_m${String(turn).padStart(3, '0')}_assistant`;
-        insertMessage.run(user, session, time, time, JSON.stringify({ role: 'user' }));
-        insertPart.run(`${user}_p0`, user, session, time, time, JSON.stringify({ type: 'text', text: `Question ${turn} ${'é'.repeat(turn % 7)}` }));
-        insertMessage.run(assistant, session, time + 1, time + 1, JSON.stringify({ role: 'assistant', modelID: 'big-pickle' }));
-        insertPart.run(`${assistant}_p0`, assistant, session, time + 1, time + 1, JSON.stringify({ type: 'step-start' }));
-        insertPart.run(`${assistant}_p1`, assistant, session, time + 2, time + 2, JSON.stringify({ type: 'text', text: `Answer ${turn}` }));
-        insertPart.run(`${assistant}_p2`, assistant, session, time + 3, time + 3, JSON.stringify({
-          type: 'tool', callID: `call_${turn}`, tool: 'bash', state: { status: 'completed', input: { command: `ls ${turn}` }, output: `out ${turn}` },
-        }));
+    // One transaction: ~540 autocommitted inserts each sync the disk, which took
+    // 1.3 s here and passed the 5 s test timeout on a loaded CI runner.
+    database.transaction(() => {
+      for (const session of [SESSION, 'ses_other']) {
+        for (let turn = 0; turn < turns; turn += 1) {
+          const time = 1_000 + turn * 10;
+          const user = `${session}_m${String(turn).padStart(3, '0')}_user`;
+          const assistant = `${session}_m${String(turn).padStart(3, '0')}_assistant`;
+          insertMessage.run(user, session, time, time, JSON.stringify({ role: 'user' }));
+          insertPart.run(`${user}_p0`, user, session, time, time, JSON.stringify({ type: 'text', text: `Question ${turn} ${'é'.repeat(turn % 7)}` }));
+          insertMessage.run(assistant, session, time + 1, time + 1, JSON.stringify({ role: 'assistant', modelID: 'big-pickle' }));
+          insertPart.run(`${assistant}_p0`, assistant, session, time + 1, time + 1, JSON.stringify({ type: 'step-start' }));
+          insertPart.run(`${assistant}_p1`, assistant, session, time + 2, time + 2, JSON.stringify({ type: 'text', text: `Answer ${turn}` }));
+          insertPart.run(`${assistant}_p2`, assistant, session, time + 3, time + 3, JSON.stringify({
+            type: 'tool', callID: `call_${turn}`, tool: 'bash', state: { status: 'completed', input: { command: `ls ${turn}` }, output: `out ${turn}` },
+          }));
+        }
       }
-    }
+    })();
     database.close();
   }
 
