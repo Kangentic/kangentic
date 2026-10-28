@@ -228,7 +228,7 @@ describe('ConversationIndexer.recordWorkflowAgentTurns', () => {
     const { indexer } = harness({ displayName: 'Whole file only', parseTranscript });
 
     expect(await indexer.recordWorkflowAgentTurns('project-1', OWNER)).toBe('missing-source');
-    expect(parseTranscript).toHaveBeenCalledWith(AGENT_SESSION_ID, '/work', null);
+    expect(parseTranscript).toHaveBeenCalledWith(AGENT_SESSION_ID, '/work', null, null);
   });
 
   it('never throws: a project database that will not open, or a parser that fails, answers error', async () => {

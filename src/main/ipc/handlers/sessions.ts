@@ -460,6 +460,7 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
           agentSessionId: record.agent_session_id,
           cwd: record.cwd,
           cliTarget: parseStoredCliTarget(record.cli_target),
+          transcriptPath: record.transcript_path,
         };
       } catch {
         return null;

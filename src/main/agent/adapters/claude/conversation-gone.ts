@@ -1,11 +1,7 @@
-import fs from 'node:fs';
 import path from 'node:path';
-import { locateClaudeTranscriptFile } from './transcript-parser';
+import { listClaudeProjectFolders, PROJECT_SCAN_BATCH, resolveClaudeTranscriptFile } from './transcript-locator';
 import { isConfirmedMissing } from '../../shared/confirmed-missing';
 import { hostPathForTarget, type CliPlace } from '../../shared/cli-target';
-
-/** Project folders statted at once by the folder scan. */
-const SCAN_BATCH = 32;
 
 /**
  * Prove that Claude can no longer resume a conversation: its transcript is
@@ -19,8 +15,10 @@ const SCAN_BATCH = 32;
  *  1. One of the reported paths is absolute and names this conversation's
  *     file (`<id>.jsonl`). A path from before a `/clear` fork names another id,
  *     and a relative one would resolve against Kangentic's own working folder.
- *  2. That path and the locator's path for the current cwd both fail with
- *     ENOENT. Any other error (permission, a locked file) is not proof.
+ *  2. That path and the path every reader would open (`resolveClaudeTranscriptFile`,
+ *     which finds a conversation filed under a parent folder's slug or any
+ *     other project folder) both fail with ENOENT. Any other error
+ *     (permission, a locked file) is not proof.
  *  3. The projects folder two levels above the reported path is a directory
  *     this process can read. A WSL session reports a Linux path, which on the
  *     Windows side resolves to nothing, so this is where it stops. The
@@ -52,43 +50,24 @@ export async function proveClaudeConversationGone(params: {
   if (!reportedPath) return false;
 
   if (!(await isConfirmedMissing(reportedPath))) return false;
-  if (!(await isConfirmedMissing(locateClaudeTranscriptFile(params.agentSessionId, params.cwd, place)))) return false;
+  // The path every reader would open. A conversation it finds anywhere (a
+  // parent folder's slug, another project folder) is not gone; one found
+  // nowhere resolves to the cwd path, which must then be missing too.
+  const readerPath = await resolveClaudeTranscriptFile({ agentSessionId: params.agentSessionId, cwd: params.cwd, place });
+  if (!(await isConfirmedMissing(readerPath))) return false;
 
   const projectsRoot = path.dirname(path.dirname(reportedPath));
-  let folders: fs.Dirent[];
-  try {
-    const rootStat = await fs.promises.stat(projectsRoot);
-    if (!rootStat.isDirectory()) return false;
-    folders = await fs.promises.readdir(projectsRoot, { withFileTypes: true });
-  } catch {
-    return false;
-  }
+  // A link whose target is a file is left out: looking inside it would fail
+  // ENOTDIR, which is not proof, and would keep every conversation of the
+  // profile from ever counting as gone.
+  const folders = await listClaudeProjectFolders(projectsRoot);
+  if (!folders) return false;
 
-  const candidates: string[] = [];
-  for (const folder of folders) {
-    const folderPath = path.join(projectsRoot, folder.name);
-    if (folder.isDirectory() || (folder.isSymbolicLink() && await mayBeFolder(folderPath))) {
-      candidates.push(path.join(folderPath, fileName));
-    }
-  }
-  for (let start = 0; start < candidates.length; start += SCAN_BATCH) {
-    const batch = candidates.slice(start, start + SCAN_BATCH);
+  const candidates = folders.map((folderPath) => path.join(folderPath, fileName));
+  for (let start = 0; start < candidates.length; start += PROJECT_SCAN_BATCH) {
+    const batch = candidates.slice(start, start + PROJECT_SCAN_BATCH);
     const missing = await Promise.all(batch.map(isConfirmedMissing));
     if (missing.includes(false)) return false;
   }
   return true;
-}
-
-/**
- * False only for a link whose target is a file, which can hold no transcript;
- * looking inside it would fail ENOTDIR, which is not proof, and so would keep
- * every conversation of the profile from ever counting as gone. A link to a
- * folder, a dangling link and an unreadable one stay in the scan.
- */
-async function mayBeFolder(linkPath: string): Promise<boolean> {
-  try {
-    return (await fs.promises.stat(linkPath)).isDirectory();
-  } catch {
-    return true;
-  }
 }

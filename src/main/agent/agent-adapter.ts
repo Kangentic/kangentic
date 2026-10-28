@@ -804,8 +804,32 @@ export interface AgentAdapter {
    * that distro's home, and `cwd` is the Windows path of the folder it ran in.
    * Null or absent: this machine. An adapter without `supportsWslCli` is never
    * given one and may ignore it.
+   *
+   * `reportedPath`, here and on every transcript method below, is a transcript
+   * path the AGENT reported for this conversation (a session row's
+   * `transcript_path`, a live session's usage `transcriptPath`), never one
+   * Kangentic derived. An agent can keep writing a conversation outside the
+   * folder the current cwd maps to (Claude appends a resumed conversation to the
+   * file it started in), and its own report is how a reader follows it. It may
+   * be stale (a project relocation does not rewrite it) or name another id, so
+   * an adapter that reads it checks both. Adapters whose files are found by id
+   * ignore it.
    */
-  locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null>;
+  locateSessionHistoryFile(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<string | null>;
+
+  /**
+   * Optional: where the agent CLI's own resume from `cwd` reads the
+   * conversation's history, for an adapter whose `locateSessionHistoryFile`
+   * finds files the CLI's resume does not reach. `migrateResumeCwdIfRenamed`
+   * asks it whether a renamed worktree's history must move before `--resume`.
+   * Absent: `locateSessionHistoryFile` answers both questions.
+   */
+  locateResumeHistoryFile?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
    * Optional: prove that a conversation's history file no longer exists, so a
@@ -851,7 +875,12 @@ export interface AgentAdapter {
    * history location is unknown) omit this; `get_transcript` then reports that
    * the structured format is unsupported and points at `format: "raw"`.
    */
-  parseTranscript?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript>;
+  parseTranscript?(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedTranscript>;
 
   /**
    * Optional: parse ONE bounded byte window of the native transcript, retaining
@@ -898,6 +927,7 @@ export interface AgentAdapter {
     maxBytes: number,
     attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<ParsedTranscriptWindow>;
 
   /**
@@ -931,6 +961,7 @@ export interface AgentAdapter {
     cwd: string,
     request: TranscriptPageReadRequest,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<TranscriptPageReadResult>;
 
   /**
@@ -949,7 +980,12 @@ export interface AgentAdapter {
    * a fan-out runs: an indexer that only watched the main signature would never
    * see the subagent turns at all.
    */
-  statSubagentTranscripts?(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null;
+  statSubagentTranscripts?(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): SubagentTranscriptSignature | null;
 
   /**
    * Optional: parse this session's subagent (sub-conversation) token usage into
@@ -966,7 +1002,12 @@ export interface AgentAdapter {
    * retry later. Adapters with no subagent concept omit this; the ledger then
    * simply carries main-thread rows for that agent, as it always has.
    */
-  parseSubagentUsage?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage>;
+  parseSubagentUsage?(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedSubagentUsage>;
 
   /**
    * Optional: the name of the tool this agent spawns a subagent with, as it

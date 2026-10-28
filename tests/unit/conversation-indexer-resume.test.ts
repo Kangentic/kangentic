@@ -15,11 +15,17 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
-import { parseClaudeTranscriptWindow } from '../../src/main/agent/adapters/claude/transcript-parser';
+import {
+  claudeProjectSlug,
+  locateClaudeTranscriptFile,
+  parseClaudeTranscriptWindow,
+} from '../../src/main/agent/adapters/claude/transcript-parser';
+import { clearClaudeTranscriptLocatorCacheForTests } from '../../src/main/agent/adapters/claude/transcript-locator';
+import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { openTestDatabase } from './helpers/test-database';
 
 const WINDOW_BYTES = 2000;
@@ -371,5 +377,62 @@ describe('ConversationIndexer resumed walk', () => {
       const fresh = await fromScratch(transcriptPath);
       expect({ chunks, state }).toEqual({ chunks: fresh.chunks, state: fresh.state });
     });
+  });
+});
+
+describe('ConversationIndexer: a conversation resumed from another folder', () => {
+  // Claude keeps appending a resumed conversation to the file under the folder
+  // it started in. A read from the worktree's cwd found nothing, so the index
+  // recorded `missing-source` under the worktree path and re-walked every pass.
+  // Once the locator finds the file, the next walk reads it from byte 0, once,
+  // owned by the newest session, and later passes skip it.
+  afterEach(() => {
+    vi.restoreAllMocks();
+    clearClaudeTranscriptLocatorCacheForTests();
+  });
+
+  it('re-walks from the root-slug file, replacing the miss, not duplicating it, not handing it to the older session', async () => {
+    const workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-resumed-elsewhere-'));
+    temporaryDirectories.push(workDir);
+    const tempHome = path.join(workDir, 'home');
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    const projectRoot = path.join(workDir, 'project');
+    const worktree = path.join(projectRoot, '.kangentic', 'worktrees', '918');
+    const rootFile = path.join(tempHome, '.claude', 'projects', claudeProjectSlug(projectRoot), `${AGENT_SESSION_ID}.jsonl`);
+    fs.mkdirSync(path.dirname(rootFile), { recursive: true });
+    writeTranscript(rootFile, transcriptLines(20));
+
+    const database = openDatabase();
+    runProjectMigrations(database);
+    database.exec('PRAGMA foreign_keys = OFF');
+    const insertSession = database.prepare(
+      `INSERT INTO sessions (id, task_id, session_type, agent_session_id, command, cwd, status, started_at)
+       VALUES (?, 'task-1', 'claude_agent', ?, 'claude', ?, 'running', ?)`,
+    );
+    insertSession.run('session-1', AGENT_SESSION_ID, projectRoot, '2026-09-30T12:00:00.000Z');
+    insertSession.run('session-2', AGENT_SESSION_ID, worktree, '2026-09-30T13:00:00.000Z');
+
+    // The read before the fix: only where the worktree's cwd maps.
+    const worktreePath = locateClaudeTranscriptFile(AGENT_SESSION_ID, worktree);
+    const cwdOnly = {
+      displayName: 'Claude',
+      locateSessionHistoryFile: async () => null,
+      parseTranscriptWindow: async (
+        _agentSessionId: string, _cwd: string, startByte: number, maxBytes: number, carry?: Set<string>,
+      ) => ({ ...(await parseClaudeTranscriptWindow(worktreePath, startByte, maxBytes, carry)), sourcePath: worktreePath }),
+    };
+    const before = new ConversationIndexer({ getDb: () => database, getAdapter: () => cwdOnly, windowBytes: WINDOW_BYTES });
+    expect(await before.indexSession('project-1', 'session-2')).toBe('missing-source');
+
+    const claude = new ClaudeAdapter();
+    const after = new ConversationIndexer({ getDb: () => database, getAdapter: () => claude, windowBytes: WINDOW_BYTES });
+    expect(await after.indexSession('project-1', 'session-2')).toBe('indexed');
+    expect(indexed(database)).toEqual(await fromScratch(rootFile, 'session-2'));
+
+    // Stable from here: neither the same session nor the older one, whose cwd
+    // maps to the root, walks it again.
+    expect(await after.indexSession('project-1', 'session-2')).toBe('skipped');
+    expect(await after.indexSession('project-1', 'session-1')).toBe('skipped');
+    expect(indexed(database)).toEqual(await fromScratch(rootFile, 'session-2'));
   });
 });

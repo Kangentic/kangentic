@@ -5,8 +5,8 @@ import { ClaudeDetector } from './detector';
 import { CommandBuilder, claudeMcpServerEntry } from './command-builder';
 import { ClaudeStatusParser } from './status-parser';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { findClaudeResumeTranscriptFile, findClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
 import {
-  locateClaudeTranscriptFile,
   parseClaudeTranscript,
   parseClaudeTranscriptWindow,
   parseClaudeTranscriptUsage,
@@ -273,24 +273,28 @@ function isResultLine(line: string): boolean {
 }
 
 /**
- * The transcript a run-level read targets: the exact path Claude reported in
- * status.json, else the canonical `~/.claude/projects/<slug>/<id>.jsonl` path
- * derived from the session id and cwd, else null.
+ * The transcript a run-level read targets: the path Claude reported in its live
+ * status.json when that file is there, whatever id it names, since the live
+ * report moves to a `/clear` fork's file before the session row's id does.
+ * Else wherever the locator finds the conversation (`transcript-locator.ts`).
+ * With no session id or cwd to locate by, the reported path as given, else null.
  */
-function resolveRunTranscriptPath(input: {
+async function resolveRunTranscriptPath(input: {
   transcriptPath?: string | null;
   agentSessionId?: string | null;
   cwd?: string | null;
   place?: CliPlace | null;
-}): string | null {
+}): Promise<string | null> {
   const place = input.place ?? null;
   // A Claude in a WSL distro reports its transcript by its Linux path.
-  if (input.transcriptPath) {
-    return hostPathForTarget(input.transcriptPath, place);
+  const reported = input.transcriptPath ? hostPathForTarget(input.transcriptPath, place) : null;
+  if (reported && path.isAbsolute(reported) && await fs.promises.stat(reported).then(() => true, () => false)) {
+    return reported;
   }
-  return input.agentSessionId && input.cwd
-    ? locateClaudeTranscriptFile(input.agentSessionId, input.cwd, place)
-    : null;
+  if (input.agentSessionId && input.cwd) {
+    return resolveClaudeTranscriptFile({ agentSessionId: input.agentSessionId, cwd: input.cwd, place });
+  }
+  return reported;
 }
 
 /**
@@ -582,16 +586,28 @@ export class ClaudeAdapter implements AgentAdapter {
     return humanizeClaudeModelId(modelId);
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
-    // locateClaudeTranscriptFile returns the computed path without checking existence.
-    // Verify the file actually exists before returning it.
-    try {
-      fs.accessSync(filePath);
-      return filePath;
-    } catch {
-      return null;
-    }
+  /**
+   * Wherever Claude wrote the conversation: a `--resume` from another folder
+   * keeps appending to the file under the folder it started in. See
+   * `transcript-locator.ts` for the order the places are tried in.
+   */
+  locateSessionHistoryFile(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<string | null> {
+    return findClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
+  }
+
+  /**
+   * Narrower than `locateSessionHistoryFile`: only the cwd's file or a parent
+   * folder's, where Claude's own `--resume` was measured to read it. A history
+   * under a renamed worktree's old slug is found by the locator's scan but not
+   * by this, so the migrate-on-resume still moves it.
+   */
+  locateResumeHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return findClaudeResumeTranscriptFile({ agentSessionId, cwd, place });
   }
 
   proveConversationGone(params: {
@@ -603,8 +619,13 @@ export class ClaudeAdapter implements AgentAdapter {
     return proveClaudeConversationGone(params);
   }
 
-  async parseTranscript(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
+  async parseTranscript(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedTranscript> {
+    const filePath = await resolveClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
     const entries = await parseClaudeTranscript(filePath);
     return { entries, sourcePath: filePath };
   }
@@ -620,8 +641,9 @@ export class ClaudeAdapter implements AgentAdapter {
     maxBytes: number,
     attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<ParsedTranscriptWindow> {
-    const filePath = locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null);
+    const filePath = await resolveClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
     const window = await parseClaudeTranscriptWindow(
       filePath, startByte, maxBytes, attributedMessageIds,
     );
@@ -629,28 +651,40 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /** One page of the transcript's history for the Conversation viewer. */
-  readTranscriptPage(
+  async readTranscriptPage(
     agentSessionId: string,
     cwd: string,
     request: TranscriptPageReadRequest,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ): Promise<TranscriptPageReadResult> {
-    return readClaudeTranscriptPage(locateClaudeTranscriptFile(agentSessionId, cwd, place ?? null), request);
+    const filePath = await resolveClaudeTranscriptFile({ agentSessionId, cwd, place, reportedPath });
+    return readClaudeTranscriptPage(filePath, request);
   }
 
   /**
    * Staleness signature for the session's `subagents/` directory. Its own
    * signature, because a running subagent moves no byte of the main transcript.
    */
-  statSubagentTranscripts(agentSessionId: string, cwd: string, place?: CliPlace | null): SubagentTranscriptSignature | null {
-    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd, place ?? null));
+  statSubagentTranscripts(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): SubagentTranscriptSignature | null {
+    return statClaudeSubagentDir(locateClaudeSubagentDir(agentSessionId, cwd, place ?? null, reportedPath ?? null));
   }
 
   /** Every Task-tool subagent's tokens for this session, folded to one turn per
    *  API message. See `subagent-usage-parser.ts` for why the fold rule differs
    *  from the main transcript's. */
-  async parseSubagentUsage(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<ParsedSubagentUsage> {
-    return parseClaudeSubagentUsage(agentSessionId, cwd, place ?? null);
+  async parseSubagentUsage(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedSubagentUsage> {
+    return parseClaudeSubagentUsage(agentSessionId, cwd, place ?? null, reportedPath ?? null);
   }
 
   /** Claude spawns a subagent with the `Task` tool, so a `Task` tool-use id is
@@ -669,10 +703,11 @@ export class ClaudeAdapter implements AgentAdapter {
 
   /**
    * Lifetime cumulative tokens from Claude's own session JSONL. Prefers the
-   * exact `transcriptPath` Claude reported in status.json; otherwise derives the
-   * canonical `~/.claude/projects/<slug>/<id>.jsonl` path from the session id +
-   * cwd. Returns null (caller falls back to the live snapshot) when neither a
-   * path nor an id+cwd is available, or the file is missing/unparseable.
+   * `transcriptPath` Claude reported in status.json when its file is there;
+   * otherwise the locator finds the conversation from the session id + cwd
+   * (`resolveRunTranscriptPath`). Returns null (caller falls back to the live
+   * snapshot) when neither a path nor an id+cwd is available, or the file is
+   * missing/unparseable.
    */
   async transcriptUsage(input: {
     transcriptPath?: string | null;
@@ -680,7 +715,7 @@ export class ClaudeAdapter implements AgentAdapter {
     cwd?: string | null;
     place?: CliPlace | null;
   }): Promise<TranscriptUsage | null> {
-    const filePath = resolveRunTranscriptPath(input);
+    const filePath = await resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptUsage(filePath);
   }
@@ -693,7 +728,7 @@ export class ClaudeAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<TranscriptToolCounts | null> {
-    const filePath = resolveRunTranscriptPath(input);
+    const filePath = await resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolCounts(filePath, input.sinceMs, input.untilMs);
   }
@@ -706,7 +741,7 @@ export class ClaudeAdapter implements AgentAdapter {
     untilMs?: number | null;
     place?: CliPlace | null;
   }): Promise<Record<string, number> | null> {
-    const filePath = resolveRunTranscriptPath(input);
+    const filePath = await resolveRunTranscriptPath(input);
     if (!filePath) return null;
     return parseClaudeTranscriptToolResultTokens(filePath, input.sinceMs, input.untilMs);
   }
@@ -932,7 +967,14 @@ export class ClaudeAdapter implements AgentAdapter {
         if (context.type !== 'command-injection' || !context.agentSessionId || !context.cwd) {
           return false;
         }
-        const filePath = locateClaudeTranscriptFile(context.agentSessionId, context.cwd, placeFromStored(context.cliTarget));
+        // Rebuilt every 25 ms poll, so the locator's cache keeps a conversation
+        // filed under another folder to one stat per poll after the first find.
+        const filePath = await resolveClaudeTranscriptFile({
+          agentSessionId: context.agentSessionId,
+          cwd: context.cwd,
+          place: placeFromStored(context.cliTarget),
+          reportedPath: context.transcriptPath,
+        });
         const verifier = createSlashCommandVerifier(filePath);
         if (!verifier) return false;
         // sentAt comes from TerminalSubmit.submitKeystrokes and is the FIRST

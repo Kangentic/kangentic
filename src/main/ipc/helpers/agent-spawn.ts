@@ -355,8 +355,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const handoffDb = getProjectDb(handoffProjectId);
 
     try {
-      // Locate the source agent's native session history file.
-      // The file path is derived from the session's agent_session_id + cwd.
+      // Locate the source agent's native session history file: where the
+      // agent reported writing it, else derived from agent_session_id + cwd.
       const latestSessionRecord = sessionRepo.getLatestForTask(task.id);
       let sessionFilePath: string | null = null;
 
@@ -368,6 +368,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
             latestSessionRecord.cwd,
             // A source CLI that ran in a WSL distro left its history there.
             placeOfRecord(latestSessionRecord),
+            latestSessionRecord.transcript_path,
           );
         }
       }

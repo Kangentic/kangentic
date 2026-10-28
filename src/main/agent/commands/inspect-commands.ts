@@ -196,6 +196,7 @@ export async function handleGetTranscript(
             agentSessionId: record.agent_session_id,
             cwd: record.cwd,
             cliTarget: record.cli_target,
+            transcriptPath: record.transcript_path,
           },
           view,
           tail,

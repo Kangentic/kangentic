@@ -81,12 +81,20 @@ export function needsIndex(state: IndexStateRow | undefined, signature: SourceSi
 }
 
 /**
- * Each method takes the session's `CliPlace` last: where its CLI ran when it
- * was not this machine (a WSL distro), so its history is read from there.
+ * Each method takes the session's `CliPlace`: where its CLI ran when it was
+ * not this machine (a WSL distro), so its history is read from there. Then the
+ * transcript path the agent reported (the record's `transcript_path`), which an
+ * adapter that reads it prefers over the cwd: an agent can keep writing a
+ * resumed conversation outside the folder the cwd maps to.
  */
 interface AdapterLike {
   displayName: string;
-  parseTranscript?: (agentSessionId: string, cwd: string, place?: CliPlace | null) => Promise<ParsedTranscript>;
+  parseTranscript?: (
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ) => Promise<ParsedTranscript>;
   parseTranscriptWindow?: (
     agentSessionId: string,
     cwd: string,
@@ -94,14 +102,26 @@ interface AdapterLike {
     maxBytes: number,
     attributedMessageIds?: Set<string>,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ) => Promise<ParsedTranscriptWindow>;
-  locateSessionHistoryFile?: (agentSessionId: string, cwd: string, place?: CliPlace | null) => Promise<string | null>;
+  locateSessionHistoryFile?: (
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ) => Promise<string | null>;
   statSubagentTranscripts?: (
     agentSessionId: string,
     cwd: string,
     place?: CliPlace | null,
+    reportedPath?: string | null,
   ) => SubagentTranscriptSignature | null;
-  parseSubagentUsage?: (agentSessionId: string, cwd: string, place?: CliPlace | null) => Promise<ParsedSubagentUsage>;
+  parseSubagentUsage?: (
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ) => Promise<ParsedSubagentUsage>;
   /** The agent's subagent-spawning tool name, or undefined when it has none.
    *  Read rather than matched here, so no agent name reaches this layer. */
   subagentSpawnToolName?: string;
@@ -264,7 +284,7 @@ export class ConversationIndexer {
     }
     let path: string | null;
     try {
-      path = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd, placeOfRecord(record));
+      path = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path);
     } catch {
       path = null;
     }
@@ -391,7 +411,9 @@ export class ConversationIndexer {
     let walked: WalkedTranscript;
     try {
       const resume = await this.usableResumePoint(store, record, state, signature);
-      walked = await this.walkTranscript(adapter, record.agent_session_id, record.cwd, resume, placeOfRecord(record));
+      walked = await this.walkTranscript(
+        adapter, record.agent_session_id, record.cwd, resume, placeOfRecord(record), record.transcript_path,
+      );
     } catch {
       this.writeState(store, record, signature, 'error', 0, 0);
       return 'error';
@@ -475,7 +497,15 @@ export class ConversationIndexer {
    */
   async recordWorkflowAgentTurns(
     projectId: string,
-    owner: { sessionId: string; agentSessionId: string; sessionType: string; cwd: string; cliTarget?: StoredCliTarget | null },
+    owner: {
+      sessionId: string;
+      agentSessionId: string;
+      sessionType: string;
+      cwd: string;
+      cliTarget?: StoredCliTarget | null;
+      /** The live session's reported transcript path, when its status line has painted. */
+      transcriptPath?: string | null;
+    },
   ): Promise<IndexOutcome> {
     let db: Database.Database;
     try {
@@ -486,7 +516,9 @@ export class ConversationIndexer {
     const adapter = this.deps.getAdapter(owner.sessionType);
     if (!adapter?.parseTranscript && !adapter?.parseTranscriptWindow) return 'unsupported';
     try {
-      const walked = await this.walkTranscript(adapter, owner.agentSessionId, owner.cwd, null, placeFromStored(owner.cliTarget ?? null));
+      const walked = await this.walkTranscript(
+        adapter, owner.agentSessionId, owner.cwd, null, placeFromStored(owner.cliTarget ?? null), owner.transcriptPath ?? null,
+      );
       if (walked.entryCount === 0) return 'missing-source';
       new ConversationUsageStore(db).recordTurns(
         { agentSessionId: owner.agentSessionId, sessionId: owner.sessionId, taskId: null },
@@ -541,7 +573,7 @@ export class ConversationIndexer {
 
     let signature: SourceSignature;
     try {
-      const stats = adapter.statSubagentTranscripts(record.agent_session_id, record.cwd, place);
+      const stats = adapter.statSubagentTranscripts(record.agent_session_id, record.cwd, place, record.transcript_path);
       // Fold the directory to the same three fields `needsIndex` already
       // compares. fileCount rides in `path` because a new subagent adds a file
       // without necessarily moving the largest mtime within one millisecond.
@@ -555,7 +587,7 @@ export class ConversationIndexer {
 
     let parsed: ParsedSubagentUsage;
     try {
-      parsed = await adapter.parseSubagentUsage(record.agent_session_id, record.cwd, place);
+      parsed = await adapter.parseSubagentUsage(record.agent_session_id, record.cwd, place, record.transcript_path);
     } catch {
       this.writeState(store, record, signature, 'error', 0, 0, SUBAGENT_DOC_SUFFIX);
       return 'error';
@@ -631,6 +663,7 @@ export class ConversationIndexer {
     cwd: string,
     resume: ResumePoint | null,
     place: CliPlace | null,
+    reportedPath: string | null,
   ): Promise<WalkedTranscript> {
     const start = adapter.parseTranscriptWindow ? resume : null;
     const fromSeq = start?.chunkCount ?? 0;
@@ -693,7 +726,7 @@ export class ConversationIndexer {
         // Taken before the parse, which prunes and adds to the carry in place.
         const beforeWindow = { offset, chunkCount: fromSeq + chunks.length, entryCount, carry: [...attributedMessageIds] };
         const window = await adapter.parseTranscriptWindow(
-          agentSessionId, cwd, offset, this.deps.windowBytes, attributedMessageIds, place,
+          agentSessionId, cwd, offset, this.deps.windowBytes, attributedMessageIds, place, reportedPath,
         );
         sourcePath = window.sourcePath ?? sourcePath;
         timeSyncWork('index:chunk-window', () => collect(window.entries));
@@ -711,7 +744,7 @@ export class ConversationIndexer {
     // let the type system carry it instead of a `!`.
     const unwalked = { fromSeq, chunks, usageRecords, spawnLinks, resumeAt: null };
     if (!adapter.parseTranscript) return { sourcePath, entryCount, ...unwalked };
-    const parsed = await adapter.parseTranscript(agentSessionId, cwd, place);
+    const parsed = await adapter.parseTranscript(agentSessionId, cwd, place, reportedPath);
     sourcePath = parsed.sourcePath;
     collect(parsed.entries);
     return { sourcePath, entryCount, ...unwalked };

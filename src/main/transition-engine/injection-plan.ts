@@ -426,6 +426,7 @@ export function buildCommandInjectionVerifier(
   const recordId = record.id;
   const capturedAgentSessionId = record.agent_session_id;
   const capturedCwd = record.cwd;
+  const capturedTranscriptPath = record.transcript_path;
   let resolvedRecord: SessionRecord | null = record;
   let resolvedAt = 0;
   return async (command: string, sentAt: number, mode: InjectionVerifyMode) => {
@@ -475,6 +476,11 @@ export function buildCommandInjectionVerifier(
       agentSessionId: currentAgentSessionId ?? undefined,
       cwd: currentCwd,
       cliTarget,
+      // The file the agent reported writing: a resumed conversation can stay
+      // in the folder it started in. After a /clear it names the old id until
+      // the new one paints, and the adapter ignores a path for another id.
+      // With the record gone, the captured path goes with the captured id.
+      transcriptPath: currentRecord ? currentRecord.transcript_path : capturedTranscriptPath,
       sentAt,
       mode,
     });
@@ -492,6 +498,7 @@ export function buildCommandInjectionVerifier(
       agentSessionId: capturedAgentSessionId,
       cwd: capturedCwd,
       cliTarget,
+      transcriptPath: capturedTranscriptPath,
       sentAt,
       mode,
     });

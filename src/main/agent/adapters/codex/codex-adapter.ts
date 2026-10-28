@@ -3,14 +3,14 @@ import { CodexCommandBuilder } from './command-builder';
 import { removeHooks as removeCodexHooks } from './hook-manager';
 import { CodexSessionHistoryParser } from './session-history-parser';
 import { createCodexCommandInjectionVerifier } from './command-injection-verifier';
-import { parseCodexTranscript, locateCodexTranscriptFile, readCodexTranscriptPage } from './transcript-parser';
+import { parseCodexTranscript, findCodexTranscriptFile, locateCodexTranscriptFile, readCodexTranscriptPage } from './transcript-parser';
 import { migrateCodexProjectData } from './project-relocation';
 import { ensureWorktreeTrust, removeWorktreeTrust } from './trust-manager';
 import { CodexStatusParser } from './status-parser';
 import { CodexHookTrustCheck } from './hook-trust';
 import { discoverCodexCapabilities } from './capability-discovery';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
-import { resolveCliTarget, toStoredCliTarget, type CliPlace } from '../../shared/cli-target';
+import { resolveCliTarget, type CliPlace } from '../../shared/cli-target';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import type {
@@ -292,8 +292,14 @@ export class CodexAdapter implements AgentAdapter {
     return data.includes('\x1b[?25l');
   }
 
-  async locateSessionHistoryFile(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null> {
-    return CodexSessionHistoryParser.locate({ agentSessionId, cwd, cliTarget: toStoredCliTarget(place ?? null) });
+  /**
+   * On demand, any day's rollout: the whole sessions tree newest-first, with
+   * no wait. The live telemetry keeps `CodexSessionHistoryParser.locate`
+   * (`runtime.sessionHistory`), which polls today's and yesterday's folders for a
+   * rollout the CLI is about to write.
+   */
+  async locateSessionHistoryFile(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<string | null> {
+    return findCodexTranscriptFile(agentSessionId, place ?? null);
   }
 
   async parseTranscript(agentSessionId: string, _cwd: string, place?: CliPlace | null): Promise<ParsedTranscript> {

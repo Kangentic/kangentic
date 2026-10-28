@@ -21,6 +21,8 @@ interface SessionRow {
   suspended_at: string | null;
   /** Where the session's CLI ran when it was not this machine (`placeOfRecord`). */
   cli_target: string | null;
+  /** The transcript path the agent reported writing. */
+  transcript_path: string | null;
 }
 
 const DEFAULT_TAIL = 200;
@@ -44,7 +46,8 @@ function resolveSession(
 
   if (sessionId) {
     const row = database.prepare(
-      `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target
+      `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target,
+              transcript_path
        FROM sessions WHERE id = ?`,
     ).get(sessionId) as SessionRow | undefined;
     if (!row) return { error: `Session "${sessionId}" not found` };
@@ -58,7 +61,8 @@ function resolveSession(
   if (!task) return { error: `Task "${taskId}" not found` };
 
   const rows = database.prepare(
-    `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target
+    `SELECT id, task_id, session_type, agent_session_id, cwd, status, started_at, exited_at, suspended_at, cli_target,
+            transcript_path
      FROM sessions WHERE task_id = ? ORDER BY started_at DESC`,
   ).all(task.id) as SessionRow[];
 
@@ -98,7 +102,7 @@ async function locateNativeSessionFile(session: SessionRow): Promise<string | nu
   if (!session.agent_session_id) return null;
   const adapter = agentRegistry.getBySessionType(session.session_type);
   if (!adapter) return null;
-  return adapter.locateSessionHistoryFile(session.agent_session_id, session.cwd, placeOfRecord(session));
+  return adapter.locateSessionHistoryFile(session.agent_session_id, session.cwd, placeOfRecord(session), session.transcript_path);
 }
 
 export async function handleGetSessionFiles(

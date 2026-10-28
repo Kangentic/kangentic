@@ -70,6 +70,13 @@ interface ArchiveTarget {
   cwd: string;
   /** Where the conversation's CLI ran when it was not this machine (a WSL distro): its file is there. */
   place: CliPlace | null;
+  /**
+   * The transcript path the agent reported (the row's `transcript_path`). An
+   * agent can keep writing a resumed conversation outside the folder the cwd
+   * maps to, and a path from the cwd alone would miss it and the archive would
+   * stop updating.
+   */
+  reportedPath: string | null;
 }
 
 interface ArchiveStateRow {
@@ -112,9 +119,24 @@ export class TranscriptArchive {
     if (opened === 'error') return 'error';
     if (!opened) return 'skipped';
     const db = opened;
+    // A row whose status line never painted has no path; an older row of the
+    // same conversation may, as the walk below folds it.
     const record = db.prepare(
-      'SELECT id, agent_session_id, session_type, cwd, cli_target FROM sessions WHERE id = ? OR agent_session_id = ? ORDER BY started_at DESC LIMIT 1',
-    ).get(sessionId, sessionId) as { id: string; agent_session_id: string | null; session_type: string; cwd: string; cli_target: string | null } | undefined;
+      `SELECT id, agent_session_id, session_type, cwd, cli_target,
+              COALESCE(transcript_path, (
+                SELECT older.transcript_path FROM sessions older
+                WHERE older.agent_session_id = sessions.agent_session_id AND older.transcript_path IS NOT NULL
+                ORDER BY older.started_at DESC LIMIT 1
+              )) AS transcript_path
+       FROM sessions WHERE id = ? OR agent_session_id = ? ORDER BY started_at DESC LIMIT 1`,
+    ).get(sessionId, sessionId) as {
+      id: string;
+      agent_session_id: string | null;
+      session_type: string;
+      cwd: string;
+      cli_target: string | null;
+      transcript_path: string | null;
+    } | undefined;
     if (!record?.agent_session_id) return 'skipped';
     try {
       return await this.archiveConversation(db, {
@@ -123,6 +145,7 @@ export class TranscriptArchive {
         sessionType: record.session_type,
         cwd: record.cwd,
         place: placeOfRecord(record),
+        reportedPath: record.transcript_path,
       });
     } catch (error) {
       console.warn(`[retrieval] archive of ${record.agent_session_id.slice(0, 8)} failed:`, error instanceof Error ? error.message : error);
@@ -145,13 +168,31 @@ export class TranscriptArchive {
     result.purged = await this.purgeOrphans(db, shouldContinue);
 
     const rows = db.prepare(
-      'SELECT id, agent_session_id, session_type, cwd, cli_target FROM sessions WHERE agent_session_id IS NOT NULL ORDER BY started_at DESC',
-    ).all() as Array<{ id: string; agent_session_id: string; session_type: string; cwd: string; cli_target: string | null }>;
+      'SELECT id, agent_session_id, session_type, cwd, cli_target, transcript_path FROM sessions WHERE agent_session_id IS NOT NULL ORDER BY started_at DESC',
+    ).all() as Array<{
+      id: string;
+      agent_session_id: string;
+      session_type: string;
+      cwd: string;
+      cli_target: string | null;
+      transcript_path: string | null;
+    }>;
     const newestPerConversation = new Map<string, ArchiveTarget>();
     for (const row of rows) {
-      if (newestPerConversation.has(row.agent_session_id)) continue;
+      const newer = newestPerConversation.get(row.agent_session_id);
+      if (newer) {
+        // A row whose status line never painted has no path; an older row of
+        // the same conversation may.
+        newer.reportedPath ??= row.transcript_path;
+        continue;
+      }
       newestPerConversation.set(row.agent_session_id, {
-        agentSessionId: row.agent_session_id, sessionId: row.id, sessionType: row.session_type, cwd: row.cwd, place: placeOfRecord(row),
+        agentSessionId: row.agent_session_id,
+        sessionId: row.id,
+        sessionType: row.session_type,
+        cwd: row.cwd,
+        place: placeOfRecord(row),
+        reportedPath: row.transcript_path,
       });
     }
 
@@ -162,7 +203,7 @@ export class TranscriptArchive {
       const adapter = this.deps.getAdapter(target.sessionType);
       if (!adapter?.parseTranscriptWindow) continue;
       if (!(await this.mayReadPlace(target.place))) continue;
-      const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
+      const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place, target.reportedPath).catch(() => null);
       if (!sourcePath) continue;
       const stat = await fs.promises.stat(sourcePath).catch(() => null);
       if (!stat) continue;
@@ -228,7 +269,7 @@ export class TranscriptArchive {
     // A stopped WSL distro would start if its file were read; a later walk
     // with the distro running archives it.
     if (!(await this.mayReadPlace(target.place))) return 'skipped';
-    const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place).catch(() => null);
+    const sourcePath = await adapter.locateSessionHistoryFile(target.agentSessionId, target.cwd, target.place, target.reportedPath).catch(() => null);
     if (!sourcePath) return 'missing-source';
     const stat = await fs.promises.stat(sourcePath).catch(() => null);
     if (!stat) return 'missing-source';
@@ -255,7 +296,7 @@ export class TranscriptArchive {
         // Taken before the parse, which prunes and adds to the carry in place.
         const carryBefore = [...attributedMessageIds];
         const parsedWindow = await adapter.parseTranscriptWindow(
-          target.agentSessionId, target.cwd, offset, this.deps.windowBytes, attributedMessageIds, target.place,
+          target.agentSessionId, target.cwd, offset, this.deps.windowBytes, attributedMessageIds, target.place, target.reportedPath,
         );
         // The reader's own size notice is not conversation.
         const entries = parsedWindow.entries.filter((entry) => !(entry.kind === 'system' && entry.subtype === 'truncated'));

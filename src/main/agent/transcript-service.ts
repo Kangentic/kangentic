@@ -295,8 +295,9 @@ export async function resolveSessionTranscript(
       const cached = await getCachedTranscript(
         record.session_type,
         agentSessionId,
-        // A session whose CLI ran in a WSL distro keeps its history there.
-        () => adapter.parseTranscript!(agentSessionId, record.cwd, placeOfRecord(record)),
+        // A session whose CLI ran in a WSL distro keeps its history there, and
+        // the path the agent reported names the file wherever it is.
+        () => adapter.parseTranscript!(agentSessionId, record.cwd, placeOfRecord(record), record.transcript_path),
       );
       entries = cached.entries;
       sourcePath = cached.sourcePath;

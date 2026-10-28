@@ -450,6 +450,7 @@ function recordTurnTokens(context: IpcContext, session: Session): void {
       sessionType,
       cwd: session.cwd,
       cliTarget: context.sessionManager.getSessionCliTarget(session.id),
+      transcriptPath: context.sessionManager.getReportedTranscriptPath(session.id),
       remoteTargets: collectRemoteTargets(agentRegistry),
     }).catch(warn);
   } catch (error) {

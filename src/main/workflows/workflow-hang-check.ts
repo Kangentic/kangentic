@@ -226,7 +226,11 @@ async function lastHistoryWriteAt(
 ): Promise<number | null> {
   const cwd = session.cwd;
   const place = placeFromStored(context.sessionManager.getSessionCliTarget(session.id));
-  const historyFile = await adapter.locateSessionHistoryFile(agentSessionId, cwd, place);
+  // The file the agent reported writing: an agent can keep writing a resumed
+  // conversation outside the folder the cwd maps to, and a stale same-id file
+  // at the cwd path would read as a turn that stopped writing long ago.
+  const reportedPath = context.sessionManager.getReportedTranscriptPath(session.id);
+  const historyFile = await adapter.locateSessionHistoryFile(agentSessionId, cwd, place, reportedPath);
   if (!historyFile) return null;
   let newest: number;
   try {
@@ -235,6 +239,6 @@ async function lastHistoryWriteAt(
     return null;
   }
   if (newest >= enoughAt) return newest;
-  const subagents = adapter.statSubagentTranscripts?.(agentSessionId, cwd, place) ?? null;
+  const subagents = adapter.statSubagentTranscripts?.(agentSessionId, cwd, place, reportedPath) ?? null;
   return subagents && subagents.maxMtimeMs > newest ? subagents.maxMtimeMs : newest;
 }

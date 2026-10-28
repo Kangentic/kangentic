@@ -2337,6 +2337,14 @@ export type SubmissionContext =
       /** Where the session's CLI runs when it is not this machine (a WSL distro): its transcript is there. */
       cliTarget?: StoredCliTarget | null;
       /**
+       * The transcript path the agent reported for this conversation (the
+       * session row's `transcript_path`). The verifier reads it before any
+       * path it derives from `cwd`, because an agent can keep writing a
+       * resumed conversation under the folder it started in. May be stale or
+       * name another id; the adapter checks both.
+       */
+      transcriptPath?: string | null;
+      /**
        * Wall-clock timestamp (ms since epoch) of the most recent Enter write
        * that this verifier should match against. Bounds the JSONL scan window
        * so old entries are not mistakenly treated as confirmation.
@@ -6642,6 +6650,8 @@ export interface AdapterRuntimeStrategy {
       agentSessionId: string;
       shellIds: string[];
       cliTarget?: StoredCliTarget | null;
+      /** The transcript path the agent reported (the live usage's `transcriptPath`), read before any path derived from `cwd`. */
+      transcriptPath?: string | null;
     }): string[];
   };
 
@@ -6671,6 +6681,8 @@ export interface AdapterRuntimeStrategy {
       toolIds: string[];
       sinceMs: number;
       cliTarget?: StoredCliTarget | null;
+      /** The transcript path the agent reported (the live usage's `transcriptPath`), read before any path derived from `cwd`. */
+      transcriptPath?: string | null;
     }): string[];
   };
 }

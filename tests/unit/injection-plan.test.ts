@@ -424,6 +424,29 @@ describe('prepareInjectionPlan', () => {
     expect(seen).toEqual([{ agentSessionId: undefined, cwd: '/mock/project' }]);
   });
 
+  it('hands the verifier the transcript path the agent reported on the session row', async () => {
+    // A resumed Claude conversation stays in the file under the folder it
+    // started in, so a check that only had the cwd looked in the wrong folder
+    // and pressed Enter until the burst escalated to a restart.
+    const seen: Array<string | null | undefined> = [];
+    const adapter = fakeAdapter({
+      getInjectionSequence: () => [],
+      getSubmissionVerifier: () => async (context) => {
+        if (context.type !== 'command-injection') return false;
+        seen.push(context.transcriptPath);
+        return true;
+      },
+    });
+    const reportedPath = '/home/dev/.claude/projects/-mock-project/agent-1.jsonl';
+    const verifier = buildCommandInjectionVerifier(
+      adapter,
+      sessionRepoWith({ id: 's1', agent_session_id: 'agent-1', cwd: '/mock/project/.kangentic/worktrees/1', transcript_path: reportedPath }),
+      't1',
+    );
+    expect(await verifier!('/code-review', Date.now(), 'submitted')).toBe(true);
+    expect(seen).toEqual([reportedPath]);
+  });
+
   it('still requires an agent_session_id for every other adapter', async () => {
     // The opt-out must not weaken the norm: without a session id, scanning
     // would read some other session's transcript.

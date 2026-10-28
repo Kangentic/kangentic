@@ -10,7 +10,8 @@ import { writeTransaction } from '../transaction';
  * Excludes metric columns (set via updateMetrics), the applied model/effort
  * (set via updateAppliedSettings, mirroring how metrics are maintained), and
  * the PTY grid (set via updatePtyGrid from the session manager's grid events),
- * and the reported transcript path (set via setTranscriptPath from usage updates).
+ * and the reported transcript path (set via setTranscriptPath from usage updates,
+ * and inherited by insert() for a resumed conversation).
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
@@ -158,9 +159,20 @@ export class SessionRepository {
   constructor(private db: Database.Database) {}
 
   insert(record: SessionInsertInput): SessionRecord {
+    // A resumed conversation keeps writing the file its agent last reported
+    // (an agent can append a resume to a transcript outside the folder the new
+    // cwd maps to), so the new row starts with that path rather than null until
+    // its own status line paints. Every read that takes the
+    // newest row, the turn-end reply among them, then follows the agent's
+    // report from the first turn. Readers still check that the file is there.
+    const inheritedTranscriptPath = record.agent_session_id
+      ? (this.db.prepare(
+        'SELECT transcript_path FROM sessions WHERE agent_session_id = ? AND transcript_path IS NOT NULL ORDER BY started_at DESC LIMIT 1',
+      ).get(record.agent_session_id) as { transcript_path: string } | undefined)?.transcript_path ?? null
+      : null;
     this.db.prepare(`
-      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.task_id,
@@ -178,6 +190,7 @@ export class SessionRepository {
       record.exited_at,
       record.suspended_by,
       record.cli_target ?? null,
+      inheritedTranscriptPath,
     );
     return {
       ...record,
@@ -199,7 +212,7 @@ export class SessionRepository {
       last_pty_cols: null,
       last_pty_rows: null,
       result_tokens_read_at: null,
-      transcript_path: null,
+      transcript_path: inheritedTranscriptPath,
     };
   }
 

@@ -19,8 +19,12 @@ import type { CliPlace } from '../agent/shared/cli-target';
  * via `onProjectRelocated(oldPath, newPath)` (the same hook used for whole-project
  * moves). This helper detects the rename and reuses that hook to move the history
  * to the new cwd's slug BEFORE the resume command is built, with zero new
- * per-adapter code: cwd-keyed agents migrate; id-keyed agents (Codex, OpenCode)
- * no-op because their locator finds the file regardless of cwd.
+ * per-adapter code: cwd-keyed agents migrate; agents whose resume finds the file
+ * regardless of cwd no-op (Codex and OpenCode find it by id). The skip check is
+ * the adapter's `locateResumeHistoryFile` when it declares one, because an
+ * adapter can read a history from more places than its CLI resumes from.
+ * Worktree folders no longer move at all (`WorktreeManager.createWorktree`), so
+ * the rename this was built for reaches it only from an older install.
  *
  * Best-effort and non-destructive. On any failure it returns silently and the
  * spawn proceeds with the same `--resume <id>`, degrading to today's exact
@@ -84,7 +88,9 @@ export async function migrateResumeCwdIfRenamed(params: {
   try {
     // Already reachable from the new cwd? Then nothing was orphaned (or a prior
     // migration already ran). A positive skip-check, never a gate on resume.
-    const reachable = await adapter.locateSessionHistoryFile(agentSessionId, newCwd, place);
+    const reachable = adapter.locateResumeHistoryFile
+      ? await adapter.locateResumeHistoryFile(agentSessionId, newCwd, place)
+      : await adapter.locateSessionHistoryFile(agentSessionId, newCwd, place);
     if (reachable) return;
     if (place) {
       console.warn(`[RESUME_MIGRATE] Session history ${oldCwd} -> ${newCwd} is in WSL distro ${place.distro}; not migrated`);

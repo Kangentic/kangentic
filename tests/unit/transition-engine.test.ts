@@ -961,7 +961,7 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
     // The locate probe uses `intent.resumeFromCwd` (the RETIRING record's own
     // cwd, i.e. `match.cwd` above), never the new spawn's `cwd` (worktreeDir),
     // on this machine (no CLI target).
-    expect(mockAdapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'), null);
+    expect(mockAdapter.locateSessionHistoryFile).toHaveBeenCalledWith(FORKED_ID, path.join(projectPath, 'worktree'), null, null);
 
     // The reconcile must run BEFORE migrateResumeCwdIfRenamed (see the
     // "Runs BEFORE migrateResumeCwdIfRenamed below so the cwd migration keys
