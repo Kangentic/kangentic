@@ -3,7 +3,10 @@ import React, { useState, useEffect, useLayoutEffect, useCallback, useMemo, useR
 import { ChevronsLeftRight, ChevronsRightLeft, GitBranch, ArrowUp, ArrowDown, Check, GitCommitHorizontal } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { plural } from '@lingui/core/macro';
+import { msg } from '@lingui/core/runtime-macro';
 import { Tooltip } from '../../../Tooltip';
+import { translateText } from '../../../../i18n/translate';
+import type { LocalizedText } from '../../../../../shared/i18n/text';
 import { DetachableSurfaceHeader } from '../../../../pop-out/DetachableSurfaceHeader';
 import { FileTreePanel } from './FileTreePanel';
 import { DiffViewer } from './DiffViewer';
@@ -50,6 +53,13 @@ const DIFF_PANE_DRAG_MIN = 240;               // the diff pane's floor, held whi
 const HISTORY_DEFAULT_HEIGHT = 200;
 // Min body height: about 2.5 commit rows at 44px.
 const HISTORY_DRAG_MIN = 120;
+
+/** The selection bar's way back to the scope the commit was picked from ("Back to Working"). */
+const BACK_TO_SCOPE: Record<GitDiffScope, LocalizedText> = {
+  working: msg`Back to Working`,
+  staged: msg`Back to Staged`,
+  branch: msg`Back to Branch`,
+};
 
 // Min height kept for the tree region above the section while dragging.
 const TREE_REGION_DRAG_MIN = 160;
@@ -1005,7 +1015,7 @@ export function ChangesPanel({ entityId, isFocused = false, scrollKey, projectPa
       <CommitSelectionBar
         shortHash={selectedCommitInfo?.shortHash ?? changesSelectedCommit.slice(0, 7)}
         subject={selectedCommitInfo?.subject ?? null}
-        backLabel={completed ? t`Back to all changes` : scope === 'staged' ? t`Back to Staged` : scope === 'branch' ? t`Back to Branch` : t`Back to Working`}
+        backLabel={completed ? t`Back to all changes` : translateText(BACK_TO_SCOPE[scope])}
         onClose={handleClearCommit}
       />
     </div>

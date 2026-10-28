@@ -20,7 +20,7 @@ export function buildWorkflowAriaLabelConfig(): Partial<AriaLabelConfig> {
       msg`Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel.`,
     ),
     'node.a11yDescription.ariaLiveMessage': ({ direction, x, y }) => i18n._(
-      msg`Moved selected node ${select(direction, { left: 'left', right: 'right', up: 'up', down: 'down', other: '' })}. New position, x: ${x}, y: ${y}`,
+      msg`Moved selected node ${select({ direction }, { left: 'left', right: 'right', up: 'up', down: 'down', other: '' })}. New position, x: ${{ x }}, y: ${{ y }}`,
     ),
     'handle.ariaLabel': i18n._(msg({ message: 'Handle', context: 'canvas link port' })),
   };

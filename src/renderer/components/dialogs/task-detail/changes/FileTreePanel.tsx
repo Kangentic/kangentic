@@ -341,6 +341,8 @@ const FileRowView = memo(function FileRowView({
   // Flat mode shows the full repo-relative path (no directory rows for context);
   // tree mode shows just the basename since the directory rows supply the path.
   const displayName = flat ? row.file.path : (row.file.path.split('/').pop() ?? row.file.path);
+  const statusLabel = translateText(statusConfig.label);
+  const filePath = row.file.path;
 
   return (
     <div
@@ -352,7 +354,7 @@ const FileRowView = memo(function FileRowView({
       data-path={row.file.path}
       data-selected={isSelected}
     >
-      <Tooltip label={`${translateText(statusConfig.label)}: ${row.file.path}`}>
+      <Tooltip label={translateText(msg`${{ statusLabel }}: ${{ filePath }}`)}>
         <button
           onClick={() => onSelect(row.file.path)}
           // Detach this one file's diff into its own OS window. Both clicks of the

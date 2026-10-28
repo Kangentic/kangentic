@@ -435,15 +435,13 @@ export function describeAutomationChanges(
     const before = originals[columnId] ?? [];
     const after = drafts[columnId] ?? [];
     const columnName = nameOfColumn(columnId);
-    // The "(s)" is the English wording tests and the discard dialog already show;
-    // both plural forms keep it, and a translator still gets the plural slots.
     if (after.length > before.length) {
       const addedCount = after.length - before.length;
-      return translateText(msg`${{ columnName }}: added ${plural(addedCount, { one: '# automation(s)', other: '# automation(s)' })}`);
+      return translateText(msg`${{ columnName }}: added ${plural({ addedCount }, { one: '# automation', other: '# automations' })}`);
     }
     if (after.length < before.length) {
       const removedCount = before.length - after.length;
-      return translateText(msg`${{ columnName }}: removed ${plural(removedCount, { one: '# automation(s)', other: '# automation(s)' })}`);
+      return translateText(msg`${{ columnName }}: removed ${plural({ removedCount }, { one: '# automation', other: '# automations' })}`);
     }
     return translateText(msg`${{ columnName }}: edited automations`);
   });

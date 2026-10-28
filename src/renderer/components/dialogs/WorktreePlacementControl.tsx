@@ -2,6 +2,7 @@ import { FolderGit, FolderGit2 } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
+import { cachePerCatalog, cachePerCatalogBy } from '../../i18n/catalog-cache';
 
 /** Where a task's agent runs: its own worktree, or the project folder. */
 export type WorktreePlacement = 'worktree' | 'project';
@@ -26,31 +27,22 @@ const WORKTREE_PLACEMENT_MESSAGES = {
 };
 
 /**
- * Built once per language, so the array keeps its identity across renders:
- * `SegmentedControl` keys a layout effect on the `options` identity, so a fresh
- * array per render would re-measure the thumb on every keystroke in the dialog.
- * The labels are descriptors resolved here, at render time, after the catalog
- * loads, never at module scope. A session has one language, so the cache holds
- * one entry in practice.
+ * Built once until the catalog changes, so the array keeps its identity across
+ * renders: `SegmentedControl` keys a layout effect on the `options` identity, so
+ * a fresh array per render would re-measure the thumb on every keystroke in the
+ * dialog. The labels are descriptors resolved here, at render time, after the
+ * catalog loads, never at module scope.
  */
-const openOptionsByLocale = new Map<string, readonly SegmentedControlOption<WorktreePlacement>[]>();
-
-function openOptionsFor(locale: string): readonly SegmentedControlOption<WorktreePlacement>[] {
-  const cached = openOptionsByLocale.get(locale);
-  if (cached) return cached;
-  const built: readonly SegmentedControlOption<WorktreePlacement>[] = [
-    { value: 'worktree', label: i18n._(WORKTREE_PLACEMENT_MESSAGES.worktreeLabel), icon: <FolderGit2 size={14} />, tip: i18n._(WORKTREE_PLACEMENT_MESSAGES.worktreeTip), testId: 'worktree-option-worktree' },
-    { value: 'project', label: i18n._(WORKTREE_PLACEMENT_MESSAGES.projectLabel), icon: <FolderGit size={14} />, tip: i18n._(WORKTREE_PLACEMENT_MESSAGES.projectTip), testId: 'worktree-option-project' },
-  ];
-  openOptionsByLocale.set(locale, built);
-  return built;
-}
+const openOptions = cachePerCatalog((): readonly SegmentedControlOption<WorktreePlacement>[] => [
+  { value: 'worktree', label: i18n._(WORKTREE_PLACEMENT_MESSAGES.worktreeLabel), icon: <FolderGit2 size={14} />, tip: i18n._(WORKTREE_PLACEMENT_MESSAGES.worktreeTip), testId: 'worktree-option-worktree' },
+  { value: 'project', label: i18n._(WORKTREE_PLACEMENT_MESSAGES.projectLabel), icon: <FolderGit size={14} />, tip: i18n._(WORKTREE_PLACEMENT_MESSAGES.projectTip), testId: 'worktree-option-project' },
+]);
 
 /**
  * The blocked option set for a given reason, cached so its identity is stable
- * across renders for the same reason and language. The comment above applies to the
- * blocked branch too: being blocked is a fixed STATE for the dialog's life, but
- * a `[...]` literal in the render body is a fresh ARRAY on every render, which
+ * across renders for the same reason. The comment above applies to the blocked
+ * branch too: being blocked is a fixed STATE for the dialog's life, but a
+ * `[...]` literal in the render body is a fresh ARRAY on every render, which
  * re-runs `SegmentedControl`'s options-keyed layout effect (two forced layouts
  * plus a rebuilt `ResizeObserver`) on every keystroke in the dialog.
  *
@@ -58,20 +50,10 @@ function openOptionsFor(locale: string): readonly SegmentedControlOption<Worktre
  * (see below). It is bounded by `describeWorktreeBlocker`'s four fixed strings,
  * which is the only thing any caller passes.
  */
-const blockedOptionsByReason = new Map<string, readonly SegmentedControlOption<WorktreePlacement>[]>();
-
-function blockedOptionsFor(locale: string, reason: string): readonly SegmentedControlOption<WorktreePlacement>[] {
-  const cacheKey = `${locale}|${reason}`;
-  const cached = blockedOptionsByReason.get(cacheKey);
-  if (cached) return cached;
-  const openOptions = openOptionsFor(locale);
-  const built: readonly SegmentedControlOption<WorktreePlacement>[] = [
-    { ...openOptions[0], disabledReason: reason, disabled: true },
-    openOptions[1],
-  ];
-  blockedOptionsByReason.set(cacheKey, built);
-  return built;
-}
+const blockedOptionsFor = cachePerCatalogBy((reason: string): readonly SegmentedControlOption<WorktreePlacement>[] => {
+  const [worktreeOption, projectOption] = openOptions();
+  return [{ ...worktreeOption, disabledReason: reason, disabled: true }, projectOption];
+});
 
 /**
  * Where the task's agent runs, beside the Branch field: the shared
@@ -95,8 +77,8 @@ export function WorktreePlacementControl({ value, onChange, blockedReason = null
   const selected: WorktreePlacement = blocked ? 'project' : value;
 
   const options: readonly SegmentedControlOption<WorktreePlacement>[] = blocked
-    ? blockedOptionsFor(i18n.locale, blockedReason)
-    : openOptionsFor(i18n.locale);
+    ? blockedOptionsFor(blockedReason)
+    : openOptions();
 
   return (
     <SegmentedControl

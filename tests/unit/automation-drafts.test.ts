@@ -322,12 +322,14 @@ describe('dirty compare', () => {
   it('describes each changed column for the discard confirmation', () => {
     const originals = { 'lane-1': [draft({ id: 'a1' })] };
     const added = { 'lane-1': [draft({ id: 'a1' }), draft({ id: 'a2', name: 'Second' })] };
+    const addedTwo = { 'lane-1': [draft({ id: 'a1' }), draft({ id: 'a2', name: 'Second' }), draft({ id: 'a3', name: 'Third' })] };
     const removed = { 'lane-1': [] };
     const edited = { 'lane-1': [draft({ id: 'a1', name: 'Renamed' })] };
     const name = () => 'Executing';
 
-    expect(describeAutomationChanges(originals, added, name)).toEqual(['Executing: added 1 automation(s)']);
-    expect(describeAutomationChanges(originals, removed, name)).toEqual(['Executing: removed 1 automation(s)']);
+    expect(describeAutomationChanges(originals, added, name)).toEqual(['Executing: added 1 automation']);
+    expect(describeAutomationChanges(originals, addedTwo, name)).toEqual(['Executing: added 2 automations']);
+    expect(describeAutomationChanges(originals, removed, name)).toEqual(['Executing: removed 1 automation']);
     expect(describeAutomationChanges(originals, edited, name)).toEqual(['Executing: edited automations']);
   });
 });

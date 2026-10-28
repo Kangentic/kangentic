@@ -6,6 +6,9 @@
  *   production build shows its raw message IDs while every gate stays green;
  * - no `.ts` module imports a build-time macro: main bundles with plain esbuild,
  *   and Playwright and the capture rig load `.ts` modules outside Vite;
+ * - the runtime macro gets labeled placeholders (`plural({ count }, ...)`,
+ *   `${{ name }}`): its raw-value form throws under plain esbuild, which no
+ *   Vite-compiled test can see;
  * - MCP and agent command code never translates: text an agent reads stays English;
  * - main's esbuild bundle carries a shared list's descriptors and resolves them;
  * - a shipped language translates the first-launch suggestion's strings;
@@ -21,6 +24,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import * as esbuild from 'esbuild';
+import * as ts from 'typescript';
 import { getConfig } from '@lingui/conf';
 import { getCatalogs } from '@lingui/cli/api';
 import { i18n } from '@lingui/core';
@@ -37,6 +41,12 @@ const SOURCE_ROOT = path.join(REPO_ROOT, 'src');
 const DEV_ONLY_DIRECTORIES = ['src/devtools/', 'src/renderer/components/debug/'];
 const MACRO_IMPORT = /from\s+['"]@lingui\/(core\/macro|react\/macro|core\/runtime-macro)['"]/;
 const BUILD_TIME_MACRO_IMPORT = /from\s+['"]@lingui\/(core\/macro|react\/macro)['"]/;
+const RUNTIME_MACRO_IMPORT = /from\s+['"]@lingui\/core\/runtime-macro['"]/;
+const RUNTIME_MACRO_MODULE = '@lingui/core/runtime-macro';
+/** The runtime macro's functions whose first argument is a labeled object: `plural({ count }, ...)`. */
+const LABELED_FIRST_ARGUMENT_MACROS = new Set(['plural', 'select', 'selectOrdinal']);
+/** The runtime macro's tags, whose placeholders are `${{ name }}` or a nested macro call. */
+const MESSAGE_TAG_MACROS = new Set(['msg', 'defineMessage']);
 /** Languages whose catalogs carry the suggestion strings now: zh-CN's are the design's own. */
 const SEEDED_SUGGESTION_LOCALES = ['zh-CN'];
 
@@ -64,6 +74,81 @@ function collectSourceFiles(directory: string): string[] {
 
 const sourceFiles = collectSourceFiles(SOURCE_ROOT);
 const isDevOnly = (relative: string): boolean => DEV_ONLY_DIRECTORIES.some((directory) => relative.startsWith(directory));
+
+interface RuntimeMacroScan {
+  violations: Array<{ line: number; reason: string }>;
+  /** `plural`, `select` and `selectOrdinal` calls looked at. */
+  callsChecked: number;
+  /** `${...}` slots of a `msg` template looked at. */
+  placeholdersChecked: number;
+}
+
+/**
+ * Reads how a file uses the runtime macro, by syntax tree rather than by pattern,
+ * since a regex cannot tell `plural(` the macro from `.plural(` or a local
+ * function, nor see a template slot's expression whole.
+ *
+ * The runtime macro throws on a raw value ("plural(): A raw value (number) was
+ * passed as first argument"). Vitest compiles the macro with the Lingui Vite
+ * plugin, which accepts it, so only plain esbuild (main's bundle) shows the throw.
+ */
+function scanRuntimeMacroUse(fileName: string, source: string): RuntimeMacroScan {
+  const sourceFile = ts.createSourceFile(
+    fileName,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    fileName.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+  );
+  // Local name -> the macro's own name, so an aliased import is still read as the macro.
+  const macroNameByLocalName = new Map<string, string>();
+  for (const statement of sourceFile.statements) {
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier)) continue;
+    if (statement.moduleSpecifier.text !== RUNTIME_MACRO_MODULE) continue;
+    const bindings = statement.importClause?.namedBindings;
+    if (!bindings || !ts.isNamedImports(bindings)) continue;
+    for (const element of bindings.elements) {
+      macroNameByLocalName.set(element.name.text, (element.propertyName ?? element.name).text);
+    }
+  }
+  const macroNameOf = (expression: ts.Expression): string => (
+    ts.isIdentifier(expression) ? macroNameByLocalName.get(expression.text) ?? '' : ''
+  );
+  const lineOf = (node: ts.Node): number => sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
+
+  const scan: RuntimeMacroScan = { violations: [], callsChecked: 0, placeholdersChecked: 0 };
+  const visit = (node: ts.Node): void => {
+    if (ts.isCallExpression(node) && LABELED_FIRST_ARGUMENT_MACROS.has(macroNameOf(node.expression))) {
+      scan.callsChecked += 1;
+      const firstArgument = node.arguments[0];
+      if (!firstArgument || !ts.isObjectLiteralExpression(firstArgument)) {
+        const name = macroNameOf(node.expression);
+        scan.violations.push({
+          line: lineOf(node),
+          reason: `${name}() takes a labeled object first (${name}({ name }, ...)), got ${firstArgument ? firstArgument.getText(sourceFile) : 'nothing'}`,
+        });
+      }
+    }
+    if (ts.isTaggedTemplateExpression(node) && MESSAGE_TAG_MACROS.has(macroNameOf(node.tag)) && ts.isTemplateExpression(node.template)) {
+      for (const span of node.template.templateSpans) {
+        scan.placeholdersChecked += 1;
+        let slot = span.expression;
+        while (ts.isParenthesizedExpression(slot)) slot = slot.expression;
+        const isLabeledObject = ts.isObjectLiteralExpression(slot);
+        const isNestedMacro = ts.isCallExpression(slot) && LABELED_FIRST_ARGUMENT_MACROS.has(macroNameOf(slot.expression));
+        if (!isLabeledObject && !isNestedMacro) {
+          scan.violations.push({
+            line: lineOf(span.expression),
+            reason: `a msg placeholder takes \${{ name }} or a nested plural/select, got \${${span.expression.getText(sourceFile)}}`,
+          });
+        }
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(sourceFile);
+  return scan;
+}
 
 type LinguiCatalogs = Awaited<ReturnType<typeof getCatalogs>>;
 let catalogs: LinguiCatalogs = [];
@@ -118,6 +203,43 @@ describe('macro boundaries', () => {
     ).toEqual([]);
   });
 
+  it('every runtime-macro plural, select and selectOrdinal takes a labeled object, and every msg placeholder is labeled', () => {
+    const importing = sourceFiles.filter((file) => RUNTIME_MACRO_IMPORT.test(fs.readFileSync(file, 'utf8')));
+    // Vacuity guard: the shared lists and a dozen renderer modules import the runtime macro today.
+    expect(importing.length).toBeGreaterThan(5);
+    let callsChecked = 0;
+    let placeholdersChecked = 0;
+    const offenders: string[] = [];
+    for (const file of importing) {
+      const scan = scanRuntimeMacroUse(file, fs.readFileSync(file, 'utf8'));
+      callsChecked += scan.callsChecked;
+      placeholdersChecked += scan.placeholdersChecked;
+      offenders.push(...scan.violations.map(({ line, reason }) => `${relativePath(file)}:${line} ${reason}`));
+    }
+    expect(callsChecked, 'the scan found no plural, select or selectOrdinal call to check').toBeGreaterThan(0);
+    expect(placeholdersChecked, 'the scan found no msg placeholder to check').toBeGreaterThan(0);
+    expect(
+      offenders,
+      'The runtime macro throws on a raw value under plain esbuild (main, MCP, the phone): '
+      + 'write plural({ count }, ...) and ${{ name }}, never plural(count, ...) or ${name}.',
+    ).toEqual([]);
+  });
+
+  it('the placeholder scan reports a raw plural, a raw select and a raw msg value, and passes the labeled forms', () => {
+    const scan = scanRuntimeMacroUse('known-bad.ts', [
+      "import { msg, plural, select as pick } from '@lingui/core/runtime-macro';",
+      'const maxRuns = 3;',
+      "export const rawPlural = msg`${plural(maxRuns, { one: 'once', other: '# times' })}`;",
+      'export const rawValue = msg`Hello ${maxRuns}`;',
+      "export const rawSelect = pick(maxRuns, { a: 'x', other: 'y' });",
+      "export const labeled = msg`Hello ${{ maxRuns }} ${plural({ maxRuns }, { one: 'once', other: '# times' })}`;",
+      "export const unrelated = otherPlural(maxRuns, { one: 'x', other: 'y' });",
+    ].join('\n'));
+    expect(scan.violations.map((violation) => violation.line)).toEqual([3, 4, 5]);
+    expect(scan.callsChecked).toBe(3);
+    expect(scan.placeholdersChecked).toBe(4);
+  });
+
   it('MCP and agent command code never imports the UI translator', () => {
     const agentFacing = sourceFiles
       .map(relativePath)
@@ -138,20 +260,15 @@ describe("main's esbuild bundle", () => {
     if (sandbox) fs.rmSync(sandbox, { recursive: true, force: true });
   });
 
-  it('bundles a shared list of descriptors with the build options and resolves them in English', async () => {
-    sandbox ||= fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
-    const entry = path.join(sandbox, 'entry.ts');
-    const importPath = (relative: string) => JSON.stringify(toPosix(path.join(REPO_ROOT, relative)));
-    fs.writeFileSync(entry, [
-      `import { KEYBINDINGS } from ${importPath('src/shared/keybindings')};`,
-      `import { TASK_TEMPLATE_VARS } from ${importPath('src/shared/task-template-vars')};`,
-      `import { translateText } from ${importPath('src/main/i18n/main-i18n')};`,
-      `import { englishText } from ${importPath('src/shared/i18n/english')};`,
-      "const label = KEYBINDINGS.find((binding) => binding.id === 'settings.toggle').label;",
-      "const description = TASK_TEMPLATE_VARS.find((templateVar) => templateVar.name === 'task_xml').description;",
-      'console.log(JSON.stringify({ label: translateText(label), english: englishText(label), description: englishText(description) }));',
-    ].join('\n'));
-    const outfile = path.join(sandbox, 'out.js');
+  const importPath = (relative: string) => JSON.stringify(toPosix(path.join(REPO_ROOT, relative)));
+
+  /** Bundles `entryLines` with the options main ships with, then runs the bundle under Node. */
+  async function bundleAndRun(name: string, entryLines: string[]) {
+    // One sandbox for every case in the block, removed once by afterAll.
+    sandbox = sandbox || fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
+    const entry = path.join(sandbox, `${name}.ts`);
+    fs.writeFileSync(entry, entryLines.join('\n'));
+    const outfile = path.join(sandbox, `${name}.js`);
     // scripts/build.js's esbuildCommon, the options main ships with.
     await esbuild.build({
       entryPoints: [entry],
@@ -164,8 +281,23 @@ describe("main's esbuild bundle", () => {
       minify: true,
       logLevel: 'silent',
     });
-    const run = spawnSync(process.execPath, [outfile], { encoding: 'utf8' });
-    expect(run.status, run.stderr).toBe(0);
+    return spawnSync(process.execPath, [outfile], { encoding: 'utf8' });
+  }
+
+  /** A crashed minified bundle prints its source line first. The thrown error is the part worth reading. */
+  const failureText = (run: { stderr: string }): string => run.stderr.split('\n').find((line) => line.startsWith('Error:')) ?? run.stderr.slice(-500);
+
+  it('bundles a shared list of descriptors with the build options and resolves them in English', async () => {
+    const run = await bundleAndRun('entry', [
+      `import { KEYBINDINGS } from ${importPath('src/shared/keybindings')};`,
+      `import { TASK_TEMPLATE_VARS } from ${importPath('src/shared/task-template-vars')};`,
+      `import { translateText } from ${importPath('src/main/i18n/main-i18n')};`,
+      `import { englishText } from ${importPath('src/shared/i18n/english')};`,
+      "const label = KEYBINDINGS.find((binding) => binding.id === 'settings.toggle').label;",
+      "const description = TASK_TEMPLATE_VARS.find((templateVar) => templateVar.name === 'task_xml').description;",
+      'console.log(JSON.stringify({ label: translateText(label), english: englishText(label), description: englishText(description) }));',
+    ]);
+    expect(run.status, failureText(run)).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({
       label: 'Toggle settings',
       english: 'Toggle settings',
@@ -176,43 +308,32 @@ describe("main's esbuild bundle", () => {
   it('resolves the values, plurals and selects main reads from the shared lists', async () => {
     // Main writes these for agents and the run log, so a message that stops
     // resolving in the shipped bundle would reach them as an id or an object.
-    sandbox ||= fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-i18n-bundle-'));
-    const entry = path.join(sandbox, 'entry-values.ts');
-    const importPath = (relative: string) => JSON.stringify(toPosix(path.join(REPO_ROOT, relative)));
-    fs.writeFileSync(entry, [
+    // The Frequency plural is the one the runtime macro threw on when it took a
+    // raw number: Vitest compiles the macro with the Vite plugin and never saw it.
+    const run = await bundleAndRun('entry-values', [
       `import { WORKFLOW_REFUSALS } from ${importPath('src/shared/workflow-refusals')};`,
-      `import { describeAutomationFrequency } from ${importPath('src/shared/automation-describe')};`,
+      `import { describeAutomationFrequency, describeAutomationMarksInWords } from ${importPath('src/shared/automation-describe')};`,
       `import { KNOWLEDGE_GRAPH_TASK_FIELDS } from ${importPath('src/shared/knowledge-graph-task-fields')};`,
       `import { waitingLabel } from ${importPath('src/shared/workflow-waiting')};`,
       `import { translateText } from ${importPath('src/main/i18n/main-i18n')};`,
       `import { englishI18n, englishText } from ${importPath('src/shared/i18n/english')};`,
       "const pullRequest = KNOWLEDGE_GRAPH_TASK_FIELDS.find((field) => field.key === 'pr');",
+      "const row = { type: 'notify', trigger: 'turn_end', config: { title: 'Hi' }, condition: 'the review is clean', final_line: null, max_runs: 3 };",
       'console.log(JSON.stringify({',
       "  refusal: WORKFLOW_REFUSALS.locked('#12', 'Release'),",
       '  once: describeAutomationFrequency(1, englishI18n),',
       '  several: describeAutomationFrequency(3, englishI18n),',
+      '  words: describeAutomationMarksInWords(row, englishI18n),',
       "  pullRequest: englishText(pullRequest.display({ prNumber: 417, prState: 'merged' })),",
       "  waiting: translateText(waitingLabel(['#1', '#2'], false).label),",
       '}));',
-    ].join('\n'));
-    const outfile = path.join(sandbox, 'out-values.js');
-    await esbuild.build({
-      entryPoints: [entry],
-      outfile,
-      bundle: true,
-      platform: 'node',
-      target: 'node24',
-      format: 'cjs',
-      conditions: ['require'],
-      minify: true,
-      logLevel: 'silent',
-    });
-    const run = spawnSync(process.execPath, [outfile], { encoding: 'utf8' });
-    expect(run.status, run.stderr).toBe(0);
+    ]);
+    expect(run.status, failureText(run)).toBe(0);
     expect(JSON.parse(run.stdout)).toEqual({
       refusal: '#12 is locked while Release runs.',
       once: 'At most once until you move the task.',
       several: 'At most 3 times until you move the task.',
+      words: 'only if the review is clean; at most 3 times until you move the task',
       pullRequest: 'PR 417 merged',
       waiting: 'Blocked by 2 tasks...',
     });

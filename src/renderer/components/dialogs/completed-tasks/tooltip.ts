@@ -16,7 +16,7 @@ export function buildToolsTooltip(summary: SessionSummary): string {
   const breakdown = summary.toolBreakdown ?? [];
   if (breakdown.length === 0) {
     const toolCallCount = summary.toolCallCount;
-    return i18n._(msg`${plural(toolCallCount, { one: '# tool call', other: '# tool calls' })}`);
+    return i18n._(msg`${plural({ toolCallCount }, { one: '# tool call', other: '# tool calls' })}`);
   }
   const sorted = breakdown
     .slice()
