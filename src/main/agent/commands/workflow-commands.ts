@@ -320,10 +320,16 @@ function failedClause(failed: WorkflowAgentFailure[], verb: string): string {
 export const handlePauseWorkflow: CommandHandler = async (params, context) => {
   try {
     const workflow = workflowParam(params, context);
-    const { workflow: paused, ...report } = await pauseWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id, controlSource(context));
+    // The caller's own session, when it is a member's, pauses once this turn
+    // ends, so the call and this reply stay in its conversation.
+    const { workflow: paused, callerPausesAfterTurn, ...report } = await pauseWorkflow(
+      requireWorkflowRuntimeContext(), context.projectId, workflow.id, controlSource(context),
+      { callerSessionId: context.callerSessionId ?? null },
+    );
+    const ownSession = callerPausesAfterTurn ? ' Your own session pauses when this turn ends.' : '';
     return {
       success: true,
-      message: `Paused "${paused.title}" (${agentCount(report.paused)} paused).${failedClause(report.failed, 'paused')} The workflow starts and moves nothing until it is resumed.`,
+      message: `Paused "${paused.title}" (${agentCount(report.paused)} paused).${failedClause(report.failed, 'paused')} The workflow starts and moves nothing until it is resumed.${ownSession}`,
       data: report,
     };
   } catch (error) {

@@ -136,6 +136,7 @@ const {
   CARRIED_IN_TURN_REASON,
   AGENT_NOT_IDLE_REASON,
 } = await import('../../src/main/automations/turn-end/turn-end-runner');
+const { markOwnCallSession } = await import('../../src/main/ipc/handlers/own-call-turn-wait');
 
 const SESSION_ID = 'session-1';
 const PROJECT_ID = 'project-1';
@@ -424,6 +425,55 @@ describe('a turn end and the rows it may run', () => {
 
       expect(hoisted.executeTransition).toHaveBeenCalledTimes(1);
       expect(runs.countRuns('row-on-to-testing', taskId)).toBe(1);
+    });
+  });
+
+  // #916. A task's own agent moved it, and the move keeps that agent's session
+  // until the turn that made the move ends (`own-call-turn-wait.ts`). That turn
+  // end lands while the task already sits in the new column and `session_id`
+  // still names the caller. It is the old column's turn: no row of the new one
+  // runs, and nothing is written to its log.
+  describe('a turn end from a session whose own move is still settling', () => {
+    it('runs no row and writes no skip for the turn that made the move', async () => {
+      hoisted.rows = [row(), row({ id: 'row-second', name: 'On to Merge', position: 1 })];
+      const movedAt = secondsAgo(2);
+      enterColumnAt(movedAt, 'agent');
+      const release = markOwnCallSession(SESSION_ID);
+      try {
+        await endTurn(Date.parse(movedAt) - 30_000);
+      } finally {
+        release();
+      }
+
+      expect(hoisted.waitForTurnCompletion).not.toHaveBeenCalled();
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(hoisted.runWorkflowStep).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+    });
+
+    it('does not run the rows even for a move that would count the turn as this column\'s', async () => {
+      hoisted.rows = [row()];
+      enterColumnAt(secondsAgo(2), 'auto-move');
+      const release = markOwnCallSession(SESSION_ID);
+      try {
+        await endTurn(Date.now() - 30_000);
+      } finally {
+        release();
+      }
+
+      expect(hoisted.executeTransition).not.toHaveBeenCalled();
+      expect(runs.listForTask(taskId)).toEqual([]);
+    });
+
+    it('judges the same turn end as before once the move has settled (the control)', async () => {
+      hoisted.rows = [row()];
+      const movedAt = secondsAgo(2);
+      enterColumnAt(movedAt, 'agent');
+      markOwnCallSession(SESSION_ID)();
+
+      await endTurn(Date.parse(movedAt) - 30_000);
+
+      expect(skippedRows().map((run) => run.detail)).toEqual([CARRIED_IN_TURN_REASON]);
     });
   });
 

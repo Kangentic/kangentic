@@ -41,6 +41,7 @@ import {
   isUnderWorkflowRecovery,
   resetWorkflowRecoveryForTests,
 } from '../../src/main/workflows/workflow-recovery-state';
+import { markOwnCallSession } from '../../src/main/ipc/handlers/own-call-turn-wait';
 import { openTestDatabase } from './helpers/test-database';
 
 interface CheckInput {
@@ -875,6 +876,23 @@ describe('a running workflow task whose turn ends without its step done', () => 
       expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
       expect(nudges()).toHaveLength(1);
       expect(nudges()[0]).toContain(`The ${workingLane.name} step is not done yet: your last reply was written before this task moved to ${workingLane.name}.`);
+    });
+
+    // #916. The agent moved its own task, and the move keeps its session until
+    // the turn that made it ends. That idle lands while the task already sits in
+    // the new column with the old session, which the move is about to end.
+    it('is left alone when the idle ends the turn that moved its own task', async () => {
+      const release = markOwnCallSession(SESSION_ID);
+      try {
+        sessionManager.emit('activity', SESSION_ID, 'idle');
+        await settle();
+      } finally {
+        release();
+      }
+
+      expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+      await wait(3 * 60 * MINUTE);
+      expect(nudges()).toHaveLength(0);
     });
 
     // A column that is not a working column has no step for recovery to finish.

@@ -132,6 +132,7 @@ import {
 } from '../../src/main/ipc/handlers/strategy-propagation';
 import { reapTaskLeftovers } from '../../src/main/ipc/helpers';
 import { closeTaskWindows } from '../../src/main/ipc/helpers/task-windows';
+import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../src/main/git/worktree-manager';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { GitTaskChangesResult, Project, Swimlane, TaskReport } from '../../src/shared/types';
@@ -269,6 +270,35 @@ describe('buildCommandContextForProject', () => {
     expect(typeof context!.onSwimlaneUpdated).toBe('function');
     expect(typeof context!.onBacklogChanged).toBe('function');
     expect(typeof context!.onLabelColorsChanged).toBe('function');
+  });
+});
+
+// The move tool names the task's own agent and its live session; a move that
+// ends that session waits for its turn (#916). Both reach `handleTaskMove`.
+describe('buildCommandContextForProject - onTaskMove', () => {
+  const MOVE_INPUT = { taskId: 'task-1', targetSwimlaneId: 'lane-review', targetPosition: 0 };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('forwards the task\'s own agent and its session to the move', async () => {
+    const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
+
+    await context!.onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true, moverSessionId: 'session-own' });
+
+    expect(handleTaskMove).toHaveBeenCalledWith(
+      expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+      { moverIsTaskAgent: true, moverSessionId: 'session-own' },
+    );
+  });
+
+  it('passes no options for a move by anyone else', async () => {
+    const context = buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID);
+
+    await context!.onTaskMove(MOVE_INPUT);
+
+    expect(handleTaskMove).toHaveBeenCalledWith(expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined);
   });
 });
 

@@ -45,6 +45,7 @@ import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-run
 import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
 import { startWorkflowHangCheck } from '../workflows/workflow-hang-check';
 import { isRunningWorkflowStepTask, workflowOfTask } from '../workflows/workflow-home';
+import { isSessionInOwnCall } from './handlers/own-call-turn-wait';
 import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
@@ -228,6 +229,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       }
     },
     isWorkflowStepTask: (projectId, taskId) => isRunningWorkflowStepTask(projectId, taskId),
+    isSessionInOwnCall,
     showNotification: (input) => showDesktopNotification(requireContext(), input),
   });
 

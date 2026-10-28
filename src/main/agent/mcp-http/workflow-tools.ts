@@ -67,7 +67,14 @@ const PLANNED_TASK_SCHEMA = z.object({
   ...TASK_PLAN_APPROVAL_SHAPE,
 });
 
-export function registerWorkflowTools(server: McpServer, resolver: RequestResolver): void {
+export function registerWorkflowTools(
+  server: McpServer,
+  resolver: RequestResolver,
+  // The calling agent's task and session, from the request's caller segment,
+  // or null for a caller with neither. A pause that would end the caller's own
+  // session ends it once the caller's turn does.
+  caller: { taskId: string | null; sessionId: string | null } = { taskId: null, sessionId: null },
+): void {
   server.registerTool(
     'kangentic_list_workflows',
     {
@@ -146,7 +153,8 @@ export function registerWorkflowTools(server: McpServer, resolver: RequestResolv
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ workflow, project }) => withProject(resolver, project, (ctx) => callHandler('pause_workflow', { workflow }, ctx, 'Failed to pause the workflow')),
+    // The caller rides the context, never the params (see `CommandContext.callerTaskId`).
+    async ({ workflow, project }) => withProject(resolver, project, (ctx) => callHandler('pause_workflow', { workflow }, { ...ctx, callerTaskId: caller.taskId, callerSessionId: caller.sessionId }, 'Failed to pause the workflow')),
   );
 
   server.registerTool(

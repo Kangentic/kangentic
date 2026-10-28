@@ -209,7 +209,8 @@ When every task is in Done, a Workflow complete notification says so (Settings >
 **Pausing.** The Running button pauses the workflow, and so do the phone and
 `kangentic_pause_workflow`. Pause stops every one of its agents at once, a task with paused
 automations included, and frees what they hold. If an agent cannot be stopped, a toast names its
-task. While paused, the workflow does nothing by itself: it starts no task, judges no turn, nudges
+task. When an agent pauses its own workflow, that agent stops once its turn ends, so its reply
+stays in its conversation. While paused, the workflow does nothing by itself: it starts no task, judges no turn, nudges
 nothing and moves no card. You still can. Resume one card's agent to look into it, drag cards, or
 approve a plan. A card you work this way is an ordinary card. Its column's automations run, and its
 agent's own `kangentic_move_task` moves it, so it can run on through its board. A card whose agent

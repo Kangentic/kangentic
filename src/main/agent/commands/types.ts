@@ -97,10 +97,12 @@ export interface CommandContext {
    * destination column's own On task enter rows (`deliverMessageAfterMove`):
    * the move and its hand-off are one call, because a separate send cannot
    * reach a session that is being suspended or spawned by the move itself.
+   * `moverSessionId` names the task's own agent session that asked for the
+   * move: a move that ends it lets its turn finish first.
    */
   onTaskMove: (
     input: { taskId: string; targetSwimlaneId: string; targetPosition: number },
-    options?: { message?: string | null; moverIsTaskAgent?: boolean },
+    options?: { message?: string | null; moverIsTaskAgent?: boolean; moverSessionId?: string },
   ) => Promise<void>;
   /**
    * The task whose agent made this call (from the MCP request's caller
@@ -110,6 +112,11 @@ export interface CommandContext {
    * path passes straight through.
    */
   callerTaskId?: string | null;
+  /**
+   * The session that made this call (the MCP request's caller segment), on the
+   * same terms as `callerTaskId`. Unset for the phone.
+   */
+  callerSessionId?: string | null;
   /**
    * Set to `'phone'` by the phone's board-tool path, which calls these
    * handlers directly, and unset for every MCP call. Only for naming the caller

@@ -210,6 +210,8 @@ export function registerTaskTools(
   // The task whose agent is calling, resolved from the request's caller
   // segment; undefined for a caller with no task.
   callerTaskId?: string | null,
+  // That caller segment itself: the calling agent's own session id.
+  callerSessionId?: string | null,
 ): void {
   // --- kangentic_create_task ---
   server.registerTool(
@@ -791,9 +793,9 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    // The caller's task rides the context, never the params (see
+    // The caller's task and session ride the context, never the params (see
     // `CommandContext.callerTaskId`).
-    async ({ taskId, column, position, message, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null, message: message ?? null }, { ...ctx, callerTaskId }, 'Failed to move task')),
+    async ({ taskId, column, position, message, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null, message: message ?? null }, { ...ctx, callerTaskId, callerSessionId }, 'Failed to move task')),
   );
 
   // --- kangentic_reorder_tasks ---

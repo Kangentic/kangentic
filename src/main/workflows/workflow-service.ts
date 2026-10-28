@@ -39,6 +39,7 @@ import { agentRegistry } from '../agent/agent-registry';
 import { validateSpawnOverrides } from '../agent/mcp-http/spawn-override-validation';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
+import { markOwnCallSession, waitForOwnAgentTurn } from '../ipc/handlers/own-call-turn-wait';
 import { resumeTaskSession } from '../ipc/handlers/session-resume';
 import { reconcileTaskSessionRef } from '../ipc/handlers/session-reconcile';
 import { autoSpawnForTask } from '../ipc/helpers/agent-spawn';
@@ -970,13 +971,21 @@ function announceWorkflowBoards(context: IpcContext, homeProjectId: string, work
  *
  * `source` names who asked, for the log line: a pause that worked used to
  * leave no trace at all.
+ *
+ * `callerSessionId` is the session of an agent that asked for the pause. When
+ * it is a member's live session, that one member pauses only once the caller's
+ * turn ends (`pauseOwnSessionAfterTurn`), after this returns, so the call and
+ * its reply reach the agent's own conversation. Paused at once, Claude exits
+ * without writing them, and after a Resume the agent pauses its workflow again.
+ * `callerPausesAfterTurn` says it happened, for the reply.
  */
 export async function pauseWorkflow(
   context: IpcContext,
   homeProjectId: string,
   workflowId: string,
   source: string,
-): Promise<{ workflow: Workflow } & WorkflowPauseReport> {
+  options: { callerSessionId?: string | null } = {},
+): Promise<{ workflow: Workflow; callerPausesAfterTurn: boolean } & WorkflowPauseReport> {
   const workflow = requireWorkflow(homeProjectId, workflowId);
   if (workflow.state !== 'running') throw new WorkflowRequestError(`"${workflow.title}" is ${describeState(workflow)}, so there is nothing to pause.`);
   new WorkflowRepository(getProjectDb(homeProjectId)).setState(workflowId, 'paused');
@@ -990,12 +999,24 @@ export async function pauseWorkflow(
   // rows (a Condition check, a Move to column) or a step check: stop them, so
   // no row moves a card on and starts the next column's agent.
   for (const { task } of members) supersedeTurnEndWork(task.id);
-  // Every task, with or without a session pointer: the pause's own reconcile
-  // re-links a live agent whose pointer was lost, and answers `not-live` cheaply
-  // for the rest. It also cancels a start or a resume still in flight.
+  // The member whose live session asked for this pause, if any.
+  const callerSessionId = options.callerSessionId ?? null;
+  const callerMember = callerSessionId
+    ? members.find(({ task }) => task.session_id === callerSessionId)
+    : undefined;
+  // Every other task, with or without a session pointer: the pause's own
+  // reconcile re-links a live agent whose pointer was lost, and answers
+  // `not-live` cheaply for the rest. It also cancels a start or a resume still
+  // in flight.
   const outcomes = await Promise.allSettled(
-    members.map(({ projectId, task }) => pauseTaskSession(context, task.id, { projectId })),
+    // The caller counts as paused here: its pause is queued for its turn end.
+    members.map(({ projectId, task }) => (callerMember?.task.id === task.id
+      ? Promise.resolve('paused' as const)
+      : pauseTaskSession(context, task.id, { projectId }))),
   );
+  if (callerMember && callerSessionId) {
+    pauseOwnSessionAfterTurn(context, homeProjectId, workflowId, callerMember, callerSessionId);
+  }
   const report: WorkflowPauseReport = { paused: 0, notLive: 0, failed: [] };
   outcomes.forEach((outcome, index) => {
     const { projectId, task } = members[index];
@@ -1012,7 +1033,42 @@ export async function pauseWorkflow(
     `[WORKFLOW] Paused "${workflow.title}" from ${source}: ${report.paused} ${plural(report.paused, 'agent')} paused,`
     + ` ${report.notLive} ${plural(report.notLive, 'task')} had no live agent, ${failureSummary(report.failed)}`,
   );
-  return { workflow: requireWorkflow(homeProjectId, workflowId), ...report };
+  return { workflow: requireWorkflow(homeProjectId, workflowId), callerPausesAfterTurn: callerMember !== undefined, ...report };
+}
+
+/**
+ * Pause the session that paused its own workflow, once the turn that made the
+ * call ends. Marked until then (`markOwnCallSession`), so that turn's end runs
+ * none of the column's rows, arms no recovery and raises no idle notice: the
+ * workflow is paused, and a Move to column row would send the card on. Nothing
+ * waits on it. A Resume that lands first leaves the agent working.
+ */
+function pauseOwnSessionAfterTurn(
+  context: IpcContext,
+  homeProjectId: string,
+  workflowId: string,
+  member: { projectId: string; task: Task },
+  sessionId: string,
+): void {
+  const release = markOwnCallSession(sessionId);
+  void (async () => {
+    try {
+      await waitForOwnAgentTurn(context.sessionManager, sessionId, 'paused its own workflow');
+      if (new WorkflowRepository(getProjectDb(homeProjectId)).getById(workflowId)?.state !== 'paused') return;
+      // Only the session that made the call: the task may have a newer one by now.
+      const outcome = await pauseTaskSession(context, member.task.id, {
+        projectId: member.projectId,
+        stillEligible: (liveSession) => liveSession.id === sessionId,
+      });
+      if (outcome === 'declined') {
+        console.log(`[WORKFLOW] #${member.task.display_id} runs a newer session than the one that paused its workflow; left it running.`);
+      }
+    } catch (error) {
+      console.warn(`[WORKFLOW] Could not pause #${member.task.display_id} after its own pause call:`, error);
+    } finally {
+      release();
+    }
+  })();
 }
 
 type ResumeOutcome = 'resumed' | 'started' | 'alreadyRunning' | 'skipped';

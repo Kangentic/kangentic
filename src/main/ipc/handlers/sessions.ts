@@ -31,7 +31,8 @@ import { forgetTranscriptPath, persistTranscriptPath } from './session-transcrip
 import { abortInFlightResume } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
-import type { AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
+import { isSessionInOwnCall } from './own-call-turn-wait';
+import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
 import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
@@ -45,6 +46,22 @@ const sessionStartTimes = new Map<string, number>();
 // event so we never double-fire if `session-changed` re-emits running for the
 // same id. Cleared on exit alongside `sessionStartTimes`.
 const sessionSpawnAnalyticsFired = new Set<string>();
+
+/**
+ * The reason a renderer gets with an activity push. An idle that ends the turn
+ * in which the session moved its own task or paused its own workflow, while
+ * that call is still taking effect, is flagged `inOwnCall`, so the renderer
+ * raises no "waiting on you" toast and moves no focus for it. That turn belongs
+ * to the column the task left or to a paused workflow. Most such calls end the
+ * session moments later. A move that keeps it is flagged as well: the move's
+ * own toast already says where the task went.
+ */
+export function markOwnCallIdle(sessionId: string, state: ActivityState, reason: ActivityReason): ActivityReason {
+  // activity-state-ok: granular, only a finished turn is flagged; a permission
+  // prompt still needs the user.
+  if (state !== 'idle' || reason.kind !== 'idle' || !isSessionInOwnCall(sessionId)) return reason;
+  return { ...reason, inOwnCall: true };
+}
 
 export function registerSessionHandlers(context: IpcContext): void {
   // === Sessions ===
@@ -405,11 +422,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     },
   );
 
-  context.sessionManager.on('activity', (sessionId: string, state: string, reason: unknown) => {
+  context.sessionManager.on('activity', (sessionId: string, state: ActivityState, reason: ActivityReason) => {
     if (!context.mainWindow.isDestroyed()) {
       const projectId = context.sessionManager.getSessionProjectId(sessionId);
       const taskId = context.sessionManager.getSessionTaskId(sessionId);
-      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, reason, projectId, taskId);
+      broadcast(context.mainWindow, IPC.SESSION_ACTIVITY, sessionId, state, markOwnCallIdle(sessionId, state, reason), projectId, taskId);
 
       // A session going idle (the agent finished its turn) is the catch-all
       // signal that a PR may have just been created mid-session - the move-time

@@ -80,11 +80,28 @@ describe('pause and resume report their agents', () => {
 
     const response = await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, { ...context, via: 'phone' });
 
-    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone');
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone', { callerSessionId: null });
     expect(response).toEqual({
       success: true,
       message: 'Paused "Usage budgets" (2 agents paused). #917 and #918 could not be paused. The workflow starts and moves nothing until it is resumed.',
       data: { paused: 2, notLive: 1, failed },
+    });
+  });
+
+  // #916's class: a member's own agent paused its workflow. Its session pauses
+  // once its turn ends, so the reply says so and the call stays in its
+  // conversation.
+  it('pause hands the caller\'s session to the service, and tells an agent its own session pauses when the turn ends', async () => {
+    resolveWorkflow.mockReturnValue(workflow);
+    pauseWorkflow.mockResolvedValue({ workflow, paused: 2, notLive: 0, failed: [], callerPausesAfterTurn: true });
+
+    const response = await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, { ...context, callerSessionId: 'session-caller' });
+
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'an MCP client', { callerSessionId: 'session-caller' });
+    expect(response).toEqual({
+      success: true,
+      message: 'Paused "Usage budgets" (2 agents paused). The workflow starts and moves nothing until it is resumed. Your own session pauses when this turn ends.',
+      data: { paused: 2, notLive: 0, failed: [] },
     });
   });
 
@@ -116,9 +133,10 @@ describe('pause and resume name the agent that asked', () => {
   const resumeReport = { workflow, resumed: 0, started: 0, alreadyRunning: 0, failed: [] };
   // Not a task on any board here: only its first eight characters may be named.
   const unknownCallerTaskId = 'abcdef12-3456-4789-8abc-def012345678';
+  // A pause also hands on the caller's session (null for these callers).
   const controls = [
-    { tool: 'pause_workflow', service: pauseWorkflow, report: pauseReport },
-    { tool: 'resume_workflow', service: resumeWorkflow, report: resumeReport },
+    { tool: 'pause_workflow', service: pauseWorkflow, report: pauseReport, trailing: [{ callerSessionId: null }] },
+    { tool: 'resume_workflow', service: resumeWorkflow, report: resumeReport, trailing: [] },
   ] as const;
 
   let database: Database.Database;
@@ -141,7 +159,7 @@ describe('pause and resume name the agent that asked', () => {
     database.close();
   });
 
-  for (const { tool, service, report } of controls) {
+  for (const { tool, service, report, trailing } of controls) {
     it(`${tool} names the agent of its task by display id when the board holds the task`, async () => {
       service.mockResolvedValue(report);
       const asked = { ...context, callerTaskId: callerTask.id, getProjectDb: () => database } as unknown as CommandContext;
@@ -150,7 +168,7 @@ describe('pause and resume name the agent that asked', () => {
 
       expect(response.success).toBe(true);
       expect(service).toHaveBeenCalledTimes(1);
-      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', `the agent of #${callerTask.display_id}`);
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', `the agent of #${callerTask.display_id}`, ...trailing);
     });
 
     it(`${tool} names the agent by the start of its task id when the board does not hold the task`, async () => {
@@ -160,7 +178,7 @@ describe('pause and resume name the agent that asked', () => {
       const response = await commandHandlers[tool]({ workflow: 'Usage budgets' }, asked);
 
       expect(response.success).toBe(true);
-      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12');
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12', ...trailing);
     });
 
     it(`${tool} names the agent by the start of its task id when the board cannot be read, and still pauses or resumes`, async () => {
@@ -174,7 +192,7 @@ describe('pause and resume name the agent that asked', () => {
       const response = await commandHandlers[tool]({ workflow: 'Usage budgets' }, asked);
 
       expect(response.success).toBe(true);
-      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12');
+      expect(service).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the agent of task abcdef12', ...trailing);
     });
   }
 
@@ -182,11 +200,11 @@ describe('pause and resume name the agent that asked', () => {
     pauseWorkflow.mockResolvedValue(pauseReport);
 
     await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, context);
-    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'an MCP client');
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'an MCP client', { callerSessionId: null });
 
     const fromPhone = { ...context, via: 'phone', callerTaskId: callerTask.id, getProjectDb: () => database } as unknown as CommandContext;
     await commandHandlers.pause_workflow({ workflow: 'Usage budgets' }, fromPhone);
-    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone');
+    expect(pauseWorkflow).toHaveBeenLastCalledWith(expect.anything(), 'proj-1', 'wf-1', 'the phone', { callerSessionId: null });
   });
 });
 

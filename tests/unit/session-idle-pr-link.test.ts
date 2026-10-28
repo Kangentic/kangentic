@@ -111,8 +111,10 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
 }));
 
 // Import under test AFTER all mocks are registered.
-import { registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
+import { markOwnCallIdle, registerSessionHandlers } from '../../src/main/ipc/handlers/sessions';
+import { markOwnCallSession } from '../../src/main/ipc/handlers/own-call-turn-wait';
 import { autoLinkPRForTask } from '../../src/main/pr/pr-linking';
+import { IPC } from '../../src/shared/ipc-channels';
 
 // ---------------------------------------------------------------------------
 // Shared fixture factory
@@ -149,7 +151,11 @@ function createMockContext() {
 function fireActivity(context: ReturnType<typeof createMockContext>, sessionId: string, state: string): void {
   const handler = capturedSessionEventHandlers.get('activity');
   if (!handler) throw new Error('activity handler was not registered');
-  handler(sessionId, state, undefined);
+  // The engine sends a reason with every state, as `ActivityReason` types it.
+  const reason = state === 'idle' ? { kind: 'idle', since: 1 }
+    : state === 'permission' ? { kind: 'permission', since: 1 }
+      : { kind: 'turn-active' };
+  handler(sessionId, state, reason);
 }
 
 describe('session-idle PR auto-link trigger', () => {
@@ -189,5 +195,53 @@ describe('session-idle PR auto-link trigger', () => {
     fireActivity(context, 'sess-transient', 'idle');
 
     expect(autoLinkPRForTask).not.toHaveBeenCalled();
+  });
+});
+
+// #916. A move by the task's own agent keeps its session until the turn that
+// made the move ends. The renderer is told that idle is the move's, so it raises
+// no "waiting on you" toast and moves no focus for a session about to end.
+describe('the activity push for a session whose own move is settling', () => {
+  let context: ReturnType<typeof createMockContext>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedSessionEventHandlers.clear();
+    context = createMockContext();
+    registerSessionHandlers(context as never);
+  });
+
+  function pushedReason(): unknown {
+    const call = context.mainWindow.webContents.send.mock.calls.find(([channel]) => channel === IPC.SESSION_ACTIVITY);
+    return call?.[3];
+  }
+
+  it('flags the idle that ends the turn', () => {
+    const release = markOwnCallSession('sess-1');
+    try {
+      capturedSessionEventHandlers.get('activity')?.('sess-1', 'idle', { kind: 'idle', since: 1 });
+    } finally {
+      release();
+    }
+
+    expect(pushedReason()).toEqual({ kind: 'idle', since: 1, inOwnCall: true });
+  });
+
+  it('leaves a permission prompt in that turn unflagged', () => {
+    expect(markOwnCallIdle('sess-1', 'permission', { kind: 'permission', since: 1 })).toEqual({ kind: 'permission', since: 1 });
+    const release = markOwnCallSession('sess-1');
+    try {
+      expect(markOwnCallIdle('sess-1', 'permission', { kind: 'permission', since: 1 })).toEqual({ kind: 'permission', since: 1 });
+    } finally {
+      release();
+    }
+  });
+
+  it('leaves an idle unflagged once the move has settled (the control)', () => {
+    markOwnCallSession('sess-1')();
+
+    capturedSessionEventHandlers.get('activity')?.('sess-1', 'idle', { kind: 'idle', since: 1 });
+
+    expect(pushedReason()).toEqual({ kind: 'idle', since: 1 });
   });
 });

@@ -147,7 +147,7 @@ Move a task to a different column, optionally placing it at a chosen slot in tha
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`), or `"next"` for the column after the task's current one. A column literally named "next" wins. |
 | `position` | number | No | Zero-based ordinal slot among the column's tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Omit to append to the end of the column, which is the default. |
-| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. Refused on a move that stays in the task's column. |
+| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. Refused on a move that stays in the task's column, except from the task's own agent (see below). |
 
 Naming the task's **current** column together with `position` repositions it in place. That path is
 presentation only: it does not change the task's column, session, worktree, or `session_id`, and it
@@ -159,6 +159,20 @@ is the appending slot.
 
 `position` has no useful effect when moving into Done, which archives the task and takes it off the
 board.
+
+Naming the task's current column with no `position` moves nothing and answers `Task "<title>" is
+already in <column>.` That is a success, not an error, so an agent that repeats a move it already
+made gets a harmless answer. A `message` on that call is refused for any caller but the task's own
+agent, which gets the same answer plus "Nothing moved, so the message was not sent." `column:
+"next"` is relative to where the task is now, so repeating it moves the task again.
+
+When the task's own agent moves it and the move ends that agent's session (Done, a column with no
+agent, an isolated or always-fresh column, an agent or model change), the session ends only after
+the turn that made the call, up to 30 seconds. The call and its result then stay in the agent's own
+conversation, so a later resume of that conversation does not make the move again. The reply tells
+the agent: "Your session ends when this turn does." for Done or a column with no agent, and "If
+<column> starts a session of its own, yours ends when this turn does." otherwise. See
+[A call that ends the caller's own session](../../architecture/sessions/suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session).
 
 To re-sequence several tasks at once, use [kangentic_reorder_tasks](#kangentic_reorder_tasks).
 

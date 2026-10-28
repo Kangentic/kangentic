@@ -18,6 +18,8 @@
  *   - `column: "next"` follows the task's workflow route, and the board for an
  *     ordinary task
  *   - `message` is validated before any move fires
+ *   - the task's own live session is named to the move (`moverSessionId`), and
+ *     its repeat of a move already made is a plain "already in" answer
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -180,6 +182,85 @@ describe('handleMoveTask: workflow lock, caller identity, "next" and message val
         expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
         { moverIsTaskAgent: true },
       );
+    });
+  });
+
+  // #916. A move that ends the caller's own session waits for its turn to end,
+  // so the call reaches the agent's conversation; the move learns which session
+  // to wait for from here. A repeat of a move already made is harmless.
+  describe('the task\'s own agent session', () => {
+    const OWN_SESSION_ID = 'session-own-1';
+
+    function ownTask(): Task {
+      const task = ordinaryTask();
+      tasks.update({ id: task.id, session_id: OWN_SESSION_ID });
+      context.callerTaskId = task.id;
+      context.callerSessionId = OWN_SESSION_ID;
+      return task;
+    }
+
+    it('names the mover session when the caller is the task\'s live session', () => {
+      const task = ownTask();
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      expect(response.success).toBe(true);
+      expect(onTaskMove).toHaveBeenCalledWith(
+        expect.objectContaining({ taskId: task.id, targetSwimlaneId: laneIds['Code Review'] }),
+        { moverIsTaskAgent: true, moverSessionId: OWN_SESSION_ID },
+      );
+      expect(response.message).toContain('If Code Review starts a session of its own, yours ends when this turn does.');
+    });
+
+    it('says outright that a move to Done ends the session', () => {
+      const task = ownTask();
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Done' }, context);
+
+      expect(response.success).toBe(true);
+      expect(response.message).toContain('Your session ends when this turn does.');
+    });
+
+    it('names no mover session, and says nothing of it, when the caller is not the task\'s live session', () => {
+      const task = ownTask();
+      context.callerSessionId = 'session-some-other';
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      expect(onTaskMove).toHaveBeenCalledWith(expect.anything(), { moverIsTaskAgent: true });
+      expect(response.message).not.toContain('this turn does');
+    });
+
+    it('names no mover session for another task\'s agent', () => {
+      const task = ownTask();
+      context.callerTaskId = ordinaryTask().id;
+
+      handleMoveTask({ taskId: task.id, column: 'Code Review' }, context);
+
+      expect(onTaskMove).toHaveBeenCalledWith(expect.objectContaining({ taskId: task.id }));
+      expect(onTaskMove.mock.calls[0]).toHaveLength(1);
+    });
+
+    it('answers a repeated move into the current column as already there, and moves nothing', () => {
+      const task = ownTask();
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Planning' }, context);
+
+      expect(response).toMatchObject({ success: true, message: `Task "${task.title}" is already in Planning.` });
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('answers the same repeat carrying a message as already there, and says the message was not sent', () => {
+      const task = ownTask();
+
+      const response = handleMoveTask({ taskId: task.id, column: 'Planning', message: 'Back from review.' }, context);
+
+      expect(response).toMatchObject({
+        success: true,
+        message: `Task "${task.title}" is already in Planning. Nothing moved, so the message was not sent.`,
+      });
+      expect(onTaskMove).not.toHaveBeenCalled();
+      expect(onTasksReordered).not.toHaveBeenCalled();
     });
   });
 

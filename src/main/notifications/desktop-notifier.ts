@@ -70,6 +70,13 @@ export interface DesktopNotifierOptions {
    * stalls (`notifyWorkflowTask`), so its plain idle raises nothing here.
    */
   isWorkflowStepTask?: (projectId: string, taskId: string) => boolean;
+  /**
+   * Is the session's own call (a move of its task, a pause of its workflow)
+   * still taking effect? Its idle ends the turn that made the call, which
+   * belongs to the column the task left or to a paused workflow
+   * (`own-call-turn-wait.ts`), so it raises no idle notice.
+   */
+  isSessionInOwnCall?: (sessionId: string) => boolean;
   showNotification: (input: NotificationInput) => void;
 }
 
@@ -142,6 +149,10 @@ export class DesktopNotifier {
     // A workflow's own agent lives only in the Workflows view, where its pane
     // shows it waiting; it raises no notification of its own.
     if (session.workflowId) return;
+    // The end of the turn that moved its own task or paused its own workflow:
+    // that turn belongs to the call. A permission prompt in it still notifies.
+    // activity-state-ok: granular, only the idle half is the call's.
+    if (state === 'idle' && this.options.isSessionInOwnCall?.(sessionId)) return;
     if (!this.shouldNotify(`idle:${sessionId}`, session.projectId)) return;
     // A running workflow task's idle is its step check's to report: a wait on
     // the user at once, a stall only once recovery runs out. A permission

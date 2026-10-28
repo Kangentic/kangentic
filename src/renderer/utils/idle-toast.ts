@@ -1,6 +1,6 @@
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
-import type { ActivityState } from '../../shared/types';
+import type { ActivityReason, ActivityState } from '../../shared/types';
 import { requiresUserInteraction } from '../../shared/activity-state';
 import type { ToastVariant } from '../stores/toast-store';
 
@@ -28,6 +28,18 @@ export interface IdleToastInput {
   taskTitle: string | undefined;
   /** Fallback label when there is no task row. */
   sessionIdShort: string;
+  /** `endsOwnCallTurn(reason)`: the idle ends the turn that moved its own task or paused its own workflow. */
+  endsOwnCall: boolean;
+}
+
+/**
+ * Whether an idle ends the turn in which the session moved its own task or
+ * paused its own workflow, as main flags it while that call takes effect. That
+ * turn belongs to the call, which usually ends the session moments later, so
+ * the idle raises no toast and takes no focus.
+ */
+export function endsOwnCallTurn(reason: ActivityReason | null | undefined): boolean {
+  return reason != null && 'inOwnCall' in reason && reason.inOwnCall === true;
 }
 
 export interface IdleToastResult {
@@ -60,9 +72,11 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
     ownedByDetailSurface,
     taskTitle,
     sessionIdShort,
+    endsOwnCall,
   } = input;
 
   if (!enabled) return null;
+  if (endsOwnCall) return null;
 
   // The edge into "waiting on the human", taken through the shared classifier
   // rather than a state literal (.claude/rules/activity-state-classification.md).
