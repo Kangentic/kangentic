@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, other {#줄 추가됨}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, other {#줄 삭제됨}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, other {파일 diff 창이 #개 열려 있습니다. 다른 창을 열려면 하나를 닫으세요.}}"
@@ -1020,7 +1020,7 @@ msgstr "{baseBranch}을(를) 가져올 수 없음"
 msgid "Couldn't open \"{filename}\""
 msgstr "\"{filename}\"을(를) 열 수 없습니다"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "파일 diff를 열 수 없음"
@@ -3045,7 +3045,7 @@ msgstr "작업의 변경 사항을 읽을 수 없습니다"
 msgid "The task's changes could not be read."
 msgstr "작업의 변경 사항을 읽을 수 없습니다."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "창을 만들 수 없습니다."
@@ -3369,7 +3369,7 @@ msgstr "와일드카드 예시"
 msgid "Wildcard examples. {rows}"
 msgstr "와일드카드 예시. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "창 개수 제한에 도달함"

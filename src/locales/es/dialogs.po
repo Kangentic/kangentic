@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# línea añadida} many {# líneas añadidas} 
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# línea eliminada} many {# líneas eliminadas} other {# líneas eliminadas}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {Hay # ventana de diff de archivo abierta. Ciérrela para abrir otra.} many {Hay # de ventanas de diff de archivo abiertas. Cierre una para abrir otra.} other {Hay # ventanas de diff de archivo abiertas. Cierre una para abrir otra.}}"
@@ -1020,7 +1020,7 @@ msgstr "No se pudo obtener {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "No se pudo abrir \"{filename}\""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "No se pudo abrir el diff del archivo"
@@ -3045,7 +3045,7 @@ msgstr "No se pudieron leer los cambios de la tarea"
 msgid "The task's changes could not be read."
 msgstr "No se pudieron leer los cambios de la tarea."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "No se pudo crear la ventana."
@@ -3369,7 +3369,7 @@ msgstr "Ejemplos de comodines"
 msgid "Wildcard examples. {rows}"
 msgstr "Ejemplos de comodines. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Se alcanzó el límite de ventanas"

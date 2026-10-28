@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, one {{taskCount, plural, one {# feladat} other {# fe
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} p {seconds} mp"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} nem tartalmaz változást ebben a nézetben"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "blokkolva"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "A Teendők nem helyezhető át"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "Vigyázat"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "Nyitott ablaka van."
 msgid "Hide workflow"
 msgstr "Munkafolyamat elrejtése"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "Fontos"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "Nincs megadva ok."
 #, fuzzy
 msgid "Not a git repository"
 msgstr "Nem git-tároló"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "Megjegyzés"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "Ez egy elkülönített munkafát hoz létre ehhez a feladathoz. A munkam
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "Ez véglegesen törli a feladatot, a munkamenet előzményeit és a hozzá tartozó munkafát."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "Tipp"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "Frissítések letiltva"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "A(z) {version} verzió készen áll a telepítésre."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "Figyelmeztetés"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy

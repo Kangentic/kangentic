@@ -236,6 +236,10 @@ msgstr "{keptCount, plural, one {# process from {taskCount, plural, other {# tas
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}m {seconds}s"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+msgid "{path} has no changes in this view"
+msgstr "{path} has no changes in this view"
+
 #: src/renderer/lib/leftover-processes.ts
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
 msgstr "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -368,6 +372,11 @@ msgstr "blocked"
 #: src/renderer/hooks/useBoardDragDrop.ts
 msgid "Can't move To Do"
 msgstr "Can't move To Do"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "Caution"
 
 #: src/renderer/App.tsx
 msgid "Change not saved to disk"
@@ -790,6 +799,11 @@ msgstr "Has an open window."
 msgid "Hide workflow"
 msgstr "Hide workflow"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "Important"
+
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "Initializing..."
 msgstr "Initializing..."
@@ -989,6 +1003,11 @@ msgstr "No reason was given."
 #: src/renderer/utils/worktree-placement.tsx
 msgid "Not a git repository"
 msgstr "Not a git repository"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "Note"
 
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Nothing to preview"
@@ -1372,6 +1391,11 @@ msgstr "This will create an isolated worktree for this task. Your session histor
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "This will permanently delete the task, its session history, and any associated worktree."
 
+#: src/renderer/components/MarkdownRenderer.tsx
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "Tip"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 msgid "To Do must stay the first column."
 msgstr "To Do must stay the first column."
@@ -1419,6 +1443,11 @@ msgstr "Updates blocked"
 #: src/renderer/stores/updater-store.ts
 msgid "Version {version} is ready to install."
 msgstr "Version {version} is ready to install."
+
+#: src/renderer/components/MarkdownRenderer.tsx
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "Warning"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Workflow agent"

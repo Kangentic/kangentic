@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {Добавлена # строка} few {Доб
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {Удалена # строка} few {Удалено # строки} many {Удалено # строк} other {Удалено # строки}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {Открыто # окно сравнения файлов. Закройте его, чтобы открыть другое.} few {Открыто # окна сравнения файлов. Закройте одно, чтобы открыть другое.} many {Открыто # окон сравнения файлов. Закройте одно, чтобы открыть другое.} other {Открыто # окна сравнения файлов. Закройте одно, чтобы открыть другое.}}"
@@ -1020,7 +1020,7 @@ msgstr "Не удалось получить {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Не удалось открыть «{filename}»"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Не удалось открыть сравнение файла"
@@ -3045,7 +3045,7 @@ msgstr "Не удалось прочитать изменения задачи"
 msgid "The task's changes could not be read."
 msgstr "Не удалось прочитать изменения задачи."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Не удалось создать окно."
@@ -3369,7 +3369,7 @@ msgstr "Примеры подстановочных знаков"
 msgid "Wildcard examples. {rows}"
 msgstr "Примеры подстановочных знаков. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Достигнут лимит окон"

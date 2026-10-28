@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# satır eklendi} other {# satır eklendi}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# satır silindi} other {# satır silindi}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {# dosya fark penceresi açık. Başka bir tane açmak için bunu kapatın.} other {# dosya fark penceresi açık. Başka bir tane açmak için birini kapatın.}}"
@@ -1020,7 +1020,7 @@ msgstr "{baseBranch} dalı getirilemedi"
 msgid "Couldn't open \"{filename}\""
 msgstr "\"{filename}\" açılamadı"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Dosya farkı açılamadı"
@@ -3045,7 +3045,7 @@ msgstr "Görevin değişiklikleri okunamadı"
 msgid "The task's changes could not be read."
 msgstr "Görevin değişiklikleri okunamadı."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Pencere oluşturulamadı."
@@ -3369,7 +3369,7 @@ msgstr "Joker karakter örnekleri"
 msgid "Wildcard examples. {rows}"
 msgstr "Joker karakter örnekleri. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Pencere sınırına ulaşıldı"

@@ -50,6 +50,44 @@ export interface DiffContent {
   image: DiffImageContent | null;
 }
 
+/**
+ * What a diff is read against, with no file named: the paths, the base branch
+ * and the selection (a commit, a range, or a live scope). One value per panel,
+ * so a file's diff and the images its markdown preview loads are always read
+ * at the same revision.
+ */
+export type DiffContentScope = Omit<GitFileContentInput, 'filePath' | 'status' | 'oldPath'>;
+
+/** A string naming a scope, for keying anything read under it. */
+export function diffScopeKey(scope: DiffContentScope): string {
+  return JSON.stringify([
+    scope.worktreePath ?? null,
+    scope.projectPath,
+    scope.baseBranch,
+    scope.commitOid ?? null,
+    scope.range ? [scope.range.base, scope.range.head] : null,
+    scope.scope ?? null,
+  ]);
+}
+
+/**
+ * Read one image a markdown file names, for the document preview: a data URL,
+ * or null when it cannot be shown (missing, too large, an LFS pointer, not an
+ * image). `side` is the side of the diff the preview shows, `modified` for
+ * every status but a deletion. The image need not be in the panel's file
+ * list, so its status is chosen to read only that side: `A` reads the modified
+ * side alone, `D` the original alone, at the same per-scope revision the
+ * markdown file's own side comes from.
+ */
+export async function fetchDocumentImage(scope: DiffContentScope, filePath: string, side: 'original' | 'modified'): Promise<string | null> {
+  const mimeType = imageMimeTypeForPath(filePath);
+  if (mimeType === null) return null;
+  const result = await window.electronAPI.git.fileImage({ ...scope, filePath, status: side === 'original' ? 'D' : 'A' });
+  const read = side === 'original' ? result.original : result.modified;
+  if (read === null || read.kind !== 'bytes') return null;
+  return readAsDataUrl(new Blob([arrayBufferBacked(read.bytes)], { type: mimeType }));
+}
+
 export const EMPTY_DIFF_TEXT: GitFileContentResult = { original: '', modified: '', language: 'plaintext' };
 
 export const EMPTY_DIFF_CONTENT: DiffContent = { text: EMPTY_DIFF_TEXT, image: null };

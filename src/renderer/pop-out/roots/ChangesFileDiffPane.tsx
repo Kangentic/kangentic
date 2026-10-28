@@ -3,8 +3,9 @@
 // ChangesPanel, so it must import it itself or Monaco's workers are missing.
 import '../../monacoConfig';
 import { useConfigStore } from '../../stores/config-store';
-import { DiffViewer } from '../../components/dialogs/task-detail/changes/DiffViewer';
+import { DiffViewer, type DiffLinkedFiles } from '../../components/dialogs/task-detail/changes/DiffViewer';
 import { DiffErrorBoundary } from '../../components/dialogs/task-detail/changes/DiffErrorBoundary';
+import type { DiffContentScope } from '../../components/dialogs/task-detail/changes/diff-content';
 import type { GitDiffFileEntry, GitDiffScope } from '../../../shared/types';
 import type { DisplayedFileDiffContent } from './PopOutChangesFileRoot';
 
@@ -15,7 +16,7 @@ import type { DisplayedFileDiffContent } from './PopOutChangesFileRoot';
  * once content exists - keeping Monaco (this module's import graph) out of the
  * root chunk and the loading surface stable while both load in parallel.
  */
-export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid, isRange = false, projectPath, worktreePath, scrollKey }: {
+export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid, isRange = false, projectPath, worktreePath, scrollKey, contentScope, linkedFiles }: {
   filePath: string;
   entry: GitDiffFileEntry;
   content: DisplayedFileDiffContent;
@@ -26,6 +27,10 @@ export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid
   projectPath: string;
   worktreePath?: string;
   scrollKey: string;
+  /** What the diff is read against, for the images its markdown preview loads. */
+  contentScope: DiffContentScope;
+  /** The files a link in the markdown preview can open. */
+  linkedFiles: DiffLinkedFiles;
 }) {
   const viewMode = useConfigStore((state) => state.config.diffViewMode);
   const updateConfig = useConfigStore((state) => state.updateConfig);
@@ -52,6 +57,8 @@ export function ChangesFileDiffPane({ filePath, entry, content, scope, commitOid
         // The root's full-body spinner is this window's ONE loading indicator;
         // a second one in the editor area would shift ~20px at hand-off.
         showEditorBootSpinner={false}
+        contentScope={contentScope}
+        linkedFiles={linkedFiles}
       />
     </DiffErrorBoundary>
   );

@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# riga aggiunta} many {# righe aggiunte} other
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# riga rimossa} many {# righe rimosse} other {# righe rimosse}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {È aperta # finestra di diff dei file. Chiudila per aprirne un'altra.} many {Sono aperte # finestre di diff dei file. Chiudine una per aprirne un'altra.} other {Sono aperte # finestre di diff dei file. Chiudine una per aprirne un'altra.}}"
@@ -1020,7 +1020,7 @@ msgstr "Impossibile recuperare {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Impossibile aprire \"{filename}\""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Impossibile aprire il diff del file"
@@ -3045,7 +3045,7 @@ msgstr "Impossibile leggere le modifiche dell'attività"
 msgid "The task's changes could not be read."
 msgstr "Impossibile leggere le modifiche dell'attività."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Impossibile creare la finestra."
@@ -3369,7 +3369,7 @@ msgstr "Esempi di caratteri jolly"
 msgid "Wildcard examples. {rows}"
 msgstr "Esempi di caratteri jolly. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Limite di finestre raggiunto"

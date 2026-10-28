@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, other {新增 # 行}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, other {删除 # 行}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, other {已打开 # 个文件差异窗口。请关闭一个后再打开新窗口。}}"
@@ -1020,7 +1020,7 @@ msgstr "无法获取 {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "无法打开“{filename}”"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "无法打开文件差异"
@@ -3045,7 +3045,7 @@ msgstr "无法读取任务的更改"
 msgid "The task's changes could not be read."
 msgstr "无法读取任务的更改。"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "无法创建窗口。"
@@ -3369,7 +3369,7 @@ msgstr "通配符示例"
 msgid "Wildcard examples. {rows}"
 msgstr "通配符示例。{rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "已达到窗口数量上限"

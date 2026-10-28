@@ -123,7 +123,7 @@ msgstr "{linesAdded, plural, one {# line added} other {# lines added}}"
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 
@@ -827,7 +827,7 @@ msgstr "Couldn't fetch {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Couldn't open \"{filename}\""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "Couldn't open file diff"
 msgstr "Couldn't open file diff"
 
@@ -2468,7 +2468,7 @@ msgstr "The task's changes could not be read"
 msgid "The task's changes could not be read."
 msgstr "The task's changes could not be read."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "The window could not be created."
 msgstr "The window could not be created."
 
@@ -2730,7 +2730,7 @@ msgstr "Wildcard examples"
 msgid "Wildcard examples. {rows}"
 msgstr "Wildcard examples. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 msgid "Window limit reached"
 msgstr "Window limit reached"
 

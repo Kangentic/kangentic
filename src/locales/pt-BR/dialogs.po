@@ -152,7 +152,7 @@ msgstr "{linesAdded, plural, one {# linha adicionada} many {# de linhas adiciona
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, one {# linha removida} many {# de linhas removidas} other {# linhas removidas}}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, one {# janela de diff de arquivo está aberta. Feche-a para abrir outra.} many {# janelas de diff de arquivo estão abertas. Feche uma para abrir outra.} other {# janelas de diff de arquivo estão abertas. Feche uma para abrir outra.}}"
@@ -1020,7 +1020,7 @@ msgstr "Não foi possível buscar {baseBranch}"
 msgid "Couldn't open \"{filename}\""
 msgstr "Não foi possível abrir \"{filename}\""
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Couldn't open file diff"
 msgstr "Não foi possível abrir o diff do arquivo"
@@ -3045,7 +3045,7 @@ msgstr "Não foi possível ler as alterações da tarefa"
 msgid "The task's changes could not be read."
 msgstr "Não foi possível ler as alterações da tarefa."
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "The window could not be created."
 msgstr "Não foi possível criar a janela."
@@ -3369,7 +3369,7 @@ msgstr "Exemplos de curinga"
 msgid "Wildcard examples. {rows}"
 msgstr "Exemplos de curinga. {rows}"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
+#: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
 #, fuzzy
 msgid "Window limit reached"
 msgstr "Limite de janelas atingido"

@@ -1,9 +1,9 @@
 /**
  * Unit coverage for `assertVendorChunksLazy` in scripts/build.js - the
  * build-time backstop that fails `npm run build` unless the recharts, three,
- * xyflow and monaco vendor bundles and lucide's whole icon map stayed OUT of the
- * renderer entry's static import closure (see the function's own doc comment for
- * the three invariants).
+ * xyflow and monaco vendor bundles, lucide's whole icon map and parse5 (the
+ * markdown document pipeline) stayed OUT of the renderer entry's static import
+ * closure (see the function's own doc comment for the invariants).
  *
  * Before this file, the function had zero test coverage: it ran only as a
  * side effect of a real `npm run build`, which takes minutes and is not
@@ -86,6 +86,18 @@ const ICON_MAP_MARKER = 'ferris-wheel';
  */
 function writeLazyIconCatalog(): void {
   writeAsset('icon-catalog-pqr987.js', `const glyphs = { "${ICON_MAP_MARKER}": 1 };\n`);
+}
+
+/** The marker scripts/build.js finds parse5 by: one of its tokenizer error codes. */
+const PARSE5_MARKER = 'missing-whitespace-between-doctype-public-and-system-identifiers';
+
+/**
+ * The markdown document pipeline (parse5 inside) in a chunk reachable only by
+ * dynamic import, as a correct build emits it. Every case that has to get past
+ * the parse5 checks writes this.
+ */
+function writeLazyMarkdownPipeline(): void {
+  writeAsset('markdown-document-pipeline-stu246.js', `const codes = ["${PARSE5_MARKER}"];\n`);
 }
 
 describe('assertVendorChunksLazy', () => {
@@ -180,6 +192,7 @@ describe('assertVendorChunksLazy', () => {
     // produces.
     writeAsset('chunk-with-monaco.js', 'some code ... editorViewZones ... more code\n');
     writeLazyIconCatalog();
+    writeLazyMarkdownPipeline();
     writeManifest({
       'src/renderer/index.tsx': {
         file: 'assets/entry-abc123.js',
@@ -318,6 +331,7 @@ describe('assertVendorChunksLazy', () => {
     writeAsset('chart-shared-mno654.js');
     writeAsset('chunk-with-monaco.js', 'editorViewZones\n');
     writeLazyIconCatalog();
+    writeLazyMarkdownPipeline();
     writeManifest({
       'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
       'xyflow-chunk-key': { file: 'assets/xyflow-ghi321.js', imports: ['chart-shared-key'] },
@@ -384,5 +398,45 @@ describe('assertVendorChunksLazy', () => {
     });
 
     expect(() => assertVendorChunksLazy(tempDir)).toThrow(new RegExp(`No chunk names the icon "${ICON_MAP_MARKER}"`));
+  });
+
+  it('(r) throws when a statically reachable chunk contains parse5', () => {
+    // The shape this guards: a startup module imports the markdown pipeline (or
+    // a rehype package) directly, so every markdown surface parses parse5.
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    writeLazyIconCatalog();
+    writeAsset('markdown-renderer-vwx135.js', `const codes = ["${PARSE5_MARKER}"];\n`);
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: ['markdown-key'] },
+      'markdown-key': { file: 'assets/markdown-renderer-vwx135.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/markdown-renderer-vwx135\.js is in the entry's STATIC import closure but contains parse5/);
+  });
+
+  it('(s) throws "gone blind" when no chunk anywhere contains the parse5 marker', () => {
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    writeLazyIconCatalog();
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).toThrow(/No chunk contains the parse5 marker/);
+  });
+
+  it('(t) does not throw when the markdown pipeline is reachable only by dynamic import', () => {
+    writeAsset('entry-abc123.js');
+    writeLazyVendorChunks();
+    writeLazyIconCatalog();
+    writeLazyMarkdownPipeline();
+    writeManifest({
+      'src/renderer/index.tsx': { file: 'assets/entry-abc123.js', isEntry: true, imports: ['plugins-key'] },
+      // The loader is static; the pipeline it imports dynamically is not in `imports`.
+      'plugins-key': { file: 'assets/markdown-document-plugins-yza579.js', imports: [] },
+    });
+
+    expect(() => assertVendorChunksLazy(tempDir)).not.toThrow();
   });
 });

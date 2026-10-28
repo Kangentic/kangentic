@@ -11,6 +11,7 @@
   "@xyflow/react",
   "turndown", "turndown-plugin-gfm",
   "react-markdown", "remark-gfm", "remove-markdown",
+  "rehype-raw", "rehype-sanitize", "rehype-slug",
   "@tanstack/react-virtual", "qrcode",
   "pixelmatch"
 ]

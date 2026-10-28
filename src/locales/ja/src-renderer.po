@@ -293,6 +293,11 @@ msgstr "{keptCount, plural, other {{taskCount, plural, other {# 個のタスク}
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes}分{seconds}秒"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgid "{path} has no changes in this view"
+msgstr "{path} はこのビューに変更がありません"
+
 #: src/renderer/lib/leftover-processes.ts
 #, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
@@ -458,6 +463,12 @@ msgstr "ブロック中"
 #, fuzzy
 msgid "Can't move To Do"
 msgstr "To Do は移動できません"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Caution"
+msgstr "注意"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -984,6 +995,12 @@ msgstr "開いているウィンドウがあります。"
 msgid "Hide workflow"
 msgstr "ワークフローを非表示"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Important"
+msgstr "重要"
+
 #: src/renderer/stores/board-store/task-slice.ts
 #, fuzzy
 msgid "Initializing..."
@@ -1233,6 +1250,12 @@ msgstr "理由が示されていません。"
 #, fuzzy
 msgid "Not a git repository"
 msgstr "git リポジトリではありません"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Note"
+msgstr "メモ"
 
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
@@ -1710,6 +1733,12 @@ msgstr "このタスク用に分離されたワークツリーを作成します
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "タスク、そのセッション履歴、および関連するワークツリーが完全に削除されます。"
 
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Tip"
+msgstr "ヒント"
+
 #: src/renderer/hooks/useBoardDragDrop.ts
 #, fuzzy
 msgid "To Do must stay the first column."
@@ -1769,6 +1798,12 @@ msgstr "更新がブロックされました"
 #, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "バージョン {version} をインストールする準備ができました。"
+
+#: src/renderer/components/MarkdownRenderer.tsx
+#, fuzzy
+msgctxt "markdown alert"
+msgid "Warning"
+msgstr "警告"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
