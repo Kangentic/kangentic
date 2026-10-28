@@ -65,6 +65,7 @@ import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
 import { notifyWorkflowOfTask } from '../../workflows/workflow-changed';
 import { isTaskWorkflowPaused, taskWorkflowState } from '../../workflows/workflow-home';
 import { isMoveByAPerson } from '../../../shared/task-move-origin';
+import { isHeldPause } from '../../../shared/held-pause';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
@@ -744,9 +745,10 @@ export async function handleTaskMove(
        * No `startAgent`: on the keep-alive branches the session is live by
        * construction, and on the suspending one the column cannot hold a row
        * that needs an agent (`canColumnRun` blocks `send_message` wherever
-       * "Start an agent here" is off).
+       * "Start an agent here" is off). For a paused agent (`agentPaused`) a row
+       * that needs it is skipped with that reason, and runs at its Resume.
        */
-      const armEnterAutomations = (deliveredMessageId: string | null): void => {
+      const armEnterAutomations = (deliveredMessageId: string | null, agentPaused = false): void => {
         runEnterAutomations = async (): Promise<void> => {
         if (!toLane) return;
         try {
@@ -764,6 +766,7 @@ export async function handleTaskMove(
           const enterSummary = await enterEngine.executeTransition(task, toLane, 'enter', {
             signal,
             alreadyDelivered: deliveredMessageId ? new Set([deliveredMessageId]) : undefined,
+            agentPaused,
             deliverToAgent: async (message, mode) => {
               // Re-read, never the Phase-1 snapshot. The enter group runs
               // OUTSIDE withTaskLock on purpose (a run_script row would
@@ -1429,6 +1432,21 @@ export async function handleTaskMove(
           const refreshed = tasks.getById(planTask.id);
           if (refreshed) planTask = refreshed;
         }
+      }
+
+      // A paused agent stays paused through any move: only the user's Resume
+      // starts it (`spawnAgent` refuses it too). The column's other enter rows
+      // still run, as they do on any entry, and the rows that need the agent
+      // run at a Resume in this column (`resumeTaskSession`). The same shape as
+      // Priority 2.5: no worktree work, no spawn. Below the cross-agent clear,
+      // because that Resume starts this column's agent. A recovery move out of
+      // Done keeps the plan instead: Done removed the worktree, so the move
+      // restores it and `spawnAgent` starts nothing, as an unarchive does.
+      if (toLane && !suppressAutoCommand && isHeldPause(sessionRepo.getLatestForTask(task.id))) {
+        clearSpawnProgress(context.mainWindow, task.id);
+        console.log(`[TASK_MOVE] Task ${task.id.slice(0, 8)} stays paused in ${toLane.name} until the user resumes it`);
+        armEnterAutomations(null, true);
+        return null;
       }
 
       return {

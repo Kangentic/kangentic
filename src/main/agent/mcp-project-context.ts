@@ -94,6 +94,7 @@ export function buildCommandContextForProject(
         return false;
       }
     },
+    getSessionTurnStartedAt: (sessionId) => ipcContext.sessionManager.workTurnStartedAt(sessionId),
     // Explicit path, not the active project: a cross-project tool call must
     // resolve its profile selector against the board it is targeting. The same
     // reason applies to the write - an agent syncing profiles between projects

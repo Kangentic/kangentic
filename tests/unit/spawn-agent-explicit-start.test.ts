@@ -134,7 +134,7 @@ async function runSpawn(
   task: Task,
   toLane: Swimlane,
   deps: ReturnType<typeof makeDeps>,
-  extraOptions: { explicitStart?: boolean } = {},
+  extraOptions: { explicitStart?: boolean; resumesEntry?: boolean } = {},
 ) {
   await spawnAgent({
     context: deps.context as never,
@@ -239,6 +239,48 @@ describe('spawnAgent explicitStart: the manually-paused guard', () => {
 
     expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+  });
+});
+
+// #929. The user's Resume of an agent that was paused when its task entered
+// this column (`resumeTaskSession`) does what that entry would have done.
+describe('spawnAgent resumesEntry: a Resume after the task entered its column paused', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('lifts the held-pause guard and runs only the enter rows that need the agent', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: USER_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps, { resumesEntry: true });
+
+    expect(deps.engine.executeTransition).toHaveBeenCalledTimes(1);
+    expect(deps.engine.executeTransition).toHaveBeenCalledWith(
+      task, expect.anything(), 'enter', expect.objectContaining({ onlyRowsNeedingAgent: true }),
+    );
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps the column\'s auto_spawn default: a column that starts no agent starts none', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: USER_PAUSED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: false }), deps, { resumesEntry: true });
+
+    expect(deps.engine.executeTransition).not.toHaveBeenCalled();
+    expect(deps.engine.resumeSuspendedSession).not.toHaveBeenCalled();
+  });
+
+  it('runs the whole enter group on an ordinary spawn', async () => {
+    const task = makeTask();
+    const deps = makeDeps({ latestSession: SYSTEM_SUSPENDED_RECORD, task });
+
+    await runSpawn(task, makeSwimlane({ auto_spawn: true }), deps);
+
+    expect(deps.engine.executeTransition).toHaveBeenCalledWith(
+      task, expect.anything(), 'enter', expect.not.objectContaining({ onlyRowsNeedingAgent: true }),
+    );
   });
 });
 

@@ -12,7 +12,7 @@
  * guarantees are exercised without a PTY, a network, or a database.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { runAutomations } from '../../src/main/automations/automation-runner';
+import { AGENT_PAUSED_REASON, runAutomations } from '../../src/main/automations/automation-runner';
 import { AutomationRegistry } from '../../src/main/automations/automation-registry';
 import {
   AutomationPermanentError,
@@ -546,6 +546,58 @@ describe('a recovery move out of Done', () => {
     expect(started).toBe(0);
     expect(summary.startedAgent).toBe(false);
     expect(summary.outcomes[0].status).toBe('skipped');
+  });
+});
+
+// #929. A move never starts a paused agent. The entry still runs the rows that
+// need no agent, and the rows that need it wait for a Resume in this column.
+describe('a move of a task whose agent is paused', () => {
+  it('skips a row that needs the agent with the paused reason, and runs the rest', async () => {
+    const { rows, repository } = fakeRuns();
+    const executed: string[] = [];
+    let started = 0;
+    const registry = registryOf(
+      testAdapter('send_message', async () => { executed.push('send_message'); return { detail: 'Delivered' }; }),
+      testAdapter('notify', async () => { executed.push('notify'); return { detail: 'Shown' }; }),
+    );
+
+    const summary = await runAutomations({
+      automations: [automation({ id: 'a', type: 'send_message' }), automation({ id: 'b', type: 'notify' })],
+      column: COLUMN,
+      context: context({ task: task({ session_id: null }) }),
+      runs: repository,
+      signal: new AbortController().signal,
+      agentPaused: true,
+      startAgent: async () => { started += 1; },
+      registry,
+    });
+
+    expect(executed).toEqual(['notify']);
+    expect(started).toBe(0);
+    expect(summary.outcomes.map((outcome) => outcome.status)).toEqual(['skipped', 'succeeded']);
+    expect(rows[0].detail).toBe(AGENT_PAUSED_REASON);
+  });
+
+  it.each([
+    ['paused, never asked', true, 0],
+    ['not paused, asked', false, 1],
+  ])('asks the Condition of a row that needs the agent only when it can run: %s', async (_label, agentPaused, expectedChecks) => {
+    const { repository } = fakeRuns();
+    const checkConditions = vi.fn(async () => ({ ok: true as const, answers: new Map() }));
+    const registry = registryOf(testAdapter('send_message', async () => ({ detail: 'Delivered' })));
+
+    await runAutomations({
+      automations: [automation({ type: 'send_message', condition: 'The plan is approved.' })],
+      column: COLUMN,
+      context: context({ task: task({ session_id: null }) }),
+      runs: repository,
+      signal: new AbortController().signal,
+      agentPaused,
+      checkConditions,
+      registry,
+    });
+
+    expect(checkConditions).toHaveBeenCalledTimes(expectedChecks);
   });
 });
 

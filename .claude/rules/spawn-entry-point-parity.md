@@ -46,9 +46,17 @@ contract was kept in sync across three files by prose comments alone.
   which the `SESSION_RESUME` handler and a phone resume of a paused task both call, and
   `restartSessionForSettingsChange` in `handlers/session-reconcile.ts`) are allowlisted direct
   engine calls; they are not first-spawn entry points.
+- **A Resume after an entry goes through `spawnAgent`.** A move never starts a paused agent: it
+  runs the destination's enter rows that need no agent and skips the rest (`agentPaused`). When
+  the task entered its column after the pause, `resumeTaskSession` calls `spawnAgent` with
+  `resumesEntry: true` instead of its direct engine call, so the Resume does what the entry
+  would have done: the column's own session strategy and its enter rows that need the agent.
+  An entry out of Done is a recovery move, so that start also passes `suppressAutoCommand`.
+  `resumesEntry` lifts only the held-pause check, and `resumeTaskSession` is its one caller.
 - A **user-initiated start in place** (the phone's `start-session` verb, via `startTaskSession` in
   `handlers/session-start.ts`) is NOT a third direct engine call. For a paused task it calls
-  `resumeTaskSession`, the Resume button's own path, which runs no enter automations. Otherwise
+  `resumeTaskSession`, the Resume button's own path, which runs no enter automations unless the
+  task entered its column after the pause (the bullet above). Otherwise
   it routes through `autoSpawnForTask` -> `spawnAgent` with `explicitStart: true`, so the column's
   enter automations run as they do on a move. That flag lifts exactly two guards, the column's `auto_spawn` default
   and the manually-paused check, both of which exist to stop an AUTOMATIC spawn from overriding a
@@ -116,9 +124,10 @@ contract was kept in sync across three files by prose comments alone.
   `resolveShimLaunch(` in the same file, (g) any `explicitStart` reference outside
   `helpers/agent-spawn.ts` (its declaration, gates, and forward) and `handlers/session-start.ts`
   (its one user-gesture caller), with a companion assertion that the caller still passes it so
-  the scan cannot pass vacuously, and (h) any `<receiver>.buildCommand(` call site with no
-  `ptySessionId` property between it and the file's previous call site, or in a file that never
-  calls `releaseCommandHold(`. That
+  the scan cannot pass vacuously, (h) the same for `resumesEntry`, allowed only in
+  `helpers/agent-spawn.ts` and `handlers/session-resume.ts`, and (i) any
+  `<receiver>.buildCommand(` call site with no `ptySessionId` property between it and the file's
+  previous call site, or in a file that never calls `releaseCommandHold(`. That
   scan proves line order, not control flow; the runtime ordering
   on the Command Terminal path is pinned separately by
   `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails

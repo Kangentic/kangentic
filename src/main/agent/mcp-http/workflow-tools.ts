@@ -146,7 +146,7 @@ export function registerWorkflowTools(
   server.registerTool(
     'kangentic_pause_workflow',
     {
-      description: 'Pause a running workflow: every task\'s agent pauses at once, and the workflow starts, judges and moves nothing until it is resumed. A card a person works by hand meanwhile runs its column automations as any card does. The reply counts the agents paused and names any it could not pause.',
+      description: 'Pause a running workflow: every task\'s agent pauses at once, and the workflow starts, judges and moves nothing until it is resumed. A person may move a card by hand meanwhile. A paused agent stays paused through any move: the column\'s automations that need no agent run, and the ones that need the agent run when it is resumed there. The reply counts the agents paused and names any it could not pause.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
@@ -160,7 +160,7 @@ export function registerWorkflowTools(
   server.registerTool(
     'kangentic_resume_workflow',
     {
-      description: 'Resume a paused workflow: each paused agent resumes in the column its task is in now, a task in an agent column with no agent gets one started, and waiting tasks start again as their blockers finish. An agent already running is left alone.',
+      description: 'Resume a paused workflow: each paused agent resumes in the column its task is in now, a task in an agent column with no agent gets one started, and waiting tasks start again as their blockers finish. A task moved into a column while paused starts there as the move would have: a fresh session in a column that always starts new, then that column\'s automations that need the agent. An agent already running is left alone.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

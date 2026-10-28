@@ -1,11 +1,14 @@
 import type { Swimlane, Task } from '../../shared/types';
-import { doneColumn, routeColumns } from '../../shared/workflow-route';
+import { doneColumn, nextOnRoute, routeColumns } from '../../shared/workflow-route';
 import { getExistingProjectDb, getProjectDb } from '../db/database';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import type { WorkflowXmlInput } from '../agent/shared/prompt-xml';
+import { applyProfileToLane } from '../transition-engine/column-strategy';
+import { loadTaskProfile } from '../ipc/helpers/task-profile';
+import { workflowRuntimeContext } from './workflow-runtime';
 
 /**
  * Read what `{{workflow_xml}}` tells a workflow task's agent: its workflow's
@@ -63,13 +66,33 @@ export function readWorkflowPromptFacts(task: Task, projectId: string | null): W
     // The route ends in the board's Done column, by whatever name this board
     // gives it.
     const done = doneColumn(ownLanes);
+    // A plan column's approval moves a workflow task to the next column on its
+    // route (`planExitTargetFor`), never to the column's own plan exit target.
+    const current = asTaskRunsIt(ownLanes.find((lane) => lane.id === task.swimlane_id) ?? null, task, projectId, ownLanes);
+    const planExitTo = current?.permission_mode === 'plan' ? nextOnRoute(ownLanes, task, current.id)?.name ?? null : null;
     return {
       title: workflow.title,
       route: [...routeColumns(ownLanes, task), ...(done ? [done] : [])].map((lane) => lane.name),
+      column: current?.name ?? null,
+      planExitTo,
       waitsFor,
       blocks,
     };
   } catch {
     return null;
   }
+}
+
+/**
+ * The task's column as the task runs it: its Board Profile folded in, as the
+ * spawn and the plan approval read it (`workflow-plan-approval.ts`), so a
+ * profile that turns plan mode on or off for this task is what the block says.
+ * The column as stored when the task has no profile, or before the app's
+ * context is set.
+ */
+function asTaskRunsIt(lane: Swimlane | null, task: Task, projectId: string, lanes: Swimlane[]): Swimlane | null {
+  const context = workflowRuntimeContext();
+  if (!lane || !context || !task.profile_id) return lane;
+  const projectPath = context.projectRepo.getById(projectId)?.path ?? null;
+  return applyProfileToLane(lane, loadTaskProfile(context, task, projectPath), lanes) ?? lane;
 }

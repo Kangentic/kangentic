@@ -1,10 +1,13 @@
 import fs from 'node:fs';
+import type Database from 'better-sqlite3';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { AttachmentRepository } from '../../db/repositories/attachment-repository';
 import { BacklogAttachmentRepository } from '../../db/repositories/backlog-attachment-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
+import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { readFileAsAttachment } from '../../db/repositories/attachment-utils';
+import { resolveForceFresh, resolveSessionTarget } from '../../transition-engine/session-isolation';
 import { resolveColumn } from './column-resolver';
 import { resolveTask } from './task-resolver';
 import { MOVE_MESSAGE_MAX_CHARS } from './move-message-limit';
@@ -31,7 +34,7 @@ import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode, Swimlane } from '../../../shared/types';
+import { NEVER_AUTO_SPAWN_ROLES, type Task, type TaskUpdateInput, type PermissionMode, type PlanApproval, type TaskRunMode, type Swimlane } from '../../../shared/types';
 import { applyAutomationsHoldChange } from '../../workflows/workflow-task-hold';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
@@ -892,11 +895,16 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: `Task "${taskIdParam}" not found` };
   }
 
+  // The task's own agent (its main session or an isolated column's).
+  const moverIsTaskAgent = context.callerTaskId === task.id;
+
   // A column named exactly "next" wins; otherwise "next" means the next column
   // after the task's own, the same answer a Move to column row gets.
   let resolution = resolveColumn(db, columnName, 'todo', { includeArchivedDone: true });
   if ('error' in resolution && columnName.trim().toLowerCase() === 'next') {
     const allSwimlanes = new SwimlaneRepository(db).list();
+    const stale = moverIsTaskAgent ? staleNextRefusal(db, context, task, allSwimlanes) : null;
+    if (stale) return { success: false, error: stale };
     // A workflow task's next column is the next one on its route.
     const next = resolveMoveTarget(allSwimlanes, task.swimlane_id, null, routeOf(task));
     if (!next.ok) return { success: false, error: next.reason };
@@ -906,9 +914,6 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: resolution.error };
   }
   const { swimlane: targetSwimlane } = resolution;
-
-  // The task's own agent (its main session or an isolated column's).
-  const moverIsTaskAgent = context.callerTaskId === task.id;
 
   // A message for a move that goes nowhere is refused, except from the task's
   // own agent: that is a move it already made, repeated, and the repeat must
@@ -1018,6 +1023,53 @@ export const handleMoveTask: CommandHandler = (
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
   };
 };
+
+/**
+ * A "next" from the task's own agent, refused when the task has left the
+ * column the agent's current turn began in. The agent judged that column's
+ * work done, and "next" read from where the task sits now would skip a column:
+ * a plan exit moved #919 on to Executing mid-turn, and the same turn's "next"
+ * landed it in Code Review. Null when the turn's start or its column is not
+ * known, so the move resolves as it always did.
+ */
+function staleNextRefusal(
+  db: Database.Database,
+  context: CommandContext,
+  task: Task,
+  columns: Swimlane[],
+): string | null {
+  const sessionId = context.callerSessionId;
+  if (!sessionId || !context.getSessionTurnStartedAt) return null;
+  const turnStartedAt = context.getSessionTurnStartedAt(sessionId);
+  if (turnStartedAt === null) return null;
+  const turnColumnId = new TaskMoveRepository(db).columnAt(task.id, new Date(turnStartedAt).toISOString());
+  if (!turnColumnId || turnColumnId === task.swimlane_id) return null;
+
+  const nameOf = (columnId: string): string => columns.find((column) => column.id === columnId)?.name ?? 'another column';
+  const current = columns.find((column) => column.id === task.swimlane_id) ?? null;
+  const moved = `#${task.display_id} already moved from ${nameOf(turnColumnId)} to ${nameOf(task.swimlane_id)}`;
+  if (!current || !carriesSessionOn(current)) return `${moved}. Your session ends when this turn does.`;
+
+  const next = resolveMoveTarget(columns, current.id, null, routeOf(task));
+  const moveIt = next.ok ? `move it with column "${next.column.name}"` : null;
+  const stepNow = `${moved}, so this turn is doing ${current.name}'s step now.`;
+  if (task.workflow_id) {
+    const orMoveIt = moveIt ? `, or ${moveIt}` : '';
+    return `${stepNow} When that work is done, end your turn and the workflow moves it on${orMoveIt}.`;
+  }
+  return moveIt ? `${stepNow} When that work is done, ${moveIt}.` : stepNow;
+}
+
+/**
+ * Whether a task's session goes on in this column rather than ending: a column
+ * that runs an agent on the main track and resumes it. To Do and Done end it,
+ * as does a column with no agent, an isolated one, or one that starts every
+ * entry fresh.
+ */
+function carriesSessionOn(lane: Swimlane): boolean {
+  if ((lane.role !== null && NEVER_AUTO_SPAWN_ROLES.has(lane.role)) || !lane.auto_spawn) return false;
+  return resolveSessionTarget(lane) === 'main' && !resolveForceFresh(lane);
+}
 
 /**
  * What a self-move does to the caller's own session, so it ends its turn

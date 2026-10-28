@@ -568,6 +568,96 @@ describe('SessionManager turn-end transcript anchor', () => {
     });
   });
 
+  // #929. kangentic_move_task judges the task's own agent's "next" from the
+  // column this turn began in. A plan approval re-stamps the turn for its
+  // transcript anchor, but the approval's plan-exit move commits before that
+  // re-stamp, so the work turn's start must not follow it.
+  describe('when the work turn began', () => {
+    it('is the stamp of the turn the spawn or new input started, and a plan approval leaves it there', () => {
+      const edges = getTurnEdgeCallbacks(manager);
+      expect(manager.workTurnStartedAt(sessionId)).toBeNull();
+
+      edges.onTurnStarted(sessionId, 1000, 'seed');
+      expect(manager.workTurnStartedAt(sessionId)).toBe(1000);
+
+      edges.onTurnStarted(sessionId, 2000, 'plan-approval');
+      expect(manager.workTurnStartedAt(sessionId)).toBe(1000);
+
+      edges.onTurnStarted(sessionId, 3000, 'idle');
+      expect(manager.workTurnStartedAt(sessionId)).toBe(3000);
+    });
+
+    describe('through the real engine, on a clock the test moves', () => {
+      const PROMPT_AT = 1_000_000;
+      let engineNow: number;
+      let clocked: SessionManager;
+      let clockedSessionId: string;
+
+      function sendClocked(type: EventType, extra: Partial<SessionEvent> = {}): void {
+        clock += 1;
+        getTelemetry(clocked).ingestEvents(clockedSessionId, [{ ts: clock, type, ...extra }]);
+      }
+
+      beforeEach(() => {
+        engineNow = PROMPT_AT;
+        clocked = new SessionManager({
+          activityEngineOptions: { bgShellEscapeHatchMs: 60_000, staleThinkingTimeoutMs: 60_000, idleStabilityWindowMs: 0, now: () => engineNow },
+        });
+        const session = clocked.registerSuspendedPlaceholder({ taskId: 'task-clocked', projectId: 'project-anchor', cwd: '/mock/cwd' });
+        if (!session) throw new Error('The placeholder was not registered.');
+        clockedSessionId = session.id;
+        getTelemetry(clocked).initSession(clockedSessionId);
+        sendClocked(EventType.Prompt);
+        expect(clocked.workTurnStartedAt(clockedSessionId)).toBe(PROMPT_AT);
+        // Every stamp from here on would read a later instant.
+        engineNow = PROMPT_AT + 60_000;
+      });
+
+      afterEach(() => {
+        clocked.dispose();
+      });
+
+      it('stays at the prompt through a plan the user approves (Manual)', () => {
+        sendClocked(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+        sendClocked(EventType.Idle, { detail: IdleReason.Permission });
+        sendClocked(EventType.ToolEnd, { tool: 'ExitPlanMode', toolId: 'plan' });
+
+        expect(clocked.workTurnStartedAt(clockedSessionId)).toBe(PROMPT_AT);
+      });
+
+      it('stays at the prompt through a plan Kangentic approves (Automatic)', () => {
+        sendClocked(EventType.ToolStart, { tool: 'ExitPlanMode', toolId: 'plan' });
+        sendClocked(EventType.ToolEnd, { tool: 'ExitPlanMode', toolId: 'plan' });
+        sendClocked(EventType.PlanAutoApproved);
+
+        expect(clocked.workTurnStartedAt(clockedSessionId)).toBe(PROMPT_AT);
+      });
+
+      it('stays at the prompt through any other permission the user grants mid-turn', () => {
+        sendClocked(EventType.ToolStart, { tool: 'Bash', toolId: 'bash' });
+        sendClocked(EventType.Idle, { detail: IdleReason.Permission });
+        sendClocked(EventType.ToolEnd, { tool: 'Bash', toolId: 'bash' });
+
+        expect(clocked.workTurnStartedAt(clockedSessionId)).toBe(PROMPT_AT);
+      });
+
+      it('moves to the next prompt once the turn has ended', () => {
+        sendClocked(EventType.Idle);
+        sendClocked(EventType.Prompt);
+
+        expect(clocked.workTurnStartedAt(clockedSessionId)).toBe(PROMPT_AT + 60_000);
+      });
+    });
+
+    it('is forgotten with the session\'s anchors', () => {
+      getTurnEdgeCallbacks(manager).onTurnStarted(sessionId, 1000, 'idle');
+
+      manager.kill(sessionId);
+
+      expect(manager.workTurnStartedAt(sessionId)).toBeNull();
+    });
+  });
+
   describe('forgetting the anchors of a session that ends', () => {
     const OTHER_SESSION_ID = 'session-that-stays';
 
