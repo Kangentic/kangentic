@@ -49,6 +49,30 @@ export function applyOutcomes(messages, outcomes) {
 }
 
 /**
+ * The translation each of `ids` takes from another area's copy of the same
+ * message, as a map of id to ICU, so one message reads one way across a locale.
+ * The renderer merges a locale's areas and the last one wins, so a second draft
+ * of a message would hide the first, and a correction to one copy would not show
+ * (`tests/unit/i18n-boundaries.test.ts` fails on that). A reviewed copy wins, then
+ * a draft made earlier in this run, then a draft already in the catalogs, which a
+ * redraft skips because it is drafting those again.
+ *
+ * - `otherAreas`: the locale's messages in every other area.
+ * - `runDrafts`: id to ICU, the drafts this run already made for the locale.
+ */
+export function sharedTranslations(ids, { otherAreas, runDrafts, redraft = false }) {
+  const shared = new Map();
+  for (const id of ids) {
+    const copies = otherAreas.map((messages) => messages[id]).filter((copy) => copy && !copy.obsolete && copy.translation);
+    const reviewed = copies.find((copy) => !hasReviewMark(copy));
+    const draft = redraft ? undefined : copies.find((copy) => hasReviewMark(copy));
+    const translation = reviewed?.translation ?? runDrafts.get(id) ?? draft?.translation;
+    if (translation) shared.set(id, translation);
+  }
+  return shared;
+}
+
+/**
  * The IDs to translate: every entry with no translation, and with `redraft` also
  * every entry still marked for review. A reviewed translation is never picked.
  */
