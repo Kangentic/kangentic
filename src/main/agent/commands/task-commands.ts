@@ -31,7 +31,7 @@ import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
 import { isSafeBranchName } from '../../git/push-command';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
-import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode } from '../../../shared/types';
+import type { Task, TaskUpdateInput, PermissionMode, PlanApproval, TaskRunMode, Swimlane } from '../../../shared/types';
 import { applyAutomationsHoldChange } from '../../workflows/workflow-task-hold';
 
 export const TASK_DESCRIPTION_MAX_LENGTH = 50_000;
@@ -907,7 +907,13 @@ export const handleMoveTask: CommandHandler = (
   }
   const { swimlane: targetSwimlane } = resolution;
 
-  if (message && task.swimlane_id === targetSwimlane.id) {
+  // The task's own agent (its main session or an isolated column's).
+  const moverIsTaskAgent = context.callerTaskId === task.id;
+
+  // A message for a move that goes nowhere is refused, except from the task's
+  // own agent: that is a move it already made, repeated, and the repeat must
+  // be harmless, so it gets the no-op below.
+  if (message && task.swimlane_id === targetSwimlane.id && !moverIsTaskAgent) {
     return {
       success: false,
       error: `Task "${task.title}" is already in ${targetSwimlane.name}, so there is no agent to hand the message to on arrival. To message the agent working on it, use kangentic_send_session_message.`,
@@ -915,11 +921,12 @@ export const handleMoveTask: CommandHandler = (
   }
 
   if (task.swimlane_id === targetSwimlane.id) {
+    const unsentMessage = message ? ' Nothing moved, so the message was not sent.' : '';
     // Already here, and no slot named: the long-standing no-op.
     if (!parsedSlot) {
       return {
         success: true,
-        message: `Task "${task.title}" is already in ${targetSwimlane.name}.`,
+        message: `Task "${task.title}" is already in ${targetSwimlane.name}.${unsentMessage}`,
         data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name },
       };
     }
@@ -955,16 +962,14 @@ export const handleMoveTask: CommandHandler = (
 
     return {
       success: true,
-      message: `Moved "${task.title}" (#${task.display_id}) to position ${slot} of ${targetSwimlane.name}.`,
+      message: `Moved "${task.title}" (#${task.display_id}) to position ${slot} of ${targetSwimlane.name}.${unsentMessage}`,
       data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
     };
   }
 
   // A workflow task's lock, asked here because the move below fires and
   // forgets: a refusal inside it would never reach the agent. The task's own
-  // agent (its main session or an isolated column's) may move it; any other
-  // caller may not while its workflow runs.
-  const moverIsTaskAgent = context.callerTaskId === task.id;
+  // agent may move it; any other caller may not while its workflow runs.
   const refusal = checkWorkflowMoveForAgent(context.projectId, task, targetSwimlane.id, moverIsTaskAgent);
   if (refusal) {
     return { success: false, error: refusal };
@@ -982,12 +987,21 @@ export const handleMoveTask: CommandHandler = (
     taskRepo.nextPositionInSwimlane(targetSwimlane.id),
   );
 
+  // The calling session, when it is the task's live one. A move that ends it
+  // waits for this turn to end first, so the call and this reply reach the
+  // agent's own conversation (ended at once, Claude exits without writing
+  // them, and a later resume of that conversation makes the move again).
+  const moverSessionId = moverIsTaskAgent && context.callerSessionId && task.session_id === context.callerSessionId
+    ? context.callerSessionId
+    : null;
+
   // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
   // The MCP response confirms intent; the LLM should re-query to verify state if needed.
   const moveInput = { taskId: task.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
   const moveOptions = {
     ...(message ? { message } : {}),
     ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
+    ...(moverSessionId ? { moverSessionId } : {}),
   };
   const moving = Object.keys(moveOptions).length > 0
     ? context.onTaskMove(moveInput, moveOptions)
@@ -1000,10 +1014,23 @@ export const handleMoveTask: CommandHandler = (
   const handOff = message ? ' Its agent there gets your message once it is ready.' : '';
   return {
     success: true,
-    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}`,
+    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}${ownSessionNote(moverSessionId, targetSwimlane)}`,
     data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
   };
 };
+
+/**
+ * What a self-move does to the caller's own session, so it ends its turn
+ * rather than start work the session will not live to finish. Done and a
+ * column with no agent always end it; another column ends it only when it runs
+ * a session of its own, which the handler cannot see from here. To Do says
+ * nothing: its reset ends the session at once and starts the next run fresh.
+ */
+function ownSessionNote(moverSessionId: string | null, target: Swimlane): string {
+  if (!moverSessionId || target.role === 'todo') return '';
+  if (target.role === 'done' || !target.auto_spawn) return ' Your session ends when this turn does.';
+  return ` If ${target.name} starts a session of its own, yours ends when this turn does.`;
+}
 
 /** Cap on how many tasks a reorder echoes back before truncating. */
 const REORDER_ECHO_LIMIT = 25;

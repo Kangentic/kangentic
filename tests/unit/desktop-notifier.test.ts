@@ -479,6 +479,30 @@ describe('DesktopNotifier', () => {
     consoleErrorSpy.mockRestore();
   });
 
+  // #916. The agent moved its own task, and the move ends the session once the
+  // turn that made it ends (own-call-turn-wait.ts). That idle waits on nobody.
+  describe('the idle that ends the turn in which the agent moved its own task', () => {
+    it('raises no idle notice, but still notifies on a permission prompt in that turn', () => {
+      sessionManager.getSession.mockReturnValue(makeSession());
+      buildNotifier({ isSessionInOwnCall: (sessionId) => sessionId === 'sess-1' });
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+      expect(showNotification).not.toHaveBeenCalled();
+
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+      expect(shownInputs()[0].body).toContain('Needs permission');
+    });
+
+    it('raises the idle notice as before once the move has settled (the control)', () => {
+      sessionManager.getSession.mockReturnValue(makeSession());
+      buildNotifier({ isSessionInOwnCall: () => false });
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
+      expect(showNotification).toHaveBeenCalledTimes(1);
+    });
+  });
+
   // A running workflow task's idle is its step check's to report
   // (workflow-recovery.ts): a wait on the user at once, a stall once recovery
   // runs out. The generic idle notice would fire at every nudged turn.

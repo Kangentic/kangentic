@@ -134,7 +134,7 @@ Every transition emits both an `ActivityState` AND an `ActivityReason` describin
 
 ```ts
 type ActivityReason =
-  | { kind: 'idle'; since: number }
+  | { kind: 'idle'; since: number; inOwnCall?: true }
   | { kind: 'permission'; since: number }
   | { kind: 'tool';            pendingCount: number; currentTool: string | null }
   | { kind: 'subagent';        depth: number }
@@ -160,6 +160,15 @@ the original park time rather than resetting it - and is cleared only on returni
 The renderer uses it to show elapsed wait time ("Idle for 12m") in the TaskCard hover tooltip
 (`formatActivityReasonText` in `src/renderer/components/board/activity-reason-text.ts`, and
 `activityReasonIcon` in `src/renderer/components/board/ActivityReasonTooltip.tsx`).
+
+`inOwnCall` is not the engine's. Main adds it to the renderer's push (`markOwnCallIdle` in
+`ipc/handlers/sessions.ts`) on the idle that ends the turn in which the session moved its own task
+or paused its own workflow, while that call is still taking effect. The call ends the session about
+1.5 s later (see
+[A call that ends the caller's own session](../sessions/suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session)),
+so the renderer raises no "Agent finished" toast and moves no bottom panel focus for it
+(`endsOwnCallTurn`). The desktop notifier skips the same idle through `isSessionInOwnCall`. A
+permission prompt in that turn still notifies both ways.
 
 The renderer uses `reason.kind` to pick an icon and inline label for the TaskCard hover tooltip. The
 two kinds that describe agent activity itself render the shared `@kangentic/branding` activity marks

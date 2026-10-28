@@ -10,6 +10,7 @@ sources:
   - resource: src/main/pty/host/exited-root-wait.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
   - resource: src/main/ipc/helpers/task-cleanup.ts
+  - resource: src/main/ipc/handlers/own-call-turn-wait.ts
 ---
 # Suspend and cleanup
 
@@ -21,6 +22,22 @@ Session teardown varies by target column:
 - **Any column with `auto_spawn=false`** - suspends session (same as Done, but without archiving). A restore into such a column keeps the suspended session and its Resume affordance; only a `role=todo` target resets it. Its pop-out windows and offscreen lane stay open.
 
 On a terminal transition the teardown runs in this order: the task's sessions are killed, awaited and removed; then the task's pop-out windows close and its offscreen browser lane is destroyed (`closeTaskWindows`, `src/main/ipc/helpers/task-windows.ts`); then `reapTaskLeftovers` kills what the agents left running; then the worktree and branch are removed. The windows close after the sessions end because a Browser pop-out closing destroys its guest, and the lane hand-off stands a lane up for a pane that unmounts while its task still has a live agent. A mid-board suspend (Pause, Stop, an `auto_spawn=false` column, an idle timeout, or quitting) closes no window.
+
+## A call that ends the caller's own session
+
+Two MCP calls can end the session that makes them: `kangentic_move_task` on the agent's own task, and `kangentic_pause_workflow` on its own workflow. Either way the session ends only after the turn that made the call, so the call and its reply stay in the agent's conversation.
+
+For `kangentic_move_task`, the tool still replies at once and the move still commits at once. The wait sits in Phase 1, right before the suspend, on every branch that ends the session: Done, a column with `auto_spawn=false`, a switch into or out of an isolated or `always_spawn_new` column, an agent handoff, and a model or effort restart. It is `waitForOwnAgentTurn` (`src/main/ipc/handlers/own-call-turn-wait.ts`): idle plus 1.5 s of PTY quiet (`waitForTurnCompletion`), bounded by `OWN_CALL_TURN_WAIT_MS` (30 s). To Do does not wait, because its reset throws the conversation away.
+
+Before this, the suspend landed 2 to 4 ms after the commit. Claude takes the console close as its graceful exit and left without writing the in-flight tool call or its result to its transcript. The next resume of that conversation had no record of the move, so the agent made it again, at the cost of a full Code Review pass each time in a Testing and Code Review loop. Measured on two Testing to Code Review moves (PostToolUse had even run) and a Merge to Done move (it had not). A move that keeps the session recorded its call normally. Waiting for the turn end is enough: the turn-end runner reads a turn's final reply from the transcript at the same point.
+
+`kangentic_pause_workflow` used to suspend every member before it replied, the caller included, so after a Resume the agent paused its workflow again. Now `pauseWorkflow` pauses every other member at once and the caller's own member after its turn ends (`pauseOwnSessionAfterTurn`, in `src/main/workflows/workflow-service.ts`), outside the task lock, with nothing waiting on it. A Resume that lands before the turn ends leaves the agent working. The reply says "Your own session pauses when this turn ends."
+
+More pieces make the wait safe:
+
+- **The caller's turn end belongs to the column the task left, or to a paused workflow.** It lands while the task already sits in the new column (or its workflow is paused) and `session_id` still names the caller. The session is marked while the call takes effect (`markOwnCallSession`): for a move from the commit until Phase 1 settles, for a pause through the wait and the pause. While it is, the turn-end runner and the workflow recovery leave its turn end and idle alone, so no Move to column row sends on a card whose workflow was just paused. A move's mark starts at the commit, not at the wait, because the exit group runs between the two and a deferred exit message waits for that same turn.
+- **That idle waits on nobody.** The desktop notifier raises no idle notice for it, and main flags it on the renderer's activity push (`inOwnCall`), so no "Agent finished" toast appears and the bottom panel does not move focus to it. A permission prompt in the same turn still notifies. The phone's idle push needs 45 s of idle (`IDLE_SETTLE_MS`) and is cleared when the session exits, so the suspend ends it first.
+- **A move's wait holds the task lock.** Another move of the task aborts this one before it queues (`abortInFlightMove`), which ends the wait at once. A Pause or Resume queues for at most the bound. An MCP call from the caller that needs this task's lock before it can reply (`kangentic_resume_workflow` is one) cannot return until then, so its turn runs to the bound and the session ends mid-call. A pause waits outside the lock, so the caller's own `kangentic_pause_workflow` returns at once.
 
 ## Reaping what the session left running
 

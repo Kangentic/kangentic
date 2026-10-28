@@ -384,12 +384,13 @@ export function buildConfiguredMcpServer(
   );
   // The calling agent's task, looked up once for the request: the browser
   // tools scope their default pane to it, and the move tool's workflow lock
-  // lets a task's own agent move it while its workflow runs.
+  // lets a task's own agent move it while its workflow runs. Its session goes
+  // with it, so a move that ends that session lets its turn finish first.
   const callerTaskId = resolveCallerTaskId(browser);
-  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null);
+  registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null, browser.callerSessionId ?? null);
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver);
-  registerWorkflowTools(mcpServer, resolver);
+  registerWorkflowTools(mcpServer, resolver, { taskId: callerTaskId ?? null, sessionId: browser.callerSessionId ?? null });
   registerSessionTools(mcpServer, resolver);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);

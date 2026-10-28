@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { resolveIdleToast, type IdleToastInput } from '../../src/renderer/utils/idle-toast';
+import { endsOwnCallTurn, resolveIdleToast, type IdleToastInput } from '../../src/renderer/utils/idle-toast';
 import type { ActivityState } from '../../src/shared/types';
 
 // The toast half of the Agent Idle notification. The desktop half
@@ -18,11 +18,28 @@ function input(overrides: Partial<IdleToastInput> = {}): IdleToastInput {
     ownedByDetailSurface: false,
     taskTitle: 'Fix the drag ghost',
     sessionIdShort: 'a1b2c3d4',
+    endsOwnCall: false,
     ...overrides,
   };
 }
 
 describe('resolveIdleToast', () => {
+  // The agent moved its own task, and the move ends its session once this turn
+  // does (#916), so main flags the idle that ends the turn. Nobody is waiting.
+  describe('the idle that ends the turn in which the agent moved its own task', () => {
+    it('raises no toast', () => {
+      expect(resolveIdleToast(input({ endsOwnCall: true }))).toBeNull();
+    });
+
+    it('is read off main\'s flag on the idle reason, and only there', () => {
+      expect(endsOwnCallTurn({ kind: 'idle', since: 1, inOwnCall: true })).toBe(true);
+      expect(endsOwnCallTurn({ kind: 'idle', since: 1 })).toBe(false);
+      expect(endsOwnCallTurn({ kind: 'permission', since: 1 })).toBe(false);
+      expect(endsOwnCallTurn(undefined)).toBe(false);
+      expect(endsOwnCallTurn(null)).toBe(false);
+    });
+  });
+
   // The case the whole design turns on. `session:activity` carries a reason-only
   // refresh on the same channel as a real transition, roughly 180 of the former
   // against 3 of the latter across a long turn, so a level check here would toast

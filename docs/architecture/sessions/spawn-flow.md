@@ -132,6 +132,7 @@ Lifecycle on task move (`task-move.ts`, the session switch branch inside Priorit
 - **Leave an isolated column for a normal column**: suspend the isolated session (resumable), then Phase 3 resumes the **main** session.
 - **Reset-main / recycle**: an `always_spawn_new` column forces a fresh spawn on its target track even when the live session is already on that track, so the switch fires on `resolveForceFresh(toLane)`, not only on a target change.
 - The target + spawn policy are derived from the destination column in `resolveSpawnOverrides`, threaded through `SpawnOverrides.isolatedSwimlaneId` / `SpawnOverrides.forceFresh` into `resolveSpawnIntent` (which retires the prior record on a forced-fresh entry) and `sessionRepo.insert`. The terminal tab badges an isolated session as "Isolated" vs "Main".
+- **A switch the live session asked for itself** (its own `kangentic_move_task`, the way a main session sends its task to Code Review) suspends that session only once the turn that made the move ends, so the move stays in its conversation. The new track's spawn waits behind it. See [A call that ends the caller's own session](suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session).
 
 ## Cross-Agent Handoff
 

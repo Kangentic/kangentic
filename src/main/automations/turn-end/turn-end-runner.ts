@@ -36,6 +36,7 @@ import { deliverMessageToSession } from './deliver-message';
 import { moveTaskFromRow } from './move-from-row';
 import { readSessionFinalReply, tryReadSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
+import { isSessionInOwnCall } from '../../ipc/handlers/own-call-turn-wait';
 import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt } from './recap-turns';
 import {
   forgetAbandonedTurnSession,
@@ -497,6 +498,11 @@ function resolveSubject(
   // agent may have moved its own task, or the session been suspended for
   // another column's.
   if (task.session_id !== payload.sessionId) return null;
+  // Its own call is still taking effect: the turn that moved its task belongs
+  // to the column the task left, the turn that paused its workflow to a
+  // workflow that is now paused, and the call is waiting on this very turn end
+  // to end the session (`own-call-turn-wait.ts`).
+  if (isSessionInOwnCall(payload.sessionId)) return null;
   // An isolated column's session belongs to that column alone.
   if (payload.isolatedSwimlaneId && payload.isolatedSwimlaneId !== task.swimlane_id) return null;
   const column = repos.swimlanes.getById(task.swimlane_id);

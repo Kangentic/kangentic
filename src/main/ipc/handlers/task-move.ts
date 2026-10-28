@@ -68,7 +68,27 @@ import { isMoveByAPerson } from '../../../shared/task-move-origin';
 import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { reconcileTaskSessionRef, restartSessionForSettingsChange } from './session-reconcile';
 import { abortInFlightMove, registerMoveController, releaseMoveController } from './task-move-controllers';
+import { markOwnCallSession, waitForOwnAgentTurn } from './own-call-turn-wait';
 import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } from '../../../shared/types';
+
+/** What a session did when the move ends it, for the wait's log line. */
+const OWN_MOVE_CALL = 'moved its own task';
+
+/**
+ * Before a move ends a session: when that session is the one whose
+ * `kangentic_move_task` call started the move, wait for the turn that made the
+ * call to end (`own-call-turn-wait.ts`). Returns whether it waited.
+ */
+async function waitIfOwnAgentSession(
+  context: IpcContext,
+  ownAgentSessionId: string | null,
+  endingSessionId: string,
+  signal: AbortSignal,
+): Promise<boolean> {
+  if (ownAgentSessionId !== endingSessionId) return false;
+  await waitForOwnAgentTurn(context.sessionManager, endingSessionId, OWN_MOVE_CALL, signal);
+  return true;
+}
 
 /**
  * Suspend a live PTY session so Phase 3 can respawn it with new CLI flags:
@@ -90,6 +110,10 @@ import type { AutoCommandMode, Task, Swimlane, SessionRecord, TaskUpdateInput } 
  * label only when there is no session or the session is 'suspended'), so the
  * early emit is inert until the suspend actually lands and is never a source
  * of its own gap.
+ *
+ * `ownAgentSessionId` and `signal` are required for the same reason: the
+ * session this ends may be the one whose `kangentic_move_task` call started
+ * the move, and that session ends only once its turn does.
  */
 async function suspendLiveSessionForRespawn(args: {
   context: IpcContext;
@@ -103,12 +127,19 @@ async function suspendLiveSessionForRespawn(args: {
   projectPath: string | null;
   defaultBaseBranch: string;
   phase: SpawnPhase;
+  ownAgentSessionId: string | null;
+  signal: AbortSignal;
   // `session_id` is excluded, not merely omitted by convention: it is spread
   // after `session_id: null` below, so a caller that passed one would silently
   // defeat the null-out this helper exists to guarantee.
   additionalTaskUpdates?: Partial<Omit<TaskUpdateInput, 'id' | 'session_id'>>;
 }): Promise<void> {
-  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch, phase, additionalTaskUpdates } = args;
+  const { context, tasks, sessionRepo, usageHistoryRepo, taskId, liveSessionId, record, task, projectPath, defaultBaseBranch, phase, ownAgentSessionId, signal, additionalTaskUpdates } = args;
+  // Ahead of the label: the caller's session is still running its turn.
+  const waited = await waitIfOwnAgentSession(context, ownAgentSessionId, liveSessionId, signal);
+  // The wait can last seconds, and the session may exit in it, so a record
+  // read before it is read again.
+  const currentRecord = waited ? resolveOwnSessionRecord(sessionRepo, liveSessionId, taskId) : record;
   emitSpawnProgress(context.mainWindow, taskId, phase);
   // Everything after the emit runs in Phase 1, INSIDE the withTaskLock call.
   // That call sits under a try whose only clause is a `finally` (the
@@ -123,23 +154,23 @@ async function suspendLiveSessionForRespawn(args: {
   // half-written (record marked suspended without session_id cleared, or the
   // reverse); Phase 1 has no rollback and that is unchanged here.
   try {
-    if (record && record.agent_session_id
-        && (record.status === 'running' || record.status === 'exited')) {
+    if (currentRecord && currentRecord.agent_session_id
+        && (currentRecord.status === 'running' || currentRecord.status === 'exited')) {
       captureSessionMetrics(
         context.sessionManager,
         sessionRepo,
         usageHistoryRepo,
         liveSessionId,
-        record.id,
-        record.started_at,
-        record.session_type,
+        currentRecord.id,
+        currentRecord.started_at,
+        currentRecord.session_type,
       );
-      refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, record.id);
-      refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, record.id);
-      captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, defaultBaseBranch);
-      markRecordSuspended(sessionRepo, record.id, 'system');
-    } else if (record && record.status === 'queued') {
-      markRecordExited(sessionRepo, record.id);
+      refineTranscriptTokens(context.sessionManager, sessionRepo, liveSessionId, currentRecord.id);
+      refineTranscriptToolCounts(context.sessionManager, sessionRepo, liveSessionId, currentRecord.id);
+      captureGitChurn(task, sessionRepo, usageHistoryRepo, currentRecord.id, projectPath, defaultBaseBranch);
+      markRecordSuspended(sessionRepo, currentRecord.id, 'system');
+    } else if (currentRecord && currentRecord.status === 'queued') {
+      markRecordExited(sessionRepo, currentRecord.id);
     }
     await context.sessionManager.suspend(liveSessionId);
     tasks.update({ id: taskId, session_id: null, ...additionalTaskUpdates });
@@ -271,6 +302,10 @@ export async function handleTaskMove(
   // `moverIsTaskAgent` says an `'agent'` move comes from the task's own agent
   // session, which a running workflow lets through (`workflowMoveRefusal`).
   //
+  // `moverSessionId` names that session. When it is the task's live one and
+  // the move ends it, the session ends only once its turn does
+  // (`own-call-turn-wait.ts`), so the move stays in its own conversation.
+  //
   // `expectedFromSwimlaneId` refuses the move unless the task is still in that
   // column once the lock lets it through. A Move to column row resolves its
   // target from its own column outside the lock, so a move that landed while
@@ -281,6 +316,7 @@ export async function handleTaskMove(
     moveReason?: string;
     fromTurnEndGroup?: boolean;
     moverIsTaskAgent?: boolean;
+    moverSessionId?: string;
     expectedFromSwimlaneId?: string;
   },
 ): Promise<void> {
@@ -375,6 +411,12 @@ export async function handleTaskMove(
    * mean one thing on a cold entry and another on a warm one.
    */
   let runEnterAutomations: (() => Promise<void>) | null = null;
+  /**
+   * Releases the mark a move by the task's own agent puts on that agent's
+   * session at the commit (`markOwnCallSession`). Released when Phase 1
+   * settles, by which point a session the move ends has ended.
+   */
+  let releaseOwnMoveMark: (() => void) | null = null;
   const runMove = async (): Promise<void> => {
   try {
     // === Phase 1 (locked, short) ===
@@ -382,6 +424,12 @@ export async function handleTaskMove(
     // Returns null when the move is fully handled inside Phase 1 (Priorities
     // 1, 2, 2.5, 3b, 3c), or a plan for Priority 3a / Priority 4 which need
     // slow worktree + spawn work in Phase 2/3.
+    //
+    // Short except for one bounded wait: a move by the task's own agent that
+    // ends that agent's session first waits, up to OWN_CALL_TURN_WAIT_MS, for
+    // the turn that made the move to end. A newer move of the task aborts it
+    // before queueing here, which ends the wait; anything else that needs this
+    // lock (a Pause, a Resume) queues behind it for at most that bound.
     const plan = await withTaskLock(input.taskId, async (): Promise<MoveSpawnPlan | null> => {
       const resolvedProjectId = projectId ?? context.currentProjectId;
       // Use !== undefined (not ??) to distinguish "caller passed null" from "caller omitted the arg"
@@ -402,6 +450,10 @@ export async function handleTaskMove(
       // task neither skips its spawn nor spawns a duplicate. Synchronous, and
       // this lock is the one it asks its callers to hold.
       const { task } = reconcileTaskSessionRef(context, resolvedProjectId, input.taskId);
+      // The session that asked for this move, when it is the task's live one.
+      const ownAgentSessionId = options?.moverSessionId && task.session_id === options.moverSessionId
+        ? task.session_id
+        : null;
 
       const fromSwimlaneId = task.swimlane_id;
       const expectedFromSwimlaneId = options?.expectedFromSwimlaneId;
@@ -511,6 +563,13 @@ export async function handleTaskMove(
       // try/catch for why "the move threw" does not imply "nothing changed".
       moveCommitted = true;
       movedTaskTitle = task.title;
+      // From the commit on, the turn that made this move belongs to the column
+      // the task left, so its end is not judged for the new one: the exit rows
+      // below can wait for that turn, and it lands while `session_id` still
+      // names the caller. See `own-call-turn-wait.ts`.
+      if (ownAgentSessionId && fromSwimlaneId !== input.targetSwimlaneId) {
+        releaseOwnMoveMark = markOwnCallSession(ownAgentSessionId);
+      }
 
       // Commit-time announce. Everything slow in this handler comes AFTER this
       // line, and much of it still inside this lock: the Done branch suspends,
@@ -847,6 +906,8 @@ export async function handleTaskMove(
         // "Paused" through the whole archive below.
         clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
+          // A session that moved its own task here ends once its turn does.
+          await waitIfOwnAgentSession(context, ownAgentSessionId, task.session_id, signal);
           const record = resolveOwnSessionRecord(sessionRepo, task.session_id, task.id);
           // Accept 'running' AND 'exited' -- exited covers Claude natural exit.
           // Queued sessions never started Claude CLI, so mark exited (not suspended)
@@ -947,6 +1008,8 @@ export async function handleTaskMove(
         // renderer's suspended-row carve-out doesn't keep it alive.
         clearSpawnProgress(context.mainWindow, task.id);
         if (task.session_id) {
+          // A session that moved its own task here ends once its turn does.
+          await waitIfOwnAgentSession(context, ownAgentSessionId, task.session_id, signal);
           const record = resolveOwnSessionRecord(sessionRepo, task.session_id, task.id);
           if (record && record.agent_session_id
               && (record.status === 'running' || record.status === 'exited')) {
@@ -1037,6 +1100,8 @@ export async function handleTaskMove(
             projectPath: resolvedProjectPath,
             defaultBaseBranch: effectiveDefaultBranch,
             phase: 'new-session',
+            ownAgentSessionId,
+            signal,
           });
           console.log(
             `[TASK_MOVE] Session switch for task ${task.id.slice(0, 8)}:`
@@ -1102,6 +1167,8 @@ export async function handleTaskMove(
             projectPath: resolvedProjectPath,
             defaultBaseBranch: effectiveDefaultBranch,
             phase: 'switching-agent',
+            ownAgentSessionId,
+            signal,
             additionalTaskUpdates: task.agent_override
               ? undefined
               : { model_override: null, effort_override: null },
@@ -1220,6 +1287,8 @@ export async function handleTaskMove(
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
               phase: restartPhaseFor(plan.restartReason),
+              ownAgentSessionId,
+              signal,
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
@@ -1374,6 +1443,9 @@ export async function handleTaskMove(
         continuationPrompt: options?.continuationPrompt,
         suppressAutoCommand,
       };
+    }).finally(() => {
+      releaseOwnMoveMark?.();
+      releaseOwnMoveMark = null;
     });
 
     if (!plan) {

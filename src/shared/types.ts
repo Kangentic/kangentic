@@ -1875,7 +1875,18 @@ export type ActivityState = 'thinking' | 'idle' | 'permission';
  * the UI render elapsed wait time next to the mail affordance.
  */
 export type ActivityReason =
-  | { kind: 'idle'; since: number }
+  | {
+      kind: 'idle';
+      since: number;
+      /**
+       * Set by main on the idle that ends the turn in which the session moved
+       * its own task or paused its own workflow, while that call is still
+       * taking effect. The call ends the session next (a move may instead keep
+       * it in the new column), so nobody is being waited on, and the idle
+       * raises no toast and takes no auto-focus.
+       */
+      inOwnCall?: true;
+    }
   | { kind: 'permission'; since: number }
   | {
       kind: 'tool';

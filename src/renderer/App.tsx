@@ -30,7 +30,7 @@ import { useAgentDrivenInvalidation } from './hooks/useAgentDrivenInvalidation';
 import { useWhatsNewOnLaunch } from './hooks/useWhatsNewOnLaunch';
 import { invalidateProject } from './stores/project-cache';
 import { resolveAutoFocusTarget } from './utils/auto-focus';
-import { resolveIdleToast } from './utils/idle-toast';
+import { endsOwnCallTurn, resolveIdleToast } from './utils/idle-toast';
 import { openTaskFromNotification } from './utils/open-task-from-notification';
 import { asSentence, describeIpcError } from './lib/ipc-error';
 import { resolveGpuNotice } from './utils/gpu-notice';
@@ -757,7 +757,11 @@ export function App() {
           //
           // `previousState` is what makes a reason-only refresh on this channel a
           // no-op here: the resolver returns null when the state did not move.
-          if (isCurrentProject && config.autoFocusIdleSession) {
+          //
+          // Not for the idle that ends the turn in which the session moved its
+          // own task or paused its own workflow: that turn belongs to the call.
+          const endsOwnCall = endsOwnCallTurn(reason);
+          if (isCurrentProject && config.autoFocusIdleSession && !endsOwnCall) {
             const projectSessions = sessionStore.sessions.filter((s) => s.projectId === activeProjectId);
             const target = resolveAutoFocusTarget({
               sessionId,
@@ -793,6 +797,7 @@ export function App() {
               ownedByDetailSurface: ownedSessionIds.has(sessionId),
               taskTitle: toastTask?.title,
               sessionIdShort: sessionId.slice(0, 8),
+              endsOwnCall,
             });
             if (idleToast) {
               const openProjectId = toastSession.projectId;

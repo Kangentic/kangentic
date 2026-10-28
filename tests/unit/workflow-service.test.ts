@@ -14,6 +14,7 @@
  * boards hold. The cases below make each of those writes throw, on real SQLite.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { EventEmitter } from 'node:events';
 import type Database from 'better-sqlite3';
 
 const harness = vi.hoisted(() => ({ dbs: new Map<string, unknown>() }));
@@ -68,6 +69,7 @@ const { SwimlaneRepository } = await import('../../src/main/db/repositories/swim
 const { TaskLinkRepository } = await import('../../src/main/db/repositories/task-link-repository');
 const { WorkflowRepository } = await import('../../src/main/db/repositories/workflow-repository');
 const service = await import('../../src/main/workflows/workflow-service');
+const { isSessionInOwnCall } = await import('../../src/main/ipc/handlers/own-call-turn-wait');
 const { setWorkflowWake } = await import('../../src/main/workflows/workflow-wake');
 const { setWorkflowCatchUp } = await import('../../src/main/workflows/workflow-catch-up');
 
@@ -285,6 +287,134 @@ describe('workflow operations', () => {
       // Turn-end work a running agent's last turn set off is stopped first, for every task.
       expect(vi.mocked(supersedeTurnEndWork).mock.calls.map(([taskId]) => taskId).sort())
         .toEqual(members.map((task) => task.id).sort());
+    });
+
+    // A member's own agent paused its workflow. Suspended before the reply, as
+    // every member used to be, Claude exits without writing the call, and after
+    // a Resume the agent pauses again. So its own session pauses once the turn
+    // that made the call ends, and every other member at once.
+    describe('a pause asked for by a member\'s own agent', () => {
+      const CALLER_SESSION_ID = 'session-caller';
+
+      /** A session manager the real turn wait listens to, with the caller mid-turn. */
+      function withCallerMidTurn(): { runtime: IpcContext; sessionManager: EventEmitter } {
+        const sessionManager = Object.assign(new EventEmitter(), {
+          getActivityCache: () => ({ [CALLER_SESSION_ID]: 'thinking' }),
+          getSession: (sessionId: string) => (sessionId === CALLER_SESSION_ID ? { id: sessionId, status: 'running' } : undefined),
+        });
+        return { runtime: { ...context, sessionManager } as unknown as IpcContext, sessionManager };
+      }
+
+      async function startedWithCaller(): Promise<{ workflowId: string; callerId: string; otherId: string }> {
+        const { workflowId, taskIdOf } = await startedWith(['caller', 'other']);
+        place(taskIdOf('caller'), 'Executing');
+        place(taskIdOf('other'), 'Executing');
+        homeDb().prepare('UPDATE tasks SET session_id = ? WHERE id = ?').run(CALLER_SESSION_ID, taskIdOf('caller'));
+        vi.mocked(pauseTaskSession).mockResolvedValue('paused');
+        return { workflowId, callerId: taskIdOf('caller'), otherId: taskIdOf('other') };
+      }
+
+      const pausedTaskIds = (): string[] => vi.mocked(pauseTaskSession).mock.calls.map(([, taskId]) => taskId);
+
+      afterEach(() => {
+        vi.useRealTimers();
+      });
+
+      it('pauses every other member at once, and the caller only once its turn has ended', async () => {
+        const { workflowId, callerId, otherId } = await startedWithCaller();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        const { runtime, sessionManager } = withCallerMidTurn();
+
+        const result = await service.pauseWorkflow(runtime, 'home', workflowId, 'a test', { callerSessionId: CALLER_SESSION_ID });
+
+        expect(result).toMatchObject({ paused: 2, failed: [], callerPausesAfterTurn: true });
+        expect(pausedTaskIds()).toEqual([otherId]);
+        // Its turn's end must not run the column's rows on a paused workflow.
+        expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(true);
+
+        sessionManager.emit('activity', CALLER_SESSION_ID, 'idle');
+        await vi.advanceTimersByTimeAsync(1_500);
+
+        await vi.waitFor(() => expect(pausedTaskIds()).toEqual([otherId, callerId]));
+        await vi.waitFor(() => expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(false));
+      });
+
+      it('leaves the caller working when a Resume landed before its turn ended', async () => {
+        const { workflowId, otherId } = await startedWithCaller();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        const { runtime, sessionManager } = withCallerMidTurn();
+
+        await service.pauseWorkflow(runtime, 'home', workflowId, 'a test', { callerSessionId: CALLER_SESSION_ID });
+        new WorkflowRepository(homeDb()).setState(workflowId, 'running');
+        sessionManager.emit('activity', CALLER_SESSION_ID, 'idle');
+        await vi.advanceTimersByTimeAsync(1_500);
+
+        await vi.waitFor(() => expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(false));
+        expect(pausedTaskIds()).toEqual([otherId]);
+      });
+
+      it('releases the caller\'s mark and lets nothing escape when its pause fails after its turn ended', async () => {
+        const { workflowId, callerId, otherId } = await startedWithCaller();
+        vi.mocked(pauseTaskSession).mockImplementation(async (_context, taskId) => {
+          if (taskId === callerId) throw new Error('suspend failed');
+          return 'paused';
+        });
+        const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+        const unhandledRejection = vi.fn();
+        process.on('unhandledRejection', unhandledRejection);
+        try {
+          vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+          const { runtime, sessionManager } = withCallerMidTurn();
+
+          await service.pauseWorkflow(runtime, 'home', workflowId, 'a test', { callerSessionId: CALLER_SESSION_ID });
+          expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(true);
+
+          sessionManager.emit('activity', CALLER_SESSION_ID, 'idle');
+          await vi.advanceTimersByTimeAsync(1_500);
+
+          // A failed pause must still lift the mark, or the session's later turns run no column rows.
+          await vi.waitFor(() => expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(false));
+          // The caller's pause was attempted, so the release above is not an early return.
+          expect(pausedTaskIds()).toEqual([otherId, callerId]);
+          // An unhandled rejection is raised after the microtask queue drains: let one real turn of the loop pass.
+          // setImmediate is not faked above.
+          await new Promise<void>((resolve) => setImmediate(resolve));
+          expect(unhandledRejection).not.toHaveBeenCalled();
+          // Handled, and not silently: the failure is logged.
+          expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not pause'), expect.any(Error));
+        } finally {
+          process.off('unhandledRejection', unhandledRejection);
+        }
+      });
+
+      it('pauses only the caller\'s own session after its turn: a newer live session of the task is declined', async () => {
+        const { workflowId, callerId } = await startedWithCaller();
+        vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+        const { runtime, sessionManager } = withCallerMidTurn();
+
+        await service.pauseWorkflow(runtime, 'home', workflowId, 'a test', { callerSessionId: CALLER_SESSION_ID });
+        sessionManager.emit('activity', CALLER_SESSION_ID, 'idle');
+        await vi.advanceTimersByTimeAsync(1_500);
+        await vi.waitFor(() => expect(pausedTaskIds()).toContain(callerId));
+
+        const callerPause = vi.mocked(pauseTaskSession).mock.calls.find(([, taskId]) => taskId === callerId);
+        const stillEligible = callerPause?.[2]?.stillEligible;
+        expect(stillEligible).toBeDefined();
+        expect(stillEligible!({ id: CALLER_SESSION_ID } as never)).toBe(true);
+        // The task may have a newer session by now, one a Resume started: it is not the one that asked.
+        expect(stillEligible!({ id: 'session-newer' } as never)).toBe(false);
+        await vi.waitFor(() => expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(false));
+      });
+
+      it('pauses every member at once when the caller\'s session is no member\'s (the control)', async () => {
+        const { workflowId, callerId, otherId } = await startedWithCaller();
+
+        const result = await service.pauseWorkflow(context, 'home', workflowId, 'a test', { callerSessionId: 'session-elsewhere' });
+
+        expect(result.callerPausesAfterTurn).toBe(false);
+        expect(pausedTaskIds().sort()).toEqual([callerId, otherId].sort());
+        expect(isSessionInOwnCall(CALLER_SESSION_ID)).toBe(false);
+      });
     });
 
     it('pauses a held task\'s agent too: a workflow set down frees every agent it holds', async () => {

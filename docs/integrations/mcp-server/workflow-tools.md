@@ -154,6 +154,12 @@ automations as any card does, and its own agent may move it. The reply counts th
 names each task whose agent could not be paused; the phone gets the same counts as the result's
 `paused`, `notLive` and `failed`.
 
+When a member's own agent makes the call, its own session pauses only after the turn that made the
+call ends, and the reply says "Your own session pauses when this turn ends." Every other member
+pauses at once. The call and its reply then stay in the agent's conversation, so a later resume of
+it does not pause the workflow again. See
+[A call that ends the caller's own session](../../architecture/sessions/suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session).
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow` | string | Yes | The workflow's id or exact title. |

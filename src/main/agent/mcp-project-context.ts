@@ -241,9 +241,13 @@ export function buildCommandContextForProject(
     // origin passed in - which also drops the raw-SQL re-read this used to need
     // purely to recover a title for the toast.
     onTaskMove: async (input, options) => {
+      const moveOptions = {
+        ...(options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
+        ...(options?.moverSessionId ? { moverSessionId: options.moverSessionId } : {}),
+      };
       await handleTaskMove(
         ipcContext, input, 'agent', projectId, projectPath,
-        options?.moverIsTaskAgent ? { moverIsTaskAgent: true } : undefined,
+        Object.keys(moveOptions).length > 0 ? moveOptions : undefined,
       );
       const message = options?.message?.trim();
       if (!message) return;

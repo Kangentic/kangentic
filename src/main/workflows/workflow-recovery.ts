@@ -11,6 +11,7 @@ import { resolveInjectionVerifier } from '../ipc/helpers/agent-spawn';
 import { deliverMessageToSession } from '../automations/turn-end/deliver-message';
 import { tryReadSessionFinalReply } from '../automations/turn-end/final-reply-reader';
 import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-passes';
+import { isSessionInOwnCall } from '../ipc/handlers/own-call-turn-wait';
 import { notifyWorkflowChanged } from './workflow-changed';
 import { runWorkflowStep, workflowStepApplies, type WorkflowStepResult } from './workflow-step';
 import {
@@ -244,6 +245,10 @@ export function armWorkflowRecoveryOnIdle(context: IpcContext, sessionId: string
   try {
     const existing = recoveryEntryForSession(sessionId);
     if (existing && (existing.timer !== null || existing.inFlight)) return;
+    // Idle at the end of the turn that moved its own task or paused its own
+    // workflow: that call ends or re-homes the session next, so there is no
+    // step here to recover.
+    if (isSessionInOwnCall(sessionId)) return;
     const session = context.sessionManager.getSession(sessionId);
     if (!session || session.transient || session.workflowId) return;
     // Every session's every idle comes here: a board that cannot be read is

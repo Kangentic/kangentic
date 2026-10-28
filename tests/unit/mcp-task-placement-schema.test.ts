@@ -50,7 +50,7 @@ interface FakeToolConfig {
 
 type FakeToolHandler = (args: Record<string, unknown>) => unknown;
 
-function makeServerWithTaskTools() {
+function makeServerWithTaskTools(caller: { taskId?: string; sessionId?: string } = {}) {
   const configs = new Map<string, FakeToolConfig>();
   const handlers = new Map<string, FakeToolHandler>();
   const server = {
@@ -70,7 +70,7 @@ function makeServerWithTaskTools() {
     },
   };
   const taskCounter = { tryReserve: () => true, limit: () => 100 };
-  registerTaskTools(server as never, {} as never, taskCounter as never);
+  registerTaskTools(server as never, {} as never, taskCounter as never, undefined, caller.taskId ?? null, caller.sessionId ?? null);
   return server;
 }
 
@@ -124,6 +124,30 @@ describe('kangentic_move_task position argument', () => {
       expect.anything(),
       expect.any(String),
     );
+  });
+});
+
+// A move that ends the caller's own session waits for that session's turn
+// (#916), so the request's caller rides the context. Never the params, which
+// the phone's board-tool path passes straight through.
+describe('kangentic_move_task caller', () => {
+  it('puts the caller\'s task and session on the command context', () => {
+    const server = makeServerWithTaskTools({ taskId: 'task-caller', sessionId: 'session-caller' });
+
+    server.getHandler('kangentic_move_task')({ taskId: '42', column: 'Code Review' });
+
+    const [, params, context] = mockCallHandler.mock.calls[0] as unknown as [string, Record<string, unknown>, Record<string, unknown>];
+    expect(context).toMatchObject({ callerTaskId: 'task-caller', callerSessionId: 'session-caller' });
+    expect(params).not.toHaveProperty('callerSessionId');
+  });
+
+  it('carries null for a caller with no session', () => {
+    const server = makeServerWithTaskTools();
+
+    server.getHandler('kangentic_move_task')({ taskId: '42', column: 'Code Review' });
+
+    const [, , context] = mockCallHandler.mock.calls[0] as unknown as [string, Record<string, unknown>, Record<string, unknown>];
+    expect(context).toMatchObject({ callerTaskId: null, callerSessionId: null });
   });
 });
 
