@@ -297,7 +297,7 @@ describe('handleGetTranscript', () => {
       const result = await handleGetTranscript({ workflow: 'Usage budgets' }, createMockContext(createMockDb()));
       expect(result.success).toBe(true);
       // A workflow with no recorded target reads this machine.
-      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null);
+      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null, null);
       expect(result.message).toContain('plan the budgets');
     });
 
@@ -318,7 +318,7 @@ describe('handleGetTranscript', () => {
       expect(result.message).toContain('plan the budgets');
       // A workflow agent has no sessions row, so its target comes from the workflow.
       // A null here reads this machine's home, which holds none of a distro agent's files.
-      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/home/dev/project', EXPECTED_WSL_PLACE);
+      expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/home/dev/project', EXPECTED_WSL_PLACE, null);
     });
   });
 
@@ -493,7 +493,7 @@ describe('handleGetTranscript', () => {
     expect(result.message).toContain('Entries: 2');
     expect(result.message).toContain('## User');
     // The capability is invoked with the agent session id and cwd.
-    expect(parseTranscript).toHaveBeenCalledWith('droid-uuid-1234', 'C:/Users/dev/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('droid-uuid-1234', 'C:/Users/dev/project', null, null);
     // Data payload carries the located source path as filePath.
     expect(result.data).toMatchObject({
       sessionId: 'session-droid',
@@ -739,7 +739,7 @@ describe('handleGetTranscript', () => {
 
     expect(result.success).toBe(true);
     // sessionIndex 1 = the previous session (sessions ordered started_at DESC).
-    expect(parseTranscript).toHaveBeenCalledWith('agent-old', 'C:/Users/dev/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-old', 'C:/Users/dev/project', null, null);
   });
 
   it('returns an error when sessionIndex is out of range', async () => {
@@ -840,7 +840,7 @@ describe('handleGetTranscript', () => {
     const result = await handleGetTranscript({ taskId: '1', sessionIndex: -1 }, context);
 
     expect(result.success).toBe(true);
-    expect(parseTranscript).toHaveBeenCalledWith('agent-new', 'C:/Users/dev/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-new', 'C:/Users/dev/project', null, null);
     expect(result.message).toContain('from newest');
   });
 
@@ -868,7 +868,7 @@ describe('handleGetTranscript', () => {
       // The third argument is where the parser looks for the history: the row's
       // distro and its homes. A null here reads this machine's home, which holds
       // none of a distro session's files.
-      expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+      expect(parseTranscript).toHaveBeenCalledWith('agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE, null);
     });
 
     it('uses the target of the session sessionIndex selects, not the newest session\'s', async () => {
@@ -888,8 +888,8 @@ describe('handleGetTranscript', () => {
       await handleGetTranscript({ taskId: '1', sessionIndex: 1 }, context);
 
       expect(parseTranscript).toHaveBeenCalledTimes(2);
-      expect(parseTranscript).toHaveBeenNthCalledWith(1, 'agent-host', 'C:/Users/dev/project', null);
-      expect(parseTranscript).toHaveBeenNthCalledWith(2, 'agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+      expect(parseTranscript).toHaveBeenNthCalledWith(1, 'agent-host', 'C:/Users/dev/project', null, null);
+      expect(parseTranscript).toHaveBeenNthCalledWith(2, 'agent-wsl', '/home/dev/project', EXPECTED_WSL_PLACE, null);
     });
   });
 

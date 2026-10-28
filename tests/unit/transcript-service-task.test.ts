@@ -348,7 +348,7 @@ describe('resolveTaskTranscript', () => {
 
     expect(result).not.toBeNull();
     // The conversation lives where it ran: by its id in the checkout the workflow recorded.
-    expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null);
+    expect(parseTranscript).toHaveBeenCalledWith('conv-wf', '/work/project', null, null);
     expect(result!.entries).toEqual([{ kind: 'user', uuid: 'w1', ts: 1, text: 'plan the budgets' }]);
     expect(result!.taskTitle).toBe('Workflow agent: Usage budgets');
     expect(result!.sessions).toHaveLength(1);
@@ -394,8 +394,8 @@ describe('resolveTaskTranscript', () => {
     expect(result!.entries.filter((entry) => entry.kind === 'user')).toHaveLength(2);
     expect(parseTranscript).toHaveBeenCalledTimes(2);
     // The host session reads this machine; the distro session reads its distro's home.
-    expect(parseTranscript).toHaveBeenCalledWith('agent-place-host', 'C:/Users/dev/project', null);
-    expect(parseTranscript).toHaveBeenCalledWith('agent-place-wsl', '/home/dev/project', EXPECTED_WSL_PLACE);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-place-host', 'C:/Users/dev/project', null, undefined);
+    expect(parseTranscript).toHaveBeenCalledWith('agent-place-wsl', '/home/dev/project', EXPECTED_WSL_PLACE, undefined);
   });
 
   it('preserves an assistant turn\'s per-turn token usage through the stitch (so burn-rate analysis can read it off the unified conversation)', async () => {
