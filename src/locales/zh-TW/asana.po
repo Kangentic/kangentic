@@ -8,82 +8,66 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Cancel"
 msgstr "取消"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Connect"
 msgstr "連線"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Connect Asana"
 msgstr "連線 Asana"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Could not save the token."
 msgstr "無法儲存權杖。"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Create a Personal Access Token"
 msgstr "建立個人存取權杖"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Hide token"
 msgstr "隱藏權杖"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Kangentic connects to Asana with a Personal Access Token. The whole setup takes about 30 seconds."
 msgstr "Kangentic 會使用個人存取權杖連線至 Asana。整個設定約需 30 秒。"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Open app.asana.com/0/my-apps"
 msgstr "開啟 app.asana.com/0/my-apps"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Open Asana developer settings"
 msgstr "開啟 Asana 開發人員設定"
 
 #. The two highlighted phrases are labels in Asana's own English interface. Keep them as written.
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Open the <0>Personal access tokens</0> tab and click <1>Create new token</1>. Name it \"Kangentic\", accept the API terms, then copy the token Asana shows you (it is only displayed once)."
-msgstr "開啟 <0>Personal access tokens</0> 分頁並按一下 <1>Create new token</1>。將其命名為「Kangentic」，接受 API 條款，然後複製 Asana 顯示的權杖 (僅會顯示一次)。"
+msgstr "開啟 <0>Personal access tokens</0> 分頁並按一下 <1>Create new token</1>。命名為「Kangentic」，接受 API 條款，然後複製 Asana 顯示的權杖（只會顯示一次）。"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Paste it here"
-msgstr "貼到這裡"
+msgstr "貼上到這裡"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Paste your Personal Access Token to continue."
-msgstr "請貼上您的個人存取權杖以繼續。"
+msgstr "請貼上你的個人存取權杖以繼續。"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Paste your token"
-msgstr "貼上您的權杖"
+msgstr "貼上你的權杖"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Personal Access Token"
 msgstr "個人存取權杖"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Show token"
 msgstr "顯示權杖"
 
 #: src/renderer/components/asana/AsanaSetupDialog.tsx
-#, fuzzy
 msgid "Your token is stored locally and encrypted with your operating system's keychain. Kangentic never sends it anywhere except Asana."
-msgstr "您的權杖會儲存在本機，並以作業系統的金鑰鏈加密。Kangentic 只會將其傳送至 Asana，不會傳送至其他任何地方。"
+msgstr "你的權杖會儲存在本機，並以作業系統的金鑰鏈加密。除了 Asana，Kangentic 不會將它傳送到其他任何地方。"

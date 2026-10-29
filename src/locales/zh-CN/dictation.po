@@ -8,57 +8,46 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "清除"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Clear and start over"
 msgstr "清除并重新开始"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Dictation is off in password fields"
-msgstr "密码字段中已禁用听写"
+msgstr "密码字段中听写已关闭"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Inserting..."
 msgstr "正在插入..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Listening"
 msgstr "正在聆听"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "No terminal or input focused"
-msgstr "未聚焦终端或输入框"
+msgstr "没有聚焦的终端或输入框"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Preparing model... {downloadPercent}%"
 msgstr "正在准备模型... {downloadPercent}%"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Release to insert"
 msgstr "松开以插入"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Release to send"
 msgstr "松开以发送"
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Sending..."
 msgstr "正在发送..."
 
 #: src/renderer/components/dictation/LiveDictationChip.tsx
-#, fuzzy
 msgid "Still sending the last one"
 msgstr "仍在发送上一条"

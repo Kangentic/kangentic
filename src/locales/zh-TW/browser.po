@@ -8,315 +8,253 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
 msgid "{strokeCount, plural, one {# stroke} other {# strokes}}"
-msgstr "{strokeCount, plural, other {# 筆劃}}"
+msgstr "{strokeCount, plural, other {# 筆畫}}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "{viewportWidth} x {viewportHeight}"
 msgstr "{viewportWidth} x {viewportHeight}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Agent is driving"
-msgstr "代理程式正在操控"
+msgstr "代理正在操控"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Already at the largest zoom"
-msgstr "已是最大縮放比例"
+msgstr "已達最大縮放"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Already at the smallest zoom"
-msgstr "已是最小縮放比例"
+msgstr "已達最小縮放"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "An agent set this page to render at {viewportWidth} x {viewportHeight} CSS pixels. Reset to use the pane's own size again."
-msgstr "代理程式已將此頁面設為以 {viewportWidth} x {viewportHeight} CSS 像素呈現。重設即可改回使用窗格本身的大小。"
+msgstr "代理已將此頁面設為以 {viewportWidth} x {viewportHeight} CSS 像素呈現。重設即可改回使用窗格本身的尺寸。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "at {zoomPercent}%"
 msgstr "縮放 {zoomPercent}%"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Back"
 msgstr "上一頁"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "清除"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Clear all strokes"
-msgstr "清除所有筆觸"
+msgstr "清除所有筆畫"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Click elements to capture their identity"
 msgstr "按一下元素以擷取其識別資訊"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Close browser"
 msgstr "關閉瀏覽器"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Close the browser and free its memory. Show reopens the page."
 msgstr "關閉瀏覽器並釋放其記憶體。按「顯示」即可重新開啟頁面。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Couldn't save URL"
 msgstr "無法儲存 URL"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Couldn't send to agent"
-msgstr "無法傳送給代理程式"
+msgstr "無法傳送給代理"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Default URL saved"
 msgstr "已儲存預設 URL"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Draw"
 msgstr "繪圖"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "e.g. \"Explain what I marked\""
 msgstr "例如「說明我標記的內容」"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "e.g. \"Match the circled spacing\""
 msgstr "例如「比照圈起來的間距」"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "e.g. \"Why is this misaligned?\""
 msgstr "例如「為什麼這裡沒有對齊？」"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Enter a valid http:// or https:// URL."
 msgstr "請輸入有效的 http:// 或 https:// URL。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Enter in the note also sends"
 msgstr "在備註中按 Enter 也會傳送"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Esc stops inspecting"
 msgstr "按 Esc 停止檢查"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Failed to load: {finalUrl}"
-msgstr "無法載入：{finalUrl}"
+msgstr "載入失敗：{finalUrl}"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Forward"
 msgstr "下一頁"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "https://example.com or localhost:5173"
 msgstr "https://example.com 或 localhost:5173"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Inspect"
 msgstr "檢查"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Inspect failed"
 msgstr "檢查失敗"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Invalid URL: {target}"
 msgstr "無效的 URL：{target}"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Local dev server, staging, production, or any http(s) page. This task remembers where you were; other tasks keep their own."
-msgstr "本機開發伺服器、預備環境、正式環境，或任何 http(s) 頁面。此任務會記住您瀏覽的位置，其他任務則各自保留。"
+msgstr "本機開發伺服器、預備環境、正式環境，或任何 http(s) 頁面。此任務會記住你上次瀏覽的位置，其他任務則各自保留。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "No earlier page"
 msgstr "沒有上一頁"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "No forward page"
 msgstr "沒有下一頁"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Nothing drawn yet"
 msgstr "尚未繪製任何內容"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "On Windows: if your dev server runs in WSL and `localhost` does not connect, run <0>{WSL_HOSTNAME_COMMAND}</0> and use that IP instead."
-msgstr "Windows 上：若開發伺服器在 WSL 中執行且無法連線至 `localhost`，請執行 <0>{WSL_HOSTNAME_COMMAND}</0> 並改用該 IP。"
+msgstr "Windows 上：若你的開發伺服器在 WSL 中執行，且無法連線至 `localhost`，請執行 <0>{WSL_HOSTNAME_COMMAND}</0> 並改用該 IP。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Only http:// and https:// URLs are allowed."
 msgstr "僅允許 http:// 和 https:// URL。"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Open"
 msgstr "開啟"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open {pickUrl}"
 msgstr "開啟 {pickUrl}"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open a URL to preview"
 msgstr "開啟 URL 以預覽"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Open in new window"
 msgstr "在新視窗中開啟"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Or Ctrl+scroll wheel"
 msgstr "或按 Ctrl+滾輪"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Quick picks"
 msgstr "快速選擇"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Reload"
 msgstr "重新載入"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
 msgid "Remove from queue"
 msgstr "從佇列中移除"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Reset"
 msgstr "重設"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Reset this page to the pane's own size"
 msgstr "將此頁面重設為窗格本身的大小"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Reset viewport"
 msgstr "重設檢視區"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Reset zoom (current {zoomPercent}%)"
-msgstr "重設縮放 (目前 {zoomPercent}%)"
+msgstr "重設縮放（目前 {zoomPercent}%）"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Reset zoom to 100%"
 msgstr "將縮放重設為 100%"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Save as project default"
 msgstr "儲存為專案預設值"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Save as project default for all tasks"
-msgstr "儲存為所有任務的專案預設值"
+msgstr "儲存為專案預設值，套用於所有任務"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Send"
 msgstr "傳送"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Send to agent"
-msgstr "傳送給代理程式"
+msgstr "傳送給代理"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "The browser pane opens it for this project."
 msgstr "瀏覽器窗格會為此專案開啟它。"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "This URL is the project default"
 msgstr "此 URL 為專案預設值"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Toggle draw mode"
 msgstr "切換繪圖模式"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Undo"
 msgstr "復原"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Undo last stroke"
 msgstr "復原上一筆畫"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Webpack, generic"
-msgstr "Webpack，通用"
+msgstr "Webpack（通用）"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "What should the agent do with this?"
-msgstr "代理程式應如何處理此內容？"
+msgstr "代理應如何處理這些內容？"
 
 #: src/renderer/components/browser/AttachmentChips.tsx
-#, fuzzy
 msgid "Will send:"
 msgstr "將傳送："
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Zoom in"
 msgstr "放大"
 
 #: src/renderer/components/browser/BrowserPane.tsx
-#, fuzzy
 msgid "Zoom out"
 msgstr "縮小"

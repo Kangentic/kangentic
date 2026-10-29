@@ -8,218 +8,177 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
 msgstr "「{fileName}」超過 10 MB 的限制。"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{duplicateCount} already in the backlog"
 msgstr "{duplicateCount} 個已在待辦清單中"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{importedCount} imported"
 msgstr "已匯入 {importedCount} 個"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{loadedCount, plural, one {# item loaded} other {# items loaded}}"
 msgstr "{loadedCount, plural, other {已載入 # 個項目}}"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgid "{pendingDeletePriorityCount, plural, one {# item} other {# items}} with this priority will be reset to \"{fallbackPriorityLabel}\"."
 msgstr "{pendingDeletePriorityCount, plural, other {使用此優先順序的 # 個項目將重設為「{fallbackPriorityLabel}」。}}"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source"
 msgid "{provider} {sourceType}"
 msgstr "{provider} {sourceType}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
-#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # backlog task.} other {This will permanently delete # backlog tasks.}}"
 msgstr "{selectedCount, plural, other {這將永久刪除 # 個待辦任務。}}"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{selectedCount} selected"
 msgstr "已選取 {selectedCount} 個"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{shownCount} of {loadedCount, plural, one {# item} other {# items}}"
-msgstr "{loadedCount, plural, other {{shownCount} / # 個項目}}"
+msgstr "{loadedCount, plural, other {{shownCount} / 共 # 個項目}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{skippedAttachmentCount, plural, one {# attachment skipped} other {# attachments skipped}}"
 msgstr "{skippedAttachmentCount, plural, other {已略過 # 個附件}}"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "{summary}."
 msgstr "{summary}。"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "Add Label"
 msgstr "新增標籤"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "Add labels when creating tasks"
-msgstr "建立工作時新增標籤"
+msgstr "建立任務時新增標籤"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgid "Add Priority"
 msgstr "新增優先順序"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Add Source"
 msgstr "新增來源"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import state filter"
 msgid "All"
 msgstr "全部"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "All items have been imported"
 msgstr "所有項目皆已匯入"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import filter"
 msgid "Assignee"
 msgstr "負責人"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Back"
 msgstr "返回"
 
 #: src/renderer/components/backlog/BacklogView.tsx
-#, fuzzy
 msgid "Backlog is empty"
-msgstr "待辦清單是空的"
+msgstr "待辦清單為空"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Cancel"
 msgstr "取消"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgid "Change color"
 msgstr "變更顏色"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Clear filters"
 msgstr "清除篩選"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "CLI check failed"
 msgstr "CLI 檢查失敗"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "CLI not available"
-msgstr "無法使用 CLI"
+msgstr "CLI 無法使用"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "CLI not available or not authenticated"
 msgstr "CLI 無法使用或未經驗證"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import state filter"
 msgid "Closed"
 msgstr "已關閉"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Closing now will discard this new backlog task and its unsaved changes."
-msgstr "現在關閉將捨棄此新的待辦任務及其未儲存的變更。"
+msgstr "現在關閉將捨棄這個新待辦任務及其未儲存的變更。"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Closing now will discard your unsaved edits to this backlog task."
-msgstr "現在關閉將捨棄您對此待辦任務未儲存的編輯。"
+msgstr "現在關閉將捨棄你對此待辦任務未儲存的編輯。"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Coming soon"
 msgstr "即將推出"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "comments unavailable for {detailUnavailableCount, plural, one {# item} other {# items}}"
 msgstr "{detailUnavailableCount, plural, other {# 個項目無法取得留言}}"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Connect"
 msgstr "連線"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Couldn't delete backlog task"
 msgstr "無法刪除待辦任務"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Couldn't remove attachment"
 msgstr "無法移除附件"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Couldn't save backlog task"
 msgstr "無法儲存待辦任務"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Create"
 msgstr "建立"
 
 #: src/renderer/components/backlog/BacklogView.tsx
-#, fuzzy
 msgid "Create or import items to stage work before promoting to the board"
-msgstr "建立或匯入項目以預先準備工作，再移至看板"
+msgstr "建立或匯入項目，在這裡準備工作，再移入看板"
 
 #: src/renderer/components/backlog/BacklogView.tsx
-#, fuzzy
 msgid "Create your first task"
-msgstr "建立您的第一個任務"
+msgstr "建立你的第一個任務"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Created"
 msgstr "建立時間"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Created {createdAgo}, updated {updatedAgo}"
-msgstr "{createdAgo}建立，{updatedAgo}更新"
+msgstr "{createdAgo} 建立，{updatedAgo} 更新"
 
 #: src/renderer/components/backlog/manage-labels/ColorPickerPopover.tsx
-#, fuzzy
 msgid "Custom color"
 msgstr "自訂色彩"
 
@@ -229,443 +188,363 @@ msgstr "自訂色彩"
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Delete"
 msgstr "刪除"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
-#, fuzzy
 msgid "Delete {selectedCount, plural, one {# backlog task} other {# backlog tasks}}"
 msgstr "{selectedCount, plural, other {刪除 # 個待辦任務}}"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
 #: src/renderer/components/backlog/BacklogDialogs.tsx
-#, fuzzy
 msgid "Delete {selectedCount, plural, one {# item} other {# items}}"
 msgstr "{selectedCount, plural, other {刪除 # 個項目}}"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Delete backlog task"
 msgstr "刪除待辦任務"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
-#, fuzzy
 msgid "Delete item"
 msgstr "刪除項目"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "Delete label"
 msgstr "刪除標籤"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "Delete label \"{pendingDeleteLabelName}\""
 msgstr "刪除標籤「{pendingDeleteLabelName}」"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgid "Delete priority"
 msgstr "刪除優先順序"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgid "Delete priority \"{pendingDeletePriorityLabel}\""
 msgstr "刪除優先順序「{pendingDeletePriorityLabel}」"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Discard"
 msgstr "捨棄"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr "要捨棄未儲存的變更嗎?"
+msgstr "要捨棄未儲存的變更嗎？"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Drop files here"
 msgstr "將檔案拖放至此"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Edit"
 msgstr "編輯"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Edit Backlog Task"
 msgstr "編輯待辦任務"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
-#, fuzzy
 msgid "Edit item"
 msgstr "編輯項目"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Failed to add source"
-msgstr "無法新增來源"
+msgstr "新增來源失敗"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Failed to sync issues"
-msgstr "無法同步問題"
+msgstr "同步議題失敗"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "File too large"
 msgstr "檔案太大"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Filter by ID, title, label, or assignee..."
 msgstr "依 ID、標題、標籤或負責人篩選..."
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Hide imported items"
 msgstr "隱藏已匯入的項目"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "High"
 msgstr "高"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Import"
 msgstr "匯入"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Import ({selectedCount})"
 msgstr "匯入 ({selectedCount})"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Import failed"
 msgstr "匯入失敗"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Import from a GitHub Project board"
 msgstr "從 GitHub Project 看板匯入"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Import from a repository issue tracker"
-msgstr "從存放庫的問題追蹤器匯入"
+msgstr "從存放庫的議題追蹤器匯入"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Import from Azure DevOps boards"
-msgstr "從 Azure DevOps 看板匯入"
+msgstr "從 Azure DevOps Boards 匯入"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Import Sources"
 msgstr "匯入來源"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "Import Tasks"
-msgstr "匯入工作"
+msgstr "匯入任務"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Import tasks from an Asana project"
-msgstr "從 Asana 專案匯入工作"
+msgstr "從 Asana 專案匯入任務"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import row badge"
 msgid "imported"
 msgstr "已匯入"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import filter"
 msgid "Imported"
 msgstr "已匯入"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Importing..."
 msgstr "正在匯入..."
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Issues"
-msgstr "問題"
+msgstr "議題"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Issues imported"
-msgstr "已匯入問題"
+msgstr "已匯入議題"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Keep editing"
 msgstr "繼續編輯"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import filter"
 msgid "Label"
 msgstr "標籤"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "Label name"
 msgstr "標籤名稱"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Labels"
 msgstr "標籤"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgctxt "toolbar button"
 msgid "Labels"
 msgstr "標籤"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "Low"
 msgstr "低"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "Medium"
 msgstr "中"
 
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
-#, fuzzy
 msgid "Move {selectedCount} to Board"
 msgstr "將 {selectedCount} 個項目移至看板"
 
 #: src/renderer/components/backlog/PromotePopover.tsx
-#, fuzzy
 msgid "Move to"
 msgstr "移至"
 
 #: src/renderer/components/backlog/view/BacklogRowActions.tsx
-#, fuzzy
 msgid "Move to board"
 msgstr "移至看板"
 
 #: src/renderer/components/backlog/BacklogBulkToolbar.tsx
 #: src/renderer/components/backlog/BacklogContextMenu.tsx
-#, fuzzy
 msgid "Move to Board"
 msgstr "移至看板"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "New Backlog Task"
 msgstr "新增待辦任務"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "No items found"
 msgstr "找不到項目"
 
 #: src/renderer/components/backlog/BacklogView.tsx
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "No items match your filters"
 msgstr "沒有符合篩選條件的項目"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "No labels yet"
 msgstr "尚無標籤"
 
 #: src/renderer/components/backlog/ImportPopover.tsx
-#, fuzzy
 msgid "No sources configured. Add one to start."
-msgstr "尚未設定任何來源。請新增一個以開始使用。"
+msgstr "尚未設定任何來源。新增一個即可開始。"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "None"
 msgstr "無"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import state filter"
 msgid "Open"
-msgstr "開啟中"
+msgstr "開啟"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-#, fuzzy
 msgid "Open in {sourceName}"
 msgstr "在 {sourceName} 中開啟"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Asana project URL (list, board, or calendar view)."
 msgstr "貼上任一 Asana 專案 URL（清單、看板或行事曆檢視）。"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Paste any Azure DevOps project URL (boards, sprints, backlogs, etc.)"
-msgstr "貼上任一 Azure DevOps 專案 URL（看板、衝刺、待辦項目等）"
+msgstr "貼上任一 Azure DevOps 專案 URL（Boards、Sprints、Backlogs 等）"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub Project"
-msgstr "貼上您 GitHub Project 的完整 URL"
+msgstr "貼上你 GitHub Project 的完整 URL"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Paste the full URL to your GitHub repository"
-msgstr "貼上您 GitHub 存放庫的完整 URL"
+msgstr "貼上你 GitHub 存放庫的完整 URL"
 
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgctxt "toolbar button"
 msgid "Priorities"
 msgstr "優先順序"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Priority"
 msgstr "優先順序"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "Priority {number}"
 msgstr "優先順序 {number}"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Project"
 msgstr "專案"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Projects"
 msgstr "專案"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Refresh to check for new items"
 msgstr "重新整理以檢查新項目"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
 #: src/renderer/components/backlog/manage-labels/PrioritiesPopover.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Rename"
 msgstr "重新命名"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Retry"
 msgstr "重試"
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Save"
 msgstr "儲存"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Select all"
 msgstr "全選"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Show imported items"
 msgstr "顯示已匯入的項目"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import filter"
 msgid "Status"
 msgstr "狀態"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgid "Syncing..."
 msgstr "正在同步..."
 
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "Task title"
-msgstr "工作標題"
+msgstr "任務標題"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "This action cannot be undone."
 msgstr "此動作無法復原。"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "This label is not assigned to any items."
 msgstr "此標籤未指派給任何項目。"
 
 #: src/renderer/components/backlog/BacklogDialogs.tsx
 #: src/renderer/components/backlog/NewBacklogTaskDialog.tsx
-#, fuzzy
 msgid "This will permanently delete the backlog task."
 msgstr "這將永久刪除此待辦任務。"
 
 #: src/renderer/components/backlog/manage-labels/LabelsPopover.tsx
-#, fuzzy
 msgid "This will remove the label from {pendingDeleteLabelCount, plural, one {# item} other {# items}}."
 msgstr "{pendingDeleteLabelCount, plural, other {這會將標籤從 # 個項目中移除。}}"
 
 #: src/renderer/components/backlog/view/useBacklogColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Title"
 msgstr "標題"
 
 #: src/renderer/components/backlog/ImportDialog.tsx
-#, fuzzy
 msgctxt "import filter"
 msgid "Type"
 msgstr "類型"
 
 #: src/renderer/components/backlog/priority-labels.ts
-#, fuzzy
 msgctxt "priority"
 msgid "Urgent"
 msgstr "緊急"
 
 #: src/renderer/components/backlog/import-providers.tsx
-#, fuzzy
 msgctxt "import source type"
 msgid "Work Items"
 msgstr "工作項目"

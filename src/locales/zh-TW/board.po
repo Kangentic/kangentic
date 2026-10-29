@@ -8,228 +8,183 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "\"{doneTaskTitle}\""
 msgstr "「{doneTaskTitle}」"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in {targetName}."
-msgstr "「{movedTaskTitle}」現在位於{targetName}。"
+msgstr "「{movedTaskTitle}」現在位於 {targetName}。"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "\"{movedTaskTitle}\" is now in column."
 msgstr "「{movedTaskTitle}」現在位於欄中。"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "\"{taskTitle}\""
 msgstr "「{taskTitle}」"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "{backlogItemCount, plural, one {Backlog, {backlogItemCountText} item} other {Backlog, {backlogItemCountText} items}}"
 msgstr "{backlogItemCount, plural, other {待辦清單，{backlogItemCountText} 個項目}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "{count, plural, one {# background shell ({shellIds})} other {# background shells ({shellIds})}}"
-msgstr "{count, plural, other {# 個背景 shell ({shellIds})}}"
+msgstr "{count, plural, other {# 個背景 shell（{shellIds}）}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "{count, plural, one {# background shell} other {# background shells}}"
 msgstr "{count, plural, other {# 個背景 shell}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "{count, plural, one {# subagent active} other {# subagents active}}"
-msgstr "{count, plural, other {# 個子代理程式作用中}}"
+msgstr "{count, plural, other {# 個子代理作用中}}"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, other {# 個工具執行中}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
 msgstr "{runningWorkflowCount, plural, other {工作流程，# 個執行中}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，離開時 {exitCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，回合結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
+msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，輪次結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter, {turnEndCount} at a turn end} other {# automations run here: {enterCount} on enter, {turnEndCount} at a turn end}}"
-msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，回合結束時 {turnEndCount} 項}}"
+msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項，輪次結束時 {turnEndCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {enterCount} on enter} other {# automations run here: {enterCount} on enter}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：進入時 {enterCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {exitCount} on exit} other {# automations run here: {exitCount} on exit}}"
 msgstr "{total, plural, other {此處執行 # 項自動化：離開時 {exitCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end, {exitCount} on exit} other {# automations run here: {turnEndCount} at a turn end, {exitCount} on exit}}"
-msgstr "{total, plural, other {此處執行 # 項自動化：回合結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
+msgstr "{total, plural, other {此處執行 # 項自動化：輪次結束時 {turnEndCount} 項，離開時 {exitCount} 項}}"
 
 #: src/renderer/components/board/AutomationGlyph.tsx
-#, fuzzy
 msgid "{total, plural, one {# automation runs here: {turnEndCount} at a turn end} other {# automations run here: {turnEndCount} at a turn end}}"
-msgstr "{total, plural, other {此處執行 # 項自動化：回合結束時 {turnEndCount} 項}}"
+msgstr "{total, plural, other {此處執行 # 項自動化：輪次結束時 {turnEndCount} 項}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file will be lost} other {{fileCountText} uncommitted files will be lost}}"
 msgstr "{uncommittedFileCount, plural, other {{fileCountText} 個未提交的檔案將會遺失}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "{uncommittedFileCount, plural, one {{fileCountText} uncommitted file} other {{fileCountText} uncommitted files}}"
 msgstr "{uncommittedFileCount, plural, other {{fileCountText} 個未提交的檔案}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} commit exists only on the local branch and will be lost when the branch is deleted} other {{commitCountText} commits exist only on the local branch and will be lost when the branch is deleted}}"
 msgstr "{unpushedCommitCount, plural, other {{commitCountText} 個提交僅存在於本機分支，刪除分支後將會遺失}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "{unpushedCommitCount, plural, one {{commitCountText} unpushed commit} other {{commitCountText} unpushed commits}}"
 msgstr "{unpushedCommitCount, plural, other {{commitCountText} 個未推送的提交}}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "{unpushedCommitCount, plural, one {<0>{commitCountText} commit exists only on branch <1>{displayBranch}</1> and will be lost when the branch is deleted</0>} other {<2>{commitCountText} commits exist only on branch <3>{displayBranch}</3> and will be lost when the branch is deleted</2>}}"
 msgstr "{unpushedCommitCount, plural, other {<2>{commitCountText} 個提交僅存在於分支 <3>{displayBranch}</3>，刪除分支後將會遺失</2>}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "{workflowCount, plural, one {Workflows, # workflow} other {Workflows, # workflows}}"
 msgstr "{workflowCount, plural, other {工作流程，# 個工作流程}}"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Add column"
 msgstr "新增欄"
 
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Add task"
 msgstr "新增任務"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Always apply automatically"
 msgstr "一律自動套用"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Apply"
 msgstr "套用"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Archive"
 msgstr "封存"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Automations paused"
 msgstr "自動化已暫停"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "Awaiting permission for {duration}"
 msgstr "等待權限 {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Backlog"
 msgstr "待辦清單"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Backlog"
 msgstr "移至待辦清單"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Board"
 msgstr "看板"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Board configuration changed"
 msgstr "看板設定已變更"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be deleted"
 msgstr "將刪除分支 <0>{displayBranch}</0>"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Branch <0>{displayBranch}</0> will be kept"
 msgstr "將保留分支 <0>{displayBranch}</0>"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgid "Browser running"
 msgstr "瀏覽器執行中"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgid "Browser running for the agent. Close it from the task menu to free memory."
-msgstr "正在為代理程式執行瀏覽器。請從任務選單關閉以釋放記憶體。"
+msgstr "代理正在使用瀏覽器。請從任務選單關閉以釋放記憶體。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Cancel"
 msgstr "取消"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Changes detected in kangentic.json for \"{projectName}\". Apply the updated board configuration? This will switch to that project."
 msgstr "偵測到「{projectName}」的 kangentic.json 有變更。要套用更新後的看板設定嗎？這會切換至該專案。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Changes detected in kangentic.json for \"Unknown project\". Apply the updated board configuration? This will switch to that project."
 msgstr "偵測到「未知專案」的 kangentic.json 有變更。要套用更新後的看板設定嗎？這會切換至該專案。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Changes detected in kangentic.json. Apply the updated board configuration?"
 msgstr "偵測到 kangentic.json 有變更。要套用更新後的看板設定嗎？"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task, and its workflow does not move it. Resume them from the card's menu."
-msgstr "此任務不會執行欄位自動化，其工作流程也不會移動它。可從卡片選單繼續執行。"
+msgstr "此任務不會執行欄自動化，其工作流程也不會移動它。可從卡片選單恢復自動化。"
 
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
-#, fuzzy
 msgid "Column automations don't run for this task. Resume them from the card's menu."
-msgstr "此任務不會執行欄位自動化。可從卡片選單繼續執行。"
+msgstr "此任務不會執行欄自動化。可從卡片選單恢復自動化。"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "Completed ({archivedTotalCount})"
 msgstr "已完成 ({archivedTotalCount})"
 
@@ -237,328 +192,265 @@ msgstr "已完成 ({archivedTotalCount})"
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Delete"
 msgstr "刪除"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "Delete completed task"
 msgstr "刪除已完成的任務"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
-#, fuzzy
 msgid "Delete task"
 msgstr "刪除任務"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Dismiss"
 msgstr "關閉"
 
 #: src/renderer/components/board/KanbanBoard.tsx
-#, fuzzy
 msgid "Dismiss warning"
 msgstr "關閉警告"
 
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Drag to reorder"
 msgstr "拖曳以重新排序"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "Drop here to complete"
 msgstr "拖放至此以完成"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Edit"
 msgstr "編輯"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Edit {columnName} column"
 msgstr "編輯 {columnName} 欄"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgctxt "Agent status"
 msgid "Idle"
 msgstr "閒置"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "Idle for {duration}"
-msgstr "閒置 {duration}"
+msgstr "已閒置 {duration}"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "If this task is resumed, the worktree will be recreated from the branch's last commit."
-msgstr "若繼續此任務，將從分支的最後一個提交重新建立工作樹。"
+msgstr "若恢復此任務，將從分支的最新提交重新建立工作樹。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Keep Working"
-msgstr "繼續工作"
+msgstr "繼續進行"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Local worktree will be deleted"
 msgstr "將刪除本機工作樹"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Move"
 msgstr "移動"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Move to"
 msgstr "移至"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Move to Done?"
-msgstr "要移至完成嗎？"
+msgstr "要移至已完成嗎？"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "New Task"
-msgstr "新增工作"
+msgstr "新增任務"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "New workflow"
 msgstr "新增工作流程"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "No completed tasks yet"
 msgstr "尚無已完成的任務"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Open"
 msgstr "開啟"
 
 #: src/renderer/components/board/workflow-menu-items.tsx
-#, fuzzy
 msgid "Open workflow"
 msgstr "開啟工作流程"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Pause automations"
 msgstr "暫停自動化"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Pause session"
 msgstr "暫停工作階段"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgctxt "Agent status"
 msgid "Paused"
 msgstr "已暫停"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgid "Queued..."
 msgstr "排入佇列中..."
 
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Removed from team config"
 msgstr "已從團隊設定中移除"
 
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Removed from team config. Move tasks to continue."
 msgstr "已從團隊設定中移除。請移動任務以繼續。"
 
 #: src/renderer/components/board/Swimlane.tsx
-#, fuzzy
 msgid "Reorder {columnName} column"
 msgstr "重新排序 {columnName} 欄"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Reset"
 msgstr "重設"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Reset task?"
 msgstr "要重設任務嗎？"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will delete its worktree and destroy its session history."
 msgstr "重設 <0>「{taskTitle}」</0> 將刪除其工作樹並清除其工作階段記錄。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Resetting <0>\"{taskTitle}\"</0> will destroy its session history."
 msgstr "重設 <0>「{taskTitle}」</0> 將清除其工作階段記錄。"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
-#, fuzzy
 msgid "Restore to"
 msgstr "還原至"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Resume automations"
-msgstr "繼續自動化"
+msgstr "恢復自動化"
 
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Resume session"
-msgstr "繼續工作階段"
+msgstr "恢復工作階段"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgid "Resuming agent..."
-msgstr "正在繼續代理程式..."
+msgstr "正在恢復代理..."
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgctxt "Workflow status"
 msgid "Running"
 msgstr "執行中"
 
 #: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
 msgid "Running {toolName}"
 msgstr "正在執行 {toolName}"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Search backlog..."
 msgstr "搜尋待辦清單..."
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Search board..."
 msgstr "搜尋看板..."
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
-#, fuzzy
 msgid "Send to Backlog"
 msgstr "移至待辦清單"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "Sent to backlog"
 msgstr "已移至待辦清單"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Session history will be kept"
 msgstr "將保留工作階段記錄"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Show changes"
 msgstr "顯示變更"
 
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgid "Starting agent..."
-msgstr "正在啟動代理程式..."
+msgstr "正在啟動代理..."
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "Superseded by {workflowTitle}"
 msgstr "已由 {workflowTitle} 取代"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Task #{displayId}"
 msgstr "任務 #{displayId}"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "Task archived"
-msgstr "已封存工作"
+msgstr "已封存任務"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 #: src/renderer/components/board/TaskContextMenu.tsx
-#, fuzzy
 msgid "Task ID copied"
-msgstr "已複製工作 ID"
+msgstr "已複製任務 ID"
 
 #: src/renderer/components/board/TaskCard.tsx
-#, fuzzy
 msgid "Task moved"
 msgstr "已移動任務"
 
 #: src/renderer/components/board/activity-reason-text.ts
 #: src/renderer/components/board/task-card-view.tsx
-#, fuzzy
 msgctxt "Agent status"
 msgid "Thinking"
 msgstr "思考中"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "This action cannot be undone."
 msgstr "此動作無法復原。"
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
-#, fuzzy
 msgid "This will move \"{taskTitle}\" to the backlog and clean up its session and worktree."
 msgstr "這會將「{taskTitle}」移至待辦清單，並清除其工作階段與工作樹。"
 
 #: src/renderer/components/board/DeleteTaskDialog.tsx
-#, fuzzy
 msgid "This will permanently delete \"{taskTitle}\" and its session data."
 msgstr "這將永久刪除「{taskTitle}」及其工作階段資料。"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
-msgstr "這會永久刪除此任務、其工作階段歷程記錄，以及任何相關聯的工作樹。"
+msgstr "這會永久刪除此任務、其工作階段記錄，以及任何相關聯的工作樹。"
 
 #: src/renderer/components/board/BoardDialogs.tsx
-#, fuzzy
 msgid "Unable to verify pending changes. There may be unsaved work."
-msgstr "無法確認待處理的變更，可能有未儲存的工作。"
+msgstr "無法確認待處理的變更。可能有尚未儲存的工作內容。"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "View"
 msgstr "檢視"
 
 #: src/renderer/components/board/DoneSwimlane.tsx
-#, fuzzy
 msgid "View all"
 msgstr "檢視全部"
 
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
-#, fuzzy
 msgid "View conversation"
 msgstr "檢視對話"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Workflows"
 msgstr "工作流程"
 
 #: src/renderer/components/board/ViewToggle.tsx
-#, fuzzy
 msgid "Workflows, {workflowCount, plural, one {# workflow} other {# workflows}}, {runningWorkflowCount, plural, one {# running} other {# running}}"
 msgstr "工作流程，{workflowCount, plural, other {# 個工作流程}}，{runningWorkflowCount, plural, other {# 個執行中}}"
 
 #: src/renderer/components/board/SendToBacklogDialog.tsx
-#, fuzzy
 msgid "You can move it back to the board later."
-msgstr "您之後可以將其移回看板。"
+msgstr "你之後可以將它移回看板。"

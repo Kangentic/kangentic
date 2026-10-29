@@ -8,66 +8,53 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "{waitedCalls, plural, one {How long each tool ran. Leaves out the # call that waited for your answer or approval.} other {How long each tool ran. Leaves out the # calls that waited for your answer or approval.}}"
-msgstr "{waitedCalls, plural, other {每个工具的运行时长。不包括等待你回答或批准的 # 次调用。}}"
+msgstr "{waitedCalls, plural, other {每个工具的运行时长。不含等待你回答或批准的 # 次调用。}}"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Average run time of the calls Time counts."
-msgstr "“时间”列所计调用的平均运行时长。"
+msgstr "「时间」列统计的调用的平均运行时长。"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Avg"
 msgstr "平均"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Calls"
 msgstr "调用次数"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Cost"
 msgstr "费用"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Estimated tokens this tool's output added to the main conversation. Not billed tokens; subagent calls are not counted."
-msgstr "此工具输出添加到主对话中的估计令牌数。非计费令牌；不计入子代理调用。"
+msgstr "此工具的输出添加到主对话的估计 token 数。这些不是计费 token，也不统计子智能体调用。"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Failed"
 msgstr "失败"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "How long each tool ran."
 msgstr "每个工具的运行时长。"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "In"
 msgstr "输入"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Out"
 msgstr "输出"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Time"
 msgstr "时间"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Tokens"
-msgstr "令牌"
+msgstr "Token"
 
 #: src/renderer/components/shared/ByToolTable.tsx
-#, fuzzy
 msgid "Tool"
 msgstr "工具"

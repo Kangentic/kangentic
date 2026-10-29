@@ -8,820 +8,662 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" is now in {targetName}."
-msgstr "“{taskTitle}”现已位于{targetName}。"
+msgstr "「{taskTitle}」已移至 {targetName}。"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "\"{taskTitle}\": {reason}"
-msgstr "“{taskTitle}”：{reason}"
+msgstr "「{taskTitle}」：{reason}"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{blockedCount} blocked"
-msgstr "{blockedCount} 个已阻塞"
+msgstr "{blockedCount} 个受阻"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "{doneCount} of {taskCount}"
 msgstr "{doneCount}/{taskCount}"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{doneCount} of {taskCount} done"
 msgstr "已完成 {doneCount}/{taskCount}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "{idleTasks} idle"
 msgstr "{idleTasks} 个空闲"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{inProgressCount} in progress"
 msgstr "{inProgressCount} 个进行中"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "{name}, {countText}"
 msgstr "{name}，{countText}"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{progress}."
 msgstr "{progress}。"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{progress}. {counts}."
 msgstr "{progress}。{counts}。"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{queuedCount} queued"
-msgstr "{queuedCount} 个已排队"
+msgstr "{queuedCount} 个排队中"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
-#, fuzzy
 msgid "{stopName}: done"
 msgstr "{stopName}：已完成"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
-#, fuzzy
 msgid "{stopName}: next"
 msgstr "{stopName}：下一步"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
-#, fuzzy
 msgid "{stopName}: now"
 msgstr "{stopName}：当前"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "{taskCount, plural, one {# task} other {# tasks}}"
 msgstr "{taskCount, plural, other {# 个任务}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "{taskCount, plural, one {Creates # task. It starts automatically.} other {Creates # tasks. They start automatically in the order this workflow sets.}}"
 msgstr "{taskCount, plural, other {将创建 # 个任务，并按此工作流设定的顺序自动启动。}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "{taskCount, plural, one {Deletes its # planned task and the agent conversation. Nothing else changes.} other {Deletes its # planned tasks and the agent conversation. Nothing else changes.}}"
-msgstr "{taskCount, plural, other {将删除其 # 个计划任务及代理对话，其他内容不变。}}"
+msgstr "{taskCount, plural, other {将删除其 # 个计划任务和智能体对话，其他内容不变。}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
-msgstr "{unfinished, plural, =0 {其任务均已完成，将保留在原位。代理对话将被删除。} other {其 # 个未完成任务将作为普通任务保留在原位。代理对话将被删除。}}"
+msgstr "{unfinished, plural, =0 {其任务均已完成，将保留在原位。智能体对话将被删除。} other {其 # 个未完成任务将作为普通任务保留在原位。智能体对话将被删除。}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
 msgstr "{unfinished, plural, other {在你恢复之前，它们将保持暂停状态。}}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "{workflowTitle} is complete."
 msgstr "{workflowTitle} 已完成。"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "#{displayId}: {reason}"
 msgstr "#{displayId}：{reason}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "task activity"
 msgid "Active"
-msgstr "活动"
+msgstr "活跃"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Add a task to this workflow"
 msgstr "向此工作流添加任务"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Add blocker"
 msgstr "添加阻塞项"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Add task"
 msgstr "添加任务"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Agent active"
-msgstr "代理活动中"
+msgstr "智能体活动中"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Agent idle"
-msgstr "代理空闲"
+msgstr "智能体空闲"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Agent idle, last message {lastMessageTime}"
-msgstr "代理空闲，最后一条消息于 {lastMessageTime}"
+msgstr "智能体空闲，最后消息：{lastMessageTime}"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Agent paused"
-msgstr "代理已暂停"
+msgstr "智能体已暂停"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Another project"
 msgstr "其他项目"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Approve this task's plans for you. Questions the agent asks still wait."
-msgstr "自动为你批准此任务的计划。代理提出的问题仍需等待。"
+msgstr "自动为你批准此任务的计划。智能体提出的问题仍会等你回答。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Ask for changes"
 msgstr "请求更改"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Auto layout"
 msgstr "自动布局"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
 msgstr "自动"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "workflow section"
 msgid "Blocked by"
-msgstr "被阻塞于"
+msgstr "受阻于"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "workflow section"
 msgid "Blocking"
 msgstr "正在阻塞"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Cancel"
 msgstr "取消"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Choose a workflow agent"
-msgstr "选择工作流代理"
+msgstr "选择工作流智能体"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "Close workflow panel"
 msgstr "关闭工作流面板"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Collapse agent"
-msgstr "折叠代理"
+msgstr "折叠智能体"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgctxt "stand-in for a column name"
 msgid "column"
-msgstr "列"
+msgstr "该列"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Columns on its board"
 msgstr "所在看板上的列"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Columns on the {boardName} board"
 msgstr "{boardName} 看板上的列"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgctxt "workflow state"
 msgid "Complete"
 msgstr "已完成"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Couldn't delete task"
 msgstr "无法删除任务"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgid "Couldn't move task"
 msgstr "无法移动任务"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Create your first workflow"
 msgstr "创建你的第一个工作流"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Delete"
 msgstr "删除"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Delete {workflowTitle}?"
 msgstr "删除 {workflowTitle}？"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Deletes the agent conversation. Nothing else changes."
-msgstr "将删除代理对话，其他内容不变。"
+msgstr "将删除智能体对话，其他内容不变。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Dismiss"
 msgstr "关闭"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "column role"
 msgid "Done"
 msgstr "已完成"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Drag to resize"
-msgstr "拖动以调整大小"
+msgstr "拖动调整大小"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Edit Task"
 msgstr "编辑任务"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Every route ends in {name}"
-msgstr "每条路线都结束于 {name}"
+msgstr "每条路线都在 {name} 结束"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Every route starts in {name}"
-msgstr "每条路线都开始于 {name}"
+msgstr "每条路线都从 {name} 开始"
 
 #: src/renderer/components/workflows/LazyWorkflowsView.tsx
-#, fuzzy
 msgid "Failed to load the workflows"
-msgstr "无法加载工作流"
+msgstr "加载工作流失败"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Fit every card in view"
-msgstr "使所有卡片适应视图"
+msgstr "让所有卡片都进入视野"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Fit view"
 msgstr "适应视图"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
-#, fuzzy
 msgctxt "canvas link port"
 msgid "Handle"
 msgstr "连接点"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "task activity"
 msgid "Idle"
 msgstr "空闲"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Include {stepName}"
 msgstr "包含 {stepName}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "It exists only in this workflow, so it is gone for good."
 msgstr "它仅存在于此工作流中，删除后将无法恢复。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "It plans your workflows, and starts when you ask for changes."
 msgstr "它负责规划你的工作流，并在你请求更改时启动。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "It plans your workflows, and starts when you close Settings."
 msgstr "它负责规划你的工作流，并在你关闭设置时启动。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "It starts when you close Settings."
-msgstr "它将在你关闭设置时启动。"
+msgstr "它会在你关闭设置时启动。"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "It stays where it is, as an ordinary task."
-msgstr "它将作为普通任务保留在原位。"
+msgstr "它将作为普通任务留在原位。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "stand-in for a project name"
 msgid "its board"
-msgstr "所在看板"
+msgstr "其看板"
 
 #. Stands in for a column name inside "has reached ..."
 #: src/renderer/components/workflows/workflow-graph.ts
-#, fuzzy
 msgid "its column"
 msgstr "其所在列"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Linked tasks that run through your board on their own."
 msgstr "在看板上自动运行的关联任务。"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "Loading..."
 msgstr "正在加载..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Make this task wait for another"
 msgstr "让此任务等待另一个任务"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
 msgstr "手动"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
-#, fuzzy
 msgid "Moved selected node {direction, select, left {left} right {right} up {up} down {down} other {}}. New position, x: {x}, y: {y}"
 msgstr "{direction, select, left {已将所选节点向左移动。新位置，x：{x}，y：{y}} right {已将所选节点向右移动。新位置，x：{x}，y：{y}} up {已将所选节点向上移动。新位置，x：{x}，y：{y}} down {已将所选节点向下移动。新位置，x：{x}，y：{y}} other {已移动所选节点。新位置，x：{x}，y：{y}}}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "New workflow"
 msgstr "新建工作流"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "No card has been moved"
-msgstr "没有已移动的卡片"
+msgstr "尚未移动任何卡片"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "No conversation yet"
 msgstr "暂无对话"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "No task matches the search."
 msgstr "没有与搜索匹配的任务。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "No tasks yet."
 msgstr "暂无任务。"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "No workflow to start"
 msgstr "没有可启动的工作流"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "No workflows"
-msgstr "没有工作流"
+msgstr "暂无工作流"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgctxt "workflow state"
 msgid "Not started"
 msgstr "未开始"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Nothing planned yet"
-msgstr "尚未规划任何内容"
+msgstr "尚未规划任何任务"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Open on {otherBoardName}"
 msgstr "在 {otherBoardName} 上打开"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgid "Open on board"
 msgstr "在看板上打开"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Open Settings"
 msgstr "打开设置"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Open task"
 msgstr "打开任务"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Open the main window to see the workflow."
 msgstr "打开主窗口以查看工作流。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Open workflow"
 msgstr "打开工作流"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Or right-click a task and choose New workflow."
-msgstr "或右键单击任务并选择“新建工作流”。"
+msgstr "或右键单击任务，然后选择「新建工作流」。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Pause session"
 msgstr "暂停会话"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
 msgstr "已暂停"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Paused {pausedTime}"
-msgstr "暂停于 {pausedTime}"
+msgstr "暂停时间：{pausedTime}"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Plan approval"
 msgstr "计划审批"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
-#, fuzzy
 msgid "Press enter or space to select a node. Press escape to cancel."
-msgstr "按 Enter 或空格键选择节点。按 Esc 键取消。"
+msgstr "按 Enter 或空格选择节点，按 Escape 取消。"
 
 #: src/renderer/components/workflows/workflow-aria-labels.ts
-#, fuzzy
 msgid "Press enter or space to select a node. You can then use the arrow keys to move the node around. Press escape to cancel."
-msgstr "按 Enter 或空格键选择节点。然后可使用方向键移动节点。按 Esc 键取消。"
+msgstr "按 Enter 或空格选择节点，然后可用方向键移动节点，按 Escape 取消。"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Press Start and the tasks run automatically in order until complete."
-msgstr "按“开始”后，任务将按顺序自动运行直至完成。"
+msgstr "按「启动」后，任务将按顺序自动运行，直至完成。"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Put moved cards back in the automatic layout"
 msgstr "将已移动的卡片放回自动布局"
 
 #: src/renderer/components/workflows/WorkflowCanvas.tsx
-#, fuzzy
 msgid "Release on a task to make it wait for {blockerLabel}"
-msgstr "在任务上释放，使其等待 {blockerLabel}"
+msgstr "在任务上松开，使其等待 {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowTaskNode.tsx
-#, fuzzy
 msgid "Release to make {blockedLabel} wait for {blockerLabel}"
-msgstr "松开以使 {blockedLabel} 等待 {blockerLabel}"
+msgstr "松开后，{blockedLabel} 将等待 {blockerLabel}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Remove"
 msgstr "移除"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Remove {label} from {workflowTitle}?"
 msgstr "从 {workflowTitle} 中移除 {label}？"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgid "Remove #{displayId} from its workflow first."
 msgstr "请先将 #{displayId} 从其工作流中移除。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Remove link"
 msgstr "移除关联"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Rename"
 msgstr "重命名"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Rename workflow"
 msgstr "重命名工作流"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Resize the workflow agent"
-msgstr "调整工作流代理大小"
+msgstr "调整工作流智能体大小"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "automations"
 msgid "Resume"
 msgstr "恢复"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgctxt "workflow action"
 msgid "Resume"
 msgstr "恢复"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Resume automations"
 msgstr "恢复自动化"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Resume session"
 msgstr "恢复会话"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Resume workflow"
 msgstr "恢复工作流"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Resuming agent..."
-msgstr "正在恢复代理..."
+msgstr "正在恢复智能体..."
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Review the plan, and click a task to change its route or blockers."
 msgstr "查看计划，单击任务可更改其路线或阻塞项。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "workflow section"
 msgid "Route"
 msgstr "路线"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Route step refused"
-msgstr "路由步骤被拒绝"
+msgstr "无法更改路线步骤"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Run order"
 msgstr "运行顺序"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgctxt "workflow state"
 msgid "Running"
 msgstr "运行中"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Running. Pause workflow"
 msgstr "运行中。暂停工作流"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Save"
 msgstr "保存"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Select this task"
 msgstr "选择此任务"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Show the workflow agent"
-msgstr "显示工作流代理"
+msgstr "显示工作流智能体"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Skip {stepName}"
 msgstr "跳过 {stepName}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
-#, fuzzy
 msgid "Stalled"
 msgstr "已停滞"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "Stalled on {stalledCount, plural, one {# task} other {# tasks}}"
-msgstr "{stalledCount, plural, other {卡在 # 个任务上}}"
+msgstr "{stalledCount, plural, other {停滞于 # 个任务}}"
 
 #: src/renderer/components/workflows/workflow-text.ts
-#, fuzzy
 msgid "Stalled on #{displayId}"
-msgstr "卡在 #{displayId}"
+msgstr "停滞于 #{displayId}"
 
 #: src/renderer/components/workflows/WorkflowStrip.tsx
-#, fuzzy
 msgid "Stalled: {reason}"
 msgstr "已停滞：{reason}"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgctxt "workflow action"
 msgid "Start"
 msgstr "启动"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Start {workflowTitle}?"
 msgstr "启动 {workflowTitle}？"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Start this workflow"
 msgstr "启动此工作流"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "Start workflow"
 msgstr "启动工作流"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Starting agent..."
-msgstr "正在启动代理..."
+msgstr "正在启动智能体..."
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Starting the workflow agent..."
-msgstr "正在启动工作流代理..."
+msgstr "正在启动工作流智能体..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Take this task out of the workflow"
 msgstr "将此任务移出工作流"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Task {sourceTaskLabel} moves to Done."
-msgstr "任务 {sourceTaskLabel} 将移至“完成”。"
+msgstr "任务 {sourceTaskLabel} 将移至「已完成」。"
 
 #: src/renderer/components/workflows/WorkflowCardMenu.tsx
-#, fuzzy
 msgid "Task moved"
 msgstr "任务已移动"
 
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Tell the workflow agent what to build, and it plans the tasks."
 msgstr "告诉工作流智能体要构建什么，它会规划任务。"
 
 #: src/renderer/components/workflows/workflow-graph.ts
-#, fuzzy
 msgid "That task is no longer in this workflow."
 msgstr "该任务已不在此工作流中。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "The earlier conversation could not be resumed, so the agent started a new one."
-msgstr "无法恢复之前的对话，因此代理已开始新对话。"
+msgstr "无法恢复之前的对话，因此智能体开始了新的对话。"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "The workflow agent has not seen this plan"
-msgstr "工作流代理尚未看到此计划"
+msgstr "工作流智能体尚未查看此计划"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "The workflow this task is in could not be loaded."
 msgstr "无法加载此任务所在的工作流。"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "The workflow this task was in no longer exists."
 msgstr "此任务原先所在的工作流已不存在。"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "This task is no longer in {workflowTitle}."
 msgstr "此任务已不在 {workflowTitle} 中。"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "This task is not in a workflow."
 msgstr "此任务不在任何工作流中。"
 
 #: src/renderer/components/workflows/WorkflowHeader.tsx
-#, fuzzy
 msgid "This workflow has no tasks yet."
 msgstr "此工作流尚无任务。"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgctxt "column role"
 msgid "To Do"
 msgstr "待办"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "View conversation"
 msgstr "查看对话"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Waiting for a free agent slot..."
-msgstr "正在等待空闲的代理槽位..."
+msgstr "正在等待空闲的智能体槽位..."
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "Waiting for you"
 msgstr "等待你处理"
 
 #: src/renderer/components/workflows/TaskWorkflowPanel.tsx
-#, fuzzy
 msgid "Workflow"
 msgstr "工作流"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Workflow agent"
-msgstr "工作流代理"
+msgstr "工作流智能体"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Workflow agent chosen"
-msgstr "已选择工作流代理"
+msgstr "已选择工作流智能体"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgid "Workflow agent is waiting for you"
-msgstr "工作流代理正在等待你"
+msgstr "工作流智能体正在等待你处理"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #: src/renderer/components/workflows/WorkflowsView.tsx
-#, fuzzy
 msgid "Workflow agent is working"
-msgstr "工作流代理正在工作"
+msgstr "工作流智能体正在运行"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
-#, fuzzy
 msgid "Workflow name"
 msgstr "工作流名称"
 
 #: src/renderer/components/workflows/WorkflowPicker.tsx
-#, fuzzy
 msgid "Workflows"
 msgstr "工作流"
 
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
-#, fuzzy
 msgctxt "agent pane state"
 msgid "Working"
 msgstr "工作中"
 
 #: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
 msgid "You approve this task's plans."
-msgstr "由你审批此任务的计划。"
+msgstr "此任务的计划由你批准。"

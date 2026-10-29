@@ -8,951 +8,764 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "{agentName} didn't answer. {reason}"
 msgstr "{agentName} 未回答。{reason}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{agentName}, {modelName}"
 msgstr "{agentName}，{modelName}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "{chunkCount, plural, other {# chunks}}"
 msgstr "{chunkCount, plural, other {# 个分块}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "{conversationCount} conversations, {taskRecordCount} task records"
 msgstr "{conversationCount} 个对话，{taskRecordCount} 条任务记录"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{cost} ({tokenText} tokens)"
-msgstr "{cost}（{tokenText} 个令牌）"
+msgstr "{cost}（{tokenText} tokens）"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{days}d"
 msgstr "{days} 天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{days}d {remainingHours}h"
 msgstr "{days} 天 {remainingHours} 小时"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{doneCount} of {totalCount}"
 msgstr "{doneCount}/{totalCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{earliestDate} to {latestDate}"
 msgstr "{earliestDate} 至 {latestDate}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "{handedCount, plural, one {Read # related task} other {Read # related tasks}}"
 msgstr "{handedCount, plural, other {已读取 # 个相关任务}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "{handedCount, plural, one {Reading # related task} other {Reading # related tasks}}"
 msgstr "{handedCount, plural, other {正在读取 # 个相关任务}}"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
 msgid "{hitCount, plural, one {# earlier conversation about this} other {# earlier conversations about this}}"
-msgstr "{hitCount, plural, other {之前有 # 个相关对话}}"
+msgstr "{hitCount, plural, other {此前有 # 个相关对话}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{hours}h"
 msgstr "{hours} 小时"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{hours}h {minutes}m"
 msgstr "{hours} 小时 {minutes} 分钟"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{minutes}m"
 msgstr "{minutes} 分钟"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "{scopedProjectCount, plural, one {Ask across # project} other {Ask across # projects}}"
 msgstr "{scopedProjectCount, plural, other {跨 # 个项目提问}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "{selectedCount, plural, one {# project} other {# projects}}"
 msgstr "{selectedCount, plural, other {# 个项目}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "{selectedCount} of {indexedCount}"
 msgstr "{selectedCount}/{indexedCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "{selectedCount} of {indexedCount} shown"
 msgstr "已显示 {selectedCount}/{indexedCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "{shownRegionCount} of {regionCount} shown"
 msgstr "已显示 {shownRegionCount}/{regionCount}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
-#, fuzzy
 msgid "{taskCount, plural, one {Show # task} other {Show # tasks}}"
 msgstr "{taskCount, plural, other {显示 # 个任务}}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "{tokenText} tokens"
-msgstr "{tokenText} 个令牌"
+msgstr "{tokenText} tokens"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "1 project"
 msgstr "1 个项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "30 days"
 msgstr "30 天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "90 days"
 msgstr "90 天"
 
 #: src/renderer/components/knowledge-graph/PanelRow.tsx
-#, fuzzy
 msgid "About {about}"
 msgstr "关于 {about}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgctxt "Date range"
 msgid "Active"
 msgstr "活跃时段"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Agent"
 msgstr "智能体"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "All"
 msgstr "全部"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "All projects"
 msgstr "所有项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Any"
 msgstr "任意"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Any status"
 msgstr "任意状态"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Any time"
 msgstr "任意时间"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Around \"{exploredTitle}\""
-msgstr "围绕“{exploredTitle}”"
+msgstr "围绕「{exploredTitle}」"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Around \"Untitled conversation\""
-msgstr "围绕“未命名对话”"
+msgstr "围绕「未命名对话」"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Ask {askAgentName}"
 msgstr "询问 {askAgentName}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Ask a follow-up"
 msgstr "继续提问"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Ask about your tasks and conversations"
-msgstr "询问有关任务和对话的问题"
+msgstr "就你的任务和对话提问"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Ask about your tasks, conversations and code"
-msgstr "询问有关任务、对话和代码的问题"
+msgstr "就你的任务、对话和代码提问"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Ask the agent"
-msgstr "询问代理"
+msgstr "询问智能体"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Back to {title}"
-msgstr "返回{title}"
+msgstr "返回 {title}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Back to the chat"
 msgstr "返回聊天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Back to the previous conversation"
 msgstr "返回上一个对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Back to where you were"
 msgstr "返回之前的位置"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Balanced"
 msgstr "均衡"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Building"
 msgstr "正在构建"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Building the map"
-msgstr "正在构建图谱"
+msgstr "正在构建地图"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
-#, fuzzy
 msgid "Change the sources, the model and the agent, or rebuild the index, in Settings > Knowledge Graph"
-msgstr "可在“设置 > 知识图谱”中更改来源、模型和代理，或重建索引"
+msgstr "可在「设置 > 知识图谱」中更改来源、模型和智能体，或重建索引"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Chat"
 msgstr "聊天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph, in the main window."
-msgstr "请在主窗口的“设置 > 知识图谱”中选择代理和模型。"
+msgstr "请在主窗口的「设置 > 知识图谱」中选择智能体和模型。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Choose an agent and model in Settings > Knowledge Graph."
-msgstr "请在“设置 > 知识图谱”中选择代理和模型。"
+msgstr "请在「设置 > 知识图谱」中选择智能体和模型。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Clear region filter"
 msgstr "清除区域筛选"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
-#, fuzzy
 msgid "Close Knowledge Graph"
 msgstr "关闭知识图谱"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Closest conversations"
 msgstr "最相近的对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Coarse"
 msgstr "粗略"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Color by"
 msgstr "着色依据"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Color by the region of the map each conversation sits in"
-msgstr "按每个对话在地图上所处的区域着色"
+msgstr "按每个对话在地图中所处的区域着色"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Color conversations by"
 msgstr "对话着色依据"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Commits"
 msgstr "提交"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Commits indexed"
 msgstr "已索引的提交"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Controls"
 msgstr "操作方式"
 
 #: src/renderer/components/knowledge-graph/open-knowledge-graph-conversation.ts
-#, fuzzy
 msgid "Conversation"
 msgstr "对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Conversation titles"
 msgstr "对话标题"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Conversations"
 msgstr "对话"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Conversations embedded"
 msgstr "已嵌入的对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Cosine similarity {similarity}"
 msgstr "余弦相似度 {similarity}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Cost"
 msgstr "费用"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Detail"
 msgstr "细节"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Display"
 msgstr "显示"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Drag"
 msgstr "拖动"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Duration"
 msgstr "时长"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Effort"
 msgstr "推理强度"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "End the chat"
 msgstr "结束聊天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Every task on this map is done"
 msgstr "此地图上的所有任务均已完成"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Every task on this map is open"
 msgstr "此地图上的所有任务均未完成"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Explore from here"
 msgstr "从此处探索"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Failed to index"
 msgstr "索引失败"
 
 #: src/renderer/components/knowledge-graph/LazyKnowledgeGraph.tsx
-#, fuzzy
 msgid "Failed to load the Knowledge Graph"
-msgstr "无法加载知识图谱"
+msgstr "知识图谱加载失败"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Fewer, broader regions"
 msgstr "区域更少、更宽泛"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Filter"
 msgstr "筛选"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Filter by the task's status"
 msgstr "按任务状态筛选"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Filter by when the conversation was last active"
 msgstr "按对话的最后活跃时间筛选"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Find a project"
 msgstr "查找项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Find a region"
 msgstr "查找区域"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Finding related work"
 msgstr "正在查找相关工作"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Fine"
 msgstr "精细"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly back to the opening view"
 msgstr "飞回初始视图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "向前和侧向飞行"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Up and Down"
 msgstr "向上和向下飞行"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Green is done, amber is still open on the board, grey has no task"
 msgstr "绿色表示已完成，琥珀色表示仍在看板上未完成，灰色表示没有任务"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Hidden"
-msgstr "已隐藏"
+msgstr "隐藏"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Hide {label}"
-msgstr "隐藏{label}"
+msgstr "隐藏 {label}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
-#, fuzzy
 msgid "Hide tasks"
 msgstr "隐藏任务"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "How finely the map is cut into regions. Each one is computed with the map, so switching is instant. No measurement can pick this for you: every way of scoring a clustering prefers the fewest regions on a cloud this continuous, so it is a question of how much detail you want to read."
-msgstr "地图划分区域的精细程度。每种划分都随地图一同计算，因此可即时切换。没有任何指标能替你做出选择：对于如此连续的点云，所有聚类评分方法都倾向于最少的区域，因此这取决于你想看到多少细节。"
+msgstr "地图划分区域的精细程度。每种划分都随地图一同计算，因此切换是即时的。没有任何指标能替你做出选择：对于如此连续的点云，所有聚类评分方法都倾向于最少的区域，所以这取决于你想阅读多少细节。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "How long the conversation ran for in wall time: warm and bright is slow, deep indigo is quick. A brief conversation can still be a slow one"
-msgstr "对话实际运行的时长：暖色明亮表示慢，深靛蓝表示快。简短的对话也可能耗时很长"
+msgstr "对话实际运行了多久：暖色明亮表示慢，深靛蓝表示快。简短的对话也可能耗时很长。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "How much transcript the conversation holds: warm and bright is long, deep indigo is short. This is text, not time or money - a long conversation is often a cheap one"
-msgstr "对话包含的记录文本量：暖色明亮表示长，深靛蓝表示短。这是指文本，而非时间或费用 - 长对话往往成本较低"
+msgstr "对话包含多少记录文本：暖色明亮表示长，深靛蓝表示短。这是指文本，而非时间或费用，长对话往往成本较低。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphIndexCard.tsx
-#, fuzzy
 msgid "Index"
 msgstr "索引"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Indexed"
 msgstr "已索引"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Just the open project"
-msgstr "仅当前打开的项目"
+msgstr "仅限当前打开的项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphPage.tsx
-#, fuzzy
 msgid "Knowledge Graph"
 msgstr "知识图谱"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Last 30 days"
 msgstr "最近 30 天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Last 90 days"
 msgstr "最近 90 天"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Last active"
 msgstr "上次活跃"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Length"
 msgstr "长度"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Links"
-msgstr "关联"
+msgstr "连线"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Links are computed in full embedding dimensionality and are exact. Position is an approximate reduction, so nearby is a hint, not a guarantee."
-msgstr "关联基于完整嵌入维度计算，结果精确。位置是近似降维结果，因此相邻仅作参考，并不保证相关。"
+msgstr "连线在完整嵌入维度上计算，结果是精确的。位置是近似的降维结果，因此相邻只是提示，并不保证相关。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Loading what this project has indexed."
 msgstr "正在加载此项目已索引的内容。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Map built"
-msgstr "图谱已构建"
+msgstr "地图已构建"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Model"
 msgstr "模型"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "More, narrower regions"
 msgstr "更多、更细的区域"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Naming regions"
 msgstr "正在命名区域"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Narrow the map to this conversation and everything it links to"
-msgstr "将地图范围缩小到此对话及其链接的所有内容"
+msgstr "将地图范围缩小到此对话及其连线到的全部内容"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "No done tasks on this map"
 msgstr "此地图上没有已完成的任务"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "No map yet"
-msgstr "暂无图谱"
+msgstr "暂无地图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "No open tasks on this map"
 msgstr "此地图上没有未完成的任务"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "No project matches that."
 msgstr "没有匹配的项目。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "No project open"
 msgstr "未打开项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
-#, fuzzy
 msgid "No recorded conversation to open here"
-msgstr "此处没有可打开的已记录对话"
+msgstr "此处没有可打开的对话记录"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "No region matches that."
 msgstr "没有匹配的区域。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "No session record for this conversation"
 msgstr "此对话没有会话记录"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "No session to open"
 msgstr "没有可打开的会话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "None"
 msgstr "无"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Not indexed"
 msgstr "未索引"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Not yet indexed"
 msgstr "尚未索引"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Nothing has been indexed for this project yet."
 msgstr "此项目尚未建立任何索引。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Nothing indexed yet, so there is no map to draw"
-msgstr "尚未索引任何内容，因此无法绘制图谱"
+msgstr "尚未索引任何内容，因此没有可绘制的地图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Nothing on this map is older than {days} days"
-msgstr "此地图上没有超过 {days} 天的内容"
+msgstr "此地图上没有早于 {days} 天的内容"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Off"
 msgstr "关闭"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Once per project, in the background. Later updates take moments."
-msgstr "每个项目一次，在后台进行。后续更新只需片刻。"
+msgstr "每个项目执行一次，在后台进行。之后的更新很快完成。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Open a project to see what its conversation index has learned."
-msgstr "打开项目以查看其对话索引学到的内容。"
+msgstr "打开项目，查看其对话索引已经学到了什么。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Open conversation"
 msgstr "打开对话"
 
 #: src/renderer/components/knowledge-graph/panel-card.tsx
-#, fuzzy
 msgid "Open Settings"
 msgstr "打开设置"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Open the full transcript"
 msgstr "打开完整记录"
 
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
 msgid "Open this conversation"
 msgstr "打开此对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Orbit the Map"
 msgstr "环绕地图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Pan the View"
 msgstr "平移视图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Passages this conversation was split into for search. Longer conversations produce more."
 msgstr "为便于搜索，此对话被拆分成的段落。对话越长，段落越多。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Places conversations by meaning, with a local model."
-msgstr "使用本地模型，按含义排布对话。"
+msgstr "用本地模型按含义排布对话。"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Placing conversations"
 msgstr "正在放置对话"
 
 #: src/renderer/components/knowledge-graph/use-graph-view.ts
-#, fuzzy
 msgid "Project"
 msgstr "项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphProjectsPicker.tsx
-#, fuzzy
 msgid "Projects"
 msgstr "项目"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Ran for"
 msgstr "运行时长"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Reading conversations"
 msgstr "正在读取对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Reading the index"
 msgstr "正在读取索引"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Recency"
-msgstr "最近程度"
+msgstr "新旧"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "Region"
 msgstr "区域"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Region detail"
 msgstr "区域细节"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Region labels"
 msgstr "区域标签"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Region of the map"
 msgstr "地图区域"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Regions"
 msgstr "区域"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Reset view"
 msgstr "重置视图"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Right Drag"
 msgstr "右键拖动"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Scroll"
 msgstr "滚动"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Searching \"{query}\""
-msgstr "正在搜索“{query}”"
+msgstr "正在搜索「{query}」"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Send"
 msgstr "发送"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Show"
 msgstr "显示"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Show {label}"
-msgstr "显示{label}"
+msgstr "显示 {label}"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
-#, fuzzy
 msgid "Show all {rowCount}"
 msgstr "显示全部 {rowCount} 项"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphSourceRows.tsx
-#, fuzzy
 msgid "Show fewer"
 msgstr "收起"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Show the camera keys"
-msgstr "显示相机按键"
+msgstr "显示相机控制键"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Similarity links"
 msgstr "相似性连线"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Size on disk"
 msgstr "磁盘占用"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Status"
 msgstr "状态"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphBody.tsx
-#, fuzzy
 msgid "Stop exploring this neighbourhood"
-msgstr "停止探索此邻域"
+msgstr "停止探索此邻近区域"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Tasks"
 msgstr "任务"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Tasks embedded"
 msgstr "已嵌入的任务"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "The agent didn't answer. {reason}"
-msgstr "代理未回答。{reason}"
+msgstr "智能体未回答。{reason}"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "The agent's transcript file is gone, but the indexed text and its embeddings are still here and still searchable."
-msgstr "代理的对话记录文件已不存在，但已索引的文本及其嵌入仍保留在此，且仍可搜索。"
+msgstr "智能体的记录文件已不存在，但已索引的文本及其嵌入仍然保留，且仍可搜索。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "The area of the map this conversation sits in, named by the terms that set its conversations apart from the rest of the index."
-msgstr "此对话在地图中所处的区域，以区分其中对话与索引其余部分的术语命名。"
+msgstr "此对话在地图中所处的区域，按最能将其中的对话与索引其余部分区分开的词命名。"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "The background sweep has not reached these conversations yet."
 msgstr "后台扫描尚未处理到这些对话。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "The default: regions of roughly 10 to 26 conversations"
 msgstr "默认：每个区域约 10 到 26 个对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "The map needs a GPU"
 msgstr "地图需要 GPU"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "This conversation has no session record."
 msgstr "此对话没有会话记录。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
-#, fuzzy
 msgid "This conversation links to nothing else in the index"
 msgstr "此对话未链接到索引中的任何其他内容"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "This machine could not provide a 3D drawing context, so the map cannot be drawn. Coverage and search still work."
 msgstr "此计算机无法提供 3D 绘图上下文，因此无法绘制地图。覆盖率和搜索功能仍可使用。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Time spent"
 msgstr "耗时"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Titles"
 msgstr "标题"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Topic"
 msgstr "主题"
 
 #: src/renderer/components/knowledge-graph/index-panel-lines.ts
-#, fuzzy
 msgid "Transcript gone"
 msgstr "对话记录已丢失"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphChat.tsx
-#, fuzzy
 msgid "Try again"
 msgstr "重试"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Turn it on in Settings > Knowledge Graph, in the main window."
-msgstr "请在主窗口的“设置 > 知识图谱”中开启。"
+msgstr "请在主窗口的「设置 > 知识图谱」中开启。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "under a minute"
 msgstr "不到一分钟"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
 #: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
 msgid "Untitled conversation"
 msgstr "未命名对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "Warm is recent, cool is old - shows where your attention has moved"
-msgstr "暖色表示最近，冷色表示较早 - 显示你的关注点如何转移"
+msgstr "暖色表示近期，冷色表示久远，显示你的关注点转向了哪里"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
-#, fuzzy
 msgid "What the conversation cost to run: warm and bright is expensive, deep indigo is cheap. Conversations with no recorded cost draw at the cheap end"
-msgstr "对话的运行成本：暖色明亮表示昂贵，深靛蓝表示便宜。未记录成本的对话按便宜一端绘制"
+msgstr "对话的运行成本：暖色明亮表示昂贵，深靛蓝表示便宜。没有记录成本的对话按便宜一端绘制"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphControls.tsx
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNoMap.tsx
-#, fuzzy
 msgid "Which projects the map shows and a question is asked across. Starts on the open project."
 msgstr "地图显示哪些项目，以及提问时涵盖哪些项目。默认为当前打开的项目。"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Zoom In and Out"
-msgstr "放大和缩小"
+msgstr "缩放"
