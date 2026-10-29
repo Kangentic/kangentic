@@ -5,6 +5,8 @@ description: "How to run, build and test Kangentic from source: the dev server a
 tags: [development, build, testing, worktrees]
 sources:
   - resource: scripts/dev.js
+  - resource: scripts/ensure-node-modules.js
+  - resource: scripts/verify-node-modules.js
   - resource: scripts/build.js
   - resource: scripts/worktree-preview.js
   - resource: scripts/worktree-vite-config.js
@@ -210,6 +212,26 @@ file `dev.js` passes as `--dev-restart-file=`, then quits normally, and `dev.js`
 again with Vite still running (`src/main/app-relaunch.ts`). On Ctrl+C or a closed terminal, `dev.js`
 waits up to 3 s for Electron to exit on its own before killing it, since Electron gets the same
 signal and records a clean exit itself.
+
+**Dependency check at launch.** Before anything loads from `node_modules`, `dev.js` compares the
+installed tree against `package-lock.json` with the release gate's comparison
+(`checkNodeModules` in `scripts/verify-node-modules.js`). A match costs milliseconds. On a mismatch,
+`scripts/ensure-node-modules.js` prints what differs and runs `npm ci`, unless one of these holds,
+in which case it launches on the tree as it is:
+
+- `node_modules` is a junction or symlink. A worktree preview links to the root's tree, and `npm ci`
+  through the link would replace it or empty the root's tree, which the dogfood instance and every
+  preview run from. The checkout that owns the tree installs on its own next launch.
+- A process runs an executable from inside `node_modules`, such as a preview's Electron or an esbuild
+  service, or on Windows a `node` process has a native addon from it loaded, such as Vite's rolldown
+  binding in a vitest run. `npm ci` deletes the tree before it reaches a locked file, so on Windows it
+  fails halfway. The scan is `Get-CimInstance Win32_Process` plus each `node` process's loaded modules
+  on Windows, `/proc/<pid>/exe` on Linux and `ps` on macOS. Linux and macOS let a loaded addon be
+  deleted, so the scan there looks at executables only.
+- That process scan fails or passes 5 s. It fails closed.
+
+A failed `npm ci` stops the launch, since it may have deleted part of the tree. The next launch finds
+the tree incomplete and installs again.
 
 The esbuild externals (`better-sqlite3`, `node-pty`, `sherpa-onnx-node`, `sqlite-vec`, `@huggingface/transformers`, `font-list`, `koffi`, plus `electron` itself) are not bundled. They load at runtime from `node_modules`. The list is declared identically in `scripts/build.js` and `scripts/dev.js`, so change one and change the other. Everything else, `simple-git` included, is bundled. Getting an external into a packaged build is a separate question, covered under Packaging below.
 
