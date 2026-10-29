@@ -53,8 +53,9 @@ export interface RunCliPrintOptions {
   /**
    * Optional environment variables merged into the spawn. Adapters that need to disable
    * a TUI banner via env var (e.g. `NO_COLOR=1`, custom analytics opt-out) supply them here.
+   * An `undefined` value unsets a variable the run would otherwise inherit.
    */
-  env?: Record<string, string>;
+  env?: Record<string, string | undefined>;
   /** Bytes of stdout accepted before the child is terminated. */
   outputBudget?: number;
   /**
@@ -157,7 +158,7 @@ interface ResolvedPrintOptions {
   promptFilePath: string | null;
   promptFileFlag: string | undefined;
   extractRaw: ((stdout: string) => string) | undefined;
-  env: Record<string, string> | undefined;
+  env: Record<string, string | undefined> | undefined;
   outputBudget: number;
   shape: (candidate: string) => string;
   onChunk: ((chunk: string) => void) | undefined;
@@ -443,7 +444,7 @@ export function spawnCli(
   cliPath: string,
   args: string[],
   cwd: string,
-  env?: Record<string, string>,
+  env?: Record<string, string | undefined>,
   cliTarget?: CliTarget | null,
 ): CliChildProcess {
   const invocation = cliTarget ? cliInvocationForTarget(cliTarget, args, env) : null;

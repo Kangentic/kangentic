@@ -17,7 +17,7 @@
 
 ## Adapters
 
-* [Claude Code](claude-code.md) - Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, and the locked single write to ~/.claude.json for trust and diffSidebarOpen.
+* [Claude Code](claude-code.md) - Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, the locked single write to ~/.claude.json for trust and diffSidebarOpen, and the one retry of a headless run on the stored login when Claude refuses an inherited API key.
 * [Codex CLI](codex-cli.md) - Why Codex's MCP and hook overrides go in as quote-free -c flags, how hook trust comes from Codex's own app-server hash, how per-worktree trust entries are added to and removed from config.toml, and how permission modes map to sandbox and approval flags.
 * [Gemini CLI](gemini-cli.md) - Gemini CLI's shared .gemini/settings.json with per-session holds that strip Kangentic hooks when the last session leaves, the httpUrl MCP entry of environment references, plan exit read from AfterTool text, ToolPermission notifications as permission idle, and trustedFolders.json entries.
 * [Qwen Code](qwen-code.md) - Qwen Code, a gemini-cli fork with Claude-style hook names, and why Kangentic's MCP server goes in through --mcp-config to avoid the Untrusted MCP server dialog, bare-token Windows hooks, caller-owned --session-id, trust writes gated on folderTrust and the ~/.qwen/projects chat history.

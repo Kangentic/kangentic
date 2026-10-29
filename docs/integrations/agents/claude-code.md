@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Claude Code
-description: Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, and the locked single write to ~/.claude.json for trust and diffSidebarOpen.
+description: Claude Code detection that skips dead npm shims, the merged --settings file with 18 event-bridge hooks and mcp__kangentic allow rules, how every CLI's hook command paths are quoted per shell, the locked single write to ~/.claude.json for trust and diffSidebarOpen, and the one retry of a headless run on the stored login when Claude refuses an inherited API key.
 tags: [agents, adapter, claude]
 sources:
   - resource: src/main/agent/adapters/claude/claude-adapter.ts
@@ -12,6 +12,7 @@ sources:
   - resource: src/main/agent/adapters/claude/claude-json-lock.ts
   - resource: src/main/agent/adapters/claude/diff-panel.ts
   - resource: src/main/agent/adapters/claude/model-picker-probe.ts
+  - resource: src/main/agent/adapters/claude/subscription-fallback.ts
   - resource: src/main/agent/shared/hook-utils.ts
   - resource: src/main/agent/shared/npm-shim-target.ts
 ---
@@ -99,6 +100,14 @@ See [Permission Mode Resolution](../../settings/cascade.md#permission-mode-resol
 ## Non-Interactive Mode
 
 When `nonInteractive` is set, `--print` is added. The agent runs, prints output, and exits without waiting for user input.
+
+## Headless runs on the stored login
+
+`src/main/agent/adapters/claude/subscription-fallback.ts`
+
+A task title, a Command Terminal name, a task summary and a Condition check each run Claude in print mode (`summarize`, `answerFromContext`). In print mode Claude always uses `ANTHROPIC_API_KEY` when it is set. An interactive Claude session can decline the key and keep the user's `/login`, so a stale key in the environment Kangentic started from failed every one of these runs with "Invalid API key · Fix external API key" while interactive sessions kept working.
+
+When a run fails with that refusal and inherited `ANTHROPIC_API_KEY` or `ANTHROPIC_AUTH_TOKEN`, it runs once more with both unset in its own environment (`runWithSubscriptionFallback`). Unsetting the variables falls back to the stored login. A key that works is used as before, a user with no login gets the second run's reason, and an answer that already streamed anything (text or a tool event) to the user is not run again. The refusal is recognized by its message text, so a changed wording in the CLI disables the retry; a unit test pins the current string. The retry is not remembered: while the key stays set, every call runs the refused attempt first. In a WSL distro the variables are unset by `env -u` (`cliInvocationForTarget`), because `WSLENV` cannot carry an absence. The warm answer session Ask keeps open inherits the key and is not retried: a refusal that arrives as its turn's result fails the Ask answer, and only a session that exits before any text falls back to a fresh run.
 
 ## Settings Merge
 

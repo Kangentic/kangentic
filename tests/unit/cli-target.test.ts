@@ -303,6 +303,21 @@ describe('cliInvocationForTarget', () => {
       WSLENV: 'USERPROFILE/p:KANGENTIC_MCP_TOKEN/u:NO_COLOR/u',
     });
   });
+
+  // A headless Claude run on the stored login unsets the external key
+  // (subscription-fallback.ts). WSLENV cannot carry an absence, and the key may
+  // come from the distro's own environment, so `env -u` removes it there.
+  it('unsets a variable passed as undefined in the distro, and lists only the set ones in WSLENV', () => {
+    vi.stubEnv('WSLENV', 'USERPROFILE/p');
+    const invocation = cliInvocationForTarget(TARGET, ['--print'], { MAX_THINKING_TOKENS: '0', ANTHROPIC_API_KEY: undefined });
+
+    expect(invocation.args).toEqual([
+      '-d', 'Ubuntu', '-e', 'env', '-u', 'ANTHROPIC_API_KEY',
+      'PATH=/home/dev/.nvm/versions/node/v24.22.1/bin:/usr/bin',
+      '/home/dev/.local/bin/claude', '--print',
+    ]);
+    expect(invocation.env).toEqual({ MAX_THINKING_TOKENS: '0', WSLENV: 'USERPROFILE/p:MAX_THINKING_TOKENS/u' });
+  });
 });
 
 // node-pty's ConPTY spawn needs the absolute path, and it is a Windows path on

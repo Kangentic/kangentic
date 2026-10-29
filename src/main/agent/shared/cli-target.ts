@@ -323,14 +323,21 @@ export interface CliInvocation {
  * node. The caller's variables cross through `WSLENV` rather than the command
  * line, so a token never shows in the distro's process list, and their values
  * must already be in the distro's form. So must every path-valued argument
- * (`cliPathForTarget`).
+ * (`cliPathForTarget`). A variable passed as `undefined` is unset in the distro
+ * by `env -u`, whether `WSLENV` or the distro itself would have set it.
  */
 export function cliInvocationForTarget(
   target: CliTarget,
   cliArgs: readonly string[],
-  env: Record<string, string> = {},
+  env: Record<string, string | undefined> = {},
 ): CliInvocation {
-  const names = Object.keys(env);
+  const assigned: Record<string, string> = {};
+  const unsetArguments: string[] = [];
+  for (const [name, value] of Object.entries(env)) {
+    if (value === undefined) unsetArguments.push('-u', name);
+    else assigned[name] = value;
+  }
+  const names = Object.keys(assigned);
   // A place read back from a session row carries no captured PATH
   // (`placeFromStored`): `PATH=` with nothing after it would blank the
   // distro's own, so the run keeps the default `-e` gives (`/usr/bin`, where
@@ -338,8 +345,8 @@ export function cliInvocationForTarget(
   const pathAssignment = target.facts.interactivePath ? [`PATH=${target.facts.interactivePath}`] : [];
   return {
     file: wslExecutablePath(),
-    args: ['-d', target.distro, '-e', 'env', ...pathAssignment, target.linuxCliPath, ...cliArgs],
-    env: names.length > 0 ? listInWslEnv(env, names, process.env.WSLENV) : {},
+    args: ['-d', target.distro, '-e', 'env', ...unsetArguments, ...pathAssignment, target.linuxCliPath, ...cliArgs],
+    env: names.length > 0 ? listInWslEnv(assigned, names, process.env.WSLENV) : {},
   };
 }
 
