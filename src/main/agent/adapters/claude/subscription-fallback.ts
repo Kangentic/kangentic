@@ -10,13 +10,16 @@
  * user's own terminals worked (#683). Running without the variable falls back
  * to the stored login. This does that, once, and only after the CLI rejected
  * the key: a key that works is used as before, and a user with no login gets
- * the refusal back.
+ * the second run's reason.
  *
  * Only the run's own environment changes, never main's.
  */
 
+/** The variable whose refusal `isExternalKeyRejection` matches. */
+const API_KEY_NAME = 'ANTHROPIC_API_KEY';
+
 /** The variables Claude takes an external credential from, ahead of the stored login. */
-const EXTERNAL_CREDENTIAL_NAMES: readonly string[] = ['ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN'];
+const EXTERNAL_CREDENTIAL_NAMES: readonly string[] = [API_KEY_NAME, 'ANTHROPIC_AUTH_TOKEN'];
 
 /**
  * The external credential variables `environment` sets, by the name it uses.
@@ -36,9 +39,11 @@ export function withoutExternalCredential(inheritedNames: readonly string[]): Re
 }
 
 /**
- * Claude's refusal of an external key, matched on the message text the run's
- * error carries. A change to that wording disables the fallback; the unit test
- * pins the current string.
+ * Claude's refusal of an external API key, matched on the message text the
+ * run's error carries. A change to that wording disables the fallback; the unit
+ * test pins the current string. A refused `ANTHROPIC_AUTH_TOKEN` reads "Failed
+ * to authenticate. API Error: 401 Invalid bearer token" (CLI 2.1.312) and is
+ * not matched.
  */
 export function isExternalKeyRejection(error: unknown): boolean {
   return error instanceof Error && /invalid api key/i.test(error.message);
@@ -46,8 +51,9 @@ export function isExternalKeyRejection(error: unknown): boolean {
 
 /**
  * Run `run` with no change to its environment, and when the CLI refuses the
- * external key it inherited, once more with that key unset. `mayRunAgain` lets
- * a caller refuse the second run, for one whose first already showed output.
+ * `ANTHROPIC_API_KEY` it inherited, once more with the external credential
+ * unset. `mayRunAgain` lets a caller refuse the second run, for one whose first
+ * already showed output.
  */
 export async function runWithSubscriptionFallback<T>(
   run: (credentialEnv: Record<string, undefined>) => Promise<T>,
@@ -57,7 +63,8 @@ export async function runWithSubscriptionFallback<T>(
     return await run({});
   } catch (error) {
     const inheritedNames = inheritedCredentialNames();
-    if (inheritedNames.length === 0 || !isExternalKeyRejection(error) || !mayRunAgain()) throw error;
+    const keyInherited = inheritedNames.some((name) => name.toUpperCase() === API_KEY_NAME);
+    if (!keyInherited || !isExternalKeyRejection(error) || !mayRunAgain()) throw error;
     console.warn(`[CLAUDE] a headless run refused ${inheritedNames.join(', ')}; running it again on the stored login`);
     return run(withoutExternalCredential(inheritedNames));
   }
