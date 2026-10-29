@@ -76,6 +76,7 @@ beforeEach(() => {
   // which credential the run inherits.
   vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-stale');
   vi.stubEnv('ANTHROPIC_AUTH_TOKEN', undefined);
+  vi.stubEnv('ANTHROPIC_BASE_URL', undefined);
   warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
 });
 
@@ -199,6 +200,17 @@ describe('runWithSubscriptionFallback', () => {
   it('never runs again when only an auth token was inherited, since the key is not what was refused', async () => {
     vi.stubEnv('ANTHROPIC_API_KEY', undefined);
     vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'token-stale');
+    const run = vi.fn(async (_credentialEnv: Record<string, undefined>): Promise<string> => {
+      throw new Error(REFUSAL);
+    });
+
+    await expect(runWithSubscriptionFallback(run)).rejects.toThrow(REFUSAL);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it('never runs again when a base URL was inherited, since the stored login would go to that endpoint', async () => {
+    vi.stubEnv('Anthropic_Base_Url', 'https://gateway.example.invalid');
     const run = vi.fn(async (_credentialEnv: Record<string, undefined>): Promise<string> => {
       throw new Error(REFUSAL);
     });
