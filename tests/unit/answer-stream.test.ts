@@ -13,6 +13,8 @@
  * an error message, and returned as text it read as the agent's reply.
  */
 
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import {
   extractStreamedAnswer,
@@ -139,6 +141,48 @@ describe('createAnswerStreamReducer', () => {
       assistantLine([{ type: 'text', text: 'The answer.' }]),
     ].flatMap((line) => reduce(line));
     expect(events).toEqual([{ kind: 'text', text: 'Let me search.' }, { kind: 'text', text: 'The answer.' }]);
+  });
+
+  describe('an API error notice, which is the run\'s failure and never part of the reply', () => {
+    // The text a refused key prints. Non-empty on purpose: an empty block
+    // yields nothing whether or not the notice is dropped.
+    const noticeContent = [{ type: 'text', text: 'Invalid API key · Fix external API key' }];
+
+    it('yields nothing for an assistant line flagged is_api_error_message', () => {
+      const flagged = JSON.stringify({
+        type: 'assistant',
+        message: { model: 'claude-haiku-5-5', content: noticeContent },
+        is_api_error_message: true,
+      });
+      expect(reduceFirstLine(flagged)).toEqual([]);
+    });
+
+    it('yields nothing for an assistant line whose model is <synthetic>, flag or no flag', () => {
+      const synthetic = JSON.stringify({
+        type: 'assistant',
+        message: { model: '<synthetic>', content: noticeContent },
+      });
+      expect(reduceFirstLine(synthetic)).toEqual([]);
+    });
+
+    it('still yields the text of an assistant line that is neither flagged nor synthetic', () => {
+      const ordinary = JSON.stringify({
+        type: 'assistant',
+        message: { model: 'claude-haiku-5-5', content: noticeContent },
+        is_api_error_message: false,
+      });
+      expect(reduceFirstLine(ordinary)).toEqual([{ kind: 'text', text: 'Invalid API key · Fix external API key' }]);
+    });
+
+    it('yields nothing for any line of a captured refused-key stream', () => {
+      // Claude CLI 2.1.312: init, status, the synthetic notice, then the
+      // is_error result line. There is no partial message anywhere in it.
+      const capture = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-refused-api-key-stream.jsonl'), 'utf-8');
+      const lines = capture.split(/\r?\n/).filter((line) => line.length > 0);
+      expect(lines).toHaveLength(4);
+      const reduce = createAnswerStreamReducer();
+      expect(lines.flatMap((line) => reduce(line))).toEqual([]);
+    });
   });
 });
 

@@ -8,10 +8,14 @@
  *
  * Pinned here: the inherited names are found case-insensitively; the override
  * unsets them in the run's environment and nowhere else; only that refusal,
- * with a key actually inherited, earns the second run, and only one; a streamed
- * answer the user already saw is never run again; and both headless methods,
- * `summarize` and `answerFromContext`, take the second run.
+ * with an `ANTHROPIC_API_KEY` actually inherited (a refused auth token reads
+ * differently), earns the second run, and only one; a streamed answer the user
+ * already saw is never run again, while Claude's own refusal notice is not one;
+ * and both headless methods, `summarize` and `answerFromContext`, take the
+ * second run. The refusal is read from a real capture (Claude CLI 2.1.312).
  */
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { RunCliPrintOptions } from '../../src/main/agent/shared/cli-print';
 
@@ -38,9 +42,27 @@ import {
   withoutExternalCredential,
 } from '../../src/main/agent/adapters/claude/subscription-fallback';
 import { childProcessEnv } from '../../src/main/shared/child-env';
+import { createJsonResultExtractor, extractStreamedAnswer } from '../../src/main/agent/shared/cli-answer';
 
 /** The refusal exactly as the background-call ledger recorded it. */
 const REFUSAL = 'Invalid API key · Fix external API key';
+
+/** What a refused `ANTHROPIC_AUTH_TOKEN` reads on CLI 2.1.312: not the key's refusal. */
+const REFUSED_TOKEN = 'Failed to authenticate. API Error: 401 Invalid bearer token';
+
+/** A real stream-json run the CLI refused for its key: init, status, the notice, the error result. */
+const REFUSED_STREAM = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-refused-api-key-stream.jsonl'), 'utf-8');
+const REFUSED_STREAM_LINES = REFUSED_STREAM.split(/\r?\n/).filter((line) => line.length > 0);
+
+/** What `action` throws, or undefined when it does not. */
+function thrownBy(action: () => unknown): unknown {
+  try {
+    action();
+  } catch (error) {
+    return error;
+  }
+  return undefined;
+}
 
 /** A text delta as Claude's stream-json prints it, which the answer stream shows. */
 const STREAMED_TEXT_LINE = `${JSON.stringify({ type: 'stream_event', event: { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'Hello' } } })}\n`;
@@ -87,10 +109,44 @@ describe('the external credential', () => {
     expect(process.env.ANTHROPIC_API_KEY).toBe('sk-ant-stale');
   });
 
+  it('is gone from the run\'s environment under any spelling an inherited name used', () => {
+    // Windows folds the case of an environment name, so the mixed spelling
+    // would overwrite the beforeEach key and leave that spelling behind for the
+    // next test. Unset the canonical one first so this is the only spelling,
+    // and the restore at the end leaves no spelling of it on either platform.
+    vi.stubEnv('ANTHROPIC_API_KEY', undefined);
+    vi.stubEnv('Anthropic_Api_Key', 'sk-ant-stale-mixed');
+    // The mixed spelling is what main inherited, so the case below tests it.
+    expect(inheritedCredentialNames().map((name) => name.toUpperCase())).toEqual(['ANTHROPIC_API_KEY']);
+
+    const environment = childProcessEnv({ MAX_THINKING_TOKENS: '0', ...withoutExternalCredential(inheritedCredentialNames()) });
+
+    expect(Object.keys(environment).filter((name) => name.toUpperCase() === 'ANTHROPIC_API_KEY')).toEqual([]);
+    expect(environment.MAX_THINKING_TOKENS).toBe('0');
+  });
+
   it('reads only Claude\'s refusal of the key as one', () => {
     expect(isExternalKeyRejection(new Error(REFUSAL))).toBe(true);
     expect(isExternalKeyRejection(new Error('the agent timed out'))).toBe(false);
     expect(isExternalKeyRejection(REFUSAL)).toBe(false);
+    // A refused auth token is a different message, and unsetting the key
+    // would not change it.
+    expect(isExternalKeyRejection(new Error(REFUSED_TOKEN))).toBe(false);
+  });
+
+  it('reads the real refused-key capture as a refusal, from either extractor', () => {
+    // The envelope a refused run ends on, as the runner's extractors turn it
+    // into the error the fallback matches.
+    const resultLine = REFUSED_STREAM_LINES[REFUSED_STREAM_LINES.length - 1];
+    expect(JSON.parse(resultLine)).toMatchObject({ type: 'result', is_error: true });
+
+    const fromJsonResult = thrownBy(() => createJsonResultExtractor()(resultLine));
+    expect(fromJsonResult).toBeInstanceOf(Error);
+    expect(isExternalKeyRejection(fromJsonResult)).toBe(true);
+
+    const fromStream = thrownBy(() => extractStreamedAnswer(REFUSED_STREAM));
+    expect(fromStream).toBeInstanceOf(Error);
+    expect(isExternalKeyRejection(fromStream)).toBe(true);
   });
 });
 
@@ -138,6 +194,18 @@ describe('runWithSubscriptionFallback', () => {
 
     await expect(runWithSubscriptionFallback(run)).rejects.toThrow(REFUSAL);
     expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('never runs again when only an auth token was inherited, since the key is not what was refused', async () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', undefined);
+    vi.stubEnv('ANTHROPIC_AUTH_TOKEN', 'token-stale');
+    const run = vi.fn(async (_credentialEnv: Record<string, undefined>): Promise<string> => {
+      throw new Error(REFUSAL);
+    });
+
+    await expect(runWithSubscriptionFallback(run)).rejects.toThrow(REFUSAL);
+    expect(run).toHaveBeenCalledTimes(1);
+    expect(warn).not.toHaveBeenCalled();
   });
 
   it('never runs again when the caller refuses it', async () => {
@@ -210,6 +278,37 @@ describe('ClaudeAdapter headless runs', () => {
 
     await new ClaudeAdapter().answerFromContext('THE PROMPT', '/usr/bin/claude', '/answer-home', null, { onEvent: (event) => events.push(event) });
 
+    expect(answerSpy).toHaveBeenCalledTimes(2);
+    expect(events).toEqual([{ kind: 'text', text: 'Hello' }]);
+  });
+
+  it('answerFromContext streams a run again after Claude\'s own refusal notice, which is not output', async () => {
+    // The real capture streams the refusal as an assistant line before the
+    // error result. It must not reach the user or veto the second run.
+    let extractorError: unknown;
+    answerSpy.mockImplementationOnce(async (options) => {
+      for (const line of REFUSED_STREAM_LINES) options.onChunk?.(`${line}\n`);
+      try {
+        options.extractRaw?.(REFUSED_STREAM);
+      } catch (error) {
+        extractorError = error;
+        throw error;
+      }
+      throw new Error(REFUSAL);
+    });
+    answerSpy.mockImplementationOnce(async (options) => {
+      options.onChunk?.(STREAMED_TEXT_LINE);
+      return 'Hello';
+    });
+    const events: unknown[] = [];
+
+    const answer = await new ClaudeAdapter().answerFromContext('THE PROMPT', '/usr/bin/claude', '/answer-home', null, { onEvent: (event) => events.push(event) });
+
+    // The real extractor threw on the real capture, so the fallback judged the
+    // same error the runner would have handed it.
+    expect(extractorError).toBeInstanceOf(Error);
+    expect(isExternalKeyRejection(extractorError)).toBe(true);
+    expect(answer).toBe('Hello');
     expect(answerSpy).toHaveBeenCalledTimes(2);
     expect(events).toEqual([{ kind: 'text', text: 'Hello' }]);
   });

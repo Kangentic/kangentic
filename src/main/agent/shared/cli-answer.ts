@@ -146,6 +146,19 @@ export function forwardStreamLines(onLine: (line: string) => void): (chunk: stri
 }
 
 /**
+ * Claude's notice of an API call that failed: an `assistant` turn the model
+ * never wrote, whose `model` is `<synthetic>` and whose text is the error.
+ * Captured on CLI 2.1.312 for a refused key, it carries
+ * `is_api_error_message: true` and arrives with no partial message before it,
+ * just ahead of the `is_error` result line that holds the same text.
+ */
+function isApiErrorNotice(record: Record<string, unknown>): boolean {
+  if (record.is_api_error_message === true) return true;
+  const message = record.message;
+  return typeof message === 'object' && message !== null && (message as Record<string, unknown>).model === '<synthetic>';
+}
+
+/**
  * A line-by-line reducer with one piece of state: whether partial messages
  * are flowing.
  *
@@ -156,6 +169,10 @@ export function forwardStreamLines(onLine: (line: string) => void): (chunk: stri
  * did not ask for them) the `assistant` lines are all there is, and they pass
  * through. `message_start` counts as a partial event, so the switch is thrown
  * before the first delta rather than by it.
+ *
+ * An API error notice never passes. The run's result line reports that error
+ * as the run's failure. Streamed as well, it read as the start of the reply
+ * and counted as output the user had already seen.
  */
 export function createAnswerStreamReducer(): (rawLine: string) => AnswerStreamEvent[] {
   let sawPartial = false;
@@ -166,7 +183,7 @@ export function createAnswerStreamReducer(): (rawLine: string) => AnswerStreamEv
       sawPartial = true;
       return eventsFromStreamEvent(record);
     }
-    if (record.type === 'assistant') return sawPartial ? [] : eventsFromAssistantMessage(record);
+    if (record.type === 'assistant') return sawPartial || isApiErrorNotice(record) ? [] : eventsFromAssistantMessage(record);
     return [];
   };
 }
