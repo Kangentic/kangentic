@@ -787,7 +787,6 @@ export function runProjectMigrations(db: Database.Database): void {
       from_agent TEXT NOT NULL,
       to_agent TEXT NOT NULL,
       trigger TEXT NOT NULL,
-      packet_json TEXT NOT NULL,
       created_at TEXT NOT NULL
     )
   `);
@@ -817,11 +816,20 @@ export function runProjectMigrations(db: Database.Database): void {
 
   // Migration: replace packet_json with session_history_path in handoffs table.
   // Session history passthrough stores the native file path instead of a
-  // manufactured context packet.
+  // manufactured context packet. The add and the drop are separate guarded
+  // steps because the add shipped first, on its own.
   const handoffColumns = db.prepare("PRAGMA table_info('handoffs')").all() as Array<{ name: string }>;
   const hasSessionHistoryPath = handoffColumns.some((column) => column.name === 'session_history_path');
   if (!hasSessionHistoryPath) {
     db.exec('ALTER TABLE handoffs ADD COLUMN session_history_path TEXT');
+  }
+  // A database created before this drop still has packet_json, NOT NULL with
+  // no default. The repository stopped writing it, so every handoff INSERT
+  // failed there. The CREATE above no longer declares it, so a new database
+  // never has it. Nothing reads the column. No index, key or trigger names it,
+  // which is what lets SQLite drop it in place.
+  if (handoffColumns.some((column) => column.name === 'packet_json')) {
+    db.exec('ALTER TABLE handoffs DROP COLUMN packet_json');
   }
 
   // Migration: add description column to swimlanes for a free-form, team-shared

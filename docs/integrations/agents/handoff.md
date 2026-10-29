@@ -6,6 +6,8 @@ tags: [handoff, agents, session-history, transcripts]
 sources:
   - resource: src/main/agent/handoff/
   - resource: src/main/db/repositories/handoff-repository.ts
+  - resource: src/main/db/migrations/project-schema.ts
+    title: handoffs table
   - resource: src/main/transition-engine/agent-resolver.ts
 ---
 # Cross-agent handoff
@@ -96,7 +98,6 @@ Handoff records are stored in the `handoffs` table for audit trail:
 | `to_agent` | TEXT | Target agent name |
 | `trigger` | TEXT | What caused the handoff (`column_transition`) |
 | `session_history_path` | TEXT | Absolute path to source session file (nullable) |
-| `packet_json` | TEXT | Legacy column (pre-`session_history_path`). Still present in the schema for backward compatibility but excluded from every `HandoffRepository` SELECT, so it is never read or written by current code. |
 | `created_at` | TEXT | ISO timestamp |
 
 ## MCP Access

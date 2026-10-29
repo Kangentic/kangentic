@@ -166,13 +166,12 @@ The old store, one growing value per session, rewritten whole on every flush (12
 | from_agent | TEXT | NOT NULL | |
 | to_agent | TEXT | NOT NULL | |
 | trigger | TEXT | NOT NULL | |
-| packet_json | TEXT | NOT NULL | |
-| session_history_path | TEXT | | |
 | created_at | TEXT | NOT NULL | |
+| session_history_path | TEXT | | |
 
 Index: `idx_handoffs_task_id` on (task_id).
 
-`packet_json` is a legacy column retained for schema compatibility. Current handoffs pass session context via `session_history_path` (a pointer to the source agent's native session history file). Repository queries no longer SELECT or write `packet_json`, and it is absent from the `HandoffRecord` TypeScript type.
+Handoffs pass session context through `session_history_path`, a pointer to the source agent's native session history file. A database created before [migration 95](migrations.md) also had `packet_json`, the context packet handoffs carried before that. It stayed `NOT NULL` after the repository stopped writing it, so every handoff insert failed until migration 95 dropped it.
 
 TypeScript type: `HandoffRecord` in `src/shared/types.ts`. Repository: `HandoffRepository` in `src/main/db/repositories/handoff-repository.ts`.
 
