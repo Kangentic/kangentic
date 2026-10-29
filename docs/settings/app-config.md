@@ -10,6 +10,7 @@ sources:
   - resource: src/main/config/legacy-git-keys.ts
   - resource: src/main/dev-ports/dev-port-allocator.ts
   - resource: src/main/agent/shared/execution-target.ts
+  - resource: src/renderer/components/settings/settings-registry.ts
 ---
 # App config keys
 
@@ -350,3 +351,14 @@ Terminals. Global-only. How each agent is chosen and started is in
 | `automation.effort` | `string \| null` | `null` | The effort level the check runs at. Optional: unset runs at the adapter's recommended level. Cleared with the model when the agent changes. Measured with `scripts/eval-condition-check.mjs` on this repo's own judged replies, Haiku 5.5 with the reason-first answer form: an exact-line Condition scored 114/114 at low, medium and high alike, with about 52, 60 and 177 output tokens per check, so low is the cheapest at the same accuracy (about $0.0005 a check). A Condition that asks for a judgment ("the reply lists findings it has not applied") scored 78 to 96% at every level. Effort does not fix that wording; an exact line the agent is told to write does. |
 | `workflows.agentPrompt` | `string \| null` | `null` | The whole first message a new workflow's agent gets, envelope included. Unset or blank sends the default (`DEFAULT_WORKFLOW_AGENT_PROMPT`, `src/shared/workflow-agent-prompt.ts`). Offers `{{projectName}}`, `{{projectPath}}`, `{{baseBranch}}`, `{{columns}}` and `{{brief_xml}}`. An edit applies to agents that start after it; a running conversation keeps what it was sent. |
 | `workflows.agentPaneWidth` | `number \| null` | `null` | The agent pane's width in the Workflows view, in pixels. Written when a drag on the pane's right edge ends, never shown in Settings. Unset means 560; read back clamped to 360 to 960 (`workflowAgentPaneWidth`, `WorkflowAgentPane.tsx`). Below that width plus 780 (the inspector and a 400px canvas), the open pane lies over the canvas instead of taking its width. A drag on a docked pane stops where the canvas would drop below 400px, so the drag itself never turns the pane floating. |
+
+## Settings rows with no AppConfig key
+
+Four rows in `settings-registry.ts` write no key in this file:
+
+| Registry id | Tab | Where its value lives |
+|-------------|-----|-----------------------|
+| `project.location` | General | The project's `path` on its row in the global database (see the [projects table](../database/storage-model.md#projects-table)) |
+| `shortcuts` | Shortcuts | `shortcuts` in `kangentic.json` and `kangentic.local.json` (see [Shortcuts](board-config.md#shortcuts)) |
+| `mcpServer.connection` | MCP Server | Nothing is stored. The row runs a live connection check each time the tab opens, and Test connection runs it again |
+| `privacy.info` | Privacy | Nothing is stored. The row is a notice |
