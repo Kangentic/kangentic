@@ -21,6 +21,14 @@ const API_KEY_NAME = 'ANTHROPIC_API_KEY';
 /** The variables Claude takes an external credential from, ahead of the stored login. */
 const EXTERNAL_CREDENTIAL_NAMES: readonly string[] = [API_KEY_NAME, 'ANTHROPIC_AUTH_TOKEN'];
 
+/** The endpoint Claude sends its requests to in place of Anthropic's, such as a gateway. */
+const BASE_URL_NAME = 'ANTHROPIC_BASE_URL';
+
+/** Whether `environment` sets a base URL, matched case-insensitively as the credentials are. */
+function inheritsBaseUrl(environment: NodeJS.ProcessEnv = process.env): boolean {
+  return Object.keys(environment).some((name) => Boolean(environment[name]) && name.toUpperCase() === BASE_URL_NAME);
+}
+
 /**
  * The external credential variables `environment` sets, by the name it uses.
  * Matched case-insensitively, since Windows environment names are.
@@ -54,6 +62,10 @@ export function isExternalKeyRejection(error: unknown): boolean {
  * `ANTHROPIC_API_KEY` it inherited, once more with the external credential
  * unset. `mayRunAgain` lets a caller refuse the second run, for one whose first
  * already showed output.
+ *
+ * Not while an `ANTHROPIC_BASE_URL` is inherited. The second run would still go
+ * to that endpoint, now on the stored login, and the user pointed it there for
+ * the key.
  */
 export async function runWithSubscriptionFallback<T>(
   run: (credentialEnv: Record<string, undefined>) => Promise<T>,
@@ -64,7 +76,7 @@ export async function runWithSubscriptionFallback<T>(
   } catch (error) {
     const inheritedNames = inheritedCredentialNames();
     const keyInherited = inheritedNames.some((name) => name.toUpperCase() === API_KEY_NAME);
-    if (!keyInherited || !isExternalKeyRejection(error) || !mayRunAgain()) throw error;
+    if (!keyInherited || inheritsBaseUrl() || !isExternalKeyRejection(error) || !mayRunAgain()) throw error;
     console.warn(`[CLAUDE] a headless run refused ${inheritedNames.join(', ')}; running it again on the stored login`);
     return run(withoutExternalCredential(inheritedNames));
   }
