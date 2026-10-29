@@ -28,6 +28,7 @@ import { cliPathForTarget, hostPathForTarget, parseWslCliPath, peekCliTarget, pl
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
 import { mayApproveClaudePlanTool } from './plan-tool-approval';
+import { runWithSubscriptionFallback } from './subscription-fallback';
 import { runCliPrintSummarize, buildSummarizePrompt, SUMMARIZE_JSON_OUTPUT_BUDGET } from '../../shared/auto-name';
 import {
   runCliPrintAnswer,
@@ -754,22 +755,26 @@ export class ClaudeAdapter implements AgentAdapter {
    * word title (13 runs audited on 2026-10-13), and each left a transcript in
    * the project's resume list. `answerArgs` drops all of that, and `cwd` is the
    * answer home. No plan mode: it rerouted a `--model haiku` call to Sonnet
-   * (see `answerArgs`).
+   * (see `answerArgs`). A stale `ANTHROPIC_API_KEY` is retried on the stored
+   * login (`subscription-fallback.ts`).
    */
   async summarize(prompt: string, cliPath: string, cwd: string, options?: SummarizeOptions): Promise<string> {
     const effort = options?.effort ?? null;
     // A Claude installed in a WSL distro runs there.
     const cliTarget = await resolveCliTarget(cliPath, true);
-    return withConfigDirectory(options?.runDirectory, (directory) => runCliPrintSummarize({
-      cliPath,
-      args: answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort, place: cliTarget }).args,
-      prompt: buildSummarizePrompt(prompt),
-      cwd,
-      extractRaw: createJsonResultExtractor(options?.onUsage),
-      outputBudget: SUMMARIZE_JSON_OUTPUT_BUDGET,
-      ...answerEnv(effort),
-      cliTarget,
-    }));
+    return withConfigDirectory(options?.runDirectory, (directory) => {
+      const { args } = answerArgs({ directory, retrieval: undefined, streaming: false, model: options?.model, effort, place: cliTarget });
+      return runWithSubscriptionFallback((credentialEnv) => runCliPrintSummarize({
+        cliPath,
+        args,
+        prompt: buildSummarizePrompt(prompt),
+        cwd,
+        extractRaw: createJsonResultExtractor(options?.onUsage),
+        outputBudget: SUMMARIZE_JSON_OUTPUT_BUDGET,
+        env: { ...answerEnv(effort).env, ...credentialEnv },
+        cliTarget,
+      }));
+    });
   }
 
   /**
@@ -837,8 +842,21 @@ export class ClaudeAdapter implements AgentAdapter {
       // A distro on NAT networking reaches the search tool through the bridge,
       // whose relay lives as long as this one call.
       const stopRelay = startRunMcpRelay(configDirectory, mcpServer);
+      // A run whose answer already reached the user is not run a second time
+      // on the stored login, which would show it twice.
+      const callerOnEvent = options?.onEvent;
+      let streamedEvent = false;
+      const onEvent = callerOnEvent
+        ? (event: AnswerStreamEvent) => {
+          streamedEvent = true;
+          callerOnEvent(event);
+        }
+        : undefined;
       try {
-        return await this.runAnswer({ cliPath, cliTarget, args, prompt, cwd, effort, onEvent: options?.onEvent, onUsage: options?.onUsage });
+        return await runWithSubscriptionFallback(
+          (credentialEnv) => this.runAnswer({ cliPath, cliTarget, args, prompt, cwd, effort, credentialEnv, onEvent, onUsage: options?.onUsage }),
+          () => !streamedEvent,
+        );
       } finally {
         stopRelay();
       }
@@ -853,10 +871,12 @@ export class ClaudeAdapter implements AgentAdapter {
     prompt: string;
     cwd: string;
     effort: string | null;
+    /** Variables this run unsets (`runWithSubscriptionFallback`). */
+    credentialEnv: Record<string, undefined>;
     onEvent: AnswerFromContextOptions['onEvent'];
     onUsage: AnswerFromContextOptions['onUsage'];
   }): Promise<string> {
-    const { cliPath, cliTarget, args, prompt, cwd, effort, onEvent, onUsage } = input;
+    const { cliPath, cliTarget, args, prompt, cwd, effort, credentialEnv, onEvent, onUsage } = input;
     return runCliPrintAnswer({
       cliPath,
       cliTarget,
@@ -894,7 +914,7 @@ export class ClaudeAdapter implements AgentAdapter {
       //
       // `MAX_THINKING_TOKENS` is Claude Code's own control, which is why this
       // lives in the Claude adapter rather than in the shared runner.
-      ...answerEnv(effort),
+      env: { ...answerEnv(effort).env, ...credentialEnv },
       prompt,
       cwd,
     });
