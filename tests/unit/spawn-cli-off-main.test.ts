@@ -23,6 +23,7 @@ import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } fr
 afterEach(() => {
   stopAllCliRuns();
   setOffMainCliSpawner(null);
+  vi.unstubAllEnvs();
 });
 
 /** A run the drop-in hands back: records its stop. */
@@ -86,6 +87,31 @@ describe('spawnCli with a pty host registered', () => {
     expect(calls[0].env[pipeKey]).toBeUndefined();
     expect(calls[1].env[pipeKey]).toBeUndefined();
     expect(calls[1].env.KANGENTIC_RUN).toBe('yes');
+  });
+
+  // The headless Claude subscription fallback retries with the inherited API key
+  // unset by passing `{ ANTHROPIC_API_KEY: undefined }`. Red-green: dropping the
+  // unset entries from the caller's env before `childProcessEnv` merges it over
+  // main's, or merging it over main's some other way, leaves the stale key in.
+  it('hands the run an env without a variable the caller unset, and with one it set', () => {
+    vi.stubEnv('ANTHROPIC_API_KEY', 'sk-ant-stale');
+    const calls: OffMainCliOptions[] = [];
+    setOffMainCliSpawner((_command, _args, options) => {
+      calls.push(options);
+      return fakeRemoteChild();
+    });
+
+    // Control: with nothing unset, the run inherits main's key, so the absence
+    // below is the unset's doing and not a missing variable.
+    spawnCli('/usr/local/bin/agent', ['-p'], '/work/tree');
+    spawnCli('/usr/local/bin/agent', ['-p'], '/work/tree', { ANTHROPIC_API_KEY: undefined, MAX_THINKING_TOKENS: '0' }, null);
+
+    expect(calls).toHaveLength(2);
+    expect(calls[0].env.ANTHROPIC_API_KEY).toBe('sk-ant-stale');
+    expect(calls[1].env).not.toHaveProperty('ANTHROPIC_API_KEY');
+    expect(calls[1].env.MAX_THINKING_TOKENS).toBe('0');
+    // Main's own environment keeps the key.
+    expect(process.env.ANTHROPIC_API_KEY).toBe('sk-ant-stale');
   });
 
   it('hands a Windows .cmd shim to the host as one cmd command line with every % broken out of the quotes', () => {
