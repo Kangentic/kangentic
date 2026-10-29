@@ -8,1834 +8,1471 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" failed against the task's current state."
-msgstr "“{automationName}”针对任务当前状态运行失败。"
+msgstr "「{automationName}」针对任务当前状态运行失败。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" failed on {columnName}."
-msgstr "“{automationName}”在{columnName}上运行失败。"
+msgstr "「{automationName}」在 {columnName} 上运行失败。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
-msgstr "“{automationName}”仍在针对任务当前状态运行。"
+msgstr "「{automationName}」仍在针对任务当前状态运行。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" succeeded against the task's current state."
-msgstr "“{automationName}”针对任务当前状态运行成功。"
+msgstr "「{automationName}」针对任务当前状态运行成功。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" was interrupted against the task's current state."
-msgstr "“{automationName}”针对任务当前状态运行时被中断。"
+msgstr "「{automationName}」针对任务当前状态运行时被中断。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" was skipped against the task's current state."
-msgstr "“{automationName}”针对任务当前状态已跳过。"
+msgstr "「{automationName}」针对任务当前状态已跳过。"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "\"{projectName}\" is now at {projectPath}."
-msgstr "“{projectName}”现位于 {projectPath}。"
+msgstr "「{projectName}」现位于 {projectPath}。"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "\"{swimlaneName}\""
-msgstr "“{swimlaneName}”"
+msgstr "「{swimlaneName}」"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "\"{taskTitle}\""
-msgstr "“{taskTitle}”"
+msgstr "「{taskTitle}」"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" did not run {command}."
-msgstr "“{taskTitle}”未运行 {command}。"
+msgstr "「{taskTitle}」未运行 {command}。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" exited with code {exitCode}."
-msgstr "“{taskTitle}”已退出，退出代码为 {exitCode}。"
+msgstr "「{taskTitle}」已退出，退出代码为 {exitCode}。"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "\"{taskTitle}\" in {columnName}."
-msgstr "“{taskTitle}”位于{columnName}。"
+msgstr "「{taskTitle}」位于 {columnName}。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" is {phase}."
-msgstr "“{taskTitle}”正在{phase}。"
+msgstr "「{taskTitle}」正在 {phase}。"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is archived."
-msgstr "“{taskTitle}”已归档。"
+msgstr "「{taskTitle}」已归档。"
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "“{taskTitle}”正在请求运行工具。"
+msgstr "「{taskTitle}」正在请求运行工具。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is back in {columnName}."
-msgstr "“{taskTitle}”已回到{columnName}。"
+msgstr "「{taskTitle}」已回到 {columnName}。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is back on the board."
-msgstr "“{taskTitle}”已回到看板。"
+msgstr "「{taskTitle}」已回到看板。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is running."
-msgstr "“{taskTitle}”正在运行。"
+msgstr "「{taskTitle}」正在运行。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" is waiting on the git queue."
-msgstr "“{taskTitle}”正在等待 git 队列。"
+msgstr "「{taskTitle}」正在等待 git 队列。"
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is waiting on you."
-msgstr "“{taskTitle}”正在等待你的操作。"
+msgstr "「{taskTitle}」正在等待你处理。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and cleared your unsent text."
-msgstr "“{taskTitle}”已运行 {command}，并清除了你未发送的文本。"
+msgstr "「{taskTitle}」已运行 {command}，并清除了你未发送的文本。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and interrupted the agent mid-task."
-msgstr "“{taskTitle}”已运行 {command}，并中断了正在执行任务的代理。"
+msgstr "「{taskTitle}」已运行 {command}，并中断了正在执行任务的智能体。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" ran {command} and restarted the session to deliver it."
-msgstr "“{taskTitle}”已运行 {command}，并重启了会话以发送该命令。"
+msgstr "「{taskTitle}」已运行 {command}，并重启会话以送达该命令。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, cleared your unsent text and restarted the session to deliver it."
-msgstr "“{taskTitle}”已运行 {command}，清除了你未发送的文本，并重启了会话以发送该命令。"
+msgstr "「{taskTitle}」已运行 {command}，清除了你未发送的文本，并重启会话以送达该命令。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" ran {command}, interrupted the agent mid-task and restarted the session to deliver it."
-msgstr "“{taskTitle}”已运行 {command}，中断了正在执行任务的代理，并重启了会话以发送该命令。"
+msgstr "「{taskTitle}」已运行 {command}，中断了正在执行任务的智能体，并重启会话以送达该命令。"
 
 #: src/renderer/lib/auto-name-scheduler.ts
-#, fuzzy
 msgid "\"{taskTitle}\" replaces the placeholder title."
-msgstr "“{taskTitle}”已替换占位标题。"
+msgstr "「{taskTitle}」已替换占位标题。"
 
 #: src/renderer/lib/conversation-expired.ts
-#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its conversation from {lastActive} expired."
-msgstr "“{taskTitle}”已重新开始，因为其 {lastActive} 的对话已过期。"
+msgstr "「{taskTitle}」已重新开始，因为它在 {lastActive} 时的对话已过期。"
 
 #: src/renderer/lib/conversation-expired.ts
-#, fuzzy
 msgid "\"{taskTitle}\" started fresh because its last conversation expired."
-msgstr "“{taskTitle}”已重新开始，因为其上次对话已过期。"
+msgstr "「{taskTitle}」已重新开始，因为上次对话已过期。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
-msgstr "{timeoutMinutes, plural, other {“{taskTitle}”已空闲 # 分钟。}}"
+msgstr "{timeoutMinutes, plural, other {「{taskTitle}」已空闲 # 分钟。}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
 msgstr "{amount, plural, other {{projectName}，已等待 # 天}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # hour} other {{projectName}, waited # hours}}"
 msgstr "{amount, plural, other {{projectName}，已等待 # 小时}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {{projectName}, waited # minute} other {{projectName}, waited # minutes}}"
 msgstr "{amount, plural, other {{projectName}，已等待 # 分钟}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {waited # day} other {waited # days}}"
 msgstr "{amount, plural, other {已等待 # 天}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {Waited # day} other {Waited # days}}"
 msgstr "{amount, plural, other {已等待 # 天}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {waited # hour} other {waited # hours}}"
 msgstr "{amount, plural, other {已等待 # 小时}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {Waited # hour} other {Waited # hours}}"
 msgstr "{amount, plural, other {已等待 # 小时}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {waited # minute} other {waited # minutes}}"
 msgstr "{amount, plural, other {已等待 # 分钟}}"
 
 #: src/renderer/lib/paused-for-memory.ts
-#, fuzzy
 msgid "{amount, plural, one {Waited # minute} other {Waited # minutes}}"
 msgstr "{amount, plural, other {已等待 # 分钟}}"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "{basePill} will be checked out in the project folder"
-msgstr "将在项目文件夹中检出 {basePill}"
+msgstr "{basePill} 将在项目文件夹中检出"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "{branchPill} exists and will be checked out in a new worktree"
 msgstr "{branchPill} 已存在，将在新工作树中检出"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "{branchPill} exists and will be checked out in the project folder"
 msgstr "{branchPill} 已存在，将在项目文件夹中检出"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "{branchPill} will be created from {basePill} in a new worktree"
 msgstr "将在新工作树中基于 {basePill} 创建 {branchPill}"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "{branchPill} will be created from {basePill} in the project folder"
 msgstr "将在项目文件夹中基于 {basePill} 创建 {branchPill}"
 
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "{count, plural, =1 {Idle agent paused} other {# idle agents paused}}"
-msgstr "{count, plural, =1 {已暂停空闲代理} other {已暂停 # 个空闲代理}}"
+msgstr "{count, plural, other {已暂停 # 个空闲智能体}}"
 
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "{count, plural, =1 {Kangentic paused it to free memory.} other {Kangentic paused them to free memory.}}"
-msgstr "{count, plural, =1 {Kangentic 已将其暂停以释放内存。} other {Kangentic 已将其暂停以释放内存。}}"
+msgstr "{count, plural, other {Kangentic 已将其暂停以释放内存。}}"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "{count, plural, one {Couldn't pause # agent} other {Couldn't pause # agents}}"
-msgstr "{count, plural, other {无法暂停 # 个代理}}"
+msgstr "{count, plural, other {无法暂停 # 个智能体}}"
 
 #: src/renderer/components/TemplateTextField.tsx
-#, fuzzy
 msgid "{count, plural, one {Unknown variable: {variableNames}. It will be sent as written.} other {Unknown variables: {variableNames}. They will be sent as written.}}"
 msgstr "{count, plural, other {未知变量：{variableNames}。将按原样发送。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from \"{taskTitle}\", and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
-msgstr "{failedCount, plural, other {无法停止“{taskTitle}”的 # 个进程，{keptCount, plural, other {另有 # 个仍在运行。}}}}"
+msgstr "{failedCount, plural, other {无法停止「{taskTitle}」的 # 个进程，{keptCount, plural, other {另有 # 个仍在运行。}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from \"{taskTitle}\".} other {Couldn't stop # processes from \"{taskTitle}\".}}"
-msgstr "{failedCount, plural, other {无法停止“{taskTitle}”的 # 个进程。}}"
+msgstr "{failedCount, plural, other {无法停止「{taskTitle}」的 # 个进程。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}, and {keptCount, plural, one {# more is still running.} other {# more are still running.}}}}"
 msgstr "{failedCount, plural, other {无法停止 {taskCount, plural, other {# 个任务}}的 # 个进程，{keptCount, plural, other {另有 # 个仍在运行。}}}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{failedCount, plural, one {Couldn't stop # process from {taskCount, plural, other {# tasks}}.} other {Couldn't stop # processes from {taskCount, plural, other {# tasks}}.}}"
 msgstr "{failedCount, plural, other {无法停止 {taskCount, plural, other {# 个任务}}的 # 个进程。}}"
 
 #: src/renderer/utils/format-session.ts
-#, fuzzy
 msgid "{hours}h {minutes}m"
 msgstr "{hours} 小时 {minutes} 分钟"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "{interruptedCount, plural, one {# automation didn't finish before Kangentic closed.} other {# automations didn't finish before Kangentic closed.}}"
 msgstr "{interruptedCount, plural, other {有 # 个自动化在 Kangentic 关闭前未完成。}}"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "{interruptedCount, plural, one {Automation interrupted} other {Automations interrupted}}"
 msgstr "{interruptedCount, plural, other {自动化已中断}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{keptCount, plural, one {# process from \"{taskTitle}\" is still running.} other {# processes from \"{taskTitle}\" are still running.}}"
-msgstr "{keptCount, plural, other {“{taskTitle}”的 # 个进程仍在运行。}}"
+msgstr "{keptCount, plural, other {「{taskTitle}」的 # 个进程仍在运行。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{keptCount, plural, one {# process from {taskCount, plural, other {# tasks}} is still running.} other {# processes from {taskCount, plural, other {# tasks}} are still running.}}"
 msgstr "{keptCount, plural, other {{taskCount, plural, other {# 个任务}}的 # 个进程仍在运行。}}"
 
 #: src/renderer/utils/format-session.ts
-#, fuzzy
 msgid "{minutes}m {seconds}s"
 msgstr "{minutes} 分 {seconds} 秒"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgid "{path} has no changes in this view"
 msgstr "{path} 在此视图中没有更改"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{processCount, plural, one {\"{taskTitle}\" left # process running.} other {\"{taskTitle}\" left # processes running.}}"
-msgstr "{processCount, plural, other {“{taskTitle}”留下 # 个进程仍在运行。}}"
+msgstr "{processCount, plural, other {「{taskTitle}」留下了 # 个仍在运行的进程。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{processCount, plural, one {{taskCount, plural, other {# tasks}} left # process running.} other {{taskCount, plural, other {# tasks}} left # processes running.}}"
-msgstr "{processCount, plural, other {{taskCount, plural, other {# 个任务}}留下 # 个进程仍在运行。}}"
+msgstr "{processCount, plural, other {{taskCount, plural, other {# 个任务}}留下了 # 个仍在运行的进程。}}"
 
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "{remaining} of memory reservations left."
-msgstr "剩余 {remaining} 内存预留。"
+msgstr "内存预留剩余 {remaining}。"
 
 #: src/renderer/utils/format-session.ts
-#, fuzzy
 msgid "{seconds}s"
 msgstr "{seconds} 秒"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "{sessionIdShort} exited with code {exitCode}."
 msgstr "{sessionIdShort} 已退出，退出代码为 {exitCode}。"
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "{sessionIdShort} is asking to run a tool."
 msgstr "{sessionIdShort} 正在请求运行工具。"
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "{sessionIdShort} is waiting on you."
-msgstr "{sessionIdShort} 正在等待你的操作。"
+msgstr "{sessionIdShort} 正在等待你处理。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "{sessionIdShort} was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, other {{sessionIdShort} 已空闲 # 分钟。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from \"{taskTitle}\".} other {Stopped # leftover processes from \"{taskTitle}\".}}"
-msgstr "{stoppedCount, plural, other {已停止“{taskTitle}”的 # 个残留进程。}}"
+msgstr "{stoppedCount, plural, other {已停止「{taskTitle}」的 # 个残留进程。}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "{stoppedCount, plural, one {Stopped # leftover process from {taskCount, plural, other {# tasks}}.} other {Stopped # leftover processes from {taskCount, plural, other {# tasks}}.}}"
 msgstr "{stoppedCount, plural, other {已停止 {taskCount, plural, other {# 个任务}}的 # 个残留进程。}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "{taskCount, plural, one {# task is back in {columnName}.} other {# tasks are back in {columnName}.}}"
-msgstr "{taskCount, plural, other {# 个任务已回到{columnName}。}}"
+msgstr "{taskCount, plural, other {# 个任务已回到 {columnName}。}}"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "{taskCount, plural, one {# task is back on the board.} other {# tasks are back on the board.}}"
 msgstr "{taskCount, plural, other {# 个任务已回到看板。}}"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "{taskCount, plural, one {The task of \"{workflowTitle}\" is in Done.} other {All # tasks of \"{workflowTitle}\" are in Done.}}"
-msgstr "{taskCount, plural, other {“{workflowTitle}”的全部 # 个任务均已进入“完成”。}}"
+msgstr "{taskCount, plural, other {「{workflowTitle}」的全部 # 个任务均已处于已完成列。}}"
 
 #: src/renderer/components/ColumnPicker.tsx
-#, fuzzy
 msgid "{value} (not on this board)"
 msgstr "{value}（不在此看板上）"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
 msgstr "{worktreeCount, plural, other {# 个工作树中有 {failedCount} 个无法清理。}}"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "A project"
 msgstr "某个项目"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "A tmux server. Stopping it ends all your tmux sessions."
 msgstr "tmux 服务器。停止它会结束你的所有 tmux 会话。"
 
 #: src/renderer/components/KebabMenu.tsx
-#, fuzzy
 msgid "Actions"
 msgstr "操作"
 
 #: src/renderer/utils/agent-display-name.ts
-#, fuzzy
 msgid "Agent"
 msgstr "智能体"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Agent didn't start"
-msgstr "代理未启动"
+msgstr "智能体未启动"
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "Agent finished"
-msgstr "代理已完成"
+msgstr "智能体已完成"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Agent paused"
-msgstr "代理已暂停"
+msgstr "智能体已暂停"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Agent resumed"
-msgstr "代理已恢复"
+msgstr "智能体已恢复"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Agent started"
-msgstr "代理已启动"
+msgstr "智能体已启动"
 
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "Almost no memory reservations left."
-msgstr "内存预留几乎耗尽。"
+msgstr "内存预留几乎用尽。"
 
 #: src/renderer/components/ErrorBoundary.tsx
-#, fuzzy
 msgid "An unexpected error occurred."
 msgstr "发生意外错误。"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "Auto-generated branch will be created from {basePill} in a new worktree"
 msgstr "将在新工作树中基于 {basePill} 创建自动生成的分支"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Automation failed"
 msgstr "自动化失败"
 
 #: src/renderer/utils/keybindings.ts
-#, fuzzy
 msgid "Back Click"
 msgstr "后退键单击"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Back to writing markdown"
-msgstr "返回编写 Markdown"
+msgstr "返回 Markdown 编辑"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Base branch not refreshed"
 msgstr "基础分支未刷新"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "blocked"
 msgstr "受阻"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
-#, fuzzy
 msgid "Can't move To Do"
-msgstr "无法移动“待办”"
+msgstr "无法移动「待办」"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgctxt "markdown alert"
 msgid "Caution"
 msgstr "小心"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Change not saved to disk"
 msgstr "更改未保存到磁盘"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Choose a project folder"
 msgstr "选择项目文件夹"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Choose folder"
 msgstr "选择文件夹"
 
 #: src/renderer/components/MultiSelectDropdown.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Clear"
 msgstr "清除"
 
 #: src/renderer/components/FilterPopover.tsx
-#, fuzzy
 msgid "Clear all filters"
 msgstr "清除所有筛选"
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
-#, fuzzy
 msgid "Clear search"
 msgstr "清除搜索"
 
 #: src/renderer/components/DataTable.tsx
-#, fuzzy
 msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "单击以排序 - Shift+单击添加次要排序"
+msgstr "单击排序 - Shift+单击添加次要排序"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
-#, fuzzy
 msgid "Close"
 msgstr "关闭"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #: src/renderer/window-manager/components/WindowTitleBar.tsx
-#, fuzzy
 msgid "Close window"
 msgstr "关闭窗口"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "closed"
 msgstr "已关闭"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Closing now will discard your unsaved edits to this task."
-msgstr "现在关闭将丢弃你对此任务所做的未保存编辑。"
+msgstr "现在关闭将丢弃你对这个任务的未保存编辑。"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "Column changed by agent"
-msgstr "代理已更改列"
+msgstr "智能体更改了列"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Command didn't run"
 msgstr "命令未运行"
 
 #: src/renderer/utils/shell-display-name.ts
-#, fuzzy
 msgid "Command Prompt"
 msgstr "命令提示符"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Command ran"
 msgstr "命令已运行"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Command terminal"
 msgstr "命令终端"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "conflicts"
 msgstr "有冲突"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Conversation moved"
 msgstr "对话已转移"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Copy conversation"
 msgstr "复制对话"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Copy conversation as Markdown"
 msgstr "将对话复制为 Markdown"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Copy task ID"
 msgstr "复制任务 ID"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Copying <0>{copiedEntries}</0> of <1>{totalEntries}</1>..."
-msgstr "正在复制 <0>{copiedEntries}</0>/<1>{totalEntries}</1>..."
+msgstr "正在复制 <0>{copiedEntries}</0>（共 <1>{totalEntries}</1>）…"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Couldn't add project"
 msgstr "无法添加项目"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't add the task"
 msgstr "无法添加任务"
 
 #: src/renderer/stores/board-store/board-config-slice.ts
-#, fuzzy
 msgid "Couldn't apply kangentic.json"
 msgstr "无法应用 kangentic.json"
 
 #: src/renderer/stores/board-store/task-slice.ts
 #: src/renderer/stores/session-store/transient-session-slice.ts
-#, fuzzy
 msgid "Couldn't apply model or effort"
 msgstr "无法应用模型或推理强度"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't change plan approval"
 msgstr "无法更改计划审批"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't change the route"
 msgstr "无法更改路由"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
-#, fuzzy
 msgid "Couldn't complete task"
 msgstr "无法完成任务"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't create the workflow"
 msgstr "无法创建工作流"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Couldn't delete task"
 msgstr "无法删除任务"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Couldn't delete tasks"
 msgstr "无法删除任务"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't delete the workflow"
 msgstr "无法删除工作流"
 
 #: src/renderer/components/NameFromPromptButton.tsx
-#, fuzzy
 msgid "Couldn't generate title"
 msgstr "无法生成标题"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't link the tasks"
 msgstr "无法关联任务"
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
-#, fuzzy
 msgid "Couldn't load the terminals for this window."
 msgstr "无法加载此窗口的终端。"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Couldn't move project"
 msgstr "无法移动项目"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Couldn't move task"
 msgstr "无法移动任务"
 
 #: src/renderer/stores/project-store.ts
-#, fuzzy
 msgid "Couldn't open project"
 msgstr "无法打开项目"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Couldn't open that folder"
 msgstr "无法打开该文件夹"
 
 #: src/renderer/utils/task-automations.ts
-#, fuzzy
 msgid "Couldn't pause automations"
 msgstr "无法暂停自动化"
 
 #: src/renderer/utils/session-toggle.ts
-#, fuzzy
 msgid "Couldn't pause session"
 msgstr "无法暂停会话"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't pause the workflow"
 msgstr "无法暂停工作流"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't pause the workflow agent"
-msgstr "无法暂停工作流代理"
+msgstr "无法暂停工作流智能体"
 
 #: src/renderer/stores/backlog-store.ts
-#, fuzzy
 msgid "Couldn't promote tasks"
-msgstr "无法提升任务"
+msgstr "无法将任务移至看板"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Couldn't reach the MCP server"
 msgstr "无法连接 MCP 服务器"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Couldn't read that folder"
 msgstr "无法读取该文件夹"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't remove the link"
 msgstr "无法移除关联"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't remove the task"
 msgstr "无法移除任务"
 
 #: src/renderer/lib/auto-name-scheduler.ts
-#, fuzzy
 msgid "Couldn't rename task"
 msgstr "无法重命名任务"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't rename the workflow"
 msgstr "无法重命名工作流"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
-#, fuzzy
 msgid "Couldn't reorder columns"
 msgstr "无法重新排序列"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Couldn't reorder task"
 msgstr "无法重新排序任务"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Couldn't restore task"
 msgstr "无法恢复任务"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Couldn't restore tasks"
 msgstr "无法恢复任务"
 
 #: src/renderer/utils/task-automations.ts
-#, fuzzy
 msgid "Couldn't resume automations"
 msgstr "无法恢复自动化"
 
 #: src/renderer/utils/session-toggle.ts
-#, fuzzy
 msgid "Couldn't resume session"
 msgstr "无法恢复会话"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't resume the workflow"
 msgstr "无法恢复工作流"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't resume the workflow agent"
-msgstr "无法恢复工作流代理"
+msgstr "无法恢复工作流智能体"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Couldn't run again"
 msgstr "无法重新运行"
 
 #: src/renderer/stores/board-store/swimlane-slice.ts
-#, fuzzy
 msgid "Couldn't save profiles"
-msgstr "无法保存配置文件"
+msgstr "无法保存配置方案"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't save the layout"
 msgstr "无法保存布局"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't save the task"
 msgstr "无法保存任务"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't start the workflow"
 msgstr "无法启动工作流"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Couldn't start the workflow agent"
-msgstr "无法启动工作流代理"
+msgstr "无法启动工作流智能体"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Couldn't stop it. Try again, or close it yourself."
 msgstr "无法停止。请重试，或自行关闭。"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Couldn't stop processes"
 msgstr "无法停止进程"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Delete"
 msgstr "删除"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Delete task"
 msgstr "删除任务"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Describe the task for the agent..."
-msgstr "为智能体描述任务..."
+msgstr "为智能体描述任务…"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Dictation could not start: {reason}"
-msgstr "无法启动听写：{reason}"
+msgstr "听写无法启动：{reason}"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Dictation could not start."
-msgstr "无法启动听写。"
+msgstr "听写无法启动。"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Dictation failed to start"
 msgstr "听写启动失败"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Dictation failed: {reason}"
 msgstr "听写失败：{reason}"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Dictation failed."
 msgstr "听写失败。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Discard"
 msgstr "丢弃"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr "丢弃未保存的更改?"
+msgstr "丢弃未保存的更改？"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
-#, fuzzy
 msgid "Download didn't finish"
 msgstr "下载未完成"
 
 #: src/renderer/window-manager/bridge/useBrowserDownloadToast.ts
-#, fuzzy
 msgid "Downloaded"
 msgstr "已下载"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "draft"
 msgstr "草稿"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
-#, fuzzy
 msgid "Drag failed"
 msgstr "拖动失败"
 
 #: src/renderer/components/DataTable.tsx
-#, fuzzy
 msgid "Drag to reorder"
 msgstr "拖动以重新排序"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Edit Task"
 msgstr "编辑任务"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Enable"
 msgstr "启用"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Enable worktree?"
-msgstr "启用工作树?"
+msgstr "启用工作树？"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
-#, fuzzy
 msgid "Failed to load the {panelLabel}"
-msgstr "无法加载{panelLabel}"
+msgstr "无法加载 {panelLabel}"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
-#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr "无法加载“更改”面板"
+msgstr "无法加载「更改」面板"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
-#, fuzzy
 msgid "Failed to load the Command Terminal"
 msgstr "无法加载命令终端"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
-#, fuzzy
 msgid "Failed to load the Conversation"
 msgstr "无法加载对话"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
-#, fuzzy
 msgid "Failed to load the File diff"
 msgstr "无法加载文件差异"
 
 #: src/renderer/components/PanelErrorBoundary.tsx
-#, fuzzy
 msgid "Failed to load the panel"
 msgstr "无法加载面板"
 
 #: src/renderer/components/NumberStepper.tsx
-#, fuzzy
 msgid "Fewer: {ariaLabel}"
 msgstr "减少：{ariaLabel}"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
-#, fuzzy
 msgid "File search unavailable."
 msgstr "文件搜索不可用。"
 
 #: src/renderer/components/ToolbarSearchFilter.tsx
-#, fuzzy
 msgid "Filter"
 msgstr "筛选"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Float this window out of the tiled layout"
 msgstr "将此窗口从平铺布局中浮出"
 
 #: src/renderer/pop-out/PopOutButton.tsx
-#, fuzzy
 msgid "Focus detached window"
-msgstr "聚焦分离的窗口"
+msgstr "聚焦独立窗口"
 
 #: src/renderer/utils/keybindings.ts
-#, fuzzy
 msgid "Forward Click"
-msgstr "前进键单击"
+msgstr "鼠标前进键"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "From:"
-msgstr "从:"
+msgstr "从："
 
 #: src/renderer/components/NameFromPromptButton.tsx
-#, fuzzy
 msgid "Generate a title from the description"
 msgstr "根据描述生成标题"
 
 #: src/renderer/components/NameFromPromptButton.tsx
-#, fuzzy
 msgid "Generating a title"
 msgstr "正在生成标题"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Git setup failed"
 msgstr "Git 设置失败"
 
 #: src/renderer/utils/gpu-notice.ts
-#, fuzzy
 msgid "Graphics acceleration off"
 msgstr "图形加速已关闭"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Has an open window."
 msgstr "有打开的窗口。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Hide workflow"
 msgstr "隐藏工作流"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgctxt "markdown alert"
 msgid "Important"
 msgstr "重要"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Initializing..."
 msgstr "正在初始化..."
 
 #: src/renderer/hooks/useBranchSettings.ts
-#, fuzzy
 msgid "Invalid git branch name"
 msgstr "无效的 Git 分支名称"
 
 #: src/renderer/components/IsolatedBadge.tsx
-#, fuzzy
 msgid "Isolated"
 msgstr "隔离"
 
 #: src/renderer/components/IsolatedBadge.tsx
-#, fuzzy
 msgid "Isolated session"
 msgstr "隔离会话"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "It may have been moved or renamed."
 msgstr "它可能已被移动或重命名。"
 
 #: src/renderer/components/IsolatedBadge.tsx
-#, fuzzy
 msgid "Its own context, separate from the main conversation"
-msgstr "拥有独立上下文，与主对话分离"
+msgstr "拥有独立上下文，与主对话分开"
 
 #: src/renderer/stores/project-store.ts
-#, fuzzy
 msgid "Its record could not be found after refreshing the project list."
-msgstr "刷新项目列表后仍找不到其记录。"
+msgstr "刷新项目列表后找不到其记录。"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Jump to start"
 msgstr "跳到开头"
 
 #: src/renderer/lib/datetime.ts
-#, fuzzy
 msgid "just now"
 msgstr "刚刚"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
 msgstr "Kangentic 将移动磁盘上的文件夹。所有任务、历史记录和工作树都会随之移动。"
 
 #: src/renderer/stores/board-store/board-config-slice.ts
-#, fuzzy
 msgid "kangentic.json warning"
 msgstr "kangentic.json 警告"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Keep editing"
 msgstr "继续编辑"
 
 #: src/renderer/components/FilterPopover.tsx
-#, fuzzy
 msgid "Labels"
 msgstr "标签"
 
 #: src/renderer/utils/format-tokens.ts
-#, fuzzy
 msgid "Latest"
 msgstr "最新"
 
 #: src/renderer/utils/format-tokens.ts
-#, fuzzy
 msgid "Latest {modelFamily}"
 msgstr "最新 {modelFamily}"
 
 #: src/renderer/utils/format-tokens.ts
-#, fuzzy
 msgid "Latest {modelFamily}, currently {currentModel}"
 msgstr "最新 {modelFamily}，当前为 {currentModel}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Leftover processes"
 msgstr "残留进程"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Leftover processes stopped"
-msgstr "已停止残留进程"
+msgstr "残留进程已停止"
 
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "Low on memory"
 msgstr "内存不足"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Make a first commit so each task gets its own worktree."
-msgstr "请先创建首次提交，以便每个任务拥有各自的工作树。"
+msgstr "请先创建首次提交，让每个任务拥有自己的工作树。"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
-#, fuzzy
 msgid "Maximize"
 msgstr "最大化"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "Merge blocked by reviews, checks, or branch rules as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，合并因审查、检查或分支规则而受阻"
+msgstr "截至上次刷新拉取请求时，合并因审查、检查或分支规则而受阻"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "Merge conflicts with the base branch as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，与基础分支存在合并冲突"
+msgstr "截至上次刷新拉取请求时，与基础分支存在合并冲突"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "merged"
 msgstr "已合并"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "Microphone access was denied. Enable it in your OS settings."
 msgstr "麦克风访问被拒绝。请在系统设置中启用。"
 
 #: src/renderer/utils/keybindings.ts
-#, fuzzy
 msgid "Middle Click"
-msgstr "中键单击"
+msgstr "鼠标中键"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
-#, fuzzy
 msgid "Minimize"
 msgstr "最小化"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "Model change saved"
 msgstr "模型更改已保存"
 
 #: src/renderer/components/NumberStepper.tsx
-#, fuzzy
 msgid "More: {ariaLabel}"
 msgstr "增加：{ariaLabel}"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Move <0>\"{pendingProjectName}\"</0> to a new folder?"
-msgstr "将 <0>“{pendingProjectName}”</0> 移动到新文件夹?"
+msgstr "将 <0>「{pendingProjectName}」</0> 移动到新文件夹？"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Move Folder"
 msgstr "移动文件夹"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Move Project Folder"
 msgstr "移动项目文件夹"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Moved \"{taskTitle}\" to {columnName}."
-msgstr "已将“{taskTitle}”移至 {columnName}。"
+msgstr "已将「{taskTitle}」移至 {columnName}。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Moved \"{taskTitle}\" to the next column."
-msgstr "已将“{taskTitle}”移至下一列。"
+msgstr "已将「{taskTitle}」移至下一列。"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Moving project folder..."
 msgstr "正在移动项目文件夹..."
 
 #: src/renderer/utils/idle-toast.ts
-#, fuzzy
 msgid "Needs permission"
 msgstr "需要权限"
 
 #: src/renderer/lib/conversation-expired-toast.ts
-#, fuzzy
 msgid "New conversation"
 msgstr "新建对话"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "No active agent sessions."
-msgstr "没有活动的代理会话。"
+msgstr "没有活动的智能体会话。"
 
 #: src/renderer/pop-out/roots/PopOutBrowserRoot.tsx
-#, fuzzy
 msgid "No active session for this task"
 msgstr "此任务没有活动会话"
 
 #: src/renderer/pop-out/roots/PopOutChangesFileRoot.tsx
-#, fuzzy
 msgid "No changes for this file"
 msgstr "此文件没有更改"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
-#, fuzzy
 msgid "No changes on this branch"
 msgstr "此分支上没有更改"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "No commits yet"
 msgstr "尚无提交"
 
 #: src/renderer/components/DataTable.tsx
-#, fuzzy
 msgid "No data"
 msgstr "无数据"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "No longer running."
 msgstr "已不再运行。"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
-#, fuzzy
 msgid "No matching files or folders."
 msgstr "没有匹配的文件或文件夹。"
 
 #: src/renderer/hooks/useDictation.ts
-#, fuzzy
 msgid "No microphone is available."
 msgstr "没有可用的麦克风。"
 
 #: src/renderer/stores/session-store/transient-session-slice.ts
-#, fuzzy
 msgid "No project is currently open"
 msgstr "当前未打开任何项目"
 
 #: src/renderer/hooks/useCommandBar.ts
-#, fuzzy
 msgid "No project open"
 msgstr "未打开项目"
 
 #: src/renderer/lib/ipc-error.ts
-#, fuzzy
 msgid "No reason was given."
 msgstr "未提供原因。"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "Not a git repository"
-msgstr "不是 git 仓库"
+msgstr "不是 Git 仓库"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgctxt "markdown alert"
 msgid "Note"
 msgstr "注意"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Nothing to preview"
 msgstr "没有可预览的内容"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Old folder not removed"
-msgstr "未删除旧文件夹"
+msgstr "旧文件夹未移除"
 
 #: src/renderer/utils/format-tokens.ts
-#, fuzzy
 msgid "Older versions"
 msgstr "旧版本"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "open"
-msgstr "打开"
+msgstr "开放"
 
 #: src/renderer/hooks/useCommandBar.ts
-#, fuzzy
 msgid "Open a project first."
 msgstr "请先打开一个项目。"
 
 #: src/renderer/pop-out/PopOutButton.tsx
-#, fuzzy
 msgid "Open in new window"
 msgstr "在新窗口中打开"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
 msgid "Open PR #{prNumber} in browser"
-msgstr "在浏览器中打开 PR #{prNumber}"
+msgstr "在浏览器中打开拉取请求 #{prNumber}"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
 msgid "Open PR in browser"
-msgstr "在浏览器中打开 PR"
+msgstr "在浏览器中打开拉取请求"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Open settings"
 msgstr "打开设置"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Open task"
 msgstr "打开任务"
 
 #: src/renderer/components/OptionalTag.tsx
-#, fuzzy
 msgid "Optional"
 msgstr "可选"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Other work uses it too. Stopping it can break that work."
-msgstr "其他工作也在使用它。停止它可能会中断这些工作。"
+msgstr "其他工作也在使用它。停止它可能中断那些工作。"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Paste or drop files here"
 msgstr "在此粘贴或拖放文件"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Pick the folder that holds your code."
 msgstr "选择存放代码的文件夹。"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Plan complete"
-msgstr "计划已完成"
+msgstr "计划完成"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Plan complete: {taskTitle}"
 msgstr "计划已完成：{taskTitle}"
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Pop out"
-msgstr "弹出"
+msgstr "弹出窗口"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
 msgid "PR"
-msgstr "PR"
+msgstr "拉取请求"
 
 #: src/renderer/components/PrLink.tsx
-#, fuzzy
 msgid "PR #{prNumber}"
 msgstr "PR #{prNumber}"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Preview"
 msgstr "预览"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Preview rendered markdown"
 msgstr "预览渲染后的 Markdown"
 
 #: src/renderer/components/FilterPopover.tsx
-#, fuzzy
 msgid "Priority"
 msgstr "优先级"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Processes from \"{taskTitle}\""
-msgstr "“{taskTitle}”的进程"
+msgstr "「{taskTitle}」的进程"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Processes from {taskCount, plural, other {# tasks}}"
 msgstr "{taskCount, plural, other {# 个任务的进程}}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Processes still running"
 msgstr "进程仍在运行"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Project moved"
 msgstr "项目已移动"
 
 #: src/renderer/stores/project-store.ts
-#, fuzzy
 msgid "Project not available"
 msgstr "项目不可用"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "queued"
 msgstr "排队中"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Ran again"
 msgstr "已重新运行"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Ran in the project folder."
 msgstr "曾在项目文件夹中运行。"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Ran in the worktree."
 msgstr "曾在工作树中运行。"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "ready"
 msgstr "就绪"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "Ready to merge as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，已可合并"
+msgstr "截至上次刷新拉取请求时，已可合并"
 
 #: src/renderer/utils/session-toggle.ts
-#, fuzzy
 msgid "Reconnected"
 msgstr "已重新连接"
 
 #: src/renderer/components/ErrorBoundary.tsx
 #: src/renderer/components/PanelErrorBoundary.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Reload"
 msgstr "重新加载"
 
 #: src/renderer/components/LabelInput.tsx
-#, fuzzy
 msgid "Remove {label}"
 msgstr "移除 {label}"
 
 #: src/renderer/utils/gpu-notice.ts
-#, fuzzy
 msgid "Repeated failures shut down your last run."
-msgstr "由于反复失败，上次运行已被关闭。"
+msgstr "反复失败导致上次运行被关闭。"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "Required checks or policies are queued as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，必需的检查或策略正在排队"
+msgstr "截至上次刷新拉取请求时，必需的检查或策略仍在排队"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "Required checks or policies are running as of the last PR refresh"
-msgstr "截至上次刷新 PR 时，必需的检查或策略正在运行"
+msgstr "截至上次刷新拉取请求时，必需的检查或策略正在运行"
 
 #: src/renderer/stores/updater-store.ts
-#, fuzzy
 msgid "Restart to update"
 msgstr "重启以更新"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Resume follows the conversation started by /clear."
-msgstr "恢复将接续由 /clear 开始的对话。"
+msgstr "恢复会接续由 /clear 开始的对话。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
-#, fuzzy
 msgid "Resuming agent..."
-msgstr "正在恢复代理..."
+msgstr "正在恢复智能体..."
 
 #: src/renderer/components/PanelErrorBoundary.tsx
-#, fuzzy
 msgctxt "Action"
 msgid "Retry"
 msgstr "重试"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "Review"
 msgstr "查看"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Run again"
 msgstr "重新运行"
 
 #: src/renderer/lib/pr-state.ts
-#, fuzzy
 msgid "running"
 msgstr "运行中"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Running agents are resuming."
-msgstr "正在恢复运行中的代理。"
+msgstr "正在恢复运行中的智能体。"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "Runs in the project folder"
 msgstr "在项目文件夹中运行"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "Runs in the project folder on {branchPill}"
-msgstr "在项目文件夹中的 {branchPill} 上运行"
+msgstr "在项目文件夹中运行，分支为 {branchPill}"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Runs in the project folder."
 msgstr "在项目文件夹中运行。"
 
 #: src/renderer/lib/leftover-processes.ts
-#, fuzzy
 msgid "Runs in the worktree."
 msgstr "在工作树中运行。"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "Runs on the remote server"
 msgstr "在远程服务器上运行"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Save"
 msgstr "保存"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Save changes before closing?"
-msgstr "关闭前保存更改?"
+msgstr "关闭前保存更改？"
 
 #: src/renderer/hooks/useDescriptionMentions.ts
-#, fuzzy
 msgid "Searching files and folders..."
 msgstr "正在搜索文件和文件夹..."
 
 #: src/renderer/window-manager/components/ConversationWindow.tsx
-#, fuzzy
 msgid "Session"
 msgstr "会话"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Session ended"
 msgstr "会话已结束"
 
 #: src/renderer/App.tsx
 #: src/renderer/stores/host-memory-store.ts
-#, fuzzy
 msgid "Settings"
 msgstr "设置"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Show workflow"
 msgstr "显示工作流"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Some worktrees remain"
 msgstr "部分工作树仍保留"
 
 #: src/renderer/components/ErrorBoundary.tsx
-#, fuzzy
 msgid "Something went wrong"
 msgstr "出现问题"
 
 #: src/renderer/utils/format-tokens.ts
-#, fuzzy
 msgid "Specific versions"
 msgstr "特定版本"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Started a git repo"
 msgstr "已初始化 Git 仓库"
 
 #: src/renderer/utils/task-progress.ts
-#, fuzzy
 msgid "Starting agent..."
-msgstr "正在启动代理..."
+msgstr "正在启动智能体..."
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Still preparing"
 msgstr "仍在准备"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Still preparing: {taskTitle}"
 msgstr "仍在准备：{taskTitle}"
 
 #: src/renderer/stores/workflow-store.ts
-#, fuzzy
 msgid "Still running: {tasks}."
 msgstr "仍在运行：{tasks}。"
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
-#, fuzzy
 msgid "Task completed"
 msgstr "任务已完成"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "Task created by agent"
-msgstr "代理已创建任务"
+msgstr "智能体已创建任务"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "Task deleted by agent"
-msgstr "代理已删除任务"
+msgstr "智能体已删除任务"
 
 #: src/renderer/lib/auto-name-scheduler.ts
-#, fuzzy
 msgid "Task renamed"
 msgstr "任务已重命名"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Task restored"
 msgstr "任务已恢复"
 
 #: src/renderer/hooks/useAgentDrivenInvalidation.ts
-#, fuzzy
 msgid "Task updated by agent"
-msgstr "代理已更新任务"
+msgstr "智能体已更新任务"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
-#, fuzzy
 msgid "Tasks restored"
 msgstr "任务已恢复"
 
 #: src/renderer/hooks/useAddProject.ts
-#, fuzzy
 msgid "Tasks will share one working tree in this folder."
-msgstr "任务将共用此文件夹中的同一个工作树。"
+msgstr "此文件夹中的任务将共用一个工作树。"
 
 #: src/renderer/components/TemplateVariablePicker.tsx
-#, fuzzy
 msgid "Template variable"
 msgstr "模板变量"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Terminals restarted"
 msgstr "终端已重启"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "The agent runs on a remote server"
-msgstr "代理在远程服务器上运行"
+msgstr "智能体在远程服务器上运行"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "The automation did not start."
 msgstr "自动化未启动。"
 
 #: src/renderer/stores/project-store.ts
-#, fuzzy
 msgid "The list has been refreshed."
 msgstr "列表已刷新。"
 
 #: src/renderer/lib/knowledge-graph-support.ts
-#, fuzzy
 msgid "The local model does not run on {platformName}."
 msgstr "本地模型无法在 {platformName} 上运行。"
 
 #: src/renderer/lib/auto-name-scheduler.ts
-#, fuzzy
 msgid "The new title was not saved."
 msgstr "新标题未保存。"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "The original copy remains at {originalPath}."
 msgstr "原始副本仍位于 {originalPath}。"
 
 #: src/renderer/utils/worktree-placement.tsx
-#, fuzzy
 msgid "The project folder is itself a git worktree"
-msgstr "项目文件夹本身就是 git 工作树"
+msgstr "项目文件夹本身就是一个 Git 工作树"
 
 #: src/renderer/stores/project-store.ts
-#, fuzzy
 msgid "The project list may be out of sync. Try again."
 msgstr "项目列表可能未同步。请重试。"
 
 #: src/renderer/stores/board-store/task-slice.ts
-#, fuzzy
 msgid "The running agent picks it up the next time it resumes."
-msgstr "正在运行的代理将在下次恢复时应用此更改。"
+msgstr "正在运行的智能体将在下次恢复时应用它。"
 
 #: src/renderer/utils/session-toggle.ts
-#, fuzzy
 msgid "The session was already running."
 msgstr "会话已在运行。"
 
 #: src/renderer/pop-out/roots/PopOutChangesRoot.tsx
-#, fuzzy
 msgid "The task's changes could not be read"
 msgstr "无法读取任务的更改"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "These active agent sessions will be stopped and resumed automatically at the new location:"
-msgstr "以下活动的代理会话将被停止，并在新位置自动恢复:"
+msgstr "以下活动的智能体会话将被停止，并在新位置自动恢复："
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "This action cannot be undone."
-msgstr "此操作无法撤消。"
+msgstr "此操作无法撤销。"
 
 #: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
-#, fuzzy
 msgid "This project is no longer in Kangentic."
 msgstr "此项目已不在 Kangentic 中。"
 
 #: src/renderer/window-manager/components/WindowContent.tsx
-#, fuzzy
 msgid "This task is no longer available."
 msgstr "此任务已不可用。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "This will create an isolated worktree for this task. Your session history will be preserved and the agent will continue from where it left off in the new worktree."
-msgstr "这将为此任务创建一个独立的工作树。你的会话历史将被保留,代理将在新工作树中从中断处继续。"
+msgstr "这将为此任务创建一个独立的工作树。会话历史将被保留，智能体将在新工作树中从中断处继续。"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "这将永久删除该任务、其会话历史以及所有关联的工作树。"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgctxt "markdown alert"
 msgid "Tip"
 msgstr "提示"
 
 #: src/renderer/hooks/useBoardDragDrop.ts
-#, fuzzy
 msgid "To Do must stay the first column."
-msgstr "“待办”必须保持为第一列。"
+msgstr "「To Do」必须保持为第一列。"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "To:"
-msgstr "到:"
+msgstr "到："
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Toggle workflow"
 msgstr "切换工作流"
 
 #: src/renderer/components/ErrorBoundary.tsx
-#, fuzzy
 msgid "Try again"
 msgstr "重试"
 
 #: src/renderer/components/LabelInput.tsx
-#, fuzzy
 msgid "Type to add..."
 msgstr "输入以添加..."
 
 #: src/renderer/hooks/useDescriptionMentions.ts
-#, fuzzy
 msgid "Type to search files and folders."
 msgstr "输入以搜索文件和文件夹。"
 
 #: src/renderer/lib/knowledge-graph-support.ts
-#, fuzzy
 msgid "Unavailable"
 msgstr "不可用"
 
 #: src/renderer/utils/shell-display-name.ts
-#, fuzzy
 msgid "Unknown"
 msgstr "未知"
 
 #: src/renderer/lib/ipc-error.ts
-#, fuzzy
 msgid "Unknown error"
 msgstr "未知错误"
 
 #: src/renderer/stores/updater-store.ts
-#, fuzzy
 msgid "Update ready"
 msgstr "更新已就绪"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Updates blocked"
-msgstr "更新被阻止"
+msgstr "更新受阻"
 
 #: src/renderer/stores/updater-store.ts
-#, fuzzy
 msgid "Version {version} is ready to install."
 msgstr "版本 {version} 已准备好安装。"
 
 #: src/renderer/components/MarkdownRenderer.tsx
-#, fuzzy
 msgctxt "markdown alert"
 msgid "Warning"
 msgstr "警告"
 
 #: src/renderer/hooks/useProjectRelocation.tsx
-#, fuzzy
 msgid "Workflow agent"
-msgstr "工作流代理"
+msgstr "工作流智能体"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Workflow complete"
 msgstr "工作流已完成"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Workflow complete: {workflowTitle}"
 msgstr "工作流已完成：{workflowTitle}"
 
 #: src/renderer/utils/workflow-refusal.ts
-#, fuzzy
 msgid "Workflow controls this task"
 msgstr "此任务由工作流控制"
 
 #: src/renderer/App.tsx
-#, fuzzy
 msgid "Workflow stalled"
 msgstr "工作流已停滞"
 
 #: src/renderer/components/DescriptionEditor.tsx
-#, fuzzy
 msgid "Write"
 msgstr "编写"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
-#, fuzzy
 msgid "Your edits to this task are not saved."
-msgstr "你对此任务所做的编辑尚未保存。"
+msgstr "你对此任务的编辑尚未保存。"

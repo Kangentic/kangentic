@@ -23,7 +23,6 @@ msgid "Change the display language to {language}?"
 msgstr "将显示语言更改为{language}?"
 
 #: src/renderer/components/language/useLanguageRestart.ts
-#, fuzzy
 msgid "Couldn't restart"
 msgstr "无法重启"
 
@@ -33,7 +32,6 @@ msgid "Kangentic restarts to change the language."
 msgstr "Kangentic 将重启以更改语言。"
 
 #: src/renderer/components/language/useLanguageRestart.ts
-#, fuzzy
 msgid "Restart Kangentic to apply the change."
 msgstr "重启 Kangentic 以应用更改。"
 

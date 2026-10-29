@@ -8,163 +8,131 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "{place}. Stalled: {reason}"
 msgstr "{place}。已停滯：{reason}"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "{place}. Waiting on you: {reason}"
-msgstr "{place}。等待您處理：{reason}"
+msgstr "{place}。等待你處理：{reason}"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "{projectName}: {workflowName}"
 msgstr "{projectName}：{workflowName}"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "{provider} blocks sign-in from apps that embed a browser, which is the usual cause here. You can open the sign-in page in your default browser, but signing in there does not sign you in inside this pane. To use the pane itself, sign in with a different method on that site."
-msgstr "{provider} 會封鎖從內嵌瀏覽器的應用程式登入，這通常就是此問題的原因。您可以在預設瀏覽器中開啟登入頁面，但在那裡登入並不會讓您在此窗格中登入。若要使用此窗格本身，請在該網站上改用其他方式登入。"
+msgstr "{provider} 會封鎖從內嵌瀏覽器的應用程式登入，這通常就是此問題的原因。你可以在預設瀏覽器中開啟登入頁面，但在那裡登入並不會讓你在這個窗格中登入。若要使用這個窗格本身，請在該網站上改用其他方式登入。"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "{provider} returned a sign-in error"
 msgstr "{provider} 傳回登入錯誤"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "{provider} would not complete this sign-in."
 msgstr "{provider} 無法完成此次登入。"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 工作流程"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "A project"
 msgstr "某個專案"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "A task"
 msgstr "某個任務"
 
 #: src/main/diagnostics/renderer-recovery.ts
-#, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "當時可用的系統記憶體：{availableMb} MB。"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Close"
 msgstr "關閉"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "Command Terminal"
 msgstr "命令終端機"
 
 #: src/main/index.ts
-#, fuzzy
 msgctxt "Action"
 msgid "Copy"
 msgstr "複製"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Copy Image"
 msgstr "複製圖片"
 
 #: src/main/diagnostics/renderer-recovery.ts
-#, fuzzy
 msgid "Free system memory (commit) at the time: {remainingMb} MB."
-msgstr "當時可用的系統記憶體 (提交)：{remainingMb} MB。"
+msgstr "當時系統可用的提交記憶體：{remainingMb} MB。"
 
 #: src/main/db/global-db-dialog.ts
-#, fuzzy
 msgid "Kangentic can't read its database"
 msgstr "Kangentic 無法讀取其資料庫"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 的視窗沒有回應"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "Needs permission: {place}"
 msgstr "需要權限：{place}"
 
 #: src/main/window-open-policy.ts
-#, fuzzy
 msgid "Not secure - {host}"
 msgstr "不安全 - {host}"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "OK"
 msgstr "確定"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Open in my browser"
 msgstr "在我的瀏覽器中開啟"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Paste"
 msgstr "貼上"
 
 #: src/main/db/global-db-dialog.ts
-#, fuzzy
 msgid "Quit"
 msgstr "結束"
 
 #: src/main/db/global-db-dialog.ts
-#, fuzzy
 msgctxt "Action"
 msgid "Retry"
 msgstr "重試"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "Running agents are resuming."
-msgstr "執行中的代理程式正在繼續。"
+msgstr "執行中的代理正在恢復。"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Select All"
 msgstr "全選"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "Session crashed: {label}"
 msgstr "工作階段當機：{label}"
 
 #: src/main/notifications/desktop-notifier.ts
-#, fuzzy
 msgid "Terminals restarted"
 msgstr "終端機已重新啟動"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "The window crashed ({crashReason}) and could not recover after {attempts, plural, one {# attempt} other {# attempts}} in {minutes, plural, one {# minute} other {# minutes}}."
 msgstr "視窗當機（{crashReason}），在 {minutes, plural, other {# 分鐘}}內嘗試 {attempts, plural, other {# 次}}後仍無法復原。"
 
 #: src/main/db/global-db-dialog.ts
-#, fuzzy
 msgid "This usually means another program is holding the file: an antivirus scan, a OneDrive or Dropbox sync, or a failing drive."
-msgstr "這通常表示有其他程式正在占用該檔案，例如防毒掃描、OneDrive 或 Dropbox 同步，或是磁碟機發生故障。"
+msgstr "這通常表示有其他程式正在占用該檔案，例如防毒掃描、OneDrive 或 Dropbox 同步，或是磁碟機故障。"
 
 #: src/main/window-open-policy.ts
-#, fuzzy
 msgid "Unknown site"
 msgstr "未知網站"
 
 #: src/main/index.ts
-#, fuzzy
 msgid "Your agents are still running in the background. Restart Kangentic to reconnect to them."
-msgstr "您的代理程式仍在背景執行。請重新啟動 Kangentic 以重新連線。"
+msgstr "你的代理仍在背景執行。請重新啟動 Kangentic 以重新連線到它們。"

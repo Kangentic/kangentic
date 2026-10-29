@@ -8,171 +8,138 @@ msgstr ""
 "Language: zh-TW\n"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgid "{doneCount} of {stepCount} done"
-msgstr "已完成 {doneCount}/{stepCount}"
+msgstr "已完成 {doneCount} / {stepCount}"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "{laneName} comes preset to start an agent, with the task's title and description as its prompt. Any column can start one; you set that in Board manager."
-msgstr "{laneName} 已預設為啟動代理程式，並以任務的標題和描述作為提示。任何欄都能啟動代理程式，可在看板管理員中設定。"
+msgstr "{laneName} 預設就會啟動代理，並以任務的標題和描述作為提示詞。任何欄都能啟動代理，可在看板管理員中設定。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Add your first task"
 msgstr "新增第一個任務"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Choose your defaults"
 msgstr "選擇預設值"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Create a task"
 msgstr "建立任務"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgctxt "onboarding button"
 msgid "Done"
 msgstr "完成"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Drag a task into {laneName}"
 msgstr "將任務拖曳到 {laneName}"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Drag a task into a column that starts an agent"
-msgstr "將任務拖曳到會啟動代理程式的欄"
+msgstr "將任務拖曳到會啟動代理的欄"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Drag it to {laneName}"
 msgstr "將它拖曳到 {laneName}"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Drag it to a column that starts an agent"
-msgstr "將它拖曳到會啟動代理程式的欄"
+msgstr "將它拖曳到會啟動代理的欄"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Dropping a task in a column that starts an agent runs it."
-msgstr "將任務放到會啟動代理程式的欄，即可執行該任務。"
+msgstr "將任務拖放到會啟動代理的欄，任務就會開始執行。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Every task starts with these unless a column overrides them. Change any one and this step is done."
-msgstr "除非欄另有覆寫，否則每個任務都會以這些設定開始。變更任一項即可完成此步驟。"
+msgstr "除非欄另有覆寫，否則每個新任務都會沿用這些設定。變更其中任一項，此步驟即完成。"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
-#, fuzzy
 msgctxt "onboarding button"
 msgid "Finish"
 msgstr "完成"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgid "Five steps to your first agent run. Take them in any order."
-msgstr "五個步驟即可完成首次代理程式執行，順序不拘。"
+msgstr "五個步驟就能完成你的第一次代理執行，順序不拘。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Make the board yours"
-msgstr "打造專屬看板"
+msgstr "自訂你的看板"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgctxt "onboarding button"
 msgid "Next step"
 msgstr "下一步"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "No column starts an agent yet. Turn that on for a column in Board manager."
-msgstr "目前沒有欄會啟動代理程式。請在看板管理員中為某一欄開啟此功能。"
+msgstr "目前還沒有任何欄會啟動代理。請在看板管理員中為某個欄開啟這項功能。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Open the task"
 msgstr "開啟任務"
 
 #: src/renderer/components/onboarding/OverseerMascot.tsx
-#, fuzzy
 msgid "Pixel-art Kangentic mascot"
 msgstr "像素風格的 Kangentic 吉祥物"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Rename a column, or give it a different icon, color, or agent. Click any column header to open this again."
-msgstr "重新命名欄，或為其變更圖示、色彩或代理程式。按一下任一欄標題即可再次開啟此處。"
+msgstr "重新命名欄，或變更它的圖示、色彩或代理。按一下任一欄標題，即可再次開啟這個畫面。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Rename columns, change their colors and icons, or add your own."
-msgstr "重新命名欄、變更其色彩和圖示，或新增自訂欄。"
+msgstr "重新命名欄、變更色彩和圖示，或新增自己的欄。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Say what you want done in a sentence or two."
-msgstr "用一兩句話說明您要完成的事。"
+msgstr "用一兩句話說明你想完成的事。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Set the agent, model, effort, or permission mode new tasks inherit."
-msgstr "設定新任務沿用的代理程式、模型、投入程度或權限模式。"
+msgstr "設定新任務沿用的代理、模型、投入程度或權限模式。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Set your defaults"
 msgstr "設定預設值"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Shape your board"
 msgstr "調整看板"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgid "Skip for now"
 msgstr "暫時略過"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgctxt "onboarding button"
 msgid "Start"
 msgstr "開始"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
-#, fuzzy
 msgid "Step {stepNumber} of {stepCount}"
 msgstr "第 {stepNumber} 步，共 {stepCount} 步"
 
 #: src/renderer/components/onboarding/WalkthroughLayer.tsx
-#, fuzzy
 msgid "Stop showing me this step"
 msgstr "不再顯示此步驟"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Tasks start from this button. An agent can also create them for you through Kangentic's MCP server."
-msgstr "從這個按鈕建立任務。代理程式也可以透過 Kangentic 的 MCP 伺服器為您建立任務。"
+msgstr "任務由這個按鈕建立。代理也可以透過 Kangentic 的 MCP 伺服器幫你建立。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "This is where the run lives: the agent's terminal, its changes, and a prompt to steer it. Moves to later columns carry this same conversation along."
-msgstr "執行過程都在這裡：代理程式的終端機、其變更，以及用來引導它的提示。移到後續欄時，會延續同一段對話。"
+msgstr "執行的一切都在這裡：代理的終端機、它帶來的變更，以及用來引導它的提示詞。移到後續的欄時，同一段對話會跟著延續。"
 
 #: src/renderer/components/onboarding/walkthrough-steps.ts
-#, fuzzy
 msgid "Watch the agent work, read its output, and steer it."
-msgstr "查看代理程式的工作、閱讀其輸出並引導它。"
+msgstr "觀看代理工作、讀取輸出，並引導它。"
 
 #: src/renderer/components/onboarding/WelcomeChecklistDialog.tsx
-#, fuzzy
 msgid "Welcome to Kangentic"
 msgstr "歡迎使用 Kangentic"

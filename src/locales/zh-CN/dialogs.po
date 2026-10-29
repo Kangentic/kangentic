@@ -8,623 +8,503 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
-#, fuzzy
 msgid "\"{fileName}\" is over the 10 MB limit."
-msgstr "“{fileName}”超过了 10 MB 的大小限制。"
+msgstr "「{fileName}」超过 10 MB 的大小限制。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "\"{name}\" will be removed when you save."
-msgstr "保存后将移除“{name}”。"
+msgstr "「{name}」将在保存后移除。"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "\"{oversizedFileName}\" is over the 10 MB limit."
-msgstr "“{oversizedFileName}”超过了 10 MB 的限制。"
+msgstr "「{oversizedFileName}」超过 10 MB 的限制。"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "\"{relocatedName}\" now points at {relocatedPath}."
-msgstr "“{relocatedName}”现在指向 {relocatedPath}。"
+msgstr "「{relocatedName}」现在指向 {relocatedPath}。"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" is in {openBoardLaneName}."
-msgstr "“{taskTitle}”位于{openBoardLaneName}中。"
+msgstr "「{taskTitle}」位于 {openBoardLaneName} 中。"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "\"{taskTitle}\" is now in {columnName}."
-msgstr "“{taskTitle}”现位于{columnName}。"
+msgstr "「{taskTitle}」现位于 {columnName}。"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "\"{taskTitle}\" is on the board."
-msgstr "“{taskTitle}”已在看板上。"
+msgstr "「{taskTitle}」已在看板上。"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "({deleteFailureCount} failed)"
 msgstr "（{deleteFailureCount} 个失败）"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
-msgstr "{agentCount, plural, other {已暂停 # 个代理以释放内存}}"
+msgstr "{agentCount, plural, other {已暂停 # 个智能体以释放内存}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr "{agentCount, plural, other {在你恢复之前将一直保持暂停。}}"
+msgstr "{agentCount, plural, other {在你恢复之前会一直保持暂停。}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "{ahead} ahead, {behind} behind base branch"
 msgstr "领先基础分支 {ahead} 个提交，落后 {behind} 个提交"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "{automationCount, plural, one {# automation runs here} other {# automations run here}}"
 msgstr "{automationCount, plural, other {此处运行 # 个自动化}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "{changedCount} of {totalPixels, plural, one {# pixel differs} other {# pixels differ}}"
 msgstr "{totalPixels, plural, other {# 个像素中有 {changedCount} 个不同}}"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
-#, fuzzy
 msgid "{columnName}, {triggerPhrase}"
 msgstr "{columnName}，{triggerPhrase}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
-#, fuzzy
 msgid "{columnName}: added {addedCount, plural, one {# automation} other {# automations}}"
 msgstr "{addedCount, plural, other {{columnName}：已添加 # 个自动化}}"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
-#, fuzzy
 msgid "{columnName}: edited automations"
 msgstr "{columnName}：已编辑自动化"
 
 #: src/renderer/components/dialogs/board-manager/automation-drafts.ts
-#, fuzzy
 msgid "{columnName}: removed {removedCount, plural, one {# automation} other {# automations}}"
 msgstr "{removedCount, plural, other {{columnName}：已移除 # 个自动化}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "{commitCount, plural, one {# commit for this task} other {# commits for this task}}"
 msgstr "{commitCount, plural, other {此任务有 # 个提交}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "{commitCount, plural, one {# commit on this branch} other {# commits on this branch}}"
 msgstr "{commitCount, plural, other {此分支上有 # 个提交}}"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} 上下文窗口"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
-#, fuzzy
 msgid "{count, plural, one {# tool call, by tool} other {# tool calls, by tool}}"
 msgstr "{count, plural, other {# 次工具调用（按工具分类）}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "{fileCount, plural, one {# file} other {# files}}"
 msgstr "{fileCount, plural, other {# 个文件}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "{filesChanged, plural, one {# file changed} other {# files changed}}"
 msgstr "{filesChanged, plural, other {已更改 # 个文件}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "{filesChanged, plural, one {# file} other {# files}}"
 msgstr "{filesChanged, plural, other {# 个文件}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{filteredCount, plural, one {# task} other {# tasks}}"
 msgstr "{filteredCount, plural, other {# 个任务}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{filteredCount} of {archivedTotalCount, plural, one {# task} other {# tasks}}"
-msgstr "{archivedTotalCount, plural, other {{filteredCount} / # 个任务}}"
+msgstr "{archivedTotalCount, plural, other {# 个任务中的 {filteredCount} 个}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{leadingParts} and {lastPart}"
-msgstr "{leadingParts}和{lastPart}"
+msgstr "{leadingParts} 和 {lastPart}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "{linesAdded, plural, one {# line added} other {# lines added}}"
 msgstr "{linesAdded, plural, other {新增 # 行}}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "{linesRemoved, plural, one {# line removed} other {# lines removed}}"
 msgstr "{linesRemoved, plural, other {删除 # 行}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
-#, fuzzy
 msgid "{maxInstances, plural, one {# file diff window is open. Close it to open another.} other {# file diff windows are open. Close one to open another.}}"
 msgstr "{maxInstances, plural, other {已打开 # 个文件差异窗口。请关闭一个后再打开新窗口。}}"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "{name} enabled"
 msgstr "已启用 {name}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "{newer} available"
 msgstr "{newer} 可用"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "{newerModelLabel} available"
 msgstr "{newerModelLabel} 现已可用"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "{nextFileCombo} - next changed file"
-msgstr "{nextFileCombo} - 下一个已更改文件"
+msgstr "{nextFileCombo}：下一个已更改文件"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "{oldPath} to {newPath}"
 msgstr "{oldPath} 到 {newPath}"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
 msgid "{pattern}: {rule}, as in {sample}."
 msgstr "{pattern}：{rule}，例如 {sample}。"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
 msgid "{pattern}: {rule}."
 msgstr "{pattern}：{rule}。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "{percent}% of pixels changed"
 msgstr "{percent}% 的像素已更改"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "{pillLabel}: {reason}"
 msgstr "{pillLabel}：{reason}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{position} of {total}"
 msgstr "第 {position} 项，共 {total} 项"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{reason} Saved {savedBeforeFailing} before failing."
-msgstr "{reason} 失败前已保存{savedBeforeFailing}。"
+msgstr "{reason} 失败前已保存 {savedBeforeFailing}。"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
 msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>，例如 {sample}</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
 msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr "{maxConcurrent, plural, other {已使用 {runningCount} / # 个代理槽位}}"
+msgstr "{maxConcurrent, plural, other {已使用 {runningCount} / # 个智能体槽位}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
 msgstr "{savedTotal, plural, other {# 列}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{selectedCount, plural, one {Delete # completed task} other {Delete # completed tasks}}"
 msgstr "{selectedCount, plural, other {删除 # 个已完成任务}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{selectedCount, plural, one {Delete # task} other {Delete # tasks}}"
 msgstr "{selectedCount, plural, other {删除 # 个任务}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{selectedCount, plural, one {This will permanently delete # task, its session history, and any associated worktrees.} other {This will permanently delete # tasks, their session history, and any associated worktrees.}}"
 msgstr "{selectedCount, plural, other {这将永久删除 # 个任务、其会话历史记录以及所有关联的工作树。}}"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
-#, fuzzy
 msgid "{selectedCount} selected"
 msgstr "已选择 {selectedCount} 项"
 
 #. The Board saved toast: the saved changes as one clause, ended as a sentence.
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{sentence}."
 msgstr "{sentence}。"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "{shownCount} of {totalCount}"
 msgstr "{shownCount} / {totalCount}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "{startedText} to {endedText}"
 msgstr "{startedText} 至 {endedText}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "{statusLabel}: {filePath}"
 msgstr "{statusLabel}：{filePath}"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "{subagentName} subagent"
-msgstr "{subagentName} 子代理"
+msgstr "{subagentName} 子智能体"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "{surfaceHeaderAhead} ahead, {surfaceHeaderBehind} behind base branch"
-msgstr "领先基础分支 {surfaceHeaderAhead}，落后 {surfaceHeaderBehind}"
+msgstr "领先基础分支 {surfaceHeaderAhead} 个提交，落后 {surfaceHeaderBehind} 个提交"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "{taskCount, plural, one {Move or delete its task first.} other {Move or delete all # tasks first.}}"
 msgstr "{taskCount, plural, other {请先移动或删除全部 # 个任务。}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{tokenCountText} tokens"
-msgstr "{tokenCountText} 个令牌"
+msgstr "{tokenCountText} token"
 
 #: src/renderer/components/dialogs/completed-tasks/tooltip.ts
-#, fuzzy
 msgid "{toolCallCount, plural, one {# tool call} other {# tool calls}}"
 msgstr "{toolCallCount, plural, other {# 次工具调用}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{totalCostText} total cost"
 msgstr "总费用 {totalCostText}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "{totalFilesChanged, plural, one {# file changed} other {# files changed}}"
 msgstr "{totalFilesChanged, plural, other {已更改 # 个文件}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file marked viewed} other {# files marked viewed}}"
-msgstr "{fileCount, plural, other {已查看 {viewedCount}/# 个文件}}"
+msgstr "{fileCount, plural, other {# 个文件中已标记查看 {viewedCount} 个}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "{viewedCount} of {fileCount, plural, one {# file viewed} other {# files viewed}}"
-msgstr "{fileCount, plural, other {已查看 {viewedCount}/# 个文件}}"
+msgstr "{fileCount, plural, other {# 个文件中已查看 {viewedCount} 个}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "A narrow pane renders inline"
-msgstr "窄窗格中以内联方式显示"
+msgstr "窗格较窄时改为内联显示"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "A profile named \"{trimmed}\" already exists."
-msgstr "已存在名为“{trimmed}”的配置文件。"
+msgstr "已存在名为「{trimmed}」的配置文件。"
 
 #: src/renderer/components/dialogs/board-manager/form-layout.tsx
-#, fuzzy
 msgid "About {label}"
-msgstr "关于{label}"
+msgstr "关于 {label}"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Action"
 msgstr "操作"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Add automation"
 msgstr "添加自动化"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Add column"
 msgstr "添加列"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Added"
 msgstr "已添加"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "After"
 msgstr "之后"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "After image opacity"
 msgstr "之后图像的不透明度"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "After Plan Mode"
-msgstr "计划模式之后"
+msgstr "计划模式后"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "After, faded"
 msgstr "之后（淡化）"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Agent"
 msgstr "智能体"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Agent"
-msgstr "代理"
+msgstr "智能体"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview group"
 msgid "Agent"
-msgstr "代理"
+msgstr "智能体"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Agent default"
-msgstr "代理默认值"
+msgstr "智能体默认值"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Agent evaluation"
 msgstr "智能体评估"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Agent Override"
 msgstr "智能体覆盖"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Agent runtime"
-msgstr "代理运行时长"
+msgstr "智能体运行时长"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Agent runtime"
-msgstr "代理运行时长"
+msgstr "智能体运行时长"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Agent: {agentOverrideLabel}"
-msgstr "代理：{agentOverrideLabel}"
+msgstr "智能体：{agentOverrideLabel}"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "All columns"
 msgstr "所有列"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "All tests pass"
 msgstr "所有测试通过"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Already up to date"
 msgstr "已是最新"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Already used on this column."
-msgstr "此列已使用。"
+msgstr "此列中已使用。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "An alternate set of per-column agent, model, and effort settings"
 msgstr "另一套按列设置的智能体、模型和推理强度配置"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "Another column uses this icon"
 msgstr "其他列已使用此图标"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Approve each plan for you. Questions the agent asks still wait."
-msgstr "自动为你批准每个计划。代理提出的问题仍会等待回答。"
+msgstr "自动为你批准每个计划。智能体提出的问题仍需要你回答。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgctxt "task action"
 msgid "Archive"
 msgstr "归档"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgctxt "task status"
 msgid "Archived"
 msgstr "已归档"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "plan approval"
 msgid "Automatic"
 msgstr "自动"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Automation needs a name"
 msgstr "自动化需要名称"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "Automations"
 msgstr "自动化"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "Automations are shared by every profile. Switch to Default to edit them."
-msgstr "自动化由所有配置文件共享。切换到“默认”以编辑。"
+msgstr "自动化由所有看板配置共享。切换到「默认」配置即可编辑。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Automations changed on:"
 msgstr "以下列的自动化已更改："
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "automations on {savedAutomationColumns, plural, one {# column} other {# columns}}"
 msgstr "{savedAutomationColumns, plural, other {# 列的自动化}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Back to all changes"
 msgstr "返回所有更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Back to Branch"
 msgstr "返回分支"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Back to Staged"
-msgstr "返回暂存"
+msgstr "返回暂存区"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Back to Working"
 msgstr "返回工作区"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Background calls"
 msgstr "后台调用"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
-#, fuzzy
 msgid "Base branch"
 msgstr "基础分支"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
-#, fuzzy
 msgid "Base branch: {displayBranch}"
 msgstr "基础分支：{displayBranch}"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "Base: {baseBranch}"
-msgstr "基准：{baseBranch}"
+msgstr "基础分支：{baseBranch}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Based on {baseLabel}, not the project default"
-msgstr "基于 {baseLabel}，非项目默认分支"
+msgstr "基于 {baseLabel}，而非项目默认分支"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Based on {baseLabel}, the project default"
 msgstr "基于 {baseLabel}，即项目默认分支"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Before"
 msgstr "之前"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "binary"
 msgstr "二进制"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Binary file - cannot display diff"
-msgstr "二进制文件 - 无法显示差异"
+msgstr "二进制文件，无法显示差异"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Blame is unavailable for this file"
-msgstr "此文件无法使用追溯"
+msgstr "无法显示此文件的追溯信息"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Board Profile changes will also be discarded."
 msgstr "看板配置的更改也将被丢弃。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Board saved"
 msgstr "看板已保存"
 
 #: src/renderer/components/dialogs/TaskBranchRow.tsx
-#, fuzzy
 msgid "Branch"
 msgstr "分支"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "git area"
 msgid "Branch"
 msgstr "分支"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Cache read"
 msgstr "缓存读取"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Cache write"
 msgstr "缓存写入"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Call"
 msgstr "调用"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Can't fast-forward"
 msgstr "无法快进"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Can't remove \"{name}\""
-msgstr "无法移除“{name}”"
+msgstr "无法移除「{name}」"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Can't update from {baseBranch}"
 msgstr "无法从 {baseBranch} 更新"
 
@@ -632,61 +512,50 @@ msgstr "无法从 {baseBranch} 更新"
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 #: src/renderer/components/dialogs/DialogFooterActions.tsx
-#, fuzzy
 msgid "Cancel"
 msgstr "取消"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgid "Change in Settings"
 msgstr "在设置中更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Changed pixels"
 msgstr "已更改的像素"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Changes"
 msgstr "更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgctxt "tab"
 msgid "Changes"
 msgstr "更改"
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
-#, fuzzy
 msgid "Changes - #{displayId} {taskTitle}"
 msgstr "更改 - #{displayId} {taskTitle}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
-#, fuzzy
 msgid "Changes are open in their own window"
 msgstr "更改已在单独的窗口中打开"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Choose icon"
 msgstr "选择图标"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "Choose Icon"
 msgstr "选择图标"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Choose icon: {chosenIconName}"
 msgstr "选择图标：{chosenIconName}"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "Clear"
 msgstr "清除"
 
@@ -695,2734 +564,2215 @@ msgstr "清除"
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #: src/renderer/components/dialogs/WhatsNewDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Close"
 msgstr "关闭"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Close browser"
 msgstr "关闭浏览器"
 
 #: src/renderer/components/dialogs/BaseDialog.tsx
-#, fuzzy
 msgid "Close dialog"
 msgstr "关闭对话框"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "Close dropdown"
 msgstr "关闭下拉列表"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Closing now will discard this new task and its unsaved changes."
 msgstr "现在关闭将丢弃此新任务及其未保存的更改。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Closing now will discard unsaved changes in:"
 msgstr "现在关闭将丢弃以下位置中未保存的更改："
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Closing now will discard your changes to this task."
 msgstr "现在关闭将丢弃你对此任务的更改。"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Collapse all"
 msgstr "全部折叠"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "Collapse history"
 msgstr "折叠历史记录"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Collapse to split view"
 msgstr "折叠为分栏视图"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Collapse unchanged"
-msgstr "折叠未更改的区域"
+msgstr "折叠未更改内容"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Color"
 msgstr "颜色"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Color {presetColor}"
 msgstr "颜色 {presetColor}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Color {presetColor} (selected)"
 msgstr "颜色 {presetColor}（已选中）"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "column name fallback"
 msgid "column"
 msgstr "列"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgctxt "unnamed column fallback"
 msgid "column"
 msgstr "列"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Column"
 msgstr "列"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Column"
 msgstr "列"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Column Manager"
 msgstr "列管理器"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Column name"
 msgstr "列名称"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Column needs a name"
 msgstr "列需要名称"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Column order changes will also be discarded."
 msgstr "列顺序的更改也将被丢弃。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Column Settings"
 msgstr "列设置"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Columns"
 msgstr "列"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
 msgstr "除非为此列设置独立会话，否则各列共享任务的主对话。独立会话每次进入时都从头开始，适合代码审查或任何不应继承之前工作的环节。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Commands"
 msgstr "命令"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphSvg.tsx
-#, fuzzy
 msgid "Commit graph"
 msgstr "提交图"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Commits"
 msgstr "提交"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Compactions"
 msgstr "压缩次数"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Compare every column's settings side by side"
 msgstr "并排比较所有列的设置"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Comparing pixels"
 msgstr "正在比较像素"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Completed"
 msgstr "完成时间"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "task status"
 msgid "Completed"
 msgstr "已完成"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgid "Completed task"
-msgstr "已完成的任务"
+msgstr "已完成任务"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "Completed Tasks ({archivedTotalCount})"
 msgstr "已完成任务（{archivedTotalCount}）"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Condition"
 msgstr "条件"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Condition check"
 msgstr "条件检查"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Condition kind"
 msgstr "条件类型"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Condition: {condition}"
 msgstr "条件：{condition}"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
-#, fuzzy
 msgid "Confirm"
 msgstr "确认"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Conversation"
 msgstr "对话"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgctxt "tab"
 msgid "Conversation"
 msgstr "对话"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Copied"
 msgstr "已复制"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
-#, fuzzy
 msgid "Copy conversation ID"
 msgstr "复制对话 ID"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
-#, fuzzy
 msgid "Copy existing"
 msgstr "复制现有项"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
-#, fuzzy
 msgid "Copy isolated conversation ID"
-msgstr "复制独立对话 ID"
+msgstr "复制隔离对话 ID"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Copy path"
 msgstr "复制路径"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Copy task ID"
 msgstr "复制任务 ID"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Cost"
 msgstr "费用"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Cost"
 msgstr "费用"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Could not compare pixels"
 msgstr "无法比较像素"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Could not read"
 msgstr "无法读取"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Could not read this image"
 msgstr "无法读取此图像"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgid "Could not read this task's record"
 msgstr "无法读取此任务的记录"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
-#, fuzzy
 msgid "Couldn't add \"{filename}\""
-msgstr "无法添加“{filename}”"
+msgstr "无法添加「{filename}」"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't archive task"
 msgstr "无法归档任务"
 
 #: src/renderer/components/dialogs/image-compress.ts
-#, fuzzy
 msgid "Couldn't compress image"
 msgstr "无法压缩图片"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Couldn't create task"
 msgstr "无法创建任务"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\""
-msgstr "无法删除“{deletedColumnName}”"
+msgstr "无法删除「{deletedColumnName}」"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't delete \"{deletedColumnName}\": {reasonText}"
-msgstr "无法删除“{deletedColumnName}”：{reasonText}"
+msgstr "无法删除「{deletedColumnName}」：{reasonText}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Couldn't fetch {baseBranch}"
-msgstr "无法获取 {baseBranch}"
+msgstr "无法拉取 {baseBranch}"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgid "Couldn't open \"{filename}\""
-msgstr "无法打开“{filename}”"
+msgstr "无法打开「{filename}」"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
-#, fuzzy
 msgid "Couldn't open file diff"
 msgstr "无法打开文件差异"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "Couldn't relocate project"
 msgstr "无法重新定位项目"
 
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
-#, fuzzy
 msgid "Couldn't remove attachment"
-msgstr "无法删除附件"
+msgstr "无法移除附件"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't reset session"
 msgstr "无法重置会话"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Couldn't resolve PR"
 msgstr "无法解析 PR"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't run {commandName}"
 msgstr "无法运行 {commandName}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't save"
 msgstr "无法保存"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\""
-msgstr "无法保存“{columnName}”上的自动化"
+msgstr "无法保存「{columnName}」上的自动化"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't save automations on \"{columnName}\": {reasonText}"
-msgstr "无法保存“{columnName}”上的自动化：{reasonText}"
+msgstr "无法保存「{columnName}」上的自动化：{reasonText}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Couldn't save profiles"
-msgstr "无法保存配置文件"
+msgstr "无法保存配置方案"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't save task"
 msgstr "无法保存任务"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't send to backlog"
 msgstr "无法移至待办列表"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Couldn't switch branch"
 msgstr "无法切换分支"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Create"
 msgstr "创建"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "created {savedCreates, plural, one {# column} other {# columns}}"
 msgstr "{savedCreates, plural, other {已创建 # 列}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Custom color"
 msgstr "自定义颜色"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "board overview value"
 msgid "Default"
 msgstr "默认"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "board profile"
 msgid "Default"
 msgstr "默认"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgctxt "placeholder"
 msgid "Default"
 msgstr "默认"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgctxt "profile option"
 msgid "Default"
 msgstr "默认"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Default ({iconRoleName})"
 msgstr "默认（{iconRoleName}）"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "Delete"
 msgstr "删除"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgctxt "task action"
 msgid "Delete"
 msgstr "删除"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "Delete {name}"
 msgstr "删除 {name}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "Delete completed task"
 msgstr "删除已完成任务"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
-#, fuzzy
 msgid "Delete task"
 msgstr "删除任务"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
-#, fuzzy
 msgid "Delete this profile"
-msgstr "删除此配置"
+msgstr "删除此配置方案"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Deleted"
 msgstr "已删除"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "deleted {savedDeletes, plural, one {# column} other {# columns}}"
 msgstr "{savedDeletes, plural, other {已删除 # 列}}"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "Deleting {deleteCompleted} of {deleteTotal}"
 msgstr "正在删除第 {deleteCompleted} 个，共 {deleteTotal} 个"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Description"
 msgstr "描述"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgctxt "tab"
 msgid "Description"
 msgstr "描述"
 
 #: src/renderer/components/dialogs/task-detail/changes/CommitSelectionBar.tsx
-#, fuzzy
 msgid "Deselect commit"
 msgstr "取消选择提交"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Diff"
 msgstr "差异"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Diff scope"
 msgstr "差异范围"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Discard"
 msgstr "丢弃"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Discard unsaved changes?"
-msgstr "丢弃未保存的更改?"
+msgstr "丢弃未保存的更改？"
 
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
-#, fuzzy
 msgid "Don't ask again"
 msgstr "不再询问"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Done"
 msgstr "完成"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "column role"
 msgid "Done"
 msgstr "已完成"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Double-click to reset"
-msgstr "双击以重置"
+msgstr "双击重置"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Drag to reorder"
 msgstr "拖动以重新排序"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Drag to resize"
-msgstr "拖动以调整大小"
+msgstr "拖动调整大小"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Drag to reveal the new image"
 msgstr "拖动以显示新图像"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-#, fuzzy
 msgid "Drop files here"
 msgstr "将文件拖放到此处"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "Duplicate profile"
-msgstr "复制配置文件"
+msgstr "复制配置方案"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
-#, fuzzy
 msgid "Duplicate this profile"
-msgstr "复制此配置"
+msgstr "复制此配置方案"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "e.g. Simple or Complex"
 msgstr "例如：简单或复杂"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Each column applies its own settings as the task moves."
-msgstr "任务移动时，每列应用各自的设置。"
+msgstr "任务移动时，各列应用自己的设置。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgctxt "task action"
 msgid "Edit"
 msgstr "编辑"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "Edit {name}"
 msgstr "编辑 {name}"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Edit agent defaults in Settings"
 msgstr "在设置中编辑智能体默认值"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Edit automation"
 msgstr "编辑自动化"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Edit profiles in Edit Columns"
-msgstr "在“编辑列”中编辑配置方案"
+msgstr "在「编辑列」中编辑配置方案"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Effort"
 msgstr "推理强度"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Effort"
 msgstr "推理强度"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Effort"
 msgstr "推理强度"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Elapsed"
 msgstr "耗时"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Ended"
 msgstr "结束时间"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "process state"
 msgid "Ended"
 msgstr "已结束"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "call outcome"
 msgid "Error"
 msgstr "错误"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Exited ({exitCode})"
-msgstr "已退出 ({exitCode})"
+msgstr "已退出（{exitCode}）"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Expand all"
 msgstr "全部展开"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Expand changes"
 msgstr "展开更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "Expand history"
 msgstr "展开历史记录"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Extension"
 msgstr "扩展名"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Fade between the two images"
 msgstr "在两张图像之间淡入淡出"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Failed to load diff"
 msgstr "加载差异失败"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
-#, fuzzy
 msgid "Failed to load diff viewer"
-msgstr "无法加载差异查看器"
+msgstr "加载差异查看器失败"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
-#, fuzzy
 msgid "Failed to load the Changes panel"
-msgstr "无法加载“更改”面板"
+msgstr "无法加载「更改」面板"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Fast-forwarded {commitCount, plural, one {# commit} other {# commits}}."
 msgstr "{commitCount, plural, other {已快进 # 个提交。}}"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "File"
 msgstr "文件"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/useAttachments.ts
-#, fuzzy
 msgid "File too large"
 msgstr "文件过大"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Files"
 msgstr "文件"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Files changed"
-msgstr "已更改的文件"
+msgstr "更改的文件"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Filter files..."
-msgstr "筛选文件..."
+msgstr "筛选文件…"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Flat list"
 msgstr "平铺列表"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Frequency"
 msgstr "频率"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Fresh input"
 msgstr "新输入"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "From session totals"
 msgstr "来自会话总计"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "General"
 msgstr "常规"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Generate title"
 msgstr "生成标题"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Git could not reach origin."
 msgstr "Git 无法连接到 origin。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Git LFS pointer"
 msgstr "Git LFS 指针"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Hand off context when the agent changes"
-msgstr "更换代理时移交上下文"
+msgstr "智能体更换时交接上下文"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Handoff"
 msgstr "交接"
 
 #: src/renderer/components/dialogs/task-detail/HandoffTimeline.tsx
-#, fuzzy
 msgid "Handoff Chain"
 msgstr "交接链"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Hex color value"
 msgstr "十六进制颜色值"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Hide browser"
 msgstr "隐藏浏览器"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Hide changes"
 msgstr "隐藏更改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Hide description"
 msgstr "隐藏描述"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Hide workflow"
 msgstr "隐藏工作流"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Highlight the pixels that changed"
 msgstr "突出显示已更改的像素"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "History"
 msgstr "历史记录"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "History: {historyFileName}"
 msgstr "历史记录：{historyFileName}"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "How many times it can run on a task."
-msgstr "在一个任务上可运行的次数。"
+msgstr "每个任务可运行的次数。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "How this task runs"
 msgstr "此任务的运行方式"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Icon"
 msgstr "图标"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "Icons failed to load. Restart Kangentic to try again."
-msgstr "图标加载失败。请重启 Kangentic 后重试。"
+msgstr "图标加载失败。重启 Kangentic 后重试。"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "If it was moved or renamed, locate the new folder to keep all tasks and board history."
-msgstr "如果该文件夹已被移动或重命名，请找到新文件夹以保留所有任务和看板历史记录。"
+msgstr "如果该文件夹已被移动或重命名，请定位新文件夹，以保留所有任务和看板历史记录。"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Ignore whitespace"
 msgstr "忽略空白"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "Image"
 msgstr "图像"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Image comparison"
 msgstr "图像比较"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Image preview"
 msgstr "图像预览"
 
 #: src/renderer/components/dialogs/image-compress.ts
-#, fuzzy
 msgid "Image sent at lower quality"
-msgstr "图片已以较低质量发送"
+msgstr "图片已按较低质量发送"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
-#, fuzzy
 msgid "Indexing is off, so no commits are linked"
-msgstr "索引已关闭，因此未关联任何提交"
+msgstr "索引已关闭，因此不会关联任何提交。"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "Inherits every column's settings from {sourceName}."
 msgstr "继承 {sourceName} 中所有列的设置。"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Inline"
 msgstr "内联"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Inline when narrow"
 msgstr "窄屏时内联显示"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Input with cache"
 msgstr "含缓存输入"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "session target"
 msgid "Isolated"
 msgstr "隔离"
 
 #: src/renderer/components/dialogs/image-compress.ts
-#, fuzzy
 msgid "It was still large after compression."
-msgstr "压缩后图片仍然过大。"
+msgstr "压缩后仍然过大。"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "JSON File"
 msgstr "JSON 文件"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "Jupyter Notebook"
 msgstr "Jupyter 笔记本"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Keep editing"
 msgstr "继续编辑"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Kept alive until you close it"
-msgstr "保持运行，直到你将其关闭"
+msgstr "保持运行，直到你关闭它"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Knowledge Graph indexing is off"
 msgstr "知识图谱索引已关闭"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
-#, fuzzy
 msgid "Labels"
 msgstr "标签"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Last message"
 msgstr "最后一条消息"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
-#, fuzzy
 msgid "Later"
 msgstr "稍后"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Lines"
 msgstr "行数"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Link PR"
 msgstr "关联 PR"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
-#, fuzzy
 msgid "Loading branches..."
-msgstr "正在加载分支..."
+msgstr "正在加载分支…"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "Loading icons"
 msgstr "正在加载图标"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "Locate Folder..."
-msgstr "查找文件夹..."
+msgstr "查找文件夹…"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "session target"
 msgid "Main"
 msgstr "主会话"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr "“主会话”会延续任务的对话，“隔离”则每次进入时都重新开始。"
+msgstr "「主会话」延续任务的对话，「隔离」每次进入都重新开始。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "plan approval"
 msgid "Manual"
 msgstr "手动"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Mark as not viewed"
 msgstr "标记为未查看"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Mark as viewed"
 msgstr "标记为已查看"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Matches the agent's last line, ignoring case and punctuation, with * as a wildcard."
-msgstr "匹配智能体输出的最后一行，忽略大小写和标点，* 为通配符。"
+msgstr "匹配智能体最后一行，忽略大小写和标点，* 作为通配符。"
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
-#, fuzzy
 msgid "Maximize dialog"
 msgstr "最大化对话框"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Maximum runs"
 msgstr "最大运行次数"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Model"
 msgstr "模型"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Model"
 msgstr "模型"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Model"
 msgstr "模型"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Models and tokens"
-msgstr "模型和令牌"
+msgstr "模型与 token"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Modified"
 msgstr "已修改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Move to"
-msgstr "移动到"
+msgstr "移至"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Name"
 msgstr "名称"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Name"
 msgstr "名称"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Name it before saving."
-msgstr "请在保存前命名。"
+msgstr "保存前请先命名。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Name terminal"
 msgstr "命名终端"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Name, description, color, and icon are shared by every profile. Switch to Default to edit them."
-msgstr "名称、描述、颜色和图标由所有配置文件共享。切换到“默认”以进行编辑。"
+msgstr "所有配置方案共享名称、描述、颜色和图标。切换到「默认」进行编辑。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Needs both images"
 msgstr "需要两张图像"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
-#, fuzzy
 msgid "New automation"
 msgstr "新建自动化"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "New profile"
-msgstr "新建配置"
+msgstr "新建配置方案"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "New Task"
 msgstr "新建任务"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Next change"
 msgstr "下一处更改"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Next column"
 msgstr "下一列"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "No active session"
 msgstr "无活动会话"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "No active session. Drag this task into a column that starts an agent."
-msgstr "无活动会话。请将此任务拖到会启动代理的列中。"
+msgstr "无活跃会话。请将此任务拖到会启动智能体的列中。"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "No agent CLI detected yet"
 msgstr "尚未检测到智能体 CLI"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "No agent runs on record"
-msgstr "无代理运行记录"
+msgstr "无智能体运行记录"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
-#, fuzzy
 msgid "No branches found"
 msgstr "未找到分支"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
-#, fuzzy
 msgid "No branches match \"{query}\""
-msgstr "没有与“{query}”匹配的分支"
+msgstr "没有与「{query}」匹配的分支"
 
 #: src/renderer/components/dialogs/TaskChangesDialog.tsx
-#, fuzzy
 msgid "No changes on this branch"
 msgstr "此分支上没有更改"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "no changes to save"
-msgstr "没有要保存的更改"
+msgstr "没有可保存的更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "No changes vs {baseLabel}"
 msgstr "与 {baseLabel} 相比无更改"
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
-#, fuzzy
 msgid "No commands or skills found"
 msgstr "未找到命令或技能"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
-#, fuzzy
 msgid "No commits for this task"
-msgstr "此任务没有提交"
+msgstr "此任务暂无提交"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "No commits on this branch yet."
 msgstr "此分支尚无提交。"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "No completed tasks yet"
 msgstr "暂无已完成任务"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "No conversation history for this task yet"
-msgstr "此任务尚无对话历史"
+msgstr "此任务暂无对话历史"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
-#, fuzzy
 msgid "No conversation yet"
 msgstr "暂无对话"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgid "No description"
 msgstr "无描述"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "No files changed"
 msgstr "无文件更改"
 
 #: src/renderer/components/dialogs/FontCombobox.tsx
-#, fuzzy
 msgid "No fonts match \"{typedFilter}\""
-msgstr "没有与“{typedFilter}”匹配的字体"
+msgstr "没有与「{typedFilter}」匹配的字体"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "No git history available."
 msgstr "无可用的 git 历史记录。"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "No history found"
 msgstr "未找到历史记录"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "No icons match \"{query}\""
-msgstr "没有与“{query}”匹配的图标"
+msgstr "没有与「{query}」匹配的图标"
 
 #: src/renderer/components/dialogs/Combobox.tsx
-#, fuzzy
 msgid "No matches"
 msgstr "无匹配项"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "No matching files"
 msgstr "没有匹配的文件"
 
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "No models match \"{filterText}\""
-msgstr "没有与“{filterText}”匹配的模型"
+msgstr "没有与「{filterText}」匹配的模型"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "No origin remote"
-msgstr "没有 origin 远程"
+msgstr "无 origin 远程仓库"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "No pixel changes"
 msgstr "无像素更改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "No PR found"
 msgstr "未找到 PR"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "No PR resolver"
 msgstr "没有 PR 解析器"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "No profiles yet - create one in Edit Columns"
-msgstr "暂无配置方案 - 请在“编辑列”中创建"
+msgstr "暂无配置方案，请在「编辑列」中创建"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "No staged changes"
 msgstr "无暂存的更改"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "No tasks match \"{searchQuery}\""
-msgstr "没有与“{searchQuery}”匹配的任务"
+msgstr "没有与「{searchQuery}」匹配的任务"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "No uncommitted changes"
 msgstr "无未提交的更改"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "None"
 msgstr "无"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgctxt "icon option"
 msgid "None"
 msgstr "无"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "None is available for this repository."
-msgstr "此仓库没有可用的解析器。"
+msgstr "此仓库没有可用的 PR 解析器。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Not image data"
 msgstr "非图像数据"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Not offered on this trigger."
-msgstr "此触发器不提供此项。"
+msgstr "此触发器不支持此类型。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "not readable"
 msgstr "不可读"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Not readable"
 msgstr "不可读"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Nothing matches branch \"{searchedBranch}\"."
-msgstr "没有与分支“{searchedBranch}”匹配的结果。"
+msgstr "没有与分支「{searchedBranch}」匹配的结果。"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
-#, fuzzy
 msgid "Nothing matches that."
 msgstr "没有匹配项。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Nothing matches this task."
 msgstr "没有与此任务匹配的结果。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Nothing new on {baseBranch}."
 msgstr "{baseBranch} 上没有新内容。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Nothing runs at a turn end in {terminalName}."
-msgstr "在 {terminalName} 中轮次结束时不运行任何操作。"
+msgstr "在 {terminalName} 中，轮次结束时不运行任何操作。"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Nothing runs when a task enters {columnName}."
 msgstr "任务进入 {columnName} 时不运行任何操作。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Nothing to search by"
 msgstr "没有可供搜索的依据"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "On enter"
 msgstr "进入时"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "On exit"
 msgstr "离开时"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "On exit, this column's automations share {exitBudgetSeconds, plural, one {# second} other {# seconds}} in total. Put longer work on enter."
-msgstr "{exitBudgetSeconds, plural, other {退出时，此列的自动化共享总计 # 秒。耗时较长的工作请放在进入时。}}"
+msgstr "退出时，此列的自动化合计共享 {exitBudgetSeconds, plural, other {# 秒}}。耗时较长的工作请放在进入时。"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "On turn end"
 msgstr "轮次结束时"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
-msgstr "仅检测到一个智能体 CLI - 请安装其他 CLI 以供选择"
+msgstr "仅检测到一个智能体 CLI，请安装其他 CLI 以供选择"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "Only the label changes. Tasks already using this profile stay on it."
-msgstr "仅更改名称。已使用此配置文件的任务将继续使用它。"
+msgstr "仅更改名称。已使用此配置方案的任务将继续使用它。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgctxt "pull request state"
 msgid "open"
-msgstr "打开"
+msgstr "开放"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "Open {shortHash} on {providerName}"
 msgstr "在 {providerName} 上打开 {shortHash}"
 
 #: src/renderer/components/dialogs/Combobox.tsx
 #: src/renderer/components/dialogs/FontCombobox.tsx
 #: src/renderer/components/dialogs/ModelCombobox.tsx
-#, fuzzy
 msgid "Open dropdown"
 msgstr "打开下拉列表"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Open Folder"
 msgstr "打开文件夹"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Open in editor"
 msgstr "在编辑器中打开"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Open in new window"
 msgstr "在新窗口中打开"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "Open on {providerName}"
 msgstr "在 {providerName} 上打开"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "Open PR #{prNumber}"
 msgstr "打开 PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "Open PR #{prNumber} ({prLabel})"
-msgstr "打开 PR #{prNumber} ({prLabel})"
+msgstr "打开 PR #{prNumber}（{prLabel}）"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Open project folder"
 msgstr "打开项目文件夹"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Open settings"
 msgstr "打开设置"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Open Settings"
 msgstr "打开设置"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Open that board to edit its profiles"
 msgstr "打开该看板以编辑其配置方案"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Open worktree"
 msgstr "打开工作树"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Open Worktree"
 msgstr "打开工作树"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Open worktree folder"
 msgstr "打开工作树文件夹"
 
 #: src/renderer/components/dialogs/task-detail/completed/report-parts.tsx
-#, fuzzy
 msgid "Opens this part of the conversation"
 msgstr "打开对话的此部分"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Outcome"
 msgstr "结果"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Output"
 msgstr "输出"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Overlay"
 msgstr "叠加"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
 msgid "Overview"
 msgstr "概览"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Page kept"
 msgstr "页面已保留"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Path copied"
 msgstr "已复制路径"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Pause session"
 msgstr "暂停会话"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Pausing agent..."
-msgstr "正在暂停代理..."
+msgstr "正在暂停智能体…"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "PDF Document"
 msgstr "PDF 文档"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Permission"
 msgstr "权限"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Permissions"
 msgstr "权限"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Permissions"
 msgstr "权限"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Permissions"
 msgstr "权限"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Pinned for the whole task, ignoring column settings."
 msgstr "固定用于整个任务，忽略列设置。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Plan approval"
 msgstr "计划审批"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Plan approval is shared by every profile. Switch to Default to change it."
-msgstr "计划审批由所有配置文件共享。切换到“默认”以进行更改。"
+msgstr "计划审批由所有配置方案共享。切换到「默认」以更改。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Pop out of tiling"
 msgstr "退出平铺"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
 msgid "Position {queuePosition} of {queueTotal}"
 msgstr "第 {queuePosition} 位，共 {queueTotal} 位"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "PR #{prNumber}"
 msgstr "PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgid "PR #{prNumber} ({prLabel})"
-msgstr "PR #{prNumber} ({prLabel})"
+msgstr "PR #{prNumber}（{prLabel}）"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "PR host unreachable"
 msgstr "无法访问 PR 主机"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "PR linked"
 msgstr "已关联 PR"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Preview image"
 msgstr "预览图像"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Preview rendered markdown"
 msgstr "预览渲染后的 Markdown"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Previews stop at {previewLimit} per image"
-msgstr "每张图像最多预览 {previewLimit}"
+msgstr "每张图像的预览上限为 {previewLimit}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Previous change"
 msgstr "上一处更改"
 
 #: src/renderer/components/dialogs/PriorityLabelsRow.tsx
-#, fuzzy
 msgid "Priority"
 msgstr "优先级"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
-#, fuzzy
 msgid "Profile"
 msgstr "配置方案"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
-#, fuzzy
 msgctxt "placement option"
 msgid "Project"
 msgstr "项目"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "Project Folder Not Found"
 msgstr "未找到项目文件夹"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "Project relocated"
 msgstr "项目已重新定位"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Pull request"
 msgstr "拉取请求"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-#, fuzzy
 msgid "Pull Request"
 msgstr "拉取请求"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Queued (click to pause)"
-msgstr "已排队(单击暂停)"
+msgstr "已排队（单击暂停）"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "call outcome"
 msgid "Ran"
 msgstr "已运行"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Rebase or merge it in the session instead."
 msgstr "请改为在会话中变基或合并。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Refresh PR"
 msgstr "刷新 PR"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Removal staged"
-msgstr "已暂存删除"
+msgstr "已暂存移除"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Remove"
 msgstr "移除"
 
 #: src/renderer/components/dialogs/AttachmentChipStrip.tsx
-#, fuzzy
 msgid "Remove {filename}"
 msgstr "移除 {filename}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Remove column"
 msgstr "删除列"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Remove column \"{removeTargetName}\""
-msgstr "删除列“{removeTargetName}”"
+msgstr "删除列「{removeTargetName}」"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "Removed profile"
-msgstr "已删除的配置方案"
+msgstr "已移除的配置方案"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "Rename"
 msgstr "重命名"
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
-#, fuzzy
 msgid "Rename profile"
-msgstr "重命名配置文件"
+msgstr "重命名配置方案"
 
 #: src/renderer/components/dialogs/board-manager/ProfileBar.tsx
-#, fuzzy
 msgid "Rename this profile"
-msgstr "重命名此配置"
+msgstr "重命名此配置方案"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Renamed"
 msgstr "已重命名"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "Reorder {name}"
 msgstr "重新排序 {name}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Reset"
 msgstr "重置"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Reset session"
 msgstr "重置会话"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Reset to agent default"
-msgstr "重置为代理默认值"
+msgstr "重置为智能体默认值"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Reset to project default"
 msgstr "重置为项目默认值"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Reset to project setting"
 msgstr "重置为项目设置"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Resize file list"
 msgstr "调整文件列表大小"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Resize history"
 msgstr "调整历史记录大小"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
-#, fuzzy
 msgid "Restart to update"
 msgstr "重启以更新"
 
 #: src/renderer/components/dialogs/completed-tasks/BulkToolbar.tsx
-#, fuzzy
 msgctxt "task action"
 msgid "Restore"
 msgstr "恢复"
 
 #: src/renderer/components/dialogs/dialog-maximize.tsx
-#, fuzzy
 msgid "Restore dialog"
 msgstr "还原对话框"
 
 #: src/renderer/components/dialogs/completed-tasks/RestorePopover.tsx
-#, fuzzy
 msgid "Restore to"
 msgstr "恢复到"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
-#, fuzzy
 msgid "Restore to board"
 msgstr "恢复到看板"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgctxt "task action"
 msgid "Resume"
 msgstr "恢复"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgid "Resume {taskTitle}"
 msgstr "恢复 {taskTitle}"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Resume session"
 msgstr "恢复会话"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgctxt "task status"
 msgid "Resuming"
 msgstr "正在恢复"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Resuming agent..."
-msgstr "正在恢复代理..."
+msgstr "正在恢复智能体..."
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #: src/renderer/components/dialogs/task-detail/changes/DiffErrorBoundary.tsx
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
-#, fuzzy
 msgid "Retry"
 msgstr "重试"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Reveal in file manager"
 msgstr "在文件管理器中显示"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgctxt "completed task card"
 msgid "Route"
 msgstr "流转路径"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
-#, fuzzy
 msgid "Run in a new worktree"
 msgstr "在新工作树中运行"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
-#, fuzzy
 msgid "Run in the project folder"
 msgstr "在项目文件夹中运行"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgctxt "task status"
 msgid "Running"
 msgstr "运行中"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "completed task card"
 msgid "Runs"
 msgstr "运行"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Runs only when this holds."
 msgstr "仅在满足此条件时运行。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Runtime"
 msgstr "运行时长"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Same-agent moves (e.g. Claude to Claude) resume natively via the agent's own session id and ignore this setting."
-msgstr "同一代理间的移动（如 Claude 到 Claude）会通过代理自身的会话 ID 原生恢复，并忽略此设置。"
+msgstr "同一智能体的移动（如 Claude 到 Claude）会通过智能体自身的会话 ID 原生恢复，并忽略此设置。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "button"
 msgid "Save"
 msgstr "保存"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Save stopped partway"
 msgstr "保存中途停止"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "saved {savedUpdates, plural, one {# column} other {# columns}}"
 msgstr "{savedUpdates, plural, other {已保存 # 个列}}"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "saved automations"
 msgstr "已保存自动化"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "saved profiles"
-msgstr "已保存配置文件"
+msgstr "已保存配置方案"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
-#, fuzzy
 msgid "Search automations"
 msgstr "搜索自动化"
 
 #: src/renderer/components/dialogs/BranchPicker.tsx
-#, fuzzy
 msgid "Search branches..."
-msgstr "搜索分支..."
+msgstr "搜索分支…"
 
 #: src/renderer/components/dialogs/task-detail/CommandSearchList.tsx
-#, fuzzy
 msgid "Search commands & skills..."
-msgstr "搜索命令和技能..."
+msgstr "搜索命令和技能…"
 
 #: src/renderer/components/dialogs/IconPickerDialog.tsx
-#, fuzzy
 msgid "Search icons..."
-msgstr "搜索图标..."
+msgstr "搜索图标…"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "Search tasks..."
-msgstr "搜索任务..."
+msgstr "搜索任务…"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Select a commit to see its changes"
 msgstr "选择一个提交以查看其更改"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "Select a file to view changes"
 msgstr "选择一个文件以查看更改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Send to Backlog"
-msgstr "移至待办"
+msgstr "移至待办列表"
 
 #: src/renderer/components/dialogs/image-compress.ts
-#, fuzzy
 msgid "Sending the original instead."
 msgstr "将改为发送原图。"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Sent to backlog"
 msgstr "已移至待办列表"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "board manager field"
 msgid "Session"
 msgstr "会话"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Session"
 msgstr "会话"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Session"
 msgstr "会话"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Session could not be resumed."
 msgstr "无法恢复会话。"
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
-#, fuzzy
 msgid "Session may be expired"
 msgstr "会话可能已过期"
 
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
-#, fuzzy
 msgid "Session may need to be re-created"
 msgstr "可能需要重新创建会话"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Sessions don't run in {roleName} columns, so {label} doesn't apply."
-msgstr "会话不会在{roleName}列中运行，因此{label}不适用。"
+msgstr "会话不会在 {roleName} 列中运行，因此 {label} 不适用。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Sessions don't run in {terminalName} columns."
-msgstr "会话不会在{terminalName}列中运行。"
+msgstr "会话不会在 {terminalName} 列中运行。"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Set up an Automation agent"
 msgstr "设置自动化智能体"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "与其他列共享任务的对话。"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Show {fileName} in Changes"
 msgstr "在更改中显示 {fileName}"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Show {shortSha} in Changes"
 msgstr "在更改中显示 {shortSha}"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Show all"
 msgstr "全部显示"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Show all {callCount}"
 msgstr "显示全部 {callCount} 项"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Show blame"
-msgstr "显示追溯"
+msgstr "显示代码追溯"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Show browser"
 msgstr "显示浏览器"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Show changes"
 msgstr "显示更改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Show description"
 msgstr "显示描述"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Show diff"
 msgstr "显示差异"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Show less"
 msgstr "收起"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
-#, fuzzy
 msgid "Show text diff"
 msgstr "显示文本差异"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Show workflow"
 msgstr "显示工作流"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgid "Showing it in the file manager instead."
 msgstr "改为在文件管理器中显示。"
 
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
-#, fuzzy
 msgid "Showing latest {commitCount, plural, one {# commit} other {# commits}}."
 msgstr "{commitCount, plural, other {显示最近 # 个提交。}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
 msgid "Showing the latest {commitCount, plural, one {# commit} other {# commits}}"
 msgstr "{commitCount, plural, other {显示最近 # 个提交}}"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Side by side"
 msgstr "并排"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Size"
 msgstr "大小"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "call outcome"
 msgid "Skipped"
 msgstr "已跳过"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Slider"
 msgstr "滑块"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Slider position"
 msgstr "滑块位置"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Sort: by extension"
 msgstr "排序：按扩展名"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Sort: by name"
 msgstr "排序：按名称"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Sort: by size"
 msgstr "排序：按大小"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Sort: by status"
 msgstr "排序：按状态"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewer.tsx
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgctxt "image compare mode"
 msgid "Stacked"
 msgstr "堆叠"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "git area"
 msgid "Staged"
 msgstr "已暂存"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgctxt "board overview column header"
 msgid "Start"
-msgstr "开始"
+msgstr "启动"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Start a clean conversation on every entry."
-msgstr "每次进入时开始新的对话。"
+msgstr "每次进入时开始一段全新的对话。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Start an agent automatically when a task enters this column."
-msgstr "任务进入此列时自动启动代理。"
+msgstr "任务进入此列时自动启动智能体。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Start an agent here"
-msgstr "在此启动代理"
+msgstr "在此启动智能体"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Start an agent here is off."
-msgstr "“在此启动代理”已关闭。"
+msgstr "「在此启动智能体」已关闭。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Started"
 msgstr "开始时间"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedHeaderStrip.tsx
-#, fuzzy
 msgctxt "completed task metric"
 msgid "Started"
 msgstr "开始时间"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
-#, fuzzy
 msgid "Starting agent..."
-msgstr "正在启动代理..."
+msgstr "正在启动智能体..."
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
 msgid "Starts automatically when a slot opens up"
-msgstr "有空闲槽位时将自动启动"
+msgstr "有空闲槽位时自动启动"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
-msgstr "当你移动任务或任务离开“完成”时重新计数；智能体或自动化将其移至别处时不会重新计数。"
+msgstr "当你移动任务或任务离开「已完成」时重新计数；由智能体或自动化将其移到别处时不会重新计数。"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Status"
 msgstr "状态"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "leftover section"
 msgid "Still running"
 msgstr "仍在运行"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "process action"
 msgid "Stop"
 msgstr "停止"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgid "Stop {label}"
 msgstr "停止 {label}"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "leftover section"
 msgid "Stopped"
 msgstr "已停止"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "process state"
 msgid "Stopped"
 msgstr "已停止"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgctxt "process state"
 msgid "Stopping"
 msgstr "正在停止"
 
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
-#, fuzzy
 msgid "Stopping leftover processes is off, so these kept running."
-msgstr "“停止残留进程”已关闭，因此这些进程仍在运行。"
+msgstr "「停止残留进程」已关闭，因此这些进程仍在运行。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgctxt "tab"
 msgid "Summary"
 msgstr "摘要"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Summary pending"
 msgstr "摘要待生成"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Switch to flat list"
-msgstr "切换为平铺列表"
+msgstr "切换到平铺列表"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Switch to tree"
 msgstr "切换到树视图"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Task archived"
 msgstr "任务已归档"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
-#, fuzzy
 msgid "Task created"
-msgstr "已创建任务"
+msgstr "任务已创建"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Task deleted"
 msgstr "任务已删除"
 
 #: src/renderer/components/dialogs/task-detail/useCopyDisplayId.ts
-#, fuzzy
 msgid "Task ID copied"
 msgstr "已复制任务 ID"
 
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
-#, fuzzy
 msgid "Task moved"
 msgstr "任务已移动"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Task summaries are off"
 msgstr "任务摘要已关闭"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
 msgid "Task summary"
 msgstr "任务摘要"
 
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
 #: src/renderer/components/dialogs/task-detail/TaskDetailEditForm.tsx
-#, fuzzy
 msgid "Task title"
 msgstr "任务标题"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "Text File"
 msgstr "文本文件"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Text match"
 msgstr "文本匹配"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
-#, fuzzy
 msgid "The agent CLI this task runs on"
 msgstr "此任务运行所用的智能体 CLI"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "The folder could not be used."
 msgstr "无法使用该文件夹。"
 
 #: src/renderer/components/dialogs/ProjectPathMissingDialog.tsx
-#, fuzzy
 msgid "The folder for <0>\"{projectName}\"</0> no longer exists:"
-msgstr "<0>“{projectName}”</0>的文件夹已不存在："
+msgstr "<0>\"{projectName}\"</0>的文件夹已不存在："
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "The new agent picks up the previous agent's conversation instead of starting from the task description."
-msgstr "新代理会接续上一个代理的对话，而不是从任务描述开始。"
+msgstr "新智能体会接续上一个智能体的对话，而不是从任务描述开始。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "The PR host returned an error."
-msgstr "PR 主机返回了错误。"
+msgstr "PR 托管服务返回了错误。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
-#, fuzzy
 msgid "The task's changes could not be read"
 msgstr "无法读取任务的更改"
 
 #: src/renderer/components/dialogs/task-detail/completed/useTaskReport.ts
-#, fuzzy
 msgid "The task's changes could not be read."
 msgstr "无法读取任务的更改。"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
-#, fuzzy
 msgid "The window could not be created."
 msgstr "无法创建窗口。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "The worktree has uncommitted changes."
-msgstr "工作树有未提交的更改。"
+msgstr "工作树中有未提交的更改。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "There is no remote to fetch {baseBranch} from."
 msgstr "没有可从中获取 {baseBranch} 的远程仓库。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "These columns are staged for removal and will be kept:"
-msgstr "以下列已暂存删除，将被保留："
+msgstr "以下列已标记为移除，并且会保留："
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "These columns are staged for removal. Discarding keeps them:"
-msgstr "以下列已暂存删除。放弃更改将保留它们："
+msgstr "以下列已标记为移除。放弃更改会保留它们："
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "This action cannot be undone."
-msgstr "此操作无法撤消。"
+msgstr "此操作无法撤销。"
 
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
-#, fuzzy
 msgid "This commit changed no files"
 msgstr "此提交未更改任何文件"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
-msgstr "此项现由列设置处理。移除此项以使用列设置。"
+msgstr "此项现由列的设置处理。移除此项即可使用列设置。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "This task has no branch, commit or PR number yet."
 msgstr "此任务尚无分支、提交或 PR 编号。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedConversationTab.tsx
-#, fuzzy
 msgid "This task has no conversation history"
-msgstr "此任务没有对话历史记录"
+msgstr "此任务没有对话历史"
 
 #: src/renderer/components/dialogs/task-detail/open-task-conversation.ts
-#, fuzzy
 msgid "This task has no conversation history."
-msgstr "此任务没有对话历史记录。"
+msgstr "此任务没有对话历史。"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "This task is archived. It does not appear on the board."
 msgstr "此任务已归档，不会显示在看板上。"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesEmpty.tsx
-#, fuzzy
 msgid "This task's commits are not in this clone"
 msgstr "此任务的提交不在此克隆中"
 
 #: src/renderer/components/dialogs/board-manager/AutomationTypePicker.tsx
-#, fuzzy
 msgid "This type is retired and cannot be chosen."
 msgstr "此类型已停用，无法选择。"
 
 #: src/renderer/components/dialogs/CompletedTasksDialog.tsx
-#, fuzzy
 msgid "This will permanently delete the task, its session history, and any associated worktree."
 msgstr "这将永久删除该任务、其会话历史以及所有关联的工作树。"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Title"
 msgstr "标题"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgctxt "column role"
 msgid "To Do"
 msgstr "待办"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Toggle browser"
 msgstr "切换浏览器"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Toggle changes"
 msgstr "切换更改"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Toggle workflow"
 msgstr "切换工作流"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Tokens"
-msgstr "令牌"
+msgstr "Token"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Too large to preview"
 msgstr "文件过大，无法预览"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Tool calls"
 msgstr "工具调用"
 
 #: src/renderer/components/dialogs/completed-tasks/useCompletedColumns.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Tools"
 msgstr "工具"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "table total row"
 msgid "Total"
 msgstr "总计"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Tree view"
 msgstr "树视图"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "Tree view only"
-msgstr "仅限树视图"
+msgstr "仅树视图支持"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Trigger"
 msgstr "触发器"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Try again in a moment."
 msgstr "请稍后重试。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Turn on \"Start an agent here\" in the Agent section to enable {label}."
-msgstr "在“代理”部分中开启“在此启动代理”以启用{label}。"
+msgstr "在「智能体」部分开启「在此启动智能体」以启用 {label}。"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgctxt "column header"
 msgid "Turns"
 msgstr "轮次"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "Type"
 msgstr "类型"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
-#, fuzzy
 msgid "Under 0.1% of pixels changed"
-msgstr "不到 0.1% 的像素已更改"
+msgstr "更改的像素不足 0.1%"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "Unsaved"
 msgstr "未保存"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
 msgid "unsaved changes"
 msgstr "未保存的更改"
 
 #: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Untitled"
 msgstr "无标题"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Untitled column"
 msgstr "未命名列"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
 msgid "Untitled task"
 msgstr "无标题任务"
 
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
-#, fuzzy
 msgctxt "file status"
 msgid "Untracked"
 msgstr "未跟踪"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Update from base"
 msgstr "从基础分支更新"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Update from base failed"
 msgstr "从基础分支更新失败"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Updated from {baseBranch}"
 msgstr "已从 {baseBranch} 更新"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "updated the column order"
-msgstr "已更新列顺序"
+msgstr "更新了列顺序"
 
 #: src/renderer/components/dialogs/task-detail/completed/CompletedTaskView.tsx
-#, fuzzy
 msgctxt "tab"
 msgid "Usage"
 msgstr "用量"
 
 #: src/renderer/components/dialogs/ReleaseNotesDialog.tsx
-#, fuzzy
 msgid "Version {updateVersion} is ready to install"
 msgstr "版本 {updateVersion} 已可安装"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "View conversation"
 msgstr "查看对话"
 
 #: src/renderer/components/dialogs/completed-tasks/RowActions.tsx
-#, fuzzy
 msgid "View details"
 msgstr "查看详情"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgid "View history"
-msgstr "查看历史记录"
+msgstr "查看历史"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "View options"
 msgstr "视图选项"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "View PR #{prNumber}"
 msgstr "查看 PR #{prNumber}"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
 msgid "Waiting in queue"
-msgstr "正在排队等待"
+msgstr "排队中"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
-#, fuzzy
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
-msgstr "任务进入此列时、其代理每次在此完成一轮时以及离开时依次执行的操作。"
+msgstr "任务进入此列、其智能体每次在此结束一轮、以及任务离开时，按以下顺序执行的操作。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "What is this column for?"
 msgstr "此列的用途是什么？"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "What it does."
-msgstr "执行的操作。"
+msgstr "执行的动作。"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "What runs. Each type brings its own fields."
 msgstr "运行的内容。每种类型有各自的字段。"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
-#, fuzzy
 msgid "What starts it."
 msgstr "触发方式。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "When a task enters this column and the assigned agent differs from the one that ran in the previous column, Kangentic injects the previous session's transcript as the first message, so the new agent continues with full context instead of starting from the task description alone."
-msgstr "当任务进入此列且分配的代理与上一列中运行的代理不同时，Kangentic 会将上一会话的记录作为第一条消息注入，使新代理带着完整上下文继续工作，而不是仅从任务描述开始。"
+msgstr "当任务进入此列，且分配的智能体与在上一列中运行的智能体不同时，Kangentic 会把上一会话的记录作为第一条消息注入，让新智能体带着完整上下文继续，而不是只从任务描述开始。"
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
-#, fuzzy
 msgid "Where the agent runs"
-msgstr "代理运行位置"
+msgstr "智能体的运行位置"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Where the task goes when the agent exits Plan mode."
-msgstr "代理退出计划模式后任务的去向。"
+msgstr "智能体退出计划模式后，任务去往何处。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
-msgstr "由你还是 Kangentic 批准每个计划。工作流任务可为自身覆盖此设置。"
+msgstr "每个计划由你批准，还是由 Kangentic 批准。工作流任务可为自身覆盖此设置。"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
 msgid "Wildcard examples"
 msgstr "通配符示例"
 
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
-#, fuzzy
 msgid "Wildcard examples. {rows}"
 msgstr "通配符示例。{rows}"
 
 #: src/renderer/components/dialogs/task-detail/changes/open-file-window.ts
-#, fuzzy
 msgid "Window limit reached"
-msgstr "已达到窗口数量上限"
+msgstr "窗口数量已达上限"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Workflow step"
 msgstr "工作流步骤"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
-#, fuzzy
 msgctxt "git area"
 msgid "Working"
 msgstr "工作区"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
-#, fuzzy
 msgid "Working..."
 msgstr "正在处理..."
 
 #: src/renderer/components/dialogs/WorktreePlacementControl.tsx
-#, fuzzy
 msgctxt "placement option"
 msgid "Worktree"
 msgstr "工作树"
 
 #: src/renderer/components/dialogs/task-detail/changes/DiffViewOptionsMenu.tsx
-#, fuzzy
 msgid "Wrap long lines"
 msgstr "长行自动换行"
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
-#, fuzzy
 msgid "Write summary"
 msgstr "撰写摘要"
 
 #: src/renderer/components/dialogs/attachment-utils.ts
-#, fuzzy
 msgctxt "file type"
 msgid "XML File"
 msgstr "XML 文件"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "You approve each plan in the agent's terminal."
-msgstr "你在代理的终端中批准每个计划。"
+msgstr "你在智能体的终端中批准每个计划。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Your Board Profile changes will be discarded."
-msgstr "你对看板配置文件的更改将被放弃。"
+msgstr "你对看板配置的更改将被放弃。"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
 msgid "Your column order changes will be discarded."
 msgstr "你对列顺序的更改将被放弃。"

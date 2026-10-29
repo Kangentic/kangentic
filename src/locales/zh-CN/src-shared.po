@@ -8,1462 +8,1178 @@ msgstr ""
 "Language: zh-CN\n"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{blockedLabel} already waits for {blockerLabel}."
 msgstr "{blockedLabel} 已在等待 {blockerLabel}。"
 
 #: src/shared/workflow-waiting.ts
-#, fuzzy
 msgid "{count, plural, one {Blocked by # task...} other {Blocked by # tasks...}}"
 msgstr "{count, plural, other {被 # 个任务阻塞...}}"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} has passed {columnName}. Its plan approval can no longer change."
 msgstr "{label} 已越过 {columnName}，其计划审批无法再更改。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} has reached {columnName}. Only the columns after it can change."
 msgstr "{label} 已到达 {columnName}，只能更改其后的列。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} has started. Only a task in To Do can wait for another."
 msgstr "{label} 已开始。只有待办中的任务才能等待其他任务。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} has started. Removing the link changes nothing."
 msgstr "{label} 已开始，移除关联不会产生任何变化。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is done and stays with its workflow."
 msgstr "{label} 已完成，将保留在其工作流中。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is done. Its plan approval can no longer change."
 msgstr "{label} 已完成，其计划审批无法再更改。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is done. Removing the link changes nothing."
 msgstr "{label} 已完成，移除关联不会产生任何变化。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is done. Waiting for it changes nothing."
 msgstr "{label} 已完成，等待它不会产生任何变化。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is in {workflowTitle}, which is paused. Resume it to move its tasks."
 msgstr "{label} 位于已暂停的 {workflowTitle} 中。请恢复该工作流以移动其任务。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is in {workflowTitle}. Remove it from the workflow to move it to To Do."
 msgstr "{label} 位于 {workflowTitle} 中。请将其从工作流中移除后再移至待办。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is locked while {workflowTitle} runs."
 msgstr "{workflowTitle} 运行期间，{label} 已锁定。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "{label} is not in a workflow. Its column's Plan approval decides; change that with kangentic_update_column."
 msgstr "{label} 不在工作流中，由其所在列的计划审批决定；可使用 kangentic_update_column 更改。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "{maxRuns, plural, =1 {At most once until you move the task.} other {At most # times until you move the task.}}"
-msgstr "{maxRuns, plural, =1 {在你移动任务前最多运行一次。} other {在你移动任务前最多运行 # 次。}}"
+msgstr "{maxRuns, plural, other {在你移动任务前最多运行 # 次。}}"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "{maxRuns, plural, =1 {at most once until you move the task} other {at most # times until you move the task}}"
-msgstr "{maxRuns, plural, =1 {在你移动任务前最多运行一次} other {在你移动任务前最多运行 # 次}}"
+msgstr "{maxRuns, plural, other {在你移动任务前最多运行 # 次}}"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "{maxRuns, plural, =1 {Frequency: at most once until you move the task.} other {Frequency: at most # times until you move the task.}}"
-msgstr "{maxRuns, plural, =1 {频率：在你移动任务前最多运行一次。} other {频率：在你移动任务前最多运行 # 次。}}"
+msgstr "{maxRuns, plural, other {频率：在你移动任务前最多运行 # 次。}}"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "{method} to {host}"
 msgstr "{method} 到 {host}"
 
 #: src/shared/knowledge-graph-task-fields.ts
-#, fuzzy
 msgid "{state, select, open {PR {number} open} draft {PR {number} draft} merged {PR {number} merged} closed {PR {number} closed} other {PR {number} {state}}}"
 msgstr "{state, select, open {PR {number} 已打开} draft {PR {number} 草稿} merged {PR {number} 已合并} closed {PR {number} 已关闭} other {PR {number} {state}}}"
 
 #: src/shared/plan-approval.ts
-#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, from {boardName}'s {columnName} column."
-msgstr "{value, select, automatic {自动，来自 {boardName} 的“{columnName}”列。} other {手动，来自 {boardName} 的“{columnName}”列。}}"
+msgstr "{value, select, automatic {自动} other {手动}}，来自 {boardName} 的「{columnName}」列。"
 
 #: src/shared/plan-approval.ts
-#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}}), but {waitingAgentName}'s plans still wait for you."
-msgstr "{value, select, automatic {自动} other {手动}}，已为此任务设置（{boardName} 的“{columnName}”列为{columnValue, select, automatic {自动} other {手动}}），但 {waitingAgentName} 的计划仍在等你处理。"
+msgstr "{value, select, automatic {自动} other {手动}}，已为此任务设置（{boardName} 的「{columnName}」列为 {columnValue, select, automatic {自动} other {手动}}），但 {waitingAgentName} 的计划仍在等你处理。"
 
 #: src/shared/plan-approval.ts
-#, fuzzy
 msgid "{value, select, automatic {Automatic} other {Manual}}, set for this task ({boardName}'s {columnName} column is {columnValue, select, automatic {Automatic} other {Manual}})."
-msgstr "{value, select, automatic {自动} other {手动}}，已为此任务设置（{boardName} 的“{columnName}”列为{columnValue, select, automatic {自动} other {手动}}）。"
+msgstr "{value, select, automatic {自动} other {手动}}，已为此任务设置（{boardName} 的「{columnName}」列为 {columnValue, select, automatic {自动} other {手动}}）。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "A task cannot wait for itself."
 msgstr "任务不能等待自身。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "A task visits at least one column."
 msgstr "任务至少要经过一列。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "A workflow task's <workflow> block: its route, its neighbours, and how its turns are judged."
-msgstr "工作流任务的 <workflow> 块：其路线、相邻列，以及其轮次的评判方式。"
+msgstr "工作流任务的 <workflow> 块：其路线、相邻任务，以及其轮次的评判方式。"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Agent Monitor"
-msgstr "代理监视器"
+msgstr "智能体监控"
 
 #: src/shared/transcript-format.ts
-#, fuzzy
 msgid "Approved automatically"
 msgstr "已自动批准"
 
 #: src/shared/transcript-format.ts
-#, fuzzy
 msgid "Approved by you"
 msgstr "已由你批准"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Arabic"
 msgstr "阿拉伯语"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "At a turn end the turn is over, so it sends at once."
-msgstr "轮次结束时该轮已完成，因此会立即发送。"
+msgstr "轮次结束时这一轮就结束了，因此会立即发送。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Attached file paths, one per line (empty if none)."
 msgstr "附件文件路径，每行一个（无附件时为空）。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Automations are paused for this task."
 msgstr "此任务的自动化已暂停。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "Available when the workflow agent finishes"
-msgstr "工作流代理完成后可用"
+msgstr "工作流智能体完成后可用"
 
 #: src/shared/dictation-presets.ts
-#, fuzzy
 msgctxt "quality preset"
 msgid "Balanced"
 msgstr "均衡"
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
-#, fuzzy
 msgctxt "quality preset"
 msgid "Best"
 msgstr "最佳"
 
 #: src/shared/workflow-waiting.ts
-#, fuzzy
 msgid "Blocked by {blocker}..."
 msgstr "被 {blocker} 阻塞..."
 
 #: src/shared/workflow-waiting.ts
-#, fuzzy
 msgid "Blocked by a task..."
 msgstr "被某个任务阻塞..."
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Body"
 msgstr "正文"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Bold"
 msgstr "粗体"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Browser"
 msgstr "浏览器"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Call webhook"
 msgstr "调用 Webhook"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Changes"
 msgstr "更改"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Chinese"
 msgstr "中文"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Close"
 msgstr "关闭"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Close the focused task detail window by clicking its title bar with this button (default middle mouse button). Rebind to any keyboard chord or mouse button (middle / side)."
-msgstr "用此按钮单击标题栏即可关闭当前聚焦的任务详情窗口（默认为鼠标中键）。可重新绑定为任意键盘组合键或鼠标按键（中键/侧键）。"
+msgstr "用此按钮单击标题栏，即可关闭当前聚焦的任务详情窗口（默认为鼠标中键）。可重新绑定为任意键盘组合键或鼠标按键（中键/侧键）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Close the open panel: the command terminal, the task detail dialog, or a create dialog (New Task / New Backlog Task). Escape also closes any modal."
 msgstr "关闭打开的面板：命令终端、任务详情对话框或创建对话框（新建任务/新建待办任务）。按 Esc 也可关闭任何模态框。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Close window (click header)"
 msgstr "关闭窗口（单击标题栏）"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Collapse or expand the bottom terminal panel."
 msgstr "折叠或展开底部终端面板。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Column"
 msgstr "列"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Command Terminal"
 msgstr "命令终端"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Command Terminal - {projectName}"
 msgstr "命令终端 - {projectName}"
 
 #: src/shared/background-call-jobs.ts
-#, fuzzy
 msgid "Condition checks"
 msgstr "条件检查"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Condition: only if {condition}."
-msgstr "条件：仅当{condition}时。"
+msgstr "条件：仅当 {condition} 时。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Condition: only if the last line reads \"{line}\"."
-msgstr "条件：仅当最后一行为“{line}”时。"
+msgstr "条件：仅当最后一行为「{line}」时。"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
 msgid "Contains it"
 msgstr "包含该文本"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Copy"
 msgstr "复制"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Copy selection"
 msgstr "复制所选内容"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Copy the selected diff text to the clipboard."
 msgstr "将所选差异文本复制到剪贴板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Copy the selected terminal text (Ctrl+Shift+C always copies). With no selection, Ctrl+C cancels the running command instead."
 msgstr "复制所选终端文本（Ctrl+Shift+C 始终执行复制）。未选择文本时，Ctrl+C 将改为取消正在运行的命令。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Delivery"
 msgstr "发送方式"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Delivery: waits for the current turn to end."
 msgstr "发送方式：等待当前轮次结束。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Dev-server port this task reserved. Usually empty - one exists only once an agent asks for it."
 msgstr "此任务预留的开发服务器端口。通常为空，仅在智能体请求后才会存在。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Dismiss dialog"
 msgstr "关闭对话框"
 
 #: src/shared/knowledge-graph-task-fields.ts
-#, fuzzy
 msgctxt "task status"
 msgid "Done"
 msgstr "已完成"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Draw / annotate"
 msgstr "绘制/批注"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Dutch"
 msgstr "荷兰语"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Effective base branch: the task's override, else the project's configured default."
 msgstr "实际使用的基础分支：任务的覆盖设置，否则为项目配置的默认分支。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty for a task outside a workflow."
 msgstr "不属于工作流的任务为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty for a workflow made from nothing."
 msgstr "从零创建的工作流为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty on task enter, and for an agent whose transcript Kangentic cannot read."
 msgstr "任务进入时为空；对于 Kangentic 无法读取其记录的智能体也为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty until a PR is linked."
 msgstr "关联 PR 之前为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty until an agent reserves a port."
 msgstr "智能体预留端口之前为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty until the task has a branch."
 msgstr "任务拥有分支之前为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty until the task has a worktree."
 msgstr "任务拥有工作树之前为空。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Empty until the task is linked to a tracker issue."
-msgstr "任务关联跟踪器问题之前为空。"
+msgstr "任务关联跟踪器议题之前为空。"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
 msgid "Ends with it"
 msgstr "以该文本结尾"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "English"
 msgstr "英语"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Enter a full relay URL, e.g. wss://relay.example.com."
 msgstr "请输入完整的中继 URL，例如 wss://relay.example.com。"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
 msgid "Exactly this line"
 msgstr "与此行完全一致"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "File Diff"
 msgstr "文件差异"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Find in conversation"
 msgstr "在对话中查找"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Find on board"
 msgstr "在看板中查找"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Focus the board search, or open Quick Find if not on the board."
-msgstr "聚焦看板搜索框；若不在看板上，则打开快速查找。"
+msgstr "聚焦看板搜索；若不在看板上，则打开快速查找。"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "French"
 msgstr "法语"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "German"
 msgstr "德语"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Git branch name (empty if the task has none)."
 msgstr "Git 分支名称（任务没有分支时为空）。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Give up after"
 msgstr "放弃前等待"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Headers"
 msgstr "标头"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Hold to dictate; release to populate the focused terminal or text field."
 msgstr "按住以听写；松开后将内容填入当前聚焦的终端或文本框。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Insert newline"
 msgstr "插入换行"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Inspect element"
 msgstr "检查元素"
 
 #: src/shared/embedding-runtime.ts
-#, fuzzy
 msgid "Intel Macs"
 msgstr "Intel 芯片 Mac"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Interrupt (cancel)"
 msgstr "中断（取消）"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Italian"
 msgstr "意大利语"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Italic"
 msgstr "斜体"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Japanese"
 msgstr "日语"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Jump to the next change in the diff. Past a file's last change, continues into the next file."
-msgstr "跳转到差异中的下一处更改。超出文件的最后一处更改后，继续跳转到下一个文件。"
+msgstr "跳转到差异中的下一处更改。越过文件的最后一处更改后，继续跳转到下一个文件。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Jump to the previous change in the diff. Before a file's first change, continues into the previous file."
-msgstr "跳转到差异中的上一处更改。超出文件的第一处更改后，继续跳转到上一个文件。"
+msgstr "跳转到差异中的上一处更改。越过文件的第一处更改后，继续跳转到上一个文件。"
 
 #: src/shared/plan-approval.ts
-#, fuzzy
 msgid "Kangentic can't approve {agentName}'s plans, so they wait for you."
 msgstr "Kangentic 无法批准 {agentName} 的计划，因此需要由你处理。"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Knowledge Graph"
 msgstr "知识图谱"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Korean"
 msgstr "韩语"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Leave empty to send the default JSON payload"
 msgstr "留空以发送默认 JSON 负载"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Legacy. The column's Start an agent here setting does this now."
-msgstr "旧版功能。现由列的“在此启动代理”设置完成此操作。"
+msgstr "旧版功能。现由列的「在此启动智能体」设置完成此操作。"
 
 #: src/shared/dictation-presets.ts
 #: src/shared/embedding-models.ts
-#, fuzzy
 msgctxt "quality preset"
 msgid "Light"
 msgstr "轻量"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Link"
 msgstr "链接"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Main project checkout path. Always the base repo, even when the task has a worktree."
 msgstr "项目主检出路径。始终为基础仓库，即使任务拥有工作树也是如此。"
 
 #: src/shared/plan-approval.ts
-#, fuzzy
 msgid "Manual, because Kangentic can't approve {agentName}'s plans."
 msgstr "手动，因为 Kangentic 无法批准 {agentName} 的计划。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Maximize"
 msgstr "最大化"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Maximize the open panel: the command terminal, the task detail dialog (view or edit mode), a create dialog (New Task / New Backlog Task), or the Edit Columns dialog."
 msgstr "最大化打开的面板：命令终端、任务详情对话框（查看或编辑模式）、创建对话框（新建任务/新建待办任务）或编辑列对话框。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Message"
 msgstr "消息"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Message: {message}"
 msgstr "消息：{message}"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Method"
 msgstr "方法"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field unit"
 msgid "minutes"
 msgstr "分钟"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Move task left"
 msgstr "向左移动任务"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Move task right"
 msgstr "向右移动任务"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Move the open task one column left and keep its window open."
 msgstr "将打开的任务向左移动一列，并保持其窗口打开。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Move the open task one column right and keep its window open."
 msgstr "将打开的任务向右移动一列，并保持其窗口打开。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Move to column"
 msgstr "移至列"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Move to column runs only at a turn end."
-msgstr "“移至列”仅在轮次结束时运行。"
+msgstr "「移至列」仅在轮次结束时运行。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Moves the task to {column}"
-msgstr "将任务移至{column}"
+msgstr "将任务移至 {column}"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Moves the task to another column, with a message for the agent there."
-msgstr "将任务移至另一列，并向该列的代理发送消息。"
+msgstr "将任务移至另一列，并向该列的智能体发送消息。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Moves the task to the next column"
 msgstr "将任务移至下一列"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "New task"
 msgstr "新建任务"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Next change"
 msgstr "下一处更改"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Next changed file"
 msgstr "下一个更改的文件"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Next column"
 msgstr "下一列"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
-msgstr "首选“下一列”：即任务路线上的下一列，或看板上的下一列。"
+msgstr "首选「下一列」：即任务路线上的下一列，或看板上的下一列。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "No message yet."
 msgstr "尚无消息。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "No script yet."
 msgstr "尚无脚本。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "No task it can wait for."
 msgstr "没有可等待的任务。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "No URL yet."
 msgstr "尚无 URL。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "No workflow \"{workflowSelector}\" in this project."
-msgstr "此项目中没有工作流“{workflowSelector}”。"
+msgstr "此项目中没有工作流「{workflowSelector}」。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Not offered on this trigger."
-msgstr "此触发器不提供此项。"
+msgstr "此触发器不支持此类型。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Nothing runs at a turn end in {column}."
-msgstr "在 {column} 中轮次结束时不运行任何操作。"
+msgstr "在 {column} 中，轮次结束时不运行任何操作。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Nothing runs when a task enters To Do or Done."
-msgstr "任务进入“待办”或“已完成”时不运行任何操作。"
+msgstr "任务进入「待办」或「已完成」时不运行任何操作。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Notifies \"{title}\""
-msgstr "通知“{title}”"
+msgstr "通知「{title}」"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Notify me"
 msgstr "通知我"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "on agent turn end"
-msgstr "代理轮次结束时"
+msgstr "智能体轮次结束时"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "On agent turn end"
-msgstr "代理轮次结束时"
+msgstr "智能体轮次结束时"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "on task enter"
 msgstr "任务进入时"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "On task enter"
 msgstr "任务进入时"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "on task exit"
 msgstr "任务退出时"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "On task exit"
 msgstr "任务退出时"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "One line per column between To Do and Done: what it runs, and how recent tasks went through it."
-msgstr "To Do 与 Done 之间的每列各占一行：其运行的内容，以及近期任务经过该列的情况。"
+msgstr "待办与已完成之间的每列各占一行：该列运行的内容，以及近期任务经过该列的情况。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "One per line, as Name: Value."
 msgstr "每行一个，格式为 名称: 值。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "only if {condition}"
-msgstr "仅当{condition}时"
+msgstr "仅当 {condition} 时"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Only if {condition}."
-msgstr "仅当{condition}时。"
+msgstr "仅当 {condition} 时。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "only if the last line reads \"{line}\""
-msgstr "仅当最后一行为“{line}”时"
+msgstr "仅当最后一行为「{line}」时"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Only if the last line reads \"{line}\"."
-msgstr "仅当最后一行为“{line}”时。"
+msgstr "仅当最后一行为「{line}」时。"
 
 #: src/shared/knowledge-graph-task-fields.ts
-#, fuzzy
 msgctxt "task status"
 msgid "Open"
 msgstr "未完成"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open in-viewer search inside the focused Conversation window."
 msgstr "在当前聚焦的对话窗口中打开查看器内搜索。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open or close the command terminal overlay."
 msgstr "打开或关闭命令终端浮层。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open or close the cross-project view of every running agent."
-msgstr "打开或关闭跨项目的所有运行中代理视图。"
+msgstr "打开或关闭跨项目的所有运行中智能体视图。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open or close the map of what the conversation index has learned."
 msgstr "打开或关闭对话索引已学习内容的图谱。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open or close the settings panel."
 msgstr "打开或关闭设置面板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open or close the usage statistics dashboard."
 msgstr "打开或关闭使用情况统计仪表板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open the cross-project Quick Find palette."
 msgstr "打开跨项目的快速查找面板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open the New Task dialog on the board."
-msgstr "在看板上打开“新建任务”对话框。"
+msgstr "在看板上打开「新建任务」对话框。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open the Workflows view; pressed there, return to the view you came from."
 msgstr "打开工作流视图；在该视图中按下则返回之前的视图。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Open workflows"
 msgstr "打开工作流"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgctxt "hotkey"
 msgid "Paste"
 msgstr "粘贴"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Paste as plain text"
 msgstr "粘贴为纯文本"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Paste text or an image into the terminal (Ctrl+Shift+V also pastes)."
 msgstr "将文本或图像粘贴到终端（Ctrl+Shift+V 也可粘贴）。"
 
 #: src/shared/workflow-waiting.ts
-#, fuzzy
 msgctxt "workflow state"
 msgid "Paused"
 msgstr "已暂停"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "planApproval is set per task now. Put planApproval on each task entry."
 msgstr "planApproval 现在按任务设置。请在每个任务条目上设置 planApproval。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "planApproval must be \"automatic\", \"manual\", or null."
 msgstr "planApproval 必须为 \"automatic\"、\"manual\" 或 null。"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Polish"
 msgstr "波兰语"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Portuguese"
 msgstr "葡萄牙语"
 
 #: src/shared/knowledge-graph-task-fields.ts
-#, fuzzy
 msgid "PR {number}"
 msgstr "PR {number}"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Previous change"
 msgstr "上一处更改"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Previous changed file"
 msgstr "上一个更改的文件"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Previous column"
 msgstr "上一列"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Prompt"
 msgstr "提示词"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Pull request number as a string (empty if none)."
 msgstr "拉取请求编号，字符串形式（无则为空）。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Pull request state: open, merged, closed or draft."
 msgstr "拉取请求状态：open、merged、closed 或 draft。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Pull request URL (empty if none)."
 msgstr "拉取请求 URL（无则为空）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Push-to-talk (hold)"
-msgstr "按住说话（按住）"
+msgstr "按住说话（长按）"
 
 #: src/shared/workflow-waiting.ts
-#, fuzzy
 msgid "Queued..."
 msgstr "排队中..."
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Quick Find"
 msgstr "快速查找"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Relay address cannot contain a backslash."
 msgstr "中继地址不能包含反斜杠。"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Relay address cannot include a #fragment; the pairing slot is carried in the query string."
-msgstr "中继地址不能包含 #片段；配对槽位通过查询字符串传递。"
+msgstr "中继地址不能包含 #fragment；配对槽位通过查询字符串传递。"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Relay address cannot include a username or password."
 msgstr "中继地址不能包含用户名或密码。"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Relay address is too long (max {maxBytes} bytes)."
 msgstr "中继地址过长（最多 {maxBytes} 字节）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Reload page"
 msgstr "重新加载页面"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "Remove {label} from {workflowTitle} first."
 msgstr "请先将 {label} 从 {workflowTitle} 中移除。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Reset zoom"
 msgstr "重置缩放"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Review the latest changes and fix any issues you find"
 msgstr "审查最新更改并修复发现的所有问题"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Run immediately"
 msgstr "立即运行"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Run immediately interrupts a turn in progress. Wait for current turn sends it when the turn ends."
-msgstr "“立即运行”会中断进行中的轮次。“等待当前轮次”会在轮次结束时发送。"
+msgstr "「立即运行」会中断进行中的轮次；「等待当前轮次」会在轮次结束时发送。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Run script"
 msgstr "运行脚本"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Runs {script}"
 msgstr "运行 {script}"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Runs a shell command and waits for it to finish."
 msgstr "运行 shell 命令并等待其完成。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Runs in the task's worktree, or the project checkout when it has none."
-msgstr "在任务的工作树中运行；若无工作树，则在项目检出目录中运行。"
+msgstr "在任务的工作树中运行；没有工作树时，则在项目检出目录中运行。"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Russian"
 msgstr "俄语"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save board configuration"
 msgstr "保存看板配置"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save edits"
 msgstr "保存编辑"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save the task edit form, the same as its Save button."
-msgstr "保存任务编辑表单，与其“保存”按钮相同。"
+msgstr "保存任务编辑表单，与「保存」按钮相同。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Script"
 msgstr "脚本"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Select the next file in the Changes panel."
-msgstr "在“更改”面板中选择下一个文件。"
+msgstr "在「更改」面板中选择下一个文件。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Select the previous file in the Changes panel."
-msgstr "在“更改”面板中选择上一个文件。"
+msgstr "在「更改」面板中选择上一个文件。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Send message to agent"
-msgstr "向代理发送消息"
+msgstr "向智能体发送消息"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Sends \"{message}\""
-msgstr "发送“{message}”"
+msgstr "发送「{message}」"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Sends a message to the agent working on the task."
-msgstr "向处理该任务的代理发送消息。"
+msgstr "向处理该任务的智能体发送消息。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Sends a request. Retries a network error, 408, 429 or 5xx."
 msgstr "发送请求。遇到网络错误、408、429 或 5xx 时重试。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Sent to the agent in that column once it is ready."
-msgstr "在该列的代理就绪后发送给它。"
+msgstr "在该列的智能体就绪后发送给它。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Sent to the task's agent as if you typed it yourself."
-msgstr "发送给任务的代理，如同你亲自输入。"
+msgstr "发送给任务的智能体，如同你亲自输入。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the activity-engine debug overlay."
 msgstr "显示或隐藏活动引擎调试浮层。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the browser pane inside the task detail dialog."
-msgstr "显示或隐藏任务详情对话框中的浏览器窗格。"
+msgstr "在任务详情对话框中显示或隐藏浏览器窗格。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the changes (diff) panel inside the task detail dialog."
 msgstr "在任务详情对话框中显示或隐藏更改（差异）面板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "在任务详情对话框中显示或隐藏描述面板。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "显示或隐藏项目侧边栏。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Shows a desktop notification."
 msgstr "显示桌面通知。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Shows a desktop notification. Clicking it opens the task."
 msgstr "显示桌面通知。点击通知可打开任务。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap)."
 msgstr "向下贴靠：最大化时还原窗口，或将半屏贴靠的窗口移至对应的下方角落（Win11 状态式贴靠）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap left: to the left half, or from a right corner to the matching left corner (Win11 stateful snap)."
 msgstr "向左贴靠：贴靠到左半屏，或从右侧角落移至对应的左侧角落（Win11 状态式贴靠）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap right: to the right half, or from a left corner to the matching right corner (Win11 stateful snap)."
 msgstr "向右贴靠：贴靠到右半屏，或从左侧角落移至对应的右侧角落（Win11 状态式贴靠）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap up: maximize when floating, or move a half-snapped window to its top corner (Win11 stateful snap)."
 msgstr "向上贴靠：浮动时最大化，或将半屏贴靠的窗口移至对应的上方角落（Win11 状态式贴靠）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap window down"
 msgstr "向下贴靠窗口"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap window left"
 msgstr "向左贴靠窗口"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap window right"
 msgstr "向右贴靠窗口"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Snap window up"
 msgstr "向上贴靠窗口"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Spanish"
 msgstr "西班牙语"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Start agent"
-msgstr "启动代理"
+msgstr "启动智能体"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Start an agent here is off, so no agent ends a turn here."
-msgstr "“在此启动代理”已关闭，因此此处不会有代理结束轮次。"
+msgstr "「在此启动智能体」已关闭，因此此处不会有智能体结束轮次。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Start an agent here is off."
-msgstr "“在此启动代理”已关闭。"
+msgstr "「在此启动智能体」已关闭。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Starts the agent with \"{prompt}\""
-msgstr "以“{prompt}”启动代理"
+msgstr "以「{prompt}」启动智能体"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "Starts the agent."
-msgstr "启动代理。"
+msgstr "启动智能体。"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
 msgid "Starts with it"
 msgstr "以该文本开头"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Switch board / backlog"
 msgstr "切换看板/待办列表"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Task description with a \": \" prefix when non-empty (PTY-sanitized)."
 msgstr "任务描述，非空时带有 \": \" 前缀（已做 PTY 清理）。"
 
 #: src/shared/background-call-jobs.ts
-#, fuzzy
 msgid "Task summaries"
 msgstr "任务摘要"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Task title (PTY-sanitized)."
 msgstr "任务标题（已做 PTY 清理）。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Task title and description wrapped in a <task> XML envelope. Default seeded prompt template is '{{task_xml}}{{workflow_xml}}{{attachments}}'."
-msgstr "包裹在 <task> XML 信封中的任务标题和描述。默认预置的提示词模板为 '{{task_xml}}{{workflow_xml}}{{attachments}}.'"
+msgstr "包裹在 <task> XML 信封中的任务标题和描述。默认预置的提示词模板为 '{{task_xml}}{{workflow_xml}}{{attachments}}'。"
 
 #: src/shared/background-call-jobs.ts
-#, fuzzy
 msgid "Task titles"
 msgstr "任务标题"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Task UUID."
 msgstr "任务 UUID。"
 
 #: src/shared/background-call-jobs.ts
-#, fuzzy
 msgid "Terminal names"
 msgstr "终端名称"
 
 #: src/shared/final-line-match.ts
-#, fuzzy
 msgid "Text match reads the agent's last message, so it runs on agent turn end only."
-msgstr "文本匹配读取代理的最后一条消息，因此仅在代理轮次结束时运行。"
+msgstr "文本匹配读取智能体的最后一条消息，因此只能在智能体轮次结束时运行。"
 
 #: src/shared/workflow-refusals.ts
-#, fuzzy
 msgid "That link closes a loop. A workflow's links cannot go in a circle."
 msgstr "该关联会形成循环。工作流中的关联不能构成环路。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The agent's reply at the end of its last turn in this column."
 msgstr "智能体在此列中最后一轮结束时的回复。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The column the task moved into."
 msgstr "任务移入的列。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The column the task moved out of."
 msgstr "任务移出的列。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The column this automation belongs to."
 msgstr "此自动化所属的列。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The linked tracker issue's key, such as a Jira key or a GitHub issue number."
-msgstr "所关联跟踪器问题的键，例如 Jira 键或 GitHub 问题编号。"
+msgstr "所关联跟踪器议题的键，例如 Jira 键或 GitHub 议题编号。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The linked tracker issue's URL."
-msgstr "所关联跟踪器问题的 URL。"
+msgstr "所关联跟踪器议题的 URL。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The project's name as it reads in the sidebar."
 msgstr "项目在侧边栏中显示的名称。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "The task is archived."
 msgstr "该任务已归档。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "The task is in Done."
-msgstr "该任务位于“已完成”列。"
+msgstr "该任务位于「已完成」列。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "The task is in To Do."
-msgstr "该任务位于“待办”列。"
+msgstr "该任务位于「待办」列。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The task's #N, the number people say out loud."
 msgstr "任务的 #N，即人们口头称呼的编号。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "The task's labels, comma-separated."
 msgstr "任务的标签，以逗号分隔。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "This column's agent can't report when it finishes a turn."
-msgstr "此列的代理无法在完成轮次时进行报告。"
+msgstr "此列的智能体无法上报轮次结束。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "This task is archived. Restore it to the board to continue working on it."
 msgstr "此任务已归档。请将其恢复到看板以继续处理。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "This task is complete. Move it out of Done to continue working on it."
-msgstr "此任务已完成。请将其移出“已完成”列以继续处理。"
+msgstr "此任务已完成。请将其移出「已完成」列以继续处理。"
 
 #: src/shared/session-resume-eligibility.ts
-#, fuzzy
 msgid "This task is in To Do. Move it to another column to start its agent."
-msgstr "此任务位于“待办”列。请将其移至其他列以启动其代理。"
+msgstr "此任务位于「待办」列。请将其移至其他列以启动其智能体。"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "Title"
 msgstr "标题"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Agent Monitor"
-msgstr "切换代理监视器"
+msgstr "切换智能体监控"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle between the board and the backlog view."
 msgstr "在看板视图和待办列表视图之间切换。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Browser pane"
 msgstr "切换浏览器窗格"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Changes panel"
 msgstr "切换更改面板"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "切换命令终端"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle debug overlay"
 msgstr "切换调试浮层"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle description peek"
 msgstr "切换描述速览"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Knowledge Graph"
 msgstr "切换知识图谱"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle settings"
 msgstr "切换设置"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle sidebar"
 msgstr "切换侧边栏"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle terminal panel"
 msgstr "切换终端面板"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Toggle Usage Stats"
-msgstr "切换使用情况统计"
+msgstr "切换使用统计"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Turkish"
 msgstr "土耳其语"
 
 #: src/shared/dictation-languages.ts
-#, fuzzy
 msgctxt "spoken language"
 msgid "Ukrainian"
 msgstr "乌克兰语"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgctxt "automation field"
 msgid "URL"
 msgstr "URL"
 
 #: src/shared/pop-out.ts
-#, fuzzy
 msgid "Usage Statistics"
 msgstr "使用统计"
 
 #: src/shared/automation-manifest.ts
-#, fuzzy
 msgid "Wait for current turn"
 msgstr "等待当前轮次"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "waits for the current turn to end"
 msgstr "等待当前轮次结束"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "What the workflow was made from, in a <brief> block with the source task's number."
-msgstr "工作流的创建来源，以 <brief> 块呈现，并附带源任务的编号。"
+msgstr "工作流的创建来源，放在 <brief> 块中，并附带源任务的编号。"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "When this automation runs: enter, turn_end or exit."
 msgstr "此自动化的运行时机：enter、turn_end 或 exit。"
 
 #: src/shared/automation-describe.ts
-#, fuzzy
 msgid "with a message"
-msgstr "附带消息"
+msgstr "并附带消息"
 
 #: src/shared/background-call-jobs.ts
-#, fuzzy
 msgid "Workflow steps"
 msgstr "工作流步骤"
 
 #: src/shared/task-template-vars.ts
-#, fuzzy
 msgid "Worktree directory path (empty if the task has none)."
-msgstr "工作树目录路径（如果任务没有工作树则为空）。"
+msgstr "工作树目录路径（任务没有工作树时为空）。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Wrap the selected description text in a markdown link. Fixed."
 msgstr "将所选描述文本包裹为 Markdown 链接。不可更改。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Wrap the selected description text in bold markdown. Fixed."
 msgstr "将所选描述文本包裹为 Markdown 粗体。不可更改。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Wrap the selected description text in italic markdown. Fixed."
 msgstr "将所选描述文本包裹为 Markdown 斜体。不可更改。"
 
 #: src/shared/relay.ts
-#, fuzzy
 msgid "Your phone will refuse to pair with a relay that is not using TLS. Use wss://, or ws:// only for localhost, 127.0.0.1, or [::1]."
-msgstr "手机将拒绝与未使用 TLS 的中继配对。请使用 wss://，ws:// 仅限用于 localhost、127.0.0.1 或 [::1]。"
+msgstr "手机将拒绝与未使用 TLS 的中继配对。请使用 wss://，ws:// 仅限 localhost、127.0.0.1 或 [::1]。"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Zoom in"
 msgstr "放大"
 
 #: src/shared/keybindings.ts
-#, fuzzy
 msgid "Zoom out"
 msgstr "缩小"
