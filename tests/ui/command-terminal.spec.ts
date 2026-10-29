@@ -3273,6 +3273,11 @@ test.describe('Command Terminal', () => {
     });
 
     test('Escape mid-drag puts everything back, refit, and swaps nothing', async () => {
+      // Opens three terminals and waits out two resize settles before it presses Escape. On
+      // CI's loaded UI shard that setup alone ran 14.8 s and then 15.0 s on the retry, and the
+      // 15 s default ended both mid-poll (the failure read as "expected < 53, received 53": the
+      // refit had not landed yet). The Expand tests above take 45 s for the same reason.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openThree(page);
