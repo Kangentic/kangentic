@@ -875,6 +875,13 @@ export async function recordLayoutChange(
   // Small JPEG frames: the comparison shrinks the scope to PICTURE_WIDTH anyway,
   // and full-size PNGs made one recording take most of a test's time budget.
   await cdp.send('Page.startScreencast', { format: 'jpeg', quality: 80, maxWidth: 960, maxHeight: 960, everyNthFrame: 1 });
+  // The picture from before the change has to be recorded before the change starts: every reading
+  // of the recording is relative to the last frame stamped before `actedAt`, and a frame is stamped
+  // before it is delivered, so one that has arrived is one that is stamped before it. A fixed wait
+  // alone left a starved compositor (440 ms between two frames on CI) with no frame yet, and the
+  // reading threw "no frames around the layout change". The wait after it keeps the quiet beat the
+  // recording always had between that first frame and the action.
+  await expect.poll(() => captured.length, { timeout: 10000 }).toBeGreaterThan(0);
   await page.waitForTimeout(250);
   const actedAt = Date.now() / 1000;
   await action();
