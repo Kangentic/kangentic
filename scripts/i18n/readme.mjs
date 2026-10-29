@@ -1,14 +1,24 @@
 /**
- * The translated READMEs (`README.<locale>.md` at the repo root): the language
- * switcher every README carries, the stamp each translation opens with, and the
- * checks a translation passes before it is written. translate-readme.mjs runs
- * them; docs/contributing/translations.md is the guide.
+ * The translated READMEs (`i18n/README.<locale>.md`): the language switcher
+ * every README carries, the stamp each translation opens with, the checks a
+ * translation passes before it is written, and the link rewrite that moves it
+ * into its folder. translate-readme.mjs runs them;
+ * docs/contributing/translations.md is the guide.
  *
  * Pure functions with no file or git access, so tests/unit/readme-translations.test.ts
  * drives them directly.
  */
 import { createHash } from 'node:crypto';
+import path from 'node:path';
 import { glossaryErrors, relevantTerms } from './glossary.mjs';
+
+/**
+ * The folder the translations live in, from the repo root. One folder keeps 14
+ * files out of the root listing GitHub shows above the README.
+ */
+export const TRANSLATIONS_DIRECTORY = 'i18n';
+/** The English README as a translation links it. */
+const ENGLISH_HREF = path.posix.relative(TRANSLATIONS_DIRECTORY, 'README.md');
 
 const SWITCHER_START = '<!-- language-switcher -->';
 const SWITCHER_END = '<!-- /language-switcher -->';
@@ -72,19 +82,26 @@ export function shortHash(blob) {
   return blob.slice(0, SHORT_HASH_LENGTH);
 }
 
+/** A README's path from the repo root, with `/` separators: README.md, or `i18n/README.<locale>.md`. */
 export function readmeFileName(locale, sourceLocale) {
-  return locale === sourceLocale ? 'README.md' : `README.${locale}.md`;
+  return locale === sourceLocale ? 'README.md' : `${TRANSLATIONS_DIRECTORY}/README.${locale}.md`;
+}
+
+/** The href from one README to another, relative to the folder the first one sits in. */
+function readmeHref(fromLocale, toLocale, sourceLocale) {
+  const fromDirectory = path.posix.dirname(readmeFileName(fromLocale, sourceLocale));
+  return path.posix.relative(fromDirectory, readmeFileName(toLocale, sourceLocale));
 }
 
 /**
  * The switcher for the README in `currentLocale`: every shipped language by its
  * own name, in `shippedLocales` order, separated by `|`. The current one is plain
- * text and the others link to their README. HTML, because a Markdown link does not
- * render inside an HTML block.
+ * text and the others link to their README, relative to this one's folder. HTML,
+ * because a Markdown link does not render inside an HTML block.
  */
 export function renderSwitcher(currentLocale, shippedLocales, nativeNames, sourceLocale) {
   const entries = shippedLocales.map((locale) => (
-    locale === currentLocale ? nativeNames[locale] : `<a href="${readmeFileName(locale, sourceLocale)}">${nativeNames[locale]}</a>`
+    locale === currentLocale ? nativeNames[locale] : `<a href="${readmeHref(currentLocale, locale, sourceLocale)}">${nativeNames[locale]}</a>`
   ));
   const lines = entries.map((entry, index) => `  ${entry}${index < entries.length - 1 ? ' |' : ''}`);
   return [SWITCHER_START, '<p align="center">', ...lines, '</p>', SWITCHER_END].join('\n');
@@ -126,7 +143,7 @@ function stampLine(blob) {
  */
 export function composeTranslation({ blob, notice, body }) {
   const filledNotice = notice
-    .replace('{readme}', '[README.md](README.md)')
+    .replace('{readme}', `[README.md](${ENGLISH_HREF})`)
     .replace('{revision}', `\`${shortHash(blob)}\``);
   return `${stampLine(blob)}\n> ${filledNotice}\n\n${body.replace(/\s+$/, '')}\n`;
 }
@@ -165,6 +182,44 @@ const NUMBER = /\d+(?:\.\d+)*/g;
 
 function documentLines(markdown) {
   return normalizeNewlines(markdown).replace(/\s+$/, '').split('\n');
+}
+
+/** A link target with a scheme (https:, mailto:), a fragment alone, or a site-absolute path. */
+const NOT_RELATIVE = /^(?:[a-z][a-z0-9+.-]*:|#|\/)/i;
+const LINK_TARGET_IN_TEXT = /(\]\()([^)\s]+)(\))|(\b(?:href|src)=")([^"]+)(")/g;
+
+function relocateTarget(target, directory) {
+  if (NOT_RELATIVE.test(target)) return target;
+  const fragmentStart = target.indexOf('#');
+  const targetPath = fragmentStart === -1 ? target : target.slice(0, fragmentStart);
+  const fragment = fragmentStart === -1 ? '' : target.slice(fragmentStart);
+  return `${path.posix.relative(directory, targetPath)}${fragment}`;
+}
+
+/**
+ * `markdown`, written against the repo root, with every relative link target
+ * rewritten for a file in `directory`: `LICENSE` becomes `../LICENSE` in `i18n/`.
+ * Markdown link targets and `href`/`src` attributes move, while URLs, fragments,
+ * fenced blocks and inline code stay as written. The model translates against
+ * README.md's own links, so the checks compare like with like, and the
+ * translation moves into its folder only when it is written.
+ */
+export function relocateLinks(markdown, directory = TRANSLATIONS_DIRECTORY) {
+  let inFence = false;
+  return normalizeNewlines(markdown).split('\n').map((line) => {
+    if (FENCE.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence) return line;
+    // Odd parts are inline code spans, which keep their text.
+    return line.split(/(`[^`\n]+`)/).map((part, index) => (index % 2 === 1 ? part : part.replace(
+      LINK_TARGET_IN_TEXT,
+      (match, markdownOpen, markdownTarget, markdownClose, attributeOpen, attributeTarget, attributeClose) => (markdownOpen
+        ? `${markdownOpen}${relocateTarget(markdownTarget, directory)}${markdownClose}`
+        : `${attributeOpen}${relocateTarget(attributeTarget, directory)}${attributeClose}`),
+    ))).join('');
+  }).join('\n');
 }
 
 function altTextsOf(tag) {

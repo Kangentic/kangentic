@@ -24,8 +24,8 @@ import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
-/** The translated READMEs (README.<locale>.md), which link the docs the way README.md does. */
-const TRANSLATED_README = /^README\.[\w-]+\.md$/;
+/** The translated READMEs (i18n/README.<locale>.md), which link the docs the way README.md does. */
+const TRANSLATED_README = /^i18n\/README\.[\w-]+\.md$/;
 const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
 /**
  * A retired path a file names on purpose, keyed `<file> cites <path>`. release-changelog.mjs matches
@@ -66,11 +66,12 @@ describe('docs path citations', () => {
     expect(citedDocsPaths('see docs/agent-integration.md')).toEqual(['docs/agent-integration.md']);
   });
 
-  it('scans the translated READMEs at the repo root, hyphenated locales included', () => {
+  it('scans the translated READMEs in i18n/, hyphenated locales included, and reads their ../docs links', () => {
     const files = scannedFiles();
     expect(files).toContain('README.md');
-    expect(files).toContain('README.de.md');
-    expect(files).toContain('README.pt-BR.md');
+    expect(files).toContain('i18n/README.de.md');
+    expect(files).toContain('i18n/README.pt-BR.md');
+    expect(citedDocsPaths('[Translations](../docs/contributing/translations.md)')).toEqual(['docs/contributing/translations.md']);
   });
 
   it('cites only docs files that exist', () => {

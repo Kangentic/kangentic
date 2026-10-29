@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> これは `3c139f6` 時点の [README.md](README.md) の機械翻訳です。正式な版は英語版です。
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> これは `eecf917` 時点の [README.md](../README.md) の機械翻訳です。正式な版は英語版です。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic のロゴ" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="最新リリース" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm バージョン" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 ライセンス" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 ライセンス" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ WSL ユーザーは Windows 版をインストールし、ターミナルシェ�
 
 ## 言語
 
-Kangentic のインターフェースは、このページの上部に記載されている各言語で利用できます。Settings > Language で変更すると、Kangentic がその言語で再起動します。翻訳は機械翻訳で、レビューを受け付けています。修正方法は [Translations](docs/contributing/translations.md) で説明しています。
+Kangentic のインターフェースは、このページの上部に記載されている各言語で利用できます。Settings > Language で変更すると、Kangentic がその言語で再起動します。翻訳は機械翻訳で、レビューを受け付けています。修正方法は [Translations](../docs/contributing/translations.md) で説明しています。
 
 ## データとプライバシー
 
@@ -151,7 +151,7 @@ npm start
 
 ## コントリビューション
 
-プロジェクト構成、テスト、規約については [CONTRIBUTING.md](CONTRIBUTING.md) を参照してください。コントリビューターは、最初の pull request がマージされる前に [CLA](CLA.md) に署名します。
+プロジェクト構成、テスト、規約については [CONTRIBUTING.md](../CONTRIBUTING.md) を参照してください。コントリビューターは、最初の pull request がマージされる前に [CLA](../CLA.md) に署名します。
 
 ## サポート
 
@@ -159,8 +159,8 @@ npm start
 - バグ報告は [GitHub Issues](https://github.com/Kangentic/kangentic/issues) へ
 - 公開の場に投稿したくない場合は [support@kangentic.com](mailto:support@kangentic.com) へ
 
-セキュリティの問題を報告するには、[SECURITY.md](SECURITY.md) を参照してください。
+セキュリティの問題を報告するには、[SECURITY.md](../SECURITY.md) を参照してください。
 
 ## ライセンス
 
-[AGPL-3.0](LICENSE)。商用ライセンスについては licensing@kangentic.com までメールでお問い合わせください。
+[AGPL-3.0](../LICENSE)。商用ライセンスについては licensing@kangentic.com までメールでお問い合わせください。

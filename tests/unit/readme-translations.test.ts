@@ -1,9 +1,10 @@
 /**
- * The translated READMEs (README.<locale>.md at the root, docs/contributing/translations.md).
+ * The translated READMEs (i18n/README.<locale>.md, docs/contributing/translations.md).
  *
- * The first block holds the live files to SHIPPED_LOCALES: one translation per shipped language and
- * no other, every README's language switcher listing exactly the shipped languages in order with
- * the current one unlinked, a stamp on every translation, and links that resolve. Adding a language
+ * The first block holds the live files to SHIPPED_LOCALES: one translation per shipped language in
+ * i18n/ and none at the root, every README's language switcher listing exactly the shipped languages
+ * in order with the current one unlinked, a stamp on every translation, and links that resolve from
+ * the file's own folder. Adding a language
  * to SHIPPED_LOCALES fails here until `npm run i18n:translate-readme -- --locales <code>` has written
  * its README. Freshness is deliberately not checked. A feature commit that edits README.md in passing
  * should not need 14 translations, and a stale translation still helps its reader.
@@ -26,6 +27,7 @@ import {
   README_KEEP,
   readmeProblems,
   readStamp,
+  relocateLinks,
   renderSwitcher,
   replaceSwitcher,
   restamp,
@@ -35,6 +37,7 @@ import {
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SWITCHER_START = '<!-- language-switcher -->';
 const SWITCHER_END = '<!-- /language-switcher -->';
+const TRANSLATIONS_DIRECTORY = 'i18n';
 const TRANSLATION_FILE = /^README\.(.+)\.md$/;
 const STAMP_LINE = /^<!-- readme-translation source-blob=([0-9a-f]{40}) -->$/;
 
@@ -47,8 +50,14 @@ function readRepoFile(name: string): string {
   return fs.readFileSync(path.join(REPO_ROOT, name), 'utf-8').replace(/\r\n/g, '\n');
 }
 
-function expectedHref(locale: string): string {
-  return locale === SOURCE_LOCALE ? 'README.md' : `README.${locale}.md`;
+/** A README's path from the repo root. */
+function readmePath(locale: string): string {
+  return locale === SOURCE_LOCALE ? 'README.md' : `${TRANSLATIONS_DIRECTORY}/README.${locale}.md`;
+}
+
+/** The link from the README in `fromLocale` to the one in `toLocale`, relative to the first one's folder. */
+function expectedHref(fromLocale: string, toLocale: string): string {
+  return path.posix.relative(path.posix.dirname(readmePath(fromLocale)), readmePath(toLocale));
 }
 
 function countOccurrences(text: string, needle: string): number {
@@ -73,7 +82,7 @@ function parseSwitcher(markdown: string): SwitcherEntry[] | string {
 function expectedSwitcher(currentLocale: string): SwitcherEntry[] {
   return SHIPPED_LOCALES.map((locale) => ({
     label: LOCALE_NATIVE_NAMES[locale],
-    href: locale === currentLocale ? null : expectedHref(locale),
+    href: locale === currentLocale ? null : expectedHref(currentLocale, locale),
   }));
 }
 
@@ -85,20 +94,27 @@ function linkTargets(markdown: string): string[] {
   return [...markdownTargets, ...attributeTargets];
 }
 
-const translationFiles = fs.readdirSync(REPO_ROOT).filter((name) => TRANSLATION_FILE.test(name)).sort();
+const translationsDirectory = path.join(REPO_ROOT, TRANSLATIONS_DIRECTORY);
+const translationNames = fs.existsSync(translationsDirectory) ? fs.readdirSync(translationsDirectory).sort() : [];
+const translationFiles = translationNames.filter((name) => TRANSLATION_FILE.test(name)).map((name) => `${TRANSLATIONS_DIRECTORY}/${name}`);
 const translatedLocales = SHIPPED_LOCALES.filter((locale) => locale !== SOURCE_LOCALE);
 const readmeFiles: Array<{ file: string; locale: string }> = [
   { file: 'README.md', locale: SOURCE_LOCALE },
-  ...translatedLocales.map((locale) => ({ file: expectedHref(locale), locale })),
+  ...translatedLocales.map((locale) => ({ file: readmePath(locale), locale })),
 ].filter(({ file }) => fs.existsSync(path.join(REPO_ROOT, file)));
 
 describe('translated READMEs', () => {
-  it('has one README.<locale>.md for every shipped language but English, and no other', () => {
-    const fileLocales = translationFiles.map((name) => TRANSLATION_FILE.exec(name)![1]).sort();
+  it('has one i18n/README.<locale>.md for every shipped language but English, and no other', () => {
+    const fileLocales = translationNames.map((name) => TRANSLATION_FILE.exec(name)?.[1] ?? name).sort();
     expect(
       fileLocales,
-      'Each shipped language needs README.<locale>.md (npm run i18n:translate-readme -- --locales <code>), and a language that is not shipped has none.',
+      'i18n/ holds one README.<locale>.md per shipped language (npm run i18n:translate-readme -- --locales <code>) and nothing else.',
     ).toEqual([...translatedLocales].sort());
+  });
+
+  it('keeps the translations out of the repo root', () => {
+    const atRoot = fs.readdirSync(REPO_ROOT).filter((name) => TRANSLATION_FILE.test(name));
+    expect(atRoot, 'a translated README belongs in i18n/, which keeps 14 files out of the root listing').toEqual([]);
   });
 
   it('gives every README a switcher listing the shipped languages in order, the current one unlinked', () => {
@@ -115,13 +131,13 @@ describe('translated READMEs', () => {
       const stamp = STAMP_LINE.exec(lines[0]);
       expect(stamp, `${file} line 1 must be the stamp marker`).not.toBeNull();
       expect(lines[1].startsWith('> '), `${file} line 2 must be the notice, as a quote`).toBe(true);
-      expect(lines[1], `${file} notice links README.md`).toContain('[README.md](README.md)');
+      expect(lines[1], `${file} notice links README.md`).toContain('[README.md](../README.md)');
       expect(lines[1], `${file} notice shows the short hash`).toContain(`\`${stamp![1].slice(0, 7)}\``);
       expect(lines[2], `${file} line 3 is blank`).toBe('');
     }
   });
 
-  it('links only files that exist, and every #fragment to an anchor in the same file', () => {
+  it('links only files that exist from the file\'s own folder, and every #fragment to an anchor in the same file', () => {
     const problems: string[] = [];
     let checked = 0;
     for (const { file } of readmeFiles) {
@@ -135,7 +151,7 @@ describe('translated READMEs', () => {
           continue;
         }
         const relativePath = target.split('#')[0];
-        if (!fs.existsSync(path.join(REPO_ROOT, relativePath))) problems.push(`${file}: ${target} does not exist`);
+        if (!fs.existsSync(path.join(REPO_ROOT, path.dirname(file), relativePath))) problems.push(`${file}: ${target} does not exist`);
       }
     }
     expect(problems).toEqual([]);
@@ -383,6 +399,36 @@ describe('README switcher and stamp', () => {
     expect(translatableSource(markdown)).toBe(`top\n${SWITCHER_START}\n${SWITCHER_END}\nbottom`);
   });
 
+  it('links README.md into i18n/ and each translation back out, and translations to each other as siblings', () => {
+    const shipped = ['en', 'de', 'ja'];
+    const names = { en: 'English', de: 'Deutsch', ja: '日本語' };
+    expect(renderSwitcher('en', shipped, names, 'en')).toContain('<a href="i18n/README.de.md">Deutsch</a>');
+    const german = renderSwitcher('de', shipped, names, 'en');
+    expect(german).toContain('<a href="../README.md">English</a>');
+    expect(german).toContain('<a href="README.ja.md">日本語</a>');
+  });
+
+  it('moves relative link targets into i18n/ and leaves everything else as written', () => {
+    const rootRelative = [
+      '<a href="LICENSE"><img src="https://example.com/badge.svg" alt="Lizenz" /></a>',
+      'Siehe [CONTRIBUTING.md](CONTRIBUTING.md), [Übersetzungen](docs/contributing/translations.md#readme) und [Agents](#supported-agents).',
+      'Schreiben Sie an [support](mailto:support@example.com) oder [die Seite](https://example.com/guide/).',
+      'Der Pfad `[x](LICENSE)` bleibt Code.',
+      '```md',
+      '[CLA](CLA.md)',
+      '```',
+    ].join('\n');
+    expect(relocateLinks(rootRelative)).toBe([
+      '<a href="../LICENSE"><img src="https://example.com/badge.svg" alt="Lizenz" /></a>',
+      'Siehe [CONTRIBUTING.md](../CONTRIBUTING.md), [Übersetzungen](../docs/contributing/translations.md#readme) und [Agents](#supported-agents).',
+      'Schreiben Sie an [support](mailto:support@example.com) oder [die Seite](https://example.com/guide/).',
+      'Der Pfad `[x](LICENSE)` bleibt Code.',
+      '```md',
+      '[CLA](CLA.md)',
+      '```',
+    ].join('\n'));
+  });
+
   it('hashes text the way git hashes a blob', () => {
     // `git hash-object` of a file holding "hello\n".
     expect(gitBlobHash('hello\n')).toBe('ce013625030ba8dba906f756967f9e9ca394464a');
@@ -394,7 +440,7 @@ describe('README switcher and stamp', () => {
     const translation = composeTranslation({ blob: firstBlob, notice: ENGLISH_NOTICE, body: '# Body\n' });
     expect(translation).toBe(
       `<!-- readme-translation source-blob=${firstBlob} -->\n`
-      + '> This is a machine translation of [README.md](README.md) at `aaaaaaa`. The English version is the canonical one.\n'
+      + '> This is a machine translation of [README.md](../README.md) at `aaaaaaa`. The English version is the canonical one.\n'
       + '\n# Body\n',
     );
     expect(readStamp(translation)).toBe(firstBlob);

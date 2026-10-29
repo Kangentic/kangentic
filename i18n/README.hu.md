@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> Ez a [README.md](README.md) gépi fordítása, `3c139f6` állapot szerint. A hiteles változat az angol.
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> Ez a [README.md](../README.md) gépi fordítása, `eecf917` állapot szerint. A hiteles változat az angol.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic logó" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="Legújabb kiadás" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm-verzió" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 licenc" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 licenc" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ Az újraindítás utáni folytatás, a tábla MCP-eszközei és az előzmények 
 
 ## Nyelvek
 
-A Kangentic felülete az oldal tetején felsorolt összes nyelven elérhető. A nyelvet a Settings > Language menüben módosíthatod, és a Kangentic ezen a nyelven indul újra. A fordítások gépi fordítások, és bárki átnézheti őket; a [Fordítások](docs/contributing/translations.md) leírja, hogyan javíthatsz ki egyet.
+A Kangentic felülete az oldal tetején felsorolt összes nyelven elérhető. A nyelvet a Settings > Language menüben módosíthatod, és a Kangentic ezen a nyelven indul újra. A fordítások gépi fordítások, és bárki átnézheti őket; a [Fordítások](../docs/contributing/translations.md) leírja, hogyan javíthatsz ki egyet.
 
 ## Adatok és adatvédelem
 
@@ -151,7 +151,7 @@ npm start
 
 ## Közreműködés
 
-A projekt felépítéséről, a tesztekről és a konvenciókról a [CONTRIBUTING.md](CONTRIBUTING.md) fájlban olvashatsz. A közreműködők az első pull requestjük egyesítése előtt aláírnak egy [CLA](CLA.md) megállapodást.
+A projekt felépítéséről, a tesztekről és a konvenciókról a [CONTRIBUTING.md](../CONTRIBUTING.md) fájlban olvashatsz. A közreműködők az első pull requestjük egyesítése előtt aláírnak egy [CLA](../CLA.md) megállapodást.
 
 ## Támogatás
 
@@ -159,8 +159,8 @@ A projekt felépítéséről, a tesztekről és a konvenciókról a [CONTRIBUTIN
 - [GitHub Issues](https://github.com/Kangentic/kangentic/issues) hibajelentésekhez
 - [support@kangentic.com](mailto:support@kangentic.com), ha inkább nem posztolnál nyilvánosan
 
-Biztonsági probléma bejelentéséhez lásd: [SECURITY.md](SECURITY.md).
+Biztonsági probléma bejelentéséhez lásd: [SECURITY.md](../SECURITY.md).
 
 ## Licenc
 
-[AGPL-3.0](LICENSE). Kereskedelmi licencért írj a licensing@kangentic.com címre.
+[AGPL-3.0](../LICENSE). Kereskedelmi licencért írj a licensing@kangentic.com címre.

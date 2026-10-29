@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> 이 문서는 `3c139f6` 시점 [README.md](README.md)의 기계 번역본입니다. 영어 버전이 기준 문서입니다.
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> 이 문서는 `eecf917` 시점 [README.md](../README.md)의 기계 번역본입니다. 영어 버전이 기준 문서입니다.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 로고" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="최신 릴리스" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm 버전" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 라이선스" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 라이선스" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ WSL 사용자는 Windows 버전을 설치하고 터미널 셸로 WSL 배포판�
 
 ## 언어
 
-Kangentic 인터페이스는 이 페이지 상단에 나열된 각 언어로 제공됩니다. Settings > Language에서 언어를 변경하면 Kangentic이 해당 언어로 다시 시작됩니다. 번역은 기계 번역이며 누구나 검토할 수 있습니다. 번역을 수정하는 방법은 [번역](docs/contributing/translations.md)에서 설명합니다.
+Kangentic 인터페이스는 이 페이지 상단에 나열된 각 언어로 제공됩니다. Settings > Language에서 언어를 변경하면 Kangentic이 해당 언어로 다시 시작됩니다. 번역은 기계 번역이며 누구나 검토할 수 있습니다. 번역을 수정하는 방법은 [번역](../docs/contributing/translations.md)에서 설명합니다.
 
 ## 데이터 및 개인 정보
 
@@ -151,7 +151,7 @@ npm start
 
 ## 기여
 
-프로젝트 구조, 테스트, 규칙은 [CONTRIBUTING.md](CONTRIBUTING.md)를 참조하세요. 기여자는 첫 번째 끌어오기 요청이 병합되기 전에 [CLA](CLA.md)에 서명해야 합니다.
+프로젝트 구조, 테스트, 규칙은 [CONTRIBUTING.md](../CONTRIBUTING.md)를 참조하세요. 기여자는 첫 번째 끌어오기 요청이 병합되기 전에 [CLA](../CLA.md)에 서명해야 합니다.
 
 ## 지원
 
@@ -159,8 +159,8 @@ npm start
 - 버그 보고: [GitHub Issues](https://github.com/Kangentic/kangentic/issues)
 - 공개적으로 게시하고 싶지 않은 경우: [support@kangentic.com](mailto:support@kangentic.com)
 
-보안 문제를 보고하려면 [SECURITY.md](SECURITY.md)를 참조하세요.
+보안 문제를 보고하려면 [SECURITY.md](../SECURITY.md)를 참조하세요.
 
 ## 라이선스
 
-[AGPL-3.0](LICENSE). 상용 라이선스가 필요하면 licensing@kangentic.com으로 이메일을 보내세요.
+[AGPL-3.0](../LICENSE). 상용 라이선스가 필요하면 licensing@kangentic.com으로 이메일을 보내세요.

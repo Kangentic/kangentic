@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> Toto je strojový překlad souboru [README.md](README.md) v revizi `3c139f6`. Kanonickou verzí je anglická verze.
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> Toto je strojový překlad souboru [README.md](../README.md) v revizi `eecf917`. Kanonickou verzí je anglická verze.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logo Kangentic" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="Nejnovější verze" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="Verze npm" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="Licence AGPL-3.0" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="Licence AGPL-3.0" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ Obnovení po restartu, nástroje nástěnky MCP a předání historie dalšímu 
 
 ## Jazyky
 
-Rozhraní Kangentic je k dispozici v každém jazyce uvedeném v horní části této stránky. Jazyk změníte v Settings > Language a Kangentic se v něm restartuje. Překlady jsou strojové a otevřené ke kontrole. Jak některý z nich opravit, vysvětlují [Překlady](docs/contributing/translations.md).
+Rozhraní Kangentic je k dispozici v každém jazyce uvedeném v horní části této stránky. Jazyk změníte v Settings > Language a Kangentic se v něm restartuje. Překlady jsou strojové a otevřené ke kontrole. Jak některý z nich opravit, vysvětlují [Překlady](../docs/contributing/translations.md).
 
 ## Data a soukromí
 
@@ -151,7 +151,7 @@ npm start
 
 ## Přispívání
 
-Informace o struktuře projektu, testech a konvencích najdete v [CONTRIBUTING.md](CONTRIBUTING.md). Přispěvatelé podepisují [CLA](CLA.md) před sloučením svého prvního pull requestu.
+Informace o struktuře projektu, testech a konvencích najdete v [CONTRIBUTING.md](../CONTRIBUTING.md). Přispěvatelé podepisují [CLA](../CLA.md) před sloučením svého prvního pull requestu.
 
 ## Podpora
 
@@ -159,8 +159,8 @@ Informace o struktuře projektu, testech a konvencích najdete v [CONTRIBUTING.m
 - [GitHub Issues](https://github.com/Kangentic/kangentic/issues) pro hlášení chyb
 - [support@kangentic.com](mailto:support@kangentic.com), pokud nechcete psát veřejně
 
-Bezpečnostní problém nahlaste podle pokynů v [SECURITY.md](SECURITY.md).
+Bezpečnostní problém nahlaste podle pokynů v [SECURITY.md](../SECURITY.md).
 
 ## Licence
 
-[AGPL-3.0](LICENSE). Pokud chcete komerční licenci, napište na licensing@kangentic.com.
+[AGPL-3.0](../LICENSE). Pokud chcete komerční licenci, napište na licensing@kangentic.com.

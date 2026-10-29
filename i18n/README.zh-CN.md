@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> 本文是 [README.md](README.md) 在 `3c139f6` 版本的机器翻译。以英文版本为准。
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> 本文是 [README.md](../README.md) 在 `eecf917` 版本的机器翻译。以英文版本为准。
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic 标志" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="最新版本" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm 版本" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 许可证" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 许可证" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   中文(简体) |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ WSL 用户应安装 Windows 版本，并可选择一个 WSL 发行版作为终�
 
 ## 语言
 
-Kangentic 的界面支持本页顶部列出的所有语言。在 Settings > Language 中更改语言后，Kangentic 会以该语言重新启动。这些翻译由机器生成，欢迎审阅，[翻译](docs/contributing/translations.md)介绍了如何更正翻译。
+Kangentic 的界面支持本页顶部列出的所有语言。在 Settings > Language 中更改语言后，Kangentic 会以该语言重新启动。这些翻译由机器生成，欢迎审阅，[翻译](../docs/contributing/translations.md)介绍了如何更正翻译。
 
 ## 数据与隐私
 
@@ -151,7 +151,7 @@ npm start
 
 ## 贡献
 
-有关项目结构、测试和约定，请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。贡献者需要在其首个拉取请求合并之前签署 [CLA](CLA.md)。
+有关项目结构、测试和约定，请参阅 [CONTRIBUTING.md](../CONTRIBUTING.md)。贡献者需要在其首个拉取请求合并之前签署 [CLA](../CLA.md)。
 
 ## 支持
 
@@ -159,8 +159,8 @@ npm start
 - [GitHub Issues](https://github.com/Kangentic/kangentic/issues)：报告 bug
 - [support@kangentic.com](mailto:support@kangentic.com)：如果你不想公开发帖
 
-如需报告安全问题，请参阅 [SECURITY.md](SECURITY.md)。
+如需报告安全问题，请参阅 [SECURITY.md](../SECURITY.md)。
 
 ## 许可证
 
-[AGPL-3.0](LICENSE)。如需商业许可证，请发送电子邮件至 licensing@kangentic.com。
+[AGPL-3.0](../LICENSE)。如需商业许可证，请发送电子邮件至 licensing@kangentic.com。

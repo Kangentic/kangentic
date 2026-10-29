@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> Bu, [README.md](README.md) dosyasının `3c139f6` sürümünün makine çevirisidir. Esas alınan sürüm İngilizce olandır.
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> Bu, [README.md](../README.md) dosyasının `eecf917` sürümünün makine çevirisidir. Esas alınan sürüm İngilizce olandır.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Kangentic logosu" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="Son sürüm" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="npm sürümü" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 lisansı" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="AGPL-3.0 lisansı" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ Yeniden başlatmadan sonra devam etme, MCP pano araçları ve geçmişi sonraki 
 
 ## Diller
 
-Kangentic'in arayüzü bu sayfanın üst kısmında listelenen her dilde sunulur. Dili Settings > Language altından değiştirin; Kangentic o dilde yeniden başlar. Çeviriler makine tarafından yapılmıştır ve incelemeye açıktır; [Çeviriler](docs/contributing/translations.md) bir çevirinin nasıl düzeltileceğini açıklar.
+Kangentic'in arayüzü bu sayfanın üst kısmında listelenen her dilde sunulur. Dili Settings > Language altından değiştirin; Kangentic o dilde yeniden başlar. Çeviriler makine tarafından yapılmıştır ve incelemeye açıktır; [Çeviriler](../docs/contributing/translations.md) bir çevirinin nasıl düzeltileceğini açıklar.
 
 ## Veriler ve gizlilik
 
@@ -151,7 +151,7 @@ npm start
 
 ## Katkıda bulunma
 
-Proje yapısı, testler ve kurallar için [CONTRIBUTING.md](CONTRIBUTING.md) dosyasına bakın. Katkıda bulunanlar, ilk pull request'leri birleştirilmeden önce bir [CLA](CLA.md) imzalar.
+Proje yapısı, testler ve kurallar için [CONTRIBUTING.md](../CONTRIBUTING.md) dosyasına bakın. Katkıda bulunanlar, ilk pull request'leri birleştirilmeden önce bir [CLA](../CLA.md) imzalar.
 
 ## Destek
 
@@ -159,8 +159,8 @@ Proje yapısı, testler ve kurallar için [CONTRIBUTING.md](CONTRIBUTING.md) dos
 - Hata raporları için [GitHub Issues](https://github.com/Kangentic/kangentic/issues)
 - Herkese açık paylaşım yapmamayı tercih ederseniz [support@kangentic.com](mailto:support@kangentic.com)
 
-Bir güvenlik sorunu bildirmek için [SECURITY.md](SECURITY.md) dosyasına bakın.
+Bir güvenlik sorunu bildirmek için [SECURITY.md](../SECURITY.md) dosyasına bakın.
 
 ## Lisans
 
-[AGPL-3.0](LICENSE). Ticari lisans için licensing@kangentic.com adresine e-posta gönderin.
+[AGPL-3.0](../LICENSE). Ticari lisans için licensing@kangentic.com adresine e-posta gönderin.

@@ -177,16 +177,21 @@ A fixed term that inflects gives the part every form contains as `match`: Polish
 ## Translated READMEs
 
 `README.md` is English and canonical. Each shipped language but English also has
-`README.<locale>.md` at the repo root. Every README carries a language switcher under the Live demo
-row, with each language in `SHIPPED_LOCALES` order under its `LOCALE_NATIVE_NAMES` name. The current
-language is plain text and the others link to their README. The files sit at the root, not in
-`docs/<locale>/`, so their relative links (`LICENSE`, `CONTRIBUTING.md`, `docs/...`) work unchanged.
-`docs/` is also the concept bundle, and the writing-style scan reads all of it, where Chinese and
-Japanese punctuation would fail.
+`i18n/README.<locale>.md`. Every README carries a language switcher under the Live demo row, with each
+language in `SHIPPED_LOCALES` order under its `LOCALE_NATIVE_NAMES` name. The current language is
+plain text and the others link to their README. The links are relative to the file's folder, so
+`README.md` links into `i18n/`, and a translation links `../README.md` and its siblings by name.
+
+The translations share one folder because GitHub lists every root file above the README, and 14
+of them pushed it down a screen. The folder is not `docs/<locale>/`: `docs/` is the concept bundle,
+whose conformance test wants frontmatter on every file, and the writing-style scan reads all of it,
+where Chinese and Japanese punctuation would fail.
 
 `npm run i18n:translate-readme` writes them with the Claude engine, one call per language. The
 switcher sits between `<!-- language-switcher -->` markers. The script empties that block before the
-call and renders a fresh one after, so the model never writes it. Each reply is checked against the
+call and renders a fresh one after, so the model never writes it. The model translates README.md as
+it is, with its links written from the repo root, and the script adds `../` to each relative link
+(`../LICENSE`, `../docs/...`) when it writes the file into `i18n/`. Each reply is checked against the
 English before anything is written:
 
 - the same lines, each starting with the same Markdown or HTML, so the same headings;
@@ -228,8 +233,9 @@ English.
 cannot be made, so a refresh never skips quietly.
 
 `tests/unit/readme-translations.test.ts` holds the files to `SHIPPED_LOCALES`: one translation per
-shipped language and no other, every switcher listing exactly the shipped languages in order, a
-stamp on every translation, and links that resolve. Adding a language fails it until
+shipped language in `i18n/` and none at the root, every switcher listing exactly the shipped
+languages in order, a stamp on every translation, and links that resolve from the file's folder.
+Adding a language fails it until
 `npm run i18n:translate-readme -- --locales <code>` has run.
 
 ### Correcting a translation
@@ -337,9 +343,11 @@ it as "needs review".
 **The reworded-string hint comes from git.** The catalog gate runs `check sync --clean`, so a
 committed catalog never holds an obsolete entry to offer. The base branch's PO file still has it.
 
-**Translated READMEs at the root as `README.<locale>.md`** (2026-10-28). The other common layout
-is `docs/<locale>/README.md`. It was rejected because relative links would break, `docs/` is the
-concept bundle, and the writing-style scan reads all of `docs/`.
+**Translated READMEs in `i18n/README.<locale>.md`** (2026-10-28). They first shipped at the root,
+where relative links work unchanged, but 14 files lengthened the listing GitHub shows above the
+README. In one folder they take one row, and the script adds `../` to their links on write.
+`docs/<locale>/README.md` was rejected because `docs/` is the concept bundle and the writing-style
+scan reads all of it.
 
 **A blob hash stamp over a commit SHA** (2026-10-28). A rebase merge replaces a branch's SHAs, and
 a blob's hash is known before its commit exists.

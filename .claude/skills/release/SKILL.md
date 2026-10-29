@@ -283,7 +283,7 @@ unapplied.
 ## Step 1.6 - Refresh translated READMEs
 
 Runs after Step 1.5 has applied its edits, since the audit may change README.md. Each
-`README.<locale>.md` is a machine translation stamped with the README.md blob it came from, and
+`i18n/README.<locale>.md` is a machine translation stamped with the README.md blob it came from, and
 feature commits edit README.md without touching them. This step brings every stale one up to date.
 It never skips.
 
@@ -297,7 +297,7 @@ It never skips.
    retry's clean-tree check passes. Never release around it.
 4. Run `Push-Location <main>; npx vitest run tests/unit/readme-translations.test.ts`. A failure
    stops the release the same way.
-5. Stage them: `git -C <main> add README.md README.*.md`. They ride into the release commit in
+5. Stage them: `git -C <main> add README.md i18n`. They ride into the release commit in
    Step 4.
 
 `docs/contributing/translations.md` explains the stamp and why no gate fails on a stale

@@ -2,7 +2,7 @@
 /**
  * Translate README.md into every shipped language (`npm run i18n:translate-readme`).
  *
- * Writes `README.<locale>.md` at the repo root for each non-English entry in
+ * Writes `i18n/README.<locale>.md` for each non-English entry in
  * SHIPPED_LOCALES, with headless `claude -p` (engines/claude.mjs). Each one opens
  * with a stamp naming the README.md blob it was translated from, and every README
  * carries the language switcher this script renders. A translation is checked
@@ -48,6 +48,7 @@ import {
   readmeFileName,
   readmeProblems,
   readStamp,
+  relocateLinks,
   renderSwitcher,
   replaceSwitcher,
   restamp,
@@ -218,6 +219,7 @@ function readNormalized(filePath) {
 function writeIfChanged(filePath, text) {
   const before = fs.existsSync(filePath) ? readNormalized(filePath) : null;
   if (before === text) return false;
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, text);
   return true;
 }
@@ -290,7 +292,10 @@ async function main() {
   const files = new Map([[SOURCE_LOCALE, english], ...kept]);
   for (const locale of toTranslate) {
     const { markdown, notice } = results.get(locale);
-    files.set(locale, composeTranslation({ blob: englishBlob, notice, body: replaceSwitcher(markdown, switcherFor(locale)) }));
+    // The reply links from the repo root like README.md. Move its links into the
+    // translations folder before the switcher, whose links already start there.
+    const body = replaceSwitcher(relocateLinks(markdown), switcherFor(locale));
+    files.set(locale, composeTranslation({ blob: englishBlob, notice, body }));
   }
   const restamped = [...kept.keys()].filter((locale) => states.get(locale) === 'restampable');
   const updated = [];

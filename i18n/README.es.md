@@ -1,5 +1,5 @@
-<!-- readme-translation source-blob=3c139f6ee74019ac75b29fddea661fd14d0b0846 -->
-> Esta es una traducción automática de [README.md](README.md) en `3c139f6`. La versión en inglés es la canónica.
+<!-- readme-translation source-blob=eecf91791ca282e05478d5f2732f583958463f0e -->
+> Esta es una traducción automática de [README.md](../README.md) en `eecf917`. La versión en inglés es la canónica.
 
 <p align="center">
   <a href="https://www.kangentic.com"><img src="https://raw.githubusercontent.com/Kangentic/branding/main/resources/web/logo.png" alt="Logotipo de Kangentic" width="96" /></a>
@@ -15,7 +15,7 @@
 <p align="center">
   <a href="https://github.com/Kangentic/kangentic/releases/latest"><img src="https://img.shields.io/github/v/release/Kangentic/kangentic?style=flat-square" alt="Última versión" /></a>
   <a href="https://www.npmjs.com/package/kangentic"><img src="https://img.shields.io/npm/v/kangentic?style=flat-square" alt="Versión de npm" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="Licencia AGPL-3.0" /></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-AGPL--3.0-blue.svg?style=flat-square" alt="Licencia AGPL-3.0" /></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 
 <!-- language-switcher -->
 <p align="center">
-  <a href="README.md">English</a> |
+  <a href="../README.md">English</a> |
   <a href="README.zh-CN.md">中文(简体)</a> |
   <a href="README.zh-TW.md">中文(繁體)</a> |
   <a href="README.fr.md">Français</a> |
@@ -126,7 +126,7 @@ La reanudación tras un reinicio, las herramientas de tablero de MCP y el traspa
 
 ## Idiomas
 
-La interfaz de Kangentic está disponible en cada idioma que aparece al principio de esta página. Cámbialo en Settings > Language y Kangentic se reinicia en ese idioma. Las traducciones son automáticas y están abiertas a revisión, y [Traducciones](docs/contributing/translations.md) explica cómo corregir una.
+La interfaz de Kangentic está disponible en cada idioma que aparece al principio de esta página. Cámbialo en Settings > Language y Kangentic se reinicia en ese idioma. Las traducciones son automáticas y están abiertas a revisión, y [Traducciones](../docs/contributing/translations.md) explica cómo corregir una.
 
 ## Datos y privacidad
 
@@ -151,7 +151,7 @@ npm start
 
 ## Contribuir
 
-Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para conocer la estructura del proyecto, las pruebas y las convenciones. Los colaboradores firman un [CLA](CLA.md) antes de que se fusione su primer pull request.
+Consulta [CONTRIBUTING.md](../CONTRIBUTING.md) para conocer la estructura del proyecto, las pruebas y las convenciones. Los colaboradores firman un [CLA](../CLA.md) antes de que se fusione su primer pull request.
 
 ## Soporte
 
@@ -159,8 +159,8 @@ Consulta [CONTRIBUTING.md](CONTRIBUTING.md) para conocer la estructura del proye
 - [GitHub Issues](https://github.com/Kangentic/kangentic/issues) para informes de errores
 - [support@kangentic.com](mailto:support@kangentic.com) si prefieres no publicar de forma pública
 
-Para informar de un problema de seguridad, consulta [SECURITY.md](SECURITY.md).
+Para informar de un problema de seguridad, consulta [SECURITY.md](../SECURITY.md).
 
 ## Licencia
 
-[AGPL-3.0](LICENSE). Para obtener una licencia comercial, escribe a licensing@kangentic.com.
+[AGPL-3.0](../LICENSE). Para obtener una licencia comercial, escribe a licensing@kangentic.com.
