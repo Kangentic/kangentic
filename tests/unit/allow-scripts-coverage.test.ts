@@ -146,8 +146,9 @@ describe('allowScripts covers every package npm would otherwise block', () => {
     //   1. the root `postinstall` runs `install-electron` (a bin of the electron
     //      package), which fetches the binary on an ordinary install;
     //   2. scripts/dev.js on Windows resolves the executable by requiring the
-    //      electron package, which returns the binary path and downloads it on
-    //      first use, so an install that skipped scripts still launches.
+    //      electron package (resolveElectronExecutable), which returns the binary
+    //      path and downloads it on first use, so an install that skipped scripts
+    //      still launches.
     expect(
       manifest.scripts?.postinstall,
       'package.json "scripts.postinstall" must be exactly "install-electron". electron 42+ no longer '
@@ -167,22 +168,23 @@ describe('allowScripts covers every package npm would otherwise block', () => {
       })
       .join('\n');
 
-    // `const electronExe = process.platform === 'win32' ? <win32 branch> : <posix branch>;`
+    // `function resolveElectronExecutable() { return process.platform === 'win32' ? <win32 branch> : <posix branch>; }`
     // The win32 branch holds no `:` or `;`, so it is everything up to the ternary's colon.
-    const electronExeAssignment = /const electronExe\s*=\s*process\.platform\s*===\s*'win32'\s*\?([^:;]+):/.exec(
+    const electronExeResolution = /function resolveElectronExecutable\s*\(\s*\)\s*\{\s*return\s+process\.platform\s*===\s*'win32'\s*\?([^:;]+):/.exec(
       devScriptCode,
     );
     expect(
-      electronExeAssignment,
-      'scripts/dev.js no longer assigns electronExe as `process.platform === \'win32\' ? <win32> : <posix>`. '
-      + 'If that shape changed on purpose, update this test, but keep the win32 branch resolving the '
-      + 'binary through require() of the electron package so a first run can download it.',
+      electronExeResolution,
+      'scripts/dev.js no longer resolves electronExe in resolveElectronExecutable() as '
+      + '`return process.platform === \'win32\' ? <win32> : <posix>`. If that shape changed on purpose, update '
+      + 'this test, but keep the win32 branch resolving the binary through require() of the electron package '
+      + 'so a first run can download it.',
     ).not.toBeNull();
-    const win32Branch = (electronExeAssignment?.[1] ?? '').trim();
+    const win32Branch = (electronExeResolution?.[1] ?? '').trim();
 
     expect(
       win32Branch,
-      'The win32 branch of electronExe must be require(path.join(projectDir, \'node_modules\', \'electron\')). '
+      'The win32 branch of resolveElectronExecutable() must be require(path.join(projectDir, \'node_modules\', \'electron\')). '
       + 'Requiring the electron package returns the binary path and downloads the binary when it is missing. '
       + 'Any other form leaves `npm start` on Windows failing with ENOENT after `npm ci --ignore-scripts` or a '
       + 'failed postinstall, because electron 42+ does not download its binary at install time.',
