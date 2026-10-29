@@ -2,7 +2,7 @@ const { spawn } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
-const esbuild = require('esbuild');
+const { ensureNodeModules, npmCiInvocation, stopInstall } = require('./ensure-node-modules');
 const { worktreeViteCacheDir, worktreeViteConfig } = require('./worktree-vite-config');
 const { copyExternalScripts } = require('./copy-external-scripts');
 const { compileCatalogsForMainInBackground } = require('./i18n-catalogs');
@@ -184,10 +184,16 @@ function requestGracefulElectronQuit() {
 // what does that: it returns the binary's path, fetching it first when an
 // install skipped scripts (`npm ci --ignore-scripts`) or the root postinstall
 // failed. POSIX launches through the package's cli.js, which downloads the same
-// way.
-const electronExe = process.platform === 'win32'
-  ? require(path.join(projectDir, 'node_modules', 'electron'))
-  : path.join(projectDir, 'node_modules', '.bin', 'electron');
+// way. start() calls this after the dependency check, never at load: the
+// package would otherwise come from the tree `npm ci` is about to replace, and
+// a checkout with no node_modules yet would fail here instead of installing.
+function resolveElectronExecutable() {
+  return process.platform === 'win32'
+    ? require(path.join(projectDir, 'node_modules', 'electron'))
+    : path.join(projectDir, 'node_modules', '.bin', 'electron');
+}
+
+let electronExe = null;
 
 const esbuildCommon = {
   bundle: true,
@@ -213,6 +219,30 @@ let electronProc = null;
 // Held so cleanup() can end it: a stop that lands while it runs would
 // otherwise exit this process and leave the child bundling into the worktree.
 let prebundleProc = null;
+// The `npm ci` the dependency check runs, held for the same reason: left
+// running past this process, it would still be writing node_modules when the
+// next launch checks it.
+let installProc = null;
+
+/** Runs `npm ci` in this checkout and resolves with its exit code, or 1 when it
+ *  could not start. scripts/ensure-node-modules.js decides whether it runs.
+ *  Its output lands in this terminal, as the server's own does. */
+function runDependencyInstall() {
+  return new Promise((resolve) => {
+    const { command, args, shell } = npmCiInvocation();
+    const child = spawn(command, args, { cwd: projectDir, shell, stdio: 'inherit', windowsHide: true });
+    installProc = child;
+    child.on('close', (exitCode) => {
+      if (installProc === child) installProc = null;
+      resolve(exitCode ?? 1);
+    });
+    child.on('error', (spawnError) => {
+      if (installProc === child) installProc = null;
+      console.warn('[dev] could not start npm ci:', spawnError);
+      resolve(1);
+    });
+  });
+}
 
 /** Runs scripts/vite-prebundle.js for this worktree and resolves with its exit
  *  code, or 1 when it could not start. Its output lands in this terminal, as
@@ -240,6 +270,11 @@ function runDependencyPrebundle() {
 /** Builds main, preload, the utility-process workers and the pty host with
  *  esbuild. Needs nothing from Vite, so start() runs it alongside the server. */
 function buildMainBundles() {
+  // Required here, after start()'s dependency check, not at load. A shim loaded
+  // from the tree `npm ci` then replaced would start the new esbuild binary and
+  // fail its host/binary version check, and a checkout with no node_modules yet
+  // would fail before the check could install one.
+  const esbuild = require('esbuild');
   return Promise.all([
     esbuild.build({
       ...esbuildCommon,
@@ -295,6 +330,14 @@ function buildMainBundles() {
 }
 
 async function start() {
+  // First, before anything loads from node_modules: install when the tree no
+  // longer matches package-lock.json and nothing holds it, or say why not
+  // (scripts/ensure-node-modules.js). After the PID file above, so a launcher
+  // waiting for that file never waits on an install. A failed `npm ci` rejects
+  // into the catch at the bottom, which stops the launch.
+  await ensureNodeModules(projectDir, { runInstall: runDependencyInstall });
+  electronExe = resolveElectronExecutable();
+
   // Ephemeral preview: prepare the data dir and START pre-cloning Project 1 NOW so
   // the (slow) git clone overlaps the Vite/esbuild build below. The main process then
   // ADOPTS the existing clone instead of cloning on launch, so the board appears at
@@ -575,6 +618,10 @@ function cleanup(exitCode) {
   if (prebundleProc) {
     prebundleProc.kill();
     prebundleProc = null;
+  }
+  if (installProc) {
+    stopInstall(installProc);
+    installProc = null;
   }
   if (viteServer) {
     viteServer.close().catch(() => {});
