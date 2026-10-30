@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Cursor CLI
-description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p --trust stream-json commands, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, confirm-changes, --force skip-approval sessions, and -p --trust stream-json commands, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
 tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
@@ -30,7 +30,15 @@ Two supporting details make the fallback safe. `parseVersion` accepts `1.0.0`, `
 agent "prompt text"
 ```
 
-User confirms changes in the PTY. Default mode.
+User confirms changes in the PTY. `permissionMode === 'default'`.
+
+### New Session (Interactive, skip approvals)
+
+```
+agent --trust --force "prompt text"
+```
+
+Selected when `permissionMode === 'acceptEdits'`. The session screen stays open. `--force` (alias `--yolo`) allows commands unless one is explicitly denied. `--trust` skips the workspace prompt. This mode prints no stream-json, so the context bar learns the model from `agent about`, the same as confirm-changes. A resume is `agent --trust --force --resume="<chat-id>"`.
 
 ### New Session (Non-Interactive)
 
@@ -69,12 +77,13 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
 | Mode | Behavior | Cursor Mode |
 |------|----------|-------------|
 | `default` | (no special flag) | Interactive (Confirm Changes) |
+| `acceptEdits` | `--trust --force`, session screen stays open | Interactive (Skip Approvals) |
 | `bypassPermissions` | `--trust -p ... --output-format stream-json` | Non-Interactive (Full Access) |
 
 ## Limitations
 
 - No hooks wired and no structured status pipeline (PTY silence timer only). The CLI does run hooks: it reads the same `<project>/.cursor/hooks.json` and `~/.cursor/hooks.json` as the editor, and Cursor's forum lists `beforeShellExecution`, `afterShellExecution`, `afterFileEdit`, `postToolUse`, `stop` and `sessionStart` as working in the CLI, with reports of hooks not firing on some Linux and Windows builds. Kangentic wires none. None of those events marks a wait on the user either (its AskQuestion tool raises no hook, stream event or file), so a Cursor wait stays on the envelope (GitHub #452)
-- No settings merge. Workspace trust is the `--trust` flag on every non-interactive spawn (and resume), not a file Kangentic writes. Interactive mode leaves Cursor's own prompt so the user can decide.
+- No settings merge. Workspace trust is the `--trust` flag on every spawn except confirm-changes (and on those resumes), not a file Kangentic writes. Confirm-changes leaves Cursor's own prompt so the user can decide.
 - Kangentic's MCP server reaches every session through the project's `.cursor/mcp.json` (a static
   `${env:...}` entry beside the user's servers, `project-mcp-config.ts`) and `--approve-mcps`, which
   also approves the user's own project servers for that run. The entry is removed when the last

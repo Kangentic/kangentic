@@ -619,14 +619,14 @@ describe('CursorAdapter', () => {
     // ── Permission mode mapping ─────────────────────────────────────────
 
     describe('permission mode mapping', () => {
-      // Only `default` explicitly means "interactive TUI, user confirms".
-      // Every other mode (bypassPermissions + any Kangentic-level mode
-      // like project-settings, plan, acceptEdits, ...) must emit
-      // `--output-format stream-json`. Cursor's docs say stream-json
-      // only works with --print, so without this the init event never
-      // lands and ContextBar is stuck on "Starting agent..." forever.
+      // `default` is the confirm-changes screen. `acceptEdits` is the same
+      // screen with --force, so commands run unless one is explicitly denied.
+      // Every other mode must emit `--output-format stream-json`. Cursor's
+      // docs say stream-json only works with --print, so without this the
+      // init event never lands and ContextBar is stuck on "Starting agent..."
+      // forever.
       const streamJsonModes: PermissionMode[] = [
-        'bypassPermissions', 'plan', 'dontAsk', 'acceptEdits', 'auto',
+        'bypassPermissions', 'plan', 'dontAsk', 'auto',
       ];
       const interactiveModes: PermissionMode[] = ['default'];
 
@@ -652,8 +652,48 @@ describe('CursorAdapter', () => {
           expect(command).not.toContain('-p');
           expect(command).not.toContain('--output-format');
           expect(command).not.toContain('--trust');
+          expect(command).not.toContain('--force');
         });
       }
+
+      it('keeps the session screen and skips approvals for acceptEdits', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          prompt: 'test',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('--force');
+        expect(command).toContain('test');
+        expect(command).not.toContain('-p');
+        expect(command).not.toContain('--output-format');
+        expect(command).not.toContain('stream-json');
+      });
+
+      it('keeps --force on a resumed skip-approvals session', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          sessionId: 'chat-abc-123',
+          resume: true,
+          prompt: 'This should be ignored',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('--force');
+        expect(command).toContain('--resume=');
+        expect(command).not.toContain('-p');
+        expect(command).not.toContain('This should be ignored');
+      });
+
+      it('prints stream-json when skip-approvals is asked to run non-interactive', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          nonInteractive: true,
+          prompt: 'test',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('-p');
+        expect(command).toContain('stream-json');
+        expect(command).not.toContain('--force');
+      });
 
       it('uses stream-json when nonInteractive is explicitly requested', () => {
         const command = adapter.buildCommand(makeOptions({

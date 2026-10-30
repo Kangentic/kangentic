@@ -149,12 +149,14 @@ function isAboutPayload(value: unknown): value is { model: string } {
  * caller-owned IDs, no structured hooks, and no settings merging.
  * Permissions are config-file based only (~/.cursor/cli-config.json).
  * A directory Cursor has not seen prints "Workspace Trust Required" and
- * exits, so every non-interactive spawn passes `--trust` (the same flag
- * summarize and answerFromContext already pass). Interactive mode leaves
+ * exits, so every spawn except confirm-changes passes `--trust` (the same
+ * flag summarize and answerFromContext already pass). Confirm-changes leaves
  * the prompt so the user can decide in the PTY.
  *
- * Two modes:
- *   - Interactive: `agent "prompt"` - user confirms changes in PTY
+ * Three modes:
+ *   - Confirm changes: `agent "prompt"` - user confirms each change in the PTY
+ *   - Skip approvals: `agent --trust --force "prompt"` - the same screen,
+ *     commands run unless one is explicitly denied
  *   - Non-interactive: `agent --trust -p "prompt" --output-format stream-json`
  *     - Full write access, emits NDJSON events with session_id on each line
  *     - Enables session ID capture via the init event
@@ -186,6 +188,7 @@ export class CursorAdapter implements AgentAdapter {
   private readonly sessionLaunches = new Map<string, CursorSessionLaunch>();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
+    { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
   ];
   // Default to non-interactive (`--output-format stream-json`). The init
@@ -234,7 +237,7 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   // Cursor records workspace trust on `--trust`, not a file Kangentic writes.
-  // That flag rides every non-interactive spawn in buildCommand.
+  // That flag rides every spawn except confirm-changes.
   async ensureTrust(_workingDirectory: string): Promise<void> {}
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -260,26 +263,33 @@ export class CursorAdapter implements AgentAdapter {
       }
     }
 
-    // Cursor CLI only natively distinguishes two permission modes:
-    //   default           → interactive TUI, user confirms changes
-    //   bypassPermissions → non-interactive, full access, stream-json
+    // Three ways a session starts:
+    //   default            interactive screen, the user confirms each change
+    //   acceptEdits        the same screen, with --force so commands run
+    //                      unless one is explicitly denied
+    //   anything else      one turn, then exit, as stream-json
     //
-    // Upstream may pass Kangentic-level modes (`project-settings`,
-    // `acceptEdits`, `plan`, etc.) that Cursor does not recognize. If we
-    // treated every unknown value as interactive, those spawns would
-    // silently drop `--output-format stream-json`, the init event would
-    // never arrive, and ContextBar would be stuck on "Starting agent...".
-    // Treat anything other than an explicit interactive `default` as
-    // bypassPermissions so stream-json is always emitted when reasonable.
-    const interactive = options.permissionMode === 'default' && !options.nonInteractive;
+    // A mode Cursor's own list does not offer (plan, dontAsk, auto) stays
+    // on the print path. Dropping stream-json there would leave the context
+    // bar on "Starting agent...", because the init event is the only
+    // documented place the model and session id arrive together.
+    // An explicit nonInteractive flag wins over both session screens.
+    const confirmSession = options.permissionMode === 'default' && !options.nonInteractive;
+    const forceSession = options.permissionMode === 'acceptEdits' && !options.nonInteractive;
+    const sessionUi = confirmSession || forceSession;
 
-    if (!interactive) {
+    if (!confirmSession) {
       // A directory Cursor has not seen prints "Workspace Trust Required"
       // and exits. --trust is the documented skip (cursor-agent --help:
       // "Trust the current workspace without prompting"). summarize and
-      // answerFromContext already pass it. --yolo / -f would also skip
-      // it, and auto-approve every command with it.
+      // answerFromContext already pass it. Confirm-changes leaves the
+      // prompt so the user can decide.
       parts.push('--trust');
+    }
+    if (forceSession) {
+      // --force (alias --yolo) allows commands unless one is explicitly
+      // denied, and keeps the session screen. -p would close that screen.
+      parts.push('--force');
     }
 
     if (options.sessionId) {
@@ -307,7 +317,7 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
-    if (!interactive) {
+    if (!sessionUi) {
       // Non-interactive mode: agent --trust -p "prompt" --output-format stream-json
       // Has full write access. Uses stream-json (NDJSON) so the runtime
       // sessionId.fromOutput parser can capture the session_id from the
@@ -319,8 +329,8 @@ export class CursorAdapter implements AgentAdapter {
       }
       parts.push('--output-format', 'stream-json');
     } else {
-      // Interactive mode: agent "prompt"
-      // User confirms changes in the PTY.
+      // Session screen: agent "prompt", or agent --trust --force "prompt".
+      // Confirm-changes asks before each change. Skip-approvals does not.
       if (quotedPrompt) parts.push(quotedPrompt);
       // Per-column model override in interactive mode
       if (options.model && options.model.trim().length > 0) {
@@ -419,7 +429,7 @@ export class CursorAdapter implements AgentAdapter {
   /**
    * Kick off an out-of-band model bootstrap when a session starts.
    * Cursor's `--output-format stream-json` requires `--print`, so
-   * interactive TUI spawns (permissionMode === 'default') emit no
+   * interactive TUI spawns (`default` and `acceptEdits`) emit no
    * NDJSON init event and the ContextBar spinner would otherwise hang
    * forever. `agent about --format json` is a documented, stable CLI
    * command that returns `{ "model": "<name>", ... }` in under a

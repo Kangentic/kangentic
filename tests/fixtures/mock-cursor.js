@@ -6,6 +6,7 @@
  *   agent --version                              -> detector probe
  *   agent --resume="<chat-id>"                   -> resume existing session
  *   agent "prompt"                               -> new interactive session
+ *   agent --trust --force "prompt"               -> interactive session, approvals skipped
  *   agent --trust -p "prompt" --output-format stream-json -> new non-interactive session
  *
  * Markers for test assertions (mirrors mock-claude):
