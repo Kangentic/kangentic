@@ -2,7 +2,7 @@
 
 <!-- releases -->
 
-## [Unreleased]
+## [protocol-v0.26.0] - 2026-10-30
 
 Tells a phone what an agent's wait is for, carries a Notify me automation row
 to the phone, and holds a phone's message for a paused task. Additive on the
@@ -40,9 +40,9 @@ task in Done, a message too long to hold) answers with the refusal and code it
 sent before. A Command Terminal is refused as before.
 
 ### Features
-- Carry the wait's kind on the activity reason and the input-required push
-- Push Notify me automation rows to every paired phone
-- Hold a phone's message for a task with no running agent
+- Carry the wait's kind on the activity reason and the input-required push (b1200926)
+- Push Notify me automation rows to every paired phone (b1200926)
+- Hold a phone's message for a task with no running agent (b1200926)
 
 ## [protocol-v0.25.0] - 2026-10-28
 
