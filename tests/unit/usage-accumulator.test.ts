@@ -70,6 +70,25 @@ describe('UsageAccumulator.setSessionUsage - merge behavior', () => {
     expect(merged.model.reportedByAgent).toBe(true);
   });
 
+  it('a spawn-time seed cannot replace a model the agent already reported', () => {
+    usage.setSessionUsage('cursor-tui', {
+      model: { id: 'Composer 2.5', displayName: 'Composer 2.5', reportedByAgent: true },
+    } as Partial<SessionUsage>);
+
+    // Cursor `agent about` can still resolve after the TUI painted. It is a
+    // seed (no reportedByAgent), so it must not put the CLI default over the
+    // live status-bar name.
+    const merged = usage.setSessionUsage('cursor-tui', {
+      model: { id: 'auto', displayName: 'Auto' },
+    } as Partial<SessionUsage>);
+
+    expect(merged.model).toEqual({
+      id: 'Composer 2.5',
+      displayName: 'Composer 2.5',
+      reportedByAgent: true,
+    });
+  });
+
   it('usedPercentage is recalculated after cross-chunk merge', () => {
     let merged = usage.setSessionUsage('test-session', {
       contextWindow: { contextWindowSize: 200000 },

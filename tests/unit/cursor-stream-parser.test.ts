@@ -63,6 +63,7 @@ describe('CursorStreamParser', () => {
     expect(result?.usage?.model).toEqual({
       id: 'Claude 4 Sonnet',
       displayName: 'Claude 4 Sonnet',
+      reportedByAgent: true,
     });
   });
 
@@ -173,18 +174,34 @@ describe('CursorStreamParser', () => {
     expect(result?.events?.[0].tool).toBe('tool');
   });
 
-  it('reads occupancy from the interactive TUI status bar', () => {
+  it('reads occupancy and the live model from the interactive TUI status bar', () => {
     const parser = new CursorStreamParser();
     const result = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
     expect(result?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(result?.usage?.model).toEqual({
+      id: 'Composer 2.5',
+      displayName: 'Composer 2.5',
+      reportedByAgent: true,
+    });
   });
 
-  it('reads occupancy through ANSI wrapping and extra status segments', () => {
+  it('reads occupancy and model through ANSI wrapping and extra status segments', () => {
     const parser = new CursorStreamParser();
     const framed =
       '\x1b[6;1H\x1b[2mAuto\x1b[0m \u00b7 8.3% \u00b7 1 file edited\x1b[?25l';
     const result = parser.parseTelemetry(framed);
     expect(result?.usage?.contextWindow?.usedPercentage).toBe(8.3);
+    expect(result?.usage?.model).toEqual({
+      id: 'Auto',
+      displayName: 'Auto',
+      reportedByAgent: true,
+    });
+  });
+
+  it('keeps the model name after trailing punctuation on the same line', () => {
+    const parser = new CursorStreamParser();
+    const result = parser.parseTelemetry('done. Composer 2.5 · 7.8%\n');
+    expect(result?.usage?.model?.displayName).toBe('Composer 2.5');
   });
 
   it('does not treat a tool duration or a hidden-output hint as occupancy', () => {
@@ -201,6 +218,16 @@ describe('CursorStreamParser', () => {
     expect(parser.parseTelemetry('Composer 2.5 · 7.8%\n')).toBeNull();
     const next = parser.parseTelemetry('Composer 2.5 · 9.1%\n');
     expect(next?.usage?.contextWindow?.usedPercentage).toBe(9.1);
+    expect(next?.usage?.model?.displayName).toBe('Composer 2.5');
+  });
+
+  it('emits again when the TUI model changes at the same percent', () => {
+    const parser = new CursorStreamParser();
+    const first = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(first?.usage?.model?.displayName).toBe('Composer 2.5');
+    const switched = parser.parseTelemetry('Auto · 7.8%\n');
+    expect(switched?.usage?.model?.displayName).toBe('Auto');
+    expect(switched?.usage?.contextWindow?.usedPercentage).toBe(7.8);
   });
 
   it('reassembles occupancy split across a ConPTY flush', () => {
@@ -208,5 +235,6 @@ describe('CursorStreamParser', () => {
     expect(parser.parseTelemetry('Composer 2.5 · 7.')).toBeNull();
     const second = parser.parseTelemetry('8%\n');
     expect(second?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(second?.usage?.model?.displayName).toBe('Composer 2.5');
   });
 });

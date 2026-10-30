@@ -257,7 +257,7 @@ test.describe('Cursor ContextBar model pill', () => {
             };
           }).__zustandStores;
           stores?.session.getState().updateUsage(sessionId, {
-            model: { id: 'composer-2.5', displayName: 'Composer 2.5' },
+            model: { id: 'composer-2.5', displayName: 'Composer 2.5', reportedByAgent: true },
             contextWindow: {
               usedPercentage: 7.8,
               usedTokens: 0,
@@ -276,6 +276,8 @@ test.describe('Cursor ContextBar model pill', () => {
       await expect(contextBar).toContainText('8%');
       await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(0);
       await expect(contextBar).not.toContainText('/');
+      await expect(contextBar.locator('[data-model-source]'))
+        .toHaveAttribute('data-model-source', 'live');
     } finally {
       await browser.close();
     }

@@ -96,6 +96,24 @@ function newAccumulator(): ToolAccumulator {
   };
 }
 
+/**
+ * A spawn-time seed (`--model`, Cursor `agent about`) must not replace a
+ * model the agent has already reported. Interactive Cursor paints the live
+ * name on the TUI (`Composer 2.5 · 7.8%`) and `about` can still resolve a
+ * moment later with the CLI default. Keep the live block until another
+ * reported snapshot arrives.
+ */
+function mergeModel(
+  baseModel: SessionUsage['model'],
+  partialModel: SessionUsage['model'] | undefined,
+): SessionUsage['model'] {
+  if (!partialModel) return baseModel;
+  if (baseModel.reportedByAgent === true && partialModel.reportedByAgent !== true) {
+    return baseModel;
+  }
+  return { ...baseModel, ...partialModel };
+}
+
 function emptyUsage(): SessionUsage {
   return {
     contextWindow: {
@@ -242,7 +260,7 @@ export class UsageAccumulator {
       ...partial,
       contextWindow: { ...base.contextWindow, ...(partial.contextWindow ?? {}) },
       cost: { ...base.cost, ...(partial.cost ?? {}) },
-      model: { ...base.model, ...(partial.model ?? {}) },
+      model: mergeModel(base.model, partial.model),
     };
     // Only a partial that carries rate limits is a new report of them. A chunk
     // without them (a transcript tick) keeps base's windows, already stamped.
