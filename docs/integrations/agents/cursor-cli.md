@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Cursor CLI
-description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p stream-json commands, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p --trust stream-json commands, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
 tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
@@ -34,10 +34,10 @@ User confirms changes in the PTY. Default mode.
 ### New Session (Non-Interactive)
 
 ```
-agent -p "prompt text" --output-format stream-json
+agent --trust -p "prompt text" --output-format stream-json
 ```
 
-Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is set. Has full write access. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume.
+Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is set. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A non-interactive resume keeps `--trust` for the same reason.
 
 ### Resumed Session
 
@@ -45,7 +45,7 @@ Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is se
 agent --resume="<chat-id>"
 ```
 
-The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
+A non-interactive resume is `agent --trust --resume="<chat-id>"`. The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
 
 A resume carries no prompt. Nothing Cursor documents says a prompt rides `--resume=<id>`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic types a resume's message (a column's message, held messages) in once Cursor is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
@@ -62,12 +62,12 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
 | Mode | Behavior | Cursor Mode |
 |------|----------|-------------|
 | `default` | (no special flag) | Interactive (Confirm Changes) |
-| `bypassPermissions` | `-p ... --output-format stream-json` | Non-Interactive (Full Access) |
+| `bypassPermissions` | `--trust -p ... --output-format stream-json` | Non-Interactive (Full Access) |
 
 ## Limitations
 
 - No hooks wired and no structured status pipeline (PTY silence timer only). The CLI does run hooks: it reads the same `<project>/.cursor/hooks.json` and `~/.cursor/hooks.json` as the editor, and Cursor's forum lists `beforeShellExecution`, `afterShellExecution`, `afterFileEdit`, `postToolUse`, `stop` and `sessionStart` as working in the CLI, with reports of hooks not firing on some Linux and Windows builds. Kangentic wires none. None of those events marks a wait on the user either (its AskQuestion tool raises no hook, stream event or file), so a Cursor wait stays on the envelope (GitHub #452)
-- No settings merge, no trust mechanism
+- No settings merge. Workspace trust is the `--trust` flag on every non-interactive spawn (and resume), not a file Kangentic writes. Interactive mode leaves Cursor's own prompt so the user can decide.
 - Kangentic's MCP server reaches every session through the project's `.cursor/mcp.json` (a static
   `${env:...}` entry beside the user's servers, `project-mcp-config.ts`) and `--approve-mcps`, which
   also approves the user's own project servers for that run. The entry is removed when the last

@@ -546,6 +546,7 @@ describe('CursorAdapter', () => {
       const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }));
       expect(command).not.toContain('-p');
       expect(command).not.toContain('--output-format');
+      expect(command).not.toContain('--trust');
       expect(command).toContain('Fix the bug');
     });
 
@@ -558,21 +559,23 @@ describe('CursorAdapter', () => {
 
     // ── Non-interactive mode (bypassPermissions) ────────────────────────
 
-    it('adds -p and --output-format stream-json for bypassPermissions', () => {
+    it('adds --trust, -p and --output-format stream-json for bypassPermissions', () => {
       const command = adapter.buildCommand(makeOptions({
         permissionMode: 'bypassPermissions',
         prompt: 'Fix the bug',
       }));
+      expect(command).toContain('--trust');
       expect(command).toContain('-p');
       expect(command).toContain('--output-format');
       expect(command).toContain('stream-json');
     });
 
-    it('adds -p and --output-format stream-json for nonInteractive flag', () => {
+    it('adds --trust, -p and --output-format stream-json for nonInteractive flag', () => {
       const command = adapter.buildCommand(makeOptions({
         nonInteractive: true,
         prompt: 'Fix the bug',
       }));
+      expect(command).toContain('--trust');
       expect(command).toContain('-p');
       expect(command).toContain('--output-format');
       expect(command).toContain('stream-json');
@@ -587,6 +590,7 @@ describe('CursorAdapter', () => {
       }));
       expect(command).toContain('--resume=');
       expect(command).toContain('chat-abc-123');
+      expect(command).not.toContain('--trust');
     });
 
     it('resume command does not include prompt or -p', () => {
@@ -597,6 +601,17 @@ describe('CursorAdapter', () => {
       }));
       expect(command).not.toContain('-p');
       expect(command).not.toContain('This should be ignored');
+    });
+
+    it('trusts a non-interactive resume so a new worktree does not exit on Workspace Trust', () => {
+      const command = adapter.buildCommand(makeOptions({
+        permissionMode: 'bypassPermissions',
+        sessionId: 'chat-abc-123',
+        resume: true,
+      }));
+      expect(command).toContain('--trust');
+      expect(command).toContain('--resume=');
+      expect(command).not.toContain('-p');
     });
 
     // ── Permission mode mapping ─────────────────────────────────────────
@@ -614,11 +629,12 @@ describe('CursorAdapter', () => {
       const interactiveModes: PermissionMode[] = ['default'];
 
       for (const mode of streamJsonModes) {
-        it(`emits -p and --output-format stream-json for ${mode}`, () => {
+        it(`emits --trust, -p and --output-format stream-json for ${mode}`, () => {
           const command = adapter.buildCommand(makeOptions({
             permissionMode: mode,
             prompt: 'test',
           }));
+          expect(command).toContain('--trust');
           expect(command).toContain('-p');
           expect(command).toContain('--output-format');
           expect(command).toContain('stream-json');
@@ -633,6 +649,7 @@ describe('CursorAdapter', () => {
           }));
           expect(command).not.toContain('-p');
           expect(command).not.toContain('--output-format');
+          expect(command).not.toContain('--trust');
         });
       }
 
@@ -642,6 +659,7 @@ describe('CursorAdapter', () => {
           nonInteractive: true,
           prompt: 'test',
         }));
+        expect(command).toContain('--trust');
         expect(command).toContain('-p');
         expect(command).toContain('stream-json');
       });

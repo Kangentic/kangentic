@@ -6,7 +6,7 @@
  *   agent --version                              -> detector probe
  *   agent --resume="<chat-id>"                   -> resume existing session
  *   agent "prompt"                               -> new interactive session
- *   agent -p "prompt" --output-format stream-json -> new non-interactive session
+ *   agent --trust -p "prompt" --output-format stream-json -> new non-interactive session
  *
  * Markers for test assertions (mirrors mock-claude):
  *   MOCK_CURSOR_SESSION:<id>    -> new session created

@@ -293,9 +293,9 @@ async function seedTrust(agent, cwd) {
   } else if (agent === 'cursor') {
     // Cursor CLI keeps one directory per workspace under ~/.cursor/projects, named after the path
     // with its separators, colon and spaces folded to dashes, and marks trust with a file inside
-    // it. Note the app's cursor adapter still says the CLI has no trust mechanism and makes
-    // ensureTrust a no-op; that was true of an older build, and this one opens on a Workspace
-    // Trust dialog that a recording would otherwise capture instead of the agent working.
+    // it. The adapter's non-interactive spawn passes --trust instead of writing this file;
+    // a capture launch is interactive (no -p), so it still pre-seeds the file or the recording
+    // would be the Workspace Trust dialog rather than the agent working.
     const native = path.resolve(cwd);
     const slug = native.replace(/:/g, '').replace(/[\\/\s]+/g, '-');
     const dir = path.join(os.homedir(), '.cursor', 'projects', slug);

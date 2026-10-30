@@ -146,13 +146,16 @@ function isAboutPayload(value: unknown): value is { model: string } {
  * (https://cursor.com/cli) behind the generic AgentAdapter interface.
  *
  * Cursor CLI is simpler than Claude Code: no session resume via
- * caller-owned IDs, no structured hooks, no trust mechanism, and
- * no settings merging. Permissions are config-file based only
- * (~/.cursor/cli-config.json), with no CLI flags to control them.
+ * caller-owned IDs, no structured hooks, and no settings merging.
+ * Permissions are config-file based only (~/.cursor/cli-config.json).
+ * A directory Cursor has not seen prints "Workspace Trust Required" and
+ * exits, so every non-interactive spawn passes `--trust` (the same flag
+ * summarize and answerFromContext already pass). Interactive mode leaves
+ * the prompt so the user can decide in the PTY.
  *
  * Two modes:
  *   - Interactive: `agent "prompt"` - user confirms changes in PTY
- *   - Non-interactive: `agent -p "prompt" --output-format stream-json`
+ *   - Non-interactive: `agent --trust -p "prompt" --output-format stream-json`
  *     - Full write access, emits NDJSON events with session_id on each line
  *     - Enables session ID capture via the init event
  *
@@ -230,7 +233,8 @@ export class CursorAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  // Cursor CLI has no trust mechanism - permissions are config-file based
+  // Cursor records workspace trust on `--trust`, not a file Kangentic writes.
+  // That flag rides every non-interactive spawn in buildCommand.
   async ensureTrust(_workingDirectory: string): Promise<void> {}
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -254,6 +258,28 @@ export class CursorAdapter implements AgentAdapter {
         this.mcpHolds.retain(options.ptySessionId, options.cwd);
         parts.push('--approve-mcps');
       }
+    }
+
+    // Cursor CLI only natively distinguishes two permission modes:
+    //   default           → interactive TUI, user confirms changes
+    //   bypassPermissions → non-interactive, full access, stream-json
+    //
+    // Upstream may pass Kangentic-level modes (`project-settings`,
+    // `acceptEdits`, `plan`, etc.) that Cursor does not recognize. If we
+    // treated every unknown value as interactive, those spawns would
+    // silently drop `--output-format stream-json`, the init event would
+    // never arrive, and ContextBar would be stuck on "Starting agent...".
+    // Treat anything other than an explicit interactive `default` as
+    // bypassPermissions so stream-json is always emitted when reasonable.
+    const interactive = options.permissionMode === 'default' && !options.nonInteractive;
+
+    if (!interactive) {
+      // A directory Cursor has not seen prints "Workspace Trust Required"
+      // and exits. --trust is the documented skip (cursor-agent --help:
+      // "Trust the current workspace without prompting"). summarize and
+      // answerFromContext already pass it. --yolo / -f would also skip
+      // it, and auto-approve every command with it.
+      parts.push('--trust');
     }
 
     if (options.sessionId) {
@@ -281,21 +307,8 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
-    // Cursor CLI only natively distinguishes two permission modes:
-    //   default           → interactive TUI, user confirms changes
-    //   bypassPermissions → non-interactive, full access, stream-json
-    //
-    // Upstream may pass Kangentic-level modes (`project-settings`,
-    // `acceptEdits`, `plan`, etc.) that Cursor does not recognize. If we
-    // treated every unknown value as interactive, those spawns would
-    // silently drop `--output-format stream-json`, the init event would
-    // never arrive, and ContextBar would be stuck on "Starting agent...".
-    // Treat anything other than an explicit interactive `default` as
-    // bypassPermissions so stream-json is always emitted when reasonable.
-    const interactive = options.permissionMode === 'default' && !options.nonInteractive;
-
     if (!interactive) {
-      // Non-interactive mode: agent -p "prompt" --output-format stream-json
+      // Non-interactive mode: agent --trust -p "prompt" --output-format stream-json
       // Has full write access. Uses stream-json (NDJSON) so the runtime
       // sessionId.fromOutput parser can capture the session_id from the
       // init event: {"type":"system","subtype":"init","session_id":"<uuid>",...}
