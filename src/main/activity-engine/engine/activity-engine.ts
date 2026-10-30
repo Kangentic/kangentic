@@ -30,6 +30,7 @@ import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTur
 import {
   updateCounters,
   updatePermissionFlag,
+  clearPermissionWait,
   releaseSubagentSlots,
   isInternalAgentToolEvent,
   rememberPendingServiceShellId,
@@ -407,10 +408,7 @@ export class ActivityEngine {
       } else {
         state.turnActive = false;
         state.turnForcedByHeartbeat = false;
-        state.permissionPending = false;
-        state.permissionAwaitedToolId = null;
-        state.permissionWaitKind = null;
-        state.permissionSiblingToolIds.clear();
+        clearPermissionWait(state);
         state.idleAuthoritative = true;
         this.applyInterruptedBypass(sessionId, state, before, event);
       }
@@ -602,10 +600,7 @@ export class ActivityEngine {
     state.turnForcedByHeartbeat = forcedByHeartbeat;
     state.turnEndSource = null;
     state.lastSignalAt = this.now();
-    state.permissionPending = false;
-    state.permissionAwaitedToolId = null;
-    state.permissionWaitKind = null;
-    state.permissionSiblingToolIds.clear();
+    clearPermissionWait(state);
     state.pendingIdleAt = null;
     state.idleHintPending = false;
     state.retryFailurePending = false;
@@ -632,10 +627,7 @@ export class ActivityEngine {
     const before = snapshotCounters(state);
     state.turnActive = false;
     state.turnForcedByHeartbeat = false;
-    state.permissionPending = false;
-    state.permissionAwaitedToolId = null;
-    state.permissionWaitKind = null;
-    state.permissionSiblingToolIds.clear();
+    clearPermissionWait(state);
     if (!keepBackgroundShells) {
       state.lastSignalAt = null;
       state.lastPtyOutputAt = null;
@@ -989,10 +981,7 @@ export class ActivityEngine {
     if (!state.permissionPending || state.permissionAwaitedToolId !== toolId) return;
     const before = snapshotCounters(state);
 
-    state.permissionPending = false;
-    state.permissionAwaitedToolId = null;
-    state.permissionWaitKind = null;
-    state.permissionSiblingToolIds.clear();
+    clearPermissionWait(state);
 
     const pendingIndex = state.pendingToolStack.findIndex((entry) => entry.id === toolId);
     if (pendingIndex >= 0) {

@@ -111,6 +111,14 @@ describe('ActivityEngine: the kind of a permission wait', () => {
       ['an interrupt', (target) => target.processEvent(SESSION_ID, plain(EventType.Interrupted))],
       ['a failed turn', (target) => target.processEvent(SESSION_ID, plain(EventType.TurnFailed))],
       ['a finished turn', (target) => target.processEvent(SESSION_ID, plain(EventType.Idle))],
+      ['a retry after the turn ended', (target) => {
+        // The wait's own idle ended the turn, so the retry takes the terminal
+        // branch (the live-retry hold would keep the session thinking). A retry
+        // clears the wait nowhere else: updatePermissionFlag ignores it.
+        expect(target.getState(SESSION_ID)?.turnActive).toBe(false);
+        target.processEvent(SESSION_ID, plain(EventType.TurnRetrying));
+        expect(target.getState(SESSION_ID)?.activity).toBe('idle');
+      }],
       ['forceThinking', (target) => target.forceThinking(SESSION_ID)],
       ['forceIdle', (target) => target.forceIdle(SESSION_ID)],
       ['a rejection read from the transcript', (target) => target.markPermissionRejected(SESSION_ID, 'ask-1')],

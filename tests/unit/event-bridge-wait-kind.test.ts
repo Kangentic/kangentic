@@ -10,10 +10,12 @@
  * live captures (`tests/fixtures/copilot-hooks/`, `antigravity-hooks/`).
  * Claude's `tool_name` on PermissionRequest is pinned by its real captures in
  * `tests/fixtures/plan-exit/`, and `AskUserQuestion` by the real session in
- * `tests/fixtures/replay/session-006-ask-user-question-resume.jsonl`. The
- * Codex `request_user_input`, Qwen `ask_user_question` and Droid Notification
- * payloads are built from each CLI's docs or source: no capture of a question
- * wait exists for them yet, so a renamed field or value would pass here.
+ * `tests/fixtures/replay/session-006-ask-user-question-resume.jsonl`. Droid
+ * 0.218.0's PreToolUse and PostToolUse replay live captures
+ * (`tests/fixtures/droid-hooks/`). The Codex `request_user_input`, Qwen
+ * `ask_user_question` and Droid Notification payloads are built from each
+ * CLI's docs or source: no capture of a question wait exists for them yet, so
+ * a renamed field or value would pass here.
  * Gemini 0.66.0's captured `ask_user` and `exec` Notifications are replayed in
  * `event-bridge-remap.test.ts` (`tests/fixtures/gemini-hooks/`).
  */
@@ -59,6 +61,15 @@ function directivesOf(command: string): string[] {
   return command.split(' ').slice(4);
 }
 
+/**
+ * A directive hand-encoded the way the builders do (`<kind>:<base64(JSON)>`),
+ * for the payloads the builders refuse to emit: it is the bridge's own guard
+ * against a stale or hand-written hook command that these tests reach.
+ */
+function forgedDirective(kind: string, payload: unknown): string {
+  return `${kind}:${Buffer.from(JSON.stringify(payload)).toString('base64')}`;
+}
+
 describe('setWaitKind', () => {
   it('tags the event with a known kind', () => {
     const { lines } = run('idle', [setDetail('permission'), setWaitKind('approval')], {});
@@ -66,7 +77,7 @@ describe('setWaitKind', () => {
   });
 
   it('refuses a kind the engine does not know, and logs it', () => {
-    const forged = `setWaitKind:${Buffer.from(JSON.stringify({ kind: 'plan' })).toString('base64')}`;
+    const forged = forgedDirective('setWaitKind', { kind: 'plan' });
     const { lines, errors } = run('idle', [forged], {});
     expect(lines[0]).not.toHaveProperty('waitKind');
     expect(errors).toHaveLength(1);
@@ -118,6 +129,21 @@ describe('appendPermissionWaitForTool', () => {
     const { lines } = run('tool_start', [nested], { toolCall: { name: 'ask_question' } });
     expect(lines.map((line) => line.type)).toEqual(['tool_start', 'idle']);
   });
+
+  it('writes no wait for a payload it cannot trust, and logs it', () => {
+    // The builder types both fields; a stale or hand-written command can still
+    // carry a kind the engine does not know, or a tool name that is not a string.
+    const forgedPayloads: Array<{ name: string; payload: unknown; toolName: unknown }> = [
+      { name: 'an unknown wait kind', payload: { toolPath: ['tool_name'], tool: 'request_user_input', waitKind: 'plan' }, toolName: 'request_user_input' },
+      { name: 'a tool that is not a string', payload: { toolPath: ['tool_name'], tool: 42, waitKind: 'question' }, toolName: 42 },
+    ];
+    for (const { name, payload, toolName } of forgedPayloads) {
+      const { lines, errors } = run('tool_start', [extractTool('tool_name'), forgedDirective('appendPermissionWaitForTool', payload)], { tool_name: toolName });
+      expect(lines.map((line) => line.type), name).toEqual(['tool_start']);
+      expect(errors, name).toHaveLength(1);
+      expect(errors[0], name).toContain('invalid appendPermissionWaitForTool payload');
+    }
+  });
 });
 
 describe('replyJson', () => {
@@ -151,6 +177,19 @@ describe('replyJson', () => {
     expect(errors).toEqual([]);
     expect(hookReplyFrom([replyJson({ decision: 'allow' })])).toBe('{"decision":"allow"}');
     expect(hookReplyFrom([setDetail('x')])).toBeNull();
+  });
+
+  it('answers nothing when the reply is missing or is not an object', () => {
+    // Printing `"x"` or `undefined` for a CLI that reads a decision off stdout is worse than silence.
+    const forgedPayloads: Array<{ name: string; payload: unknown }> = [
+      { name: 'a payload with no reply', payload: {} },
+      { name: 'a reply that is a string', payload: { reply: 'x' } },
+      { name: 'a null reply', payload: { reply: null } },
+      { name: 'a null payload', payload: null },
+    ];
+    for (const { name, payload } of forgedPayloads) {
+      expect(hookReplyFrom([forgedDirective('replyJson', payload)]), name).toBeNull();
+    }
   });
 });
 
@@ -250,6 +289,35 @@ describe('the hook entries that tag a wait', () => {
       for (const notificationType of ['idle_prompt', 'auth_success']) {
         expect(run('idle', directives, notification(notificationType)).lines).toEqual([]);
       }
+    });
+  });
+
+  describe('Droid PreToolUse and PostToolUse', () => {
+    // The tool start a wait follows and the tool end that answers it, from the per-session settings file.
+    const hooks = buildDroidHookSettings('/mock/event-bridge.js', '/mock/events.jsonl').hooks;
+    const preToolUseDirectives = directivesOf(hooks.PreToolUse[0].hooks[0].command);
+    const postToolUseDirectives = directivesOf(hooks.PostToolUse[0].hooks[0].command);
+    // Captured live from Droid 0.218.0's own hook stdin (`droid exec`, with `--settings`).
+    const preToolUse = readFixture('droid-0.218.0-pre-tool-use-execute.json', 'droid-hooks');
+    const postForeground = readFixture('droid-0.218.0-post-tool-use-foreground.json', 'droid-hooks');
+    const postFireAndForget = readFixture('droid-0.218.0-post-tool-use-fire-and-forget.json', 'droid-hooks');
+
+    it('starts the tool with its name and the command it runs', () => {
+      const { lines, errors } = run('tool_start', preToolUseDirectives, preToolUse);
+      expect(lines).toEqual([{ ts: 1_700_000_000_000, type: 'tool_start', tool: 'Execute', detail: 'node server.js' }]);
+      expect(errors).toEqual([]);
+    });
+
+    it('ends a foreground tool by name alone', () => {
+      const { lines, errors } = run('tool_end', postToolUseDirectives, postForeground);
+      expect(lines).toEqual([{ ts: 1_700_000_000_000, type: 'tool_end', tool: 'Execute' }]);
+      expect(errors).toEqual([]);
+    });
+
+    it('ends a fire-and-forget tool the same way, with no background launch', () => {
+      const { lines, errors } = run('tool_end', postToolUseDirectives, postFireAndForget);
+      expect(lines).toEqual([{ ts: 1_700_000_000_000, type: 'tool_end', tool: 'Execute' }]);
+      expect(errors).toEqual([]);
     });
   });
 

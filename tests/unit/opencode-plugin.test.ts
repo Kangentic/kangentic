@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import {
   extractSessionEvent,
@@ -15,6 +16,14 @@ const fixturePath = path.join(__dirname, '..', 'fixtures', 'opencode-plugin-even
 const fixtures = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
 
 const FIXED_TIMESTAMP = 1717000000000;
+
+interface PluginHooks {
+  event: (payload: { event: unknown }) => Promise<void>;
+}
+
+interface PluginModule {
+  KangenticActivity: () => Promise<PluginHooks>;
+}
 
 describe('opencode-plugin', () => {
   describe('extractSessionEvent', () => {
@@ -120,6 +129,68 @@ describe('opencode-plugin', () => {
       expect(engine.getState(sessionId)?.activity).toBe('thinking');
       expect(engine.getState(sessionId)?.permissionWaitKind).toBeNull();
       engine.dispose();
+    });
+  });
+
+  describe('the KangenticActivity event hook', () => {
+    // The module reads KANGENTIC_EVENTS_PATH once, at load, so each test points
+    // it at its own temp file and loads a fresh copy of the plugin after.
+    let eventsDirectory: string;
+    let eventsFilePath: string;
+    let previousEventsPath: string | undefined;
+
+    beforeEach(() => {
+      previousEventsPath = process.env.KANGENTIC_EVENTS_PATH;
+      eventsDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'opencode-plugin-events-'));
+      eventsFilePath = path.join(eventsDirectory, 'events.jsonl');
+      process.env.KANGENTIC_EVENTS_PATH = eventsFilePath;
+      vi.resetModules();
+    });
+
+    afterEach(() => {
+      if (previousEventsPath === undefined) {
+        delete process.env.KANGENTIC_EVENTS_PATH;
+      } else {
+        process.env.KANGENTIC_EVENTS_PATH = previousEventsPath;
+      }
+      fs.rmSync(eventsDirectory, { recursive: true, force: true });
+      vi.resetModules();
+    });
+
+    async function loadHooks(): Promise<PluginHooks> {
+      const pluginModule = await import('../../src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs') as unknown as PluginModule;
+      return pluginModule.KangenticActivity();
+    }
+
+    function readEvents(): unknown[] {
+      if (!fs.existsSync(eventsFilePath)) return [];
+      return fs.readFileSync(eventsFilePath, 'utf-8')
+        .split('\n')
+        .filter((line) => line !== '')
+        .map((line) => JSON.parse(line) as unknown);
+    }
+
+    it('writes a question wait, an approval wait, and a plain idle as one line each, in order', async () => {
+      const hooks = await loadHooks();
+
+      await hooks.event({ event: fixtures.event_question_asked });
+      await hooks.event({ event: fixtures.event_permission_asked });
+      await hooks.event({ event: fixtures.event_session_idle });
+
+      // Exact shapes: the idle line must carry no detail or waitKind of its own.
+      expect(readEvents()).toEqual([
+        { ts: expect.any(Number), type: 'idle', detail: 'permission', waitKind: 'question' },
+        { ts: expect.any(Number), type: 'idle', detail: 'permission', waitKind: 'approval' },
+        { ts: expect.any(Number), type: 'idle' },
+      ]);
+    });
+
+    it('writes nothing for an event that is neither a session event nor a wait', async () => {
+      const hooks = await loadHooks();
+
+      await hooks.event({ event: fixtures.event_session_unknown });
+
+      expect(readEvents()).toEqual([]);
     });
   });
 

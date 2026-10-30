@@ -143,6 +143,28 @@ describe('Droid Adapter', () => {
       expect(fs.existsSync(settingsPath)).toBe(false);
     });
 
+    it('spawns without --settings, and does not throw, when the settings file cannot be written', () => {
+      // The hooks only add detail: a failed write must never block the spawn. The events
+      // file's parent is a regular file, so creating the session directory throws.
+      const blocker = path.join(tempDir, 'not-a-directory');
+      fs.writeFileSync(blocker, 'a regular file where the session directory should be');
+      const eventsOutputPath = path.join(blocker, 'events.jsonl');
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        let command = '';
+        expect(() => {
+          command = adapter.buildCommand(makeOptions({ cwd: tempDir, projectRoot: tempDir, eventsOutputPath, prompt: 'go' }));
+        }).not.toThrow();
+        expect(command).toContain('/usr/bin/droid');
+        expect(command).toContain('go');
+        expect(command).not.toContain('--settings');
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining('Could not write the hook settings file'), expect.anything());
+        expect(fs.statSync(blocker).isFile()).toBe(true);
+      } finally {
+        warn.mockRestore();
+      }
+    });
+
     it('declares the events file the hooks write, while activity stays on the PTY tracker', () => {
       expect(adapter.runtime.activity.kind).toBe('pty');
       expect(adapter.runtime.reportsTurnEnd).toBe(false);

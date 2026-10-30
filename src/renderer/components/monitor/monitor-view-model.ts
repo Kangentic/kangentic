@@ -157,10 +157,7 @@ function hasDescription(row: MonitorSessionRow): boolean {
 }
 
 /**
- * Label for a permission wait's `since` line, by what the wait is for. A lookup
- * rather than equality checks, because the kind names overlap with
- * `ActivityState` members and a bare `=== 'permission'` reads as (and is scanned
- * for) hand-rolled activity bucketing.
+ * Label for a permission wait's `since` line, by what the wait is for.
  *
  * Plain `idle` is deliberately UNLABELLED: the amber tone, the envelope, and the
  * "Needs you" section header already say idle three times before any word does,

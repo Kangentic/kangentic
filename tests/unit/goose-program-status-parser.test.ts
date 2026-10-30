@@ -38,6 +38,14 @@ describe('GooseProgramStatusParser', () => {
     expect('waitKind' in event).toBe(false);
   });
 
+  it('leaves a kind it does not know unknown, Object.prototype names included', () => {
+    for (const kind of ['constructor', '__proto__', 'toString', 'plan']) {
+      const [event] = eventsOf(new GooseProgramStatusParser(), status(`state=blocked:kind=${kind}:app=goose`));
+      expect(event).toMatchObject({ type: EventType.Idle, detail: IdleReason.Permission });
+      expect('waitKind' in event, `kind=${kind}`).toBe(false);
+    }
+  });
+
   it('ends a wait with the tracker\'s own resume event when Goose goes back to work', () => {
     const parser = new GooseProgramStatusParser();
     const events = eventsOf(parser, status('state=blocked:kind=question:app=goose'), 'some output', status('state=working:app=goose'));
