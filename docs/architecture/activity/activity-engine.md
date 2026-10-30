@@ -21,7 +21,7 @@ sources:
 ---
 # Activity engine
 
-Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting user approval). This drives the task card spinner, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
+Kangentic tracks whether each agent session is **thinking** (working on a turn), **idle** (waiting for input or done), or in a **permission** state (paused awaiting the user's answer or approval). This drives the task card spinner, the desktop "task done" notification, the in-app idle toast, idle-timeout suspend, and auto-focus behavior.
 
 ## Why this matters
 
