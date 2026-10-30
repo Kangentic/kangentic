@@ -86,6 +86,13 @@ export class CommandTerminalHistoryRepository {
     ).run(label, agentSessionId);
   }
 
+  /** The user renamed the terminal: replaces the name, and null clears it. */
+  renameLabel(agentSessionId: string, label: string | null): void {
+    this.db.prepare(
+      'UPDATE command_terminal_history SET label = ? WHERE agent_session_id = ?',
+    ).run(label, agentSessionId);
+  }
+
   /** The conversation's first prompt. First write wins, so a resume keeps the original. */
   setFirstPrompt(agentSessionId: string, firstPrompt: string): void {
     this.db.prepare(

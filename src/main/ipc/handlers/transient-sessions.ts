@@ -566,6 +566,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     context.sessionManager.setCommandTerminalBranch(sessionId, branch);
   });
 
+  // The name the user gave the terminal. It replaces the namer's, and its
+  // Earlier row keeps it so a resume comes back under it.
+  ipcMain.handle(IPC.SESSION_SET_TRANSIENT_LABEL, (_, sessionId: string, label: string) => {
+    if (!context.sessionManager.renameCommandTerminalLabel(sessionId, label)) return;
+    context.commandTerminalHistory?.renameLabel(sessionId, label.trim() || null);
+  });
+
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // The handler returns at once - the window closes at once - and only the
     // session directory's delete waits for the shell (endCommandTerminal). An

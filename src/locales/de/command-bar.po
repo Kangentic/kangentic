@@ -133,6 +133,17 @@ msgstr "In neuem Fenster öffnen"
 msgid "Open project folder"
 msgstr "Projektordner öffnen"
 
+#: src/renderer/components/command-bar/CommandTerminalContextMenu.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "Umbenennen"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Rename terminal"
+msgstr ""
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Restore panel"

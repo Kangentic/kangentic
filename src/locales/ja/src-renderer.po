@@ -756,6 +756,10 @@ msgstr "タスクを削除できませんでした"
 msgid "Couldn't rename task"
 msgstr "タスク名を変更できませんでした"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

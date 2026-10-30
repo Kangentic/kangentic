@@ -16,7 +16,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
+import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, Pencil, SquareChevronRight } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -53,6 +53,8 @@ import { useCommandTerminalLayer } from './command-terminal-context';
 import { StopButtonIcon } from './StopButtonIcon';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { startCommandTerminalSwapDrag } from './swap-drag';
+import { CommandTerminalContextMenu } from './CommandTerminalContextMenu';
+import { useCommandTerminalRename } from './useCommandTerminalRename';
 import { PanelErrorBoundary } from '../PanelErrorBoundary';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
 
@@ -258,6 +260,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   // construction. `commandTerminalDisplayName` is shared with the Agent Monitor,
   // a phone's snapshot and the push alert, so all four print the same name.
   const windowTitle = commandTerminalDisplayName(transientLabel, slot);
+  const rename = useCommandTerminalRename(sessionId, transientLabel, windowTitle);
   // The branch is read from the pairing map, never held here: every path that
   // used to set it locally (spawn, adopt, a picker switch) already writes the
   // map entry, and the layer's HEAD tracker (`useTrackHeadBranch`) corrects
@@ -587,14 +590,24 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
         <div className="flex-1 min-w-[64px] truncate">
           {/* Inline span so its scrollWidth measures the TEXT width (not the
               flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
-              of that width for the title and lets the pills reclaim the rest. */}
-          <Tooltip label={windowTitle}>
+              of that width for the title and lets the pills reclaim the rest.
+              A rename puts its input inside the span, because the overflow hook
+              holds on to the span it measured. */}
+          <Tooltip label={windowTitle} enabled={!rename.isRenaming}>
             <span
               ref={titleSpanRef}
+              onContextMenu={rename.onContextMenu}
               className="text-base font-semibold text-fg truncate"
               data-testid="command-bar-label"
             >
-              {windowTitle}
+              {rename.isRenaming ? (
+                <input
+                  {...rename.inputProps}
+                  aria-label={t`Rename terminal`}
+                  className="w-full bg-transparent border-b border-accent text-fg outline-none px-0.5 select-text"
+                  data-testid="command-bar-rename-input"
+                />
+              ) : windowTitle}
             </span>
           </Tooltip>
         </div>
@@ -666,6 +679,13 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
             <KebabMenu>
               {(close) => (
                 <>
+                  <KebabMenuItem
+                    icon={<Pencil size={14} />}
+                    label={t`Rename`}
+                    onClick={() => { close(); rename.startRename(); }}
+                    disabled={!sessionId}
+                    data-testid="command-bar-kebab-rename"
+                  />
                   {projectPath && (
                     <KebabMenuItem
                       icon={<FolderOpen size={14} />}
@@ -770,6 +790,9 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           />
         )}
       </div>
+
+      {/* Outside the header, so a press on the menu never reaches its swap drag. */}
+      <CommandTerminalContextMenu position={rename.contextMenuAt} onRename={rename.startRename} onClose={rename.closeContextMenu} />
 
       {/* Body */}
       <div className="relative flex flex-1 min-h-0">

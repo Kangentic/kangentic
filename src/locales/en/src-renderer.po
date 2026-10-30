@@ -608,6 +608,10 @@ msgstr "Couldn't remove the task"
 msgid "Couldn't rename task"
 msgstr "Couldn't rename task"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr "Couldn't rename terminal"
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't rename the workflow"
 msgstr "Couldn't rename the workflow"

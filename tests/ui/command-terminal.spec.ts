@@ -301,6 +301,38 @@ function multiTerminalPreConfig(): string {
   `;
 }
 
+const RENAME_PROJECT_ID = 'proj-cmd-rename';
+
+/**
+ * One project and the mock's own spawnTransient, which records each terminal in
+ * the mock's session list the way main's registry holds it, so the mock's
+ * setTransientLabel finds the row it renames.
+ */
+function renamePreConfig(): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${RENAME_PROJECT_ID}',
+        name: 'Rename Project',
+        path: '/mock/rename-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, {
+          id: 'lane-rename-' + i,
+          position: i,
+          created_at: ts,
+        }));
+      });
+      return { currentProjectId: '${RENAME_PROJECT_ID}' };
+    });
+  `;
+}
+
 const RECONCILE_PROJECT_ID = 'proj-cmd-restart';
 const HARD_RELOAD_PROJECT_ID = 'proj-cmd-hard-reload';
 const SLOT_MISMATCH_PROJECT_ID = 'proj-cmd-slot-mismatch';
@@ -1709,6 +1741,273 @@ test.describe('Command Terminal', () => {
       }
     });
 
+  });
+
+  // ---------------------------------------------------------------------------
+  // Rename - the title turns into an input from a right-click on it, the
+  // kebab's Rename, or a right-click on its Running row. The name goes to main
+  // and comes back on the session row, which is where every title reads it.
+  // ---------------------------------------------------------------------------
+  test.describe('Rename', () => {
+    async function openTerminals(page: Page, count: number): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+      for (let opened = 2; opened <= count; opened += 1) {
+        await page.getByTestId('command-terminal-new').click();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(opened, { timeout: 5000 });
+      }
+      // A terminal can be renamed once its session has started.
+      await expect.poll(async () => (await transientEntriesFor(page, RENAME_PROJECT_ID)).length).toBe(count);
+    }
+
+    const renameCalls = (page: Page) => page.evaluate(() =>
+      (window as unknown as { __mockSetTransientLabelCalls?: Array<{ sessionId: string; label: string }> })
+        .__mockSetTransientLabelCalls ?? []);
+
+    test('a right-click on the title opens Rename, and Enter shows the new name', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const title = page.getByTestId('command-bar-label');
+        await expect(title).toHaveText('Command Terminal 1');
+
+        await title.click({ button: 'right' });
+        await expect(page.getByTestId('command-terminal-context-menu')).toBeVisible();
+        await page.getByTestId('command-terminal-context-rename').click();
+        await expect(page.getByTestId('command-terminal-context-menu')).toHaveCount(0);
+
+        // The input opens on the name shown, selected, so typing replaces it.
+        const input = page.getByTestId('command-bar-rename-input');
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue('Command Terminal 1');
+        await page.keyboard.type('Parser work');
+        await page.keyboard.press('Enter');
+
+        await expect(input).toHaveCount(0);
+        await expect(title).toHaveText('Parser work');
+
+        // Leaving the input saves it too.
+        await title.click({ button: 'right' });
+        await page.getByTestId('command-terminal-context-rename').click();
+        await expect(input).toBeFocused();
+        await input.fill('Parser review');
+        await input.blur();
+        await expect(title).toHaveText('Parser review');
+
+        const [entry] = await transientEntriesFor(page, RENAME_PROJECT_ID);
+        expect(await renameCalls(page)).toEqual([
+          { sessionId: entry.sessionId, label: 'Parser work' },
+          { sessionId: entry.sessionId, label: 'Parser review' },
+        ]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the kebab renames too, Escape keeps the name, and an empty name brings back the slot name', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const title = page.getByTestId('command-bar-label');
+        const input = page.getByTestId('command-bar-rename-input');
+        const renameFromKebab = async (): Promise<void> => {
+          await page.getByTestId('command-terminal-window').getByRole('button', { name: 'Actions', exact: true }).click();
+          await page.getByTestId('command-bar-kebab-rename').click();
+          await expect(input).toBeFocused();
+        };
+
+        await renameFromKebab();
+        await input.fill('Parser work');
+        await input.press('Enter');
+        await expect(title).toHaveText('Parser work');
+
+        // Escape ends the edit without sending anything.
+        await renameFromKebab();
+        await expect(input).toHaveValue('Parser work');
+        await input.fill('Something else');
+        await input.press('Escape');
+        await expect(input).toHaveCount(0);
+        await expect(title).toHaveText('Parser work');
+        expect(await renameCalls(page)).toHaveLength(1);
+
+        await renameFromKebab();
+        await input.fill('');
+        await input.press('Enter');
+        await expect(title).toHaveText('Command Terminal 1');
+        expect((await renameCalls(page)).map((call) => call.label)).toEqual(['Parser work', '']);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a right-click on a Running row renames the terminal behind the expanded one', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 2);
+        await page.locator('[data-command-slot="slot-1"]').getByTestId('command-bar-expand').click();
+        const row = page.locator('[data-testid="command-terminal-running-row"][data-command-slot="slot-2"]');
+        await expect(row).toBeVisible();
+
+        await row.click({ button: 'right' });
+        await page.getByTestId('command-terminal-context-rename').click();
+        const input = row.getByTestId('command-terminal-running-rename-input');
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue('Command Terminal 2');
+        await input.fill('Docs pass');
+        await input.press('Enter');
+
+        await expect(row.getByTestId('command-terminal-running-expand')).toHaveText('Docs pass');
+        // The window behind it reads the same row.
+        await expect(page.locator('[data-testid="command-terminal-window"][data-command-slot="slot-2"]')
+          .getByTestId('command-bar-label')).toHaveText('Docs pass');
+        await expect(page.locator('[data-testid="command-terminal-window"][data-command-slot="slot-1"]')
+          .getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    /** Right-click the title, pick Rename, and wait for the input to take focus. */
+    async function startRenameFromTitle(page: Page): Promise<Locator> {
+      await page.getByTestId('command-bar-label').click({ button: 'right' });
+      await page.getByTestId('command-terminal-context-rename').click();
+      const input = page.getByTestId('command-bar-rename-input');
+      await expect(input).toBeFocused();
+      return input;
+    }
+
+    test('Enter on a name that did not change sends nothing, named or not', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const title = page.getByTestId('command-bar-label');
+
+        // Unnamed: the input opens on the slot name, and Enter takes it as it stands.
+        // The input going away is the commit having run. The call, were there one,
+        // is made in the same handler, so there is nothing left to wait for.
+        const input = await startRenameFromTitle(page);
+        await expect(input).toHaveValue('Command Terminal 1');
+        await input.press('Enter');
+        await expect(input).toHaveCount(0);
+        expect(await renameCalls(page)).toEqual([]);
+
+        // Unnamed with the text cleared: there is no name to clear.
+        await startRenameFromTitle(page);
+        await input.fill('');
+        await input.press('Enter');
+        await expect(input).toHaveCount(0);
+        await expect(title).toHaveText('Command Terminal 1');
+        expect(await renameCalls(page)).toEqual([]);
+
+        // Named: one real rename, then Enter on the name as it stands.
+        await startRenameFromTitle(page);
+        await input.fill('Parser work');
+        await input.press('Enter');
+        await expect(title).toHaveText('Parser work');
+        expect(await renameCalls(page)).toHaveLength(1);
+
+        await startRenameFromTitle(page);
+        await expect(input).toHaveValue('Parser work');
+        await input.press('Enter');
+        await expect(input).toHaveCount(0);
+        expect(await renameCalls(page)).toHaveLength(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('leaving the input without editing sends nothing, named or not', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const title = page.getByTestId('command-bar-label');
+
+        const input = await startRenameFromTitle(page);
+        await input.blur();
+        await expect(input).toHaveCount(0);
+        await expect(title).toHaveText('Command Terminal 1');
+        expect(await renameCalls(page)).toEqual([]);
+
+        await startRenameFromTitle(page);
+        await input.fill('Parser work');
+        await input.blur();
+        await expect(title).toHaveText('Parser work');
+        expect(await renameCalls(page)).toHaveLength(1);
+
+        await startRenameFromTitle(page);
+        await expect(input).toHaveValue('Parser work');
+        await input.blur();
+        await expect(input).toHaveCount(0);
+        expect(await renameCalls(page)).toHaveLength(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Escape closes the context menu and nothing under it', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const menu = page.getByTestId('command-terminal-context-menu');
+        await page.getByTestId('command-bar-label').click({ button: 'right' });
+        await expect(menu).toBeVisible();
+
+        // Count the Escapes that get past the menu. Focus sits in the terminal's
+        // input, which reads Escape as the agent's interrupt, so the count is a
+        // CAPTURE listener on that element added after xterm's own (xterm cancels
+        // the event there, which would hide it from a bubble-phase one). A bubble
+        // listener on `document` stands in for BaseDialog and the task windows,
+        // for focus anywhere else. The menu takes the key at the document's
+        // capture phase and stops it, so neither hears it. Dispatch is
+        // synchronous with the key press, so the count is final once `press`
+        // returns.
+        await page.evaluate(() => {
+          const counter = window as unknown as { __escapesPastTheMenu: number };
+          counter.__escapesPastTheMenu = 0;
+          const countEscape = (event: KeyboardEvent) => {
+            if (event.key === 'Escape') counter.__escapesPastTheMenu += 1;
+          };
+          (document.activeElement ?? document.body).addEventListener('keydown', countEscape, true);
+          document.addEventListener('keydown', countEscape);
+        });
+
+        await page.keyboard.press('Escape');
+
+        await expect(menu).toHaveCount(0);
+        // The key closed the menu, not the panel under it.
+        await expect(page.getByTestId('command-terminal-panel')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        expect(await page.evaluate(() =>
+          (window as unknown as { __escapesPastTheMenu: number }).__escapesPastTheMenu)).toBe(0);
+        // And it opened no rename input on its way out.
+        await expect(page.getByTestId('command-bar-rename-input')).toHaveCount(0);
+        expect(await renameCalls(page)).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a press outside the context menu closes it and leaves the panel open', async () => {
+      const { browser, page } = await launchWithState(renamePreConfig());
+      try {
+        await openTerminals(page, 1);
+        const menu = page.getByTestId('command-terminal-context-menu');
+        await page.getByTestId('command-bar-label').click({ button: 'right' });
+        await expect(menu).toBeVisible();
+
+        // The panel's own header: outside the menu, inside the panel, so the press
+        // is not the backdrop click that hides the panel.
+        await page.getByTestId('command-terminal-panel-header').click({ position: { x: 60, y: 10 } });
+
+        await expect(menu).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-panel')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        expect(await renameCalls(page)).toEqual([]);
+      } finally {
+        await browser.close();
+      }
+    });
   });
 
   // ---------------------------------------------------------------------------

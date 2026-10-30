@@ -616,6 +616,10 @@ msgstr "无法移除任务"
 msgid "Couldn't rename task"
 msgstr "无法重命名任务"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 msgid "Couldn't rename the workflow"
 msgstr "无法重命名工作流"

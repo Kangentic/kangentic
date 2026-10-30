@@ -259,8 +259,9 @@ SessionManager's own events, in main:
   `locateSessionHistoryFile`, wired in `register-all.ts`), and no live terminal or resume in
   flight holds it. The newest 50 ended rows per project are kept
   (`COMMAND_TERMINAL_HISTORY_LIMIT`).
-- **A row reads as its name, else its first prompt.** The name comes from the namer, which runs
-  only with an Automation agent set, and the Automation agent has no default. Every row read
+- **A row reads as its name, else its first prompt.** The name comes from the namer or from a manual
+  rename. The namer runs only with an Automation agent set, which has no default; a rename needs no
+  agent. Every row read
   "Untitled conversation" until the row kept the conversation's first prompt too (`first_prompt`,
   from the Prompt event's text, collapsed to one line and capped at 200 characters; a prompt that
   arrives before the agent reports its id is held until the row exists). The rail and the phone's
@@ -553,8 +554,8 @@ default terminal, would start a terminal nobody asked for.
 
 A terminal gets its name from its first prompt, summarized by the Automation agent at its model and
 effort in the shared answer home, through `CommandTerminalNamer`
-(`src/main/agent/shared/command-terminal-namer.ts`). With no Automation agent, naming is off and the
-terminal keeps its "Command Terminal N" title. It used to be named in the renderer by the open
+(`src/main/agent/shared/command-terminal-namer.ts`). With no Automation agent, auto-naming is off and
+the terminal keeps its "Command Terminal N" title unless you rename it. It used to be named in the renderer by the open
 project's default agent, so a terminal a phone started, or one in a project the desktop did not have
 open, never got one; and it later ran on the terminal's own agent in its project folder, which put a
 four-word title on the project's default model with the project's instructions loaded. The namer
@@ -563,6 +564,18 @@ when it cannot name, skips the synthetic PTY-activity prompt,
 and writes through `setCommandTerminalLabel`, which emits `session-changed` once. The window title,
 the Monitor row, the phone's list and its push alerts all read the name from the registry row
 through `commandTerminalDisplayName`, falling back to "Command Terminal N".
+
+The user can rename a terminal: Rename on a right-click of its title or its Running row, or in its
+kebab, turns the title into an input (`useCommandTerminalRename`). The input sits inside the title
+span, because `useHeaderPillOverflow` keeps the span it measured. The menu opens at the cursor in a
+body portal (`CommandTerminalContextMenu`), since a fixed element inside a frame the engine moves by
+transform is placed against the frame. The name goes to main on `session:setTransientLabel`, and the
+title reads it back off the row like any other name. `renameCommandTerminalLabel` replaces the
+label, and a blank name clears it. The namer stays first-write-wins, so it never replaces the user's
+name, even when the rename lands before the summary does. A clear leaves no name, so a summary still
+in flight can still name the terminal, the same first-name path an untouched terminal takes. The
+Earlier record takes the rename too (`CommandTerminalHistory.renameLabel`). A rename made before the
+agent reports its id waits for the history row, then replaces the name a resumed row carried.
 
 Naming needs an agent whose prompt event carries the prompt's text, and most hooks report only that
 a prompt was submitted. Two agents report it: Claude Code, because a Command Terminal's start passes

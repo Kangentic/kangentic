@@ -756,6 +756,10 @@ msgstr "작업을 제거할 수 없음"
 msgid "Couldn't rename task"
 msgstr "작업 이름을 바꾸지 못함"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

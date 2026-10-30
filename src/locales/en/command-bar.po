@@ -108,6 +108,16 @@ msgstr "Open in new window"
 msgid "Open project folder"
 msgstr "Open project folder"
 
+#: src/renderer/components/command-bar/CommandTerminalContextMenu.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Rename"
+msgstr "Rename"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Rename terminal"
+msgstr "Rename terminal"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Restore panel"
 msgstr "Restore panel"
