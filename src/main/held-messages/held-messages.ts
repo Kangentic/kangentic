@@ -19,10 +19,10 @@ import { isRecapSession } from '../automations/turn-end/recap-turns';
  * is held against the TASK and goes to the next agent that starts or resumes
  * there, in its opening message, after the column's own message.
  *
- * Producers: `kangentic_send_session_message` to a task with no live agent and
- * a Move to column message into a column that runs none, both through
- * `holdTaskMessage`. The phone's chat to a paused task is not wired to it yet:
- * the mobile bridge still refuses a session that is not writable.
+ * Producers, all through `holdTaskMessage`: `kangentic_send_session_message`
+ * to a task with no live agent, a Move to column message into a column that
+ * runs none, and the phone's chat (the mobile bridge's `send-user-message`) to
+ * a task session that is not writable, a paused one above all.
  *
  * Storage: the sent-messages log (`session_messages_sent`). The `held` row is
  * the hold itself, keyed on the task with no session yet, and its status moves

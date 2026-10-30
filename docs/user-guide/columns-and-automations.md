@@ -57,7 +57,7 @@ Five types:
 | **Send message to agent** | Types a message at the column's agent. Plain instructions or a slash command. |
 | **Run script** | Runs a script in the task's worktree, or the project checkout when it has none. |
 | **Call webhook** | Calls a URL. Retries a transport error, 408, 429 or 5xx, for up to three attempts in total. |
-| **Notify me** | Raises one desktop notification. Clicking it opens the task. |
+| **Notify me** | Notifies you on the desktop and on every paired phone, with the row's Title and Body, whatever your notification settings. Opening it opens the task. |
 | **Move to column** | Moves the task to another column (or the next one), with a message for the agent there. On agent turn end only. |
 
 **Adding one.** Each group has its own **Add automation** control, so where you add decides when

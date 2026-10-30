@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Held messages
-description: How a message for a task with no running agent is held in the sent-messages log and delivered in the next agent's opening message (numbered, after the column's message, apart from a slash command), the claim that settles each held row once, the session-live flush for every other start, and what clears them.
+description: How a message for a task with no running agent (from an agent, a Move to column row or the phone) is held in the sent-messages log and delivered in the next agent's opening message (numbered, after the column's message, apart from a slash command), the claim that settles each held row once, the session-live flush for every other start, and what clears them.
 tags: [sessions, messages, mcp, automations, mobile]
 sources:
   - resource: src/main/held-messages/held-messages.ts
@@ -11,6 +11,8 @@ sources:
   - resource: src/main/ipc/handlers/session-resume.ts
   - resource: src/main/agent/mcp-http/steering-tools.ts
   - resource: src/main/automations/turn-end/deliver-message.ts
+  - resource: src/main/mobile-bridge/handlers/send-user-message.ts
+    title: the phone's chat to a task with no running agent is held
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
   - resource: src/main/ipc/handlers/task-move.ts
     title: a move to Done or To Do clears held messages
@@ -31,8 +33,8 @@ shows the hold.
 
 ## What holds a message
 
-`holdTaskMessage` in `src/main/held-messages/held-messages.ts` is the one way in. Two producers
-call it, and the phone is meant to be the third.
+`holdTaskMessage` in `src/main/held-messages/held-messages.ts` is the one way in. Three producers
+call it.
 
 - **`kangentic_send_session_message`** to a task with no running agent: paused, exited, still
   queued for a concurrency slot, or never started. It used to refuse ("not accepting input"). It
@@ -44,9 +46,13 @@ call it, and the phone is meant to be the third.
   for a column where no agent runs, or whose agent exits before its turn ends. It used to be
   logged and dropped. The check is liveness, not `task.session_id`, which a paused agent's id can
   outlive.
-- **The phone's chat to a paused task, not wired yet.** The mobile bridge's `send-user-message`
-  still refuses a session that is not writable. Once wired, it resolves the paused session's task
-  and calls `holdTaskMessage` with no caller ids, as a human sends.
+- **The phone's chat to a paused task.** The mobile bridge's `send-user-message` names a session.
+  When that session is not writable and belongs to a task (paused, queued or exited), it calls
+  `holdTaskMessage` for the session's task with no caller ids, as a human sends, and answers the
+  phone `delivered: true`. A refused hold answers with the refusal the phone got before, with the
+  same error code and the hold's reason as its text. A Command Terminal or a workflow's own agent
+  (transient) has no task, so it is refused as before. No rate window applies: that window stops
+  an agent's send loop, and a person's sends are not one.
 
 A task in Done (or archived) holds nothing and the hold is refused: the move into Done clears what
 is held, and the move out of Done is a recovery move that sends the agent no messages, so a message

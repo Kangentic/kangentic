@@ -715,6 +715,14 @@ msgstr "Bir görev Yapılacaklar veya Tamamlandı sütununa girdiğinde hiçbir 
 msgid "Notifies \"{title}\""
 msgstr "\"{title}\" bildirimi gösterir"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "Görev ayrıntısı penceresindeki açıklama panelini gösterin veya gi
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Proje kenar çubuğunu gösterin veya gizleyin."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "Masaüstü bildirimi gösterir."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "Masaüstü bildirimi gösterir. Tıklandığında görevi açar."
 
 #: src/shared/keybindings.ts
 #, fuzzy

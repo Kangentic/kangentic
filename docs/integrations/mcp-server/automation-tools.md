@@ -22,7 +22,7 @@ leaves. Each column owns one ordered list, split into three groups (`on`: `enter
 | `send_message` | Types a message at the column's agent | `message`, `mode` (`immediate` / `deferred`) |
 | `run_script` | Runs a script in the task's worktree, or the project checkout when it has none | `script`, `timeoutMinutes` (1 to 120, default 10, file only) |
 | `webhook` | Calls a URL, retrying a transport error, 408, 429 or 5xx, for up to 3 attempts in total | `url`, `method`, `body`, `headers` |
-| `notify` | Raises one desktop notification | `title`, `body` |
+| `notify` | Notifies the user on the desktop and every paired phone | `title`, `body` |
 | `move_to_column` | `turn_end` only. Moves the task, and hands the agent there a message; ends the group | `targetColumn` (omit for the next column), `message` |
 
 Every row also takes guards, a Condition of one kind or the other and a Frequency:

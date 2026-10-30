@@ -579,6 +579,14 @@ msgstr "任務進入「待辦」或「已完成」時不會執行任何項目。
 msgid "Notifies \"{title}\""
 msgstr "通知「{title}」"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 msgid "Notify me"
 msgstr "通知我"
@@ -883,14 +891,6 @@ msgstr "顯示或隱藏任務詳細資料對話方塊中的描述面板。"
 #: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
 msgstr "顯示或隱藏專案側邊欄。"
-
-#: src/shared/automation-describe.ts
-msgid "Shows a desktop notification."
-msgstr "顯示桌面通知。"
-
-#: src/shared/automation-manifest.ts
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "顯示桌面通知，按一下即可開啟任務。"
 
 #: src/shared/keybindings.ts
 msgid "Snap down: restore when maximized, or move a half-snapped window to its bottom corner (Win11 stateful snap)."

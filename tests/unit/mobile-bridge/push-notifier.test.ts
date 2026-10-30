@@ -19,7 +19,10 @@
  * push token redacted out of it, that the device-not-registered branch
  * returns before the generic-failure handling, and that a stale in-flight
  * failure releases only the cooldown stamp it made rather than a fresher
- * one written for the same key meanwhile.
+ * one written for the same key meanwhile. It also pins the wait kind the
+ * permission push seals from its fire-time snapshot, and Notify me's
+ * notifyAutomation: the row's text on an input-required with no session, sent
+ * past presence, categories and the cooldown, cut to fit, and never cleared.
  *
  * The 'clears' suite covers the other direction: every resolution trigger,
  * coalescing and the payload size bound, the acceptsClears opt-in, the
@@ -48,11 +51,12 @@ import type { WakeMessage, WakeResult } from '../../../src/main/mobile-bridge/pu
 import type { BoardChangedEvent } from '../../../src/main/mobile-bridge/board-event-bus';
 import type { MobileDeviceConnectionState } from '../../../src/shared/types';
 
-/** Both debounces re-check this at fire time, so both fields matter. */
+/** Both debounces re-check this at fire time, so both fields matter; the permission one also reads the wait's kind. */
 interface FakeStatsSnapshot {
   activity: 'thinking' | 'idle' | 'permission';
   permissionPending: boolean;
   permissionAwaitedToolId: string | null;
+  permissionWaitKind?: 'question' | 'approval' | null;
 }
 
 class FakeSessionManager extends EventEmitter {
@@ -172,6 +176,10 @@ describe('PushNotifier', () => {
 
   function sealedCategories(): string[] {
     return sealSpy.mock.calls.map(([, , plaintext]) => (plaintext as { category: string }).category);
+  }
+
+  function sealedPlaintext(callIndex = 0): Record<string, unknown> {
+    return sealSpy.mock.calls[callIndex][2] as Record<string, unknown>;
   }
 
   /**
@@ -296,6 +304,132 @@ describe('PushNotifier', () => {
     notifier.notifyWorkflowTask({ ...TASK_CONTEXT, detail: 'Workflow stalled: again.' });
     await vi.advanceTimersByTimeAsync(0);
     expect(sealedCategories()).toEqual(['input-required']);
+    // The workflow's notice keeps the category's own title on every phone.
+    expect('waitKind' in plaintext).toBe(false);
+  });
+
+  describe('the wait kind (protocol 0.26.0)', () => {
+    it('seals the wait kind the snapshot holds when the permission debounce fires', async () => {
+      buildNotifier();
+      // Arm-time reason says nothing; the fire-time snapshot is what counts.
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({
+        activity: 'permission',
+        permissionPending: true,
+        permissionAwaitedToolId: 'tool-1',
+        permissionWaitKind: 'approval',
+      } as FakeStatsSnapshot);
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(sealedPlaintext()).toMatchObject({ category: 'input-required', waitKind: 'approval' });
+    });
+
+    it('seals no wait kind when the agent did not say', async () => {
+      buildNotifier();
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({
+        activity: 'permission',
+        permissionPending: true,
+        permissionAwaitedToolId: 'tool-1',
+        permissionWaitKind: null,
+      } as FakeStatsSnapshot);
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(sealedCategories()).toEqual(['input-required']);
+      expect('waitKind' in sealedPlaintext()).toBe(false);
+    });
+  });
+
+  describe('Notify me (notifyAutomation)', () => {
+    const ROW = { projectId: TASK_CONTEXT.projectId, taskId: TASK_CONTEXT.taskId, taskTitle: TASK_CONTEXT.taskTitle, title: 'Cap retries in the sync client', body: 'Blocked' };
+
+    it('seals the row\'s title and body on an input-required with no session, and the body as detail for older phones', async () => {
+      buildNotifier();
+      notifier.notifyAutomation(ROW);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sealedPlaintext()).toMatchObject({
+        category: 'input-required',
+        projectId: TASK_CONTEXT.projectId,
+        taskId: TASK_CONTEXT.taskId,
+        sessionId: '',
+        taskTitle: TASK_CONTEXT.taskTitle,
+        detail: 'Blocked',
+        title: 'Cap retries in the sync client',
+        body: 'Blocked',
+      });
+      expect('waitKind' in sealedPlaintext()).toBe(false);
+    });
+
+    it('reaches a device whose categories leave out input-required, and a connected one', async () => {
+      listRegistrations = vi.fn(() => [
+        { ...REGISTRATION, categories: ['turn-complete'] },
+        { ...IOS_REGISTRATION },
+      ]);
+      fakeSessions.set(IOS_REGISTRATION.deviceId, { connectionState: 'connected' });
+      buildNotifier();
+      notifier.notifyAutomation(ROW);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+    });
+
+    it('is never cooled down: two rows on the same task both notify, and neither holds back the session\'s own prompt', async () => {
+      buildNotifier();
+      notifier.notifyAutomation(ROW);
+      notifier.notifyAutomation({ ...ROW, title: 'Second row' });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).toHaveBeenCalledTimes(2);
+
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      await vi.advanceTimersByTimeAsync(2000);
+      expect(fetchImpl).toHaveBeenCalledTimes(3);
+    });
+
+    it('still sends nothing while the Mobile bridge switch is off', async () => {
+      buildNotifier({ isBridgeEnabled: () => false });
+      notifier.notifyAutomation(ROW);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it('cuts a long title and shrinks a long body until the push fits Expo\'s payload limit', async () => {
+      // Seal for real, so the blob length is the one a device would get.
+      sealSpy = vi.fn((...callArguments: Parameters<typeof sealPushEnvelope>) => sealPushEnvelope(...callArguments));
+      buildNotifier();
+      const longBody = 'The reviewer asked for a rethrow of the last error. '.repeat(200);
+      notifier.notifyAutomation({ ...ROW, title: 'T'.repeat(500), body: longBody });
+      await vi.advanceTimersByTimeAsync(0);
+
+      const plaintext = sealedPlaintext() as { title: string; body: string; detail: string };
+      expect(Array.from(plaintext.title).length).toBeLessThanOrEqual(200);
+      expect(plaintext.title.endsWith('...')).toBe(true);
+      expect(plaintext.body.endsWith('...')).toBe(true);
+      expect(plaintext.body.length).toBeGreaterThan(0);
+      expect(plaintext.detail).toBe(plaintext.body);
+      const blob = (postedBodies()[0].data as { blob: string }).blob;
+      expect(blob.length).toBeLessThanOrEqual(3_000);
+    });
+
+    it('never puts the row\'s text in the iOS placeholder or anywhere else outside the sealed blob', async () => {
+      // Real sealing, so the blob is what a device would get and holds the text.
+      listRegistrations = vi.fn(() => [IOS_REGISTRATION]);
+      buildNotifier({ sealEnvelope: undefined });
+      notifier.notifyAutomation({ ...ROW, title: 'Row Title Kp4wR', body: 'Row Body Jt7sD' });
+      await vi.advanceTimersByTimeAsync(0);
+
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+      const rawBody = (fetchImpl.mock.calls[0][1] as { body: string }).body;
+      for (const plaintextValue of ['Row Title Kp4wR', 'Row Body Jt7sD', TASK_CONTEXT.taskTitle, TASK_CONTEXT.taskId]) {
+        expect(rawBody).not.toContain(plaintextValue);
+      }
+      const body = JSON.parse(rawBody) as { title: string; body: string };
+      expect(body.title).toBe('Kangentic');
+      expect(body.body).toBe('Agent needs your attention');
+    });
+
+    it('leaves a row that already fits as written', async () => {
+      buildNotifier();
+      notifier.notifyAutomation(ROW);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(sealedPlaintext()).toMatchObject({ title: ROW.title, body: ROW.body });
+    });
   });
 
   /**
@@ -1868,6 +2002,19 @@ describe('PushNotifier', () => {
       await vi.advanceTimersByTimeAsync(EXPECTED_COALESCE_MS);
       expect(removeRegistration).toHaveBeenCalledWith('device-1');
       warnSpy.mockRestore();
+    });
+
+    it('a Notify me push is never recorded, so the move that sent it does not clear it', async () => {
+      listRegistrations = vi.fn(() => [ANDROID_CLEARS]);
+      buildClearingNotifier();
+      // An exit row fires as the task leaves its lane: the move's own event follows.
+      notifier.notifyAutomation({ projectId: TASK_CONTEXT.projectId, taskId: TASK_CONTEXT.taskId, taskTitle: TASK_CONTEXT.taskTitle, title: 'Left Review', body: 'Executing' });
+      readTaskPlacement.mockReturnValue({ swimlaneId: 'lane-2', archived: false, lastMoveOrigin: 'renderer' });
+      emitTaskUpdated();
+      boardEvents.emit({ projectId: TASK_CONTEXT.projectId, change: 'task-deleted', ids: [TASK_CONTEXT.taskId] });
+      await vi.advanceTimersByTimeAsync(EXPECTED_COALESCE_MS);
+      expect(visibleBodies()).toHaveLength(1);
+      expect(clearBodies()).toHaveLength(0);
     });
 
     it('workflow-complete is never recorded, so nothing ever clears it', async () => {

@@ -715,6 +715,14 @@ msgstr "No se ejecuta nada cuando una tarea entra en Por hacer o Hecho."
 msgid "Notifies \"{title}\""
 msgstr "Notifica \"{title}\""
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "Muestra u oculta el panel de descripción en el cuadro de diálogo de de
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Muestra u oculta la barra lateral del proyecto."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "Muestra una notificación de escritorio."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "Muestra una notificación de escritorio. Al hacer clic, se abre la tarea."
 
 #: src/shared/keybindings.ts
 #, fuzzy

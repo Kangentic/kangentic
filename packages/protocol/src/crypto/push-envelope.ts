@@ -24,6 +24,7 @@
 import { randomBytes, xaeadEncrypt, xaeadDecrypt, concatBytes, XCHACHA_NONCE_LENGTH, AEAD_TAG_LENGTH } from './primitives';
 import { base64UrlEncode, base64UrlDecode } from '../wire/base64url';
 import { isRecord } from '../wire/json-value';
+import { isPermissionWaitKindWire, type PermissionWaitKindWire } from '../events/payloads';
 
 /**
  * Append only. `workflow-complete` (every task of a workflow reached Done) is
@@ -127,6 +128,24 @@ export interface PushEnvelopePlaintext {
   /** Absent for a task's agent. See PUSH_SESSION_KINDS. */
   sessionKind?: PushSessionKind;
   /**
+   * What an `input-required` notification's wait is for (protocol 0.26.0):
+   * `question` titles it "Agent has a question", `approval` "Agent needs
+   * your approval". Absent when the agent did not say, and on a workflow
+   * task's notice; the category's own title ("Agent needs your input") stays
+   * the fallback, and is what a phone that predates the field shows.
+   */
+  waitKind?: PermissionWaitKindWire;
+  /**
+   * A notification the user wrote, as a Notify me automation row's Title and
+   * Body (protocol 0.26.0). Set together, on an `input-required` envelope
+   * with an empty `sessionId`, so a tap opens the task. A phone that knows
+   * them shows `title` over `body`. One that predates them shows the
+   * category's title over `taskTitle - detail`, which is why `detail`
+   * carries the same Body.
+   */
+  title?: string;
+  body?: string;
+  /**
    * Notifications this device should remove, riding on this one. The phone
    * applies them BEFORE presenting this envelope's own notification, so an
    * entry naming the same category and ids removes only the older alert it
@@ -142,7 +161,12 @@ function requireEnvelopeString(record: Record<string, unknown>, field: string): 
   return value;
 }
 
-/** Narrows a decrypted envelope's JSON to PushEnvelopePlaintext. Throws on any malformed field except `clears`. */
+/**
+ * Narrows a decrypted envelope's JSON to PushEnvelopePlaintext. Throws on any
+ * malformed required field. The optional ones are dropped instead when
+ * malformed or unknown (`sessionKind`, `waitKind`, `title`, `body`,
+ * `clears`), so the notification still opens.
+ */
 export function parsePushEnvelopePlaintext(value: unknown): PushEnvelopePlaintext {
   if (!isRecord(value)) throw new Error('push envelope plaintext must be an object');
   if (!isPushCategory(value.category)) throw new Error('push envelope plaintext has an unknown "category"');
@@ -163,6 +187,10 @@ export function parsePushEnvelopePlaintext(value: unknown): PushEnvelopePlaintex
     // An unknown kind (from a newer desktop) is dropped, not rejected, so the
     // notification still opens; the tap then routes as a task's would.
     ...(isPushSessionKind(value.sessionKind) ? { sessionKind: value.sessionKind } : {}),
+    // An unknown wait kind reads as an unknown wait: the category's title.
+    ...(isPermissionWaitKindWire(value.waitKind) ? { waitKind: value.waitKind } : {}),
+    ...(typeof value.title === 'string' ? { title: value.title } : {}),
+    ...(typeof value.body === 'string' ? { body: value.body } : {}),
     ...(clears.length > 0 ? { clears } : {}),
   };
 }

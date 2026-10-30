@@ -715,6 +715,14 @@ msgstr "タスクが To Do または Done に入ったときは何も実行さ�
 msgid "Notifies \"{title}\""
 msgstr "「{title}」を通知"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "タスク詳細ダイアログ内の説明パネルを表示または非
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "プロジェクト サイドバーを表示または非表示にします。"
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "デスクトップ通知を表示します。"
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "デスクトップ通知を表示します。クリックするとタスクを開きます。"
 
 #: src/shared/keybindings.ts
 #, fuzzy

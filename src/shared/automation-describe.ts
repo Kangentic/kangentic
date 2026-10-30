@@ -30,7 +30,7 @@ const SENTENCES = {
   webhookTo: msg({ message: '{method} to {host}' }),
   noUrl: msg`No URL yet.`,
   notifies: msg({ message: 'Notifies "{title}"' }),
-  showsNotification: msg`Shows a desktop notification.`,
+  showsNotification: msg`Notifies you on the desktop and your phone.`,
   movesTo: msg({ message: 'Moves the task to {column}' }),
   movesToNext: msg`Moves the task to the next column`,
   startsWithPrompt: msg({ message: 'Starts the agent with "{prompt}"' }),

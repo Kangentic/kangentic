@@ -12,6 +12,7 @@ sources:
   - resource: src/main/automations/adapters/
   - resource: src/shared/automation-manifest.ts
     title: AUTOMATION_MANIFEST
+  - resource: src/shared/automation-describe.ts
   - resource: src/shared/task-template-vars.ts
     title: TASK_TEMPLATE_VARS catalog
   - resource: src/main/agent/shared/task-template-resolvers.ts
@@ -120,7 +121,7 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 | `title` | string | Default `{{title}}`. Escaping is `none` |
 | `body` | string | Default `{{toColumn}}`. Escaping is `none` |
 
-One desktop notification through the same `showNotification` path `DesktopNotifier` uses, so it inherits click-to-task. No timeout, no retry.
+One desktop notification through the same `showDesktopNotification` path `DesktopNotifier` uses, so it inherits click-to-task, and the same Title and Body pushed to every paired phone, where a tap opens the task. Every place that builds an automation context wires `showNotification` to `showAutomationNotification` (`src/main/automations/shared/show-automation-notification.ts`), which does both. Neither reads the notification settings: the row is the user's choice to be told ([Push notifications](../../integrations/mobile-bridge/push-notifications.md)). No timeout, no retry.
 
 ### `move_to_column`: Move to column
 
