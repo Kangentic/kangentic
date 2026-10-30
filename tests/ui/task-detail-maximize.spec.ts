@@ -53,6 +53,18 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
   return { browser, page };
 }
 
+/** Wait until no PTY resize has been sent for a beat, then forget the ones that were. */
+async function settleResizeLog(ownPage: Page): Promise<void> {
+  let previousCount = -1;
+  await expect.poll(async () => {
+    const count = await ownPage.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
+    const settled = count === previousCount;
+    previousCount = count;
+    return settled;
+  }, { intervals: [300], timeout: 8000 }).toBe(true);
+  await ownPage.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
+}
+
 const PROJECT_ID = 'proj-maximize';
 const TASK_ID = 'task-maximize';
 const SESSION_ID = 'sess-maximize';
@@ -150,6 +162,9 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // Closing a Chromium that has run a terminal can take longer than the project's 15 s hook budget on
+  // a starved runner, and a hook timeout fails whichever test ran last in the worker.
+  test.setTimeout(45000);
   await browser?.close();
 });
 
@@ -748,18 +763,6 @@ test.describe('Task Detail: the terminal through a maximize', () => {
     return () => ownPage.evaluate(() => (window as unknown as { __frameHoldSeen: boolean }).__frameHoldSeen);
   }
 
-  /** Wait until no PTY resize has been sent for a beat, then forget the ones that were. */
-  async function settleResizeLog(ownPage: Page): Promise<void> {
-    let previousCount = -1;
-    await expect.poll(async () => {
-      const count = await ownPage.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
-      const settled = count === previousCount;
-      previousCount = count;
-      return settled;
-    }, { intervals: [300], timeout: 8000 }).toBe(true);
-    await ownPage.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
-  }
-
   /**
    * A maximize that must not hold the frame: the window grows and the terminal refits as a plain
    * terminal does. The PTY hears the larger grid (so the refit did happen), and no terminal ever
@@ -846,14 +849,86 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
       }
     }
   }
+  /** Ask for a refit until one has nothing to send: the terminal's grid fits the layout as it stands. */
+  async function settleGrid(target: Page): Promise<void> {
+    await expect.poll(async () => {
+      await clearResizes(target);
+      await target.evaluate(() => window.dispatchEvent(new Event('terminal-panel-resize')));
+      await settleFrames(target, 3);
+      return resizeCount(target);
+    }, { intervals: [200], timeout: 10000 }).toBe(0);
+  }
+  /**
+   * Watch the drag that follows: the window resizes as the page sees them, stamped with the clock the
+   * gate groups them by (Date.now), and every send to the PTY stamped with whether the gate was
+   * holding when it went out. The gate is the same module instance the app runs (what
+   * `isManagerResizeGateOpen` reads too).
+   */
+  async function watchDrag(target: Page): Promise<void> {
+    await target.evaluate(async () => {
+      const gate = await import('/src/renderer/window-manager/terminal/manager-resize-gate.ts' as string) as {
+        isManagerResizeInProgress: () => boolean;
+      };
+      const holder = window as unknown as { __windowResizes: number[]; __sendsWhileHeld: number; __gate: typeof gate };
+      holder.__windowResizes = [];
+      holder.__sendsWhileHeld = 0;
+      holder.__gate = gate;
+      window.addEventListener('resize', () => holder.__windowResizes.push(Date.now()));
+      const sessions = window.electronAPI.sessions;
+      const sendResize = sessions.resize.bind(sessions);
+      sessions.resize = (...args: Parameters<typeof sessions.resize>) => {
+        if (gate.isManagerResizeInProgress()) holder.__sendsWhileHeld += 1;
+        return sendResize(...args);
+      };
+    });
+  }
+  /**
+   * Wait for the drag to be over for the PTY, then report what it heard. Over means the gate has
+   * closed and the held refit has gone out: no window resize for longer than the gate's settle plus
+   * the terminal's own 200 ms observer debounce, and nothing new sent between two polls.
+   */
+  async function settleAfterDrag(target: Page): Promise<{ sent: number; sendsWhileHeld: number; runs: number }> {
+    let previousSent = -1;
+    await expect.poll(async () => {
+      const state = await target.evaluate(() => {
+        const holder = window as unknown as { __windowResizes: number[]; __gate: { isManagerResizeInProgress: () => boolean } };
+        return {
+          sent: window.electronAPI.sessions.__resizeCalls.length,
+          idleMs: Date.now() - holder.__windowResizes[holder.__windowResizes.length - 1],
+          held: holder.__gate.isManagerResizeInProgress(),
+        };
+      });
+      const settled = !state.held && state.idleMs >= 500 && state.sent > 0 && state.sent === previousSent;
+      previousSent = state.sent;
+      return settled;
+    }, { intervals: [250], timeout: 15000 }).toBe(true);
+    // A resize that comes WINDOW_RESIZE_SETTLE_MS (150 ms) or more after the last starts a run of its
+    // own, which a starved runner does between any two steps. The two reads of the clock sit a ms
+    // apart, so a gap of 149 ms or more counts as a split: a run too many is never held against the
+    // gate, a run too few would be.
+    return target.evaluate(() => {
+      const holder = window as unknown as { __windowResizes: number[]; __sendsWhileHeld: number };
+      const times = holder.__windowResizes;
+      let runs = times.length > 0 ? 1 : 0;
+      for (let index = 1; index < times.length; index += 1) if (times[index] - times[index - 1] >= 149) runs += 1;
+      return { sent: window.electronAPI.sessions.__resizeCalls.length, sendsWhileHeld: holder.__sendsWhileHeld, runs };
+    });
+  }
   async function expectGridFinal(target: Page): Promise<void> {
     await clearResizes(target);
     await target.evaluate(() => window.dispatchEvent(new Event('terminal-panel-resize')));
+    // A fixed budget on purpose: nothing sent cannot be polled for. 500 ms clears the bottom panel
+    // terminal's 50 ms debounced refit (a window terminal refits synchronously) with room for load.
     await target.waitForTimeout(500);
     expect(await resizeCount(target)).toBe(0);
   }
 
   test('a maximized task window terminal resizes a few times, not once a step, and ends on the final grid', async () => {
+    // This test launches its own browser (launchWithState), then spends a 40-step drag of
+    // three round trips a step on a runner that can be several times slower than a dev
+    // machine, so the project's 15 s default is not enough. The siblings that launch their
+    // own browser carry the same 45 s.
+    test.setTimeout(45000);
     const own = await launchWithState(preConfig);
     try {
       const ownPage = own.page;
@@ -863,29 +938,25 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
       await markSessionFirstOutput(ownPage, SESSION_ID);
       await expect(ownPage.locator('[data-testid="task-detail-dialog"] [data-testid="launch-overlay"]')).toHaveCount(0);
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
-      await ownPage.waitForTimeout(1500);
+      await expect(ownPage.locator('[data-testid^="window-frame-"]').filter({
+        has: ownPage.locator('[data-testid="task-detail-dialog"]'),
+      })).toHaveClass(/rounded-none/);
+      await expectNoFrameHold(ownPage);
+      // The maximize's own refit is still on its way until a refit has nothing left to send. A
+      // fixed wait here let a late one land inside the drag and count as one of its sends.
+      await settleGrid(ownPage);
       await clearResizes(ownPage);
-      // The resizes as the page saw them. A step that arrives more than
-      // WINDOW_RESIZE_SETTLE_MS (150 ms) after the last starts a new run, which a
-      // loaded runner can do, and each run may send twice (its first step at once,
-      // its last when the size holds). Bounded by runs, a slow runner stays green
-      // while a gate that holds nothing (one send a step) still fails.
-      await ownPage.evaluate(() => {
-        const holder = window as unknown as { __windowResizes: number[] };
-        holder.__windowResizes = [];
-        window.addEventListener('resize', () => holder.__windowResizes.push(performance.now()));
-      });
+      await watchDrag(ownPage);
       await dragWindowEdge(ownPage, { width: 1400, height: 900 }, 1);
-      await ownPage.waitForTimeout(1000);
-      const sent = await resizeCount(ownPage);
-      const runs = await ownPage.evaluate(() => {
-        const times = (window as unknown as { __windowResizes: number[] }).__windowResizes;
-        let count = times.length > 0 ? 1 : 0;
-        for (let index = 1; index < times.length; index += 1) if (times[index] - times[index - 1] >= 150) count += 1;
-        return count;
-      });
+      const { sent, sendsWhileHeld, runs } = await settleAfterDrag(ownPage);
       expect(sent).toBeGreaterThan(0);
-      expect(sent, `${runs} run(s) of window resizes`).toBeLessThanOrEqual(2 * runs);
+      // Held means held: the gate lets nothing through while it is open, however slow the runner.
+      expect(sendsWhileHeld, 'resizes the PTY heard while the gate was holding').toBe(0);
+      // And a few sends, not one a step. Each run may send its first step at once, send the held
+      // refit when the size holds, and once more when its last step's layout commits after the
+      // gate has closed (the held refit fits the DOM as it stands, which a starved render can
+      // leave one commit behind). A gate that holds nothing sends one a step, far past this.
+      expect(sent, `${runs} run(s) of window resizes`).toBeLessThanOrEqual(3 * runs);
       await expectGridFinal(ownPage);
     } finally {
       await own.browser.close();
@@ -893,6 +964,8 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
   });
 
   test('the bottom panel terminal, which the gate holds too, still refits once the drag ends', async () => {
+    // Same reason as the maximized window's test above: its own browser and a 40-step drag.
+    test.setTimeout(45000);
     const own = await launchWithState(preConfig);
     try {
       const ownPage = own.page;
@@ -900,11 +973,12 @@ test.describe('Task Detail: the terminal through a drag of the OS window edge', 
       await ownPage.locator('[data-swimlane-name="Code Review"]').waitFor({ state: 'visible', timeout: 10000 });
       await expect(ownPage.locator('[data-testid="task-detail-dialog"]')).toHaveCount(0);
       await expect(ownPage.locator('.xterm-screen')).toHaveCount(1, { timeout: 10000 });
-      await ownPage.waitForTimeout(1500);
-      await clearResizes(ownPage);
+      // The mount's own refits are over once nothing has been sent for a beat.
+      await settleResizeLog(ownPage);
+      await watchDrag(ownPage);
       await dragWindowEdge(ownPage, { width: 1720, height: 1060 }, -1);
-      await ownPage.waitForTimeout(1000);
-      expect(await resizeCount(ownPage)).toBeGreaterThan(0);
+      // The refit the drag held reaches the PTY once the size holds.
+      expect((await settleAfterDrag(ownPage)).sent).toBeGreaterThan(0);
       await expectGridFinal(ownPage);
     } finally {
       await own.browser.close();
