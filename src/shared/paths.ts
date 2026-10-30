@@ -309,6 +309,16 @@ export function adaptCommandForShell(
  * `resolveShimLaunch` prefers) sees `$args`, while the quoted form reaches
  * native commands and cmd.exe as a plain `--` on every route.
  */
+/**
+ * Whether `quoteArg(..., { multiline: true })` keeps a value's newlines under
+ * `shell`. cmd.exe has no escape for one, so its value is flattened to one
+ * line, and so is a value quoted with no shell hint, which cannot tell
+ * PowerShell from cmd. Every other shell keeps them.
+ */
+export function quoteArgKeepsNewlines(shell: string | undefined): boolean {
+  return shell !== undefined && !isCmdShell(shell);
+}
+
 export function quoteArg(
   arg: string,
   shell?: string,
@@ -332,9 +342,7 @@ export function quoteArg(
     ? !isUnixLikeShell(shell)
     : process.platform === 'win32';
   const isCmd = shell ? isCmdShell(shell) : false;
-  // multiline=true with no shell hint falls back to sanitisation: we can't
-  // tell PowerShell from cmd, and only the unix branch tolerates raw newlines.
-  const preserveNewlines = options?.multiline === true && shell !== undefined && !isCmd;
+  const preserveNewlines = options?.multiline === true && quoteArgKeepsNewlines(shell);
 
   if (useDoubleQuotes) {
     // Per-shell escaping, because cmd.exe and PowerShell disagree about the

@@ -787,7 +787,7 @@ export function registerTaskTools(
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done"), or "next" for the column after the task\'s current one (refused to the task\'s own agent once the task has left the column its current turn began in).'),
-        message: z.string().max(MOVE_MESSAGE_MAX_CHARS).optional().describe('Optional message for the agent in the destination column, delivered once it is ready (after that column\'s own On task enter automations). Kept whole, line breaks included.'),
+        message: z.string().max(MOVE_MESSAGE_MAX_CHARS).optional().describe('Optional message for the agent in the destination column, delivered once it is ready (after that column\'s own On task enter automations). Kept whole, line breaks included. Where no agent runs in the destination, it is held for the task\'s next agent; a move into Done holds nothing.'),
         position: z.number().int().min(0).optional().describe('Zero-based ordinal slot among the column\'s tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Repositioning within the task\'s current column counts slots among the OTHER tasks there, so 0 is the top. Omit to append to the end of the column, which is the default. Has no useful effect when moving into Done, which archives the task.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
