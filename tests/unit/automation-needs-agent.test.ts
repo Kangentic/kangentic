@@ -22,7 +22,7 @@ describe('automationNeedsAgent', () => {
     expect(automationNeedsAgent('send_message')).toBe(true);
   });
 
-  it('is false for notify, which only shows a desktop notification', () => {
+  it('is false for notify, which only notifies the user on the desktop and the phone', () => {
     expect(automationNeedsAgent('notify')).toBe(false);
   });
 
