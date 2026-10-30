@@ -39,6 +39,11 @@ msgstr "{provider} bu oturum açma işlemini tamamlamadı."
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} iş akışı"
 
@@ -52,6 +57,26 @@ msgstr "Bir proje"
 msgid "A task"
 msgstr "Bir görev"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Ajanın bir sorusu var"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Ajan onayınızı bekliyor"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Ajan girdinizi bekliyor"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "Ajan boşta kaldı"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "Kapat"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "Komut terminali"
+msgid "Command Terminal - {projectName}"
+msgstr "Komut terminali - {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "Kangentic veritabanını okuyamıyor"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic penceresi yanıt vermiyor"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "İzin gerekiyor: {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

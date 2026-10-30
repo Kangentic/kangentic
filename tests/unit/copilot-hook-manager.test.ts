@@ -84,8 +84,8 @@ function writeUserFile(fileName: string, content: string): string {
 
 describe('copilot-hook-manager', () => {
   describe('COPILOT_HOOK_EVENTS', () => {
-    it('defines 4 hook events', () => {
-      expect(COPILOT_HOOK_EVENTS).toHaveLength(4);
+    it('defines 5 hook events', () => {
+      expect(COPILOT_HOOK_EVENTS).toHaveLength(5);
     });
 
     it('maps preToolUse to tool_start', () => {
@@ -111,12 +111,18 @@ describe('copilot-hook-manager', () => {
       expect(entry).toBeDefined();
       expect(entry!.bridgeEventType).toBe('compact');
     });
+
+    it('maps notification to idle, the wait on the user (#452)', () => {
+      const entry = COPILOT_HOOK_EVENTS.find((e) => e.event === 'notification');
+      expect(entry).toBeDefined();
+      expect(entry!.bridgeEventType).toBe('idle');
+    });
   });
 
   describe('buildHooks', () => {
-    it('returns an object with 4 keys (one per event)', () => {
+    it('returns an object with 5 keys (one per event)', () => {
       const hooks = buildHooks(EVENTS_PATH);
-      expect(Object.keys(hooks)).toHaveLength(4);
+      expect(Object.keys(hooks)).toHaveLength(5);
     });
 
     it('each hook value is an array (not a single object)', () => {

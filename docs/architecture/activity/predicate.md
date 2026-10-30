@@ -54,12 +54,13 @@ Known residual, not fixed: the depth drops at the FIRST stop, so during the ~12s
 
 ## Permission flag
 
-Set when an `Idle` event fires with `detail: 'permission'`. The engine also records `permissionAwaitedToolId` - the correlation id at the top of `pendingToolStack`, i.e. the tool the prompt was raised for (permission prompts fire between PreToolUse and execution, and permission idles leave the stack intact). Cleared by:
+Set when an `Idle` event fires with `detail: 'permission'`. The engine also records `permissionAwaitedToolId`, the tool the prompt was raised for: the newest `pendingToolStack` entry named by the event's `tool`, else the top of the stack (permission prompts fire between PreToolUse and execution, and permission idles leave the stack intact). The other pending ids are recorded as the prompt's siblings (`permissionSiblingToolIds`). Cleared by:
 - `Prompt` (user typed something new)
 - `Interrupted` (Esc)
 - `SubagentStart` (main agent spawning a child)
 - `Idle` with non-permission detail (agent ended turn)
-- `ToolStart`/`ToolEnd` at `subagentDepth === 0` (main agent activity)
+- `ToolStart` at `subagentDepth === 0` (main agent activity)
+- `ToolEnd` at `subagentDepth === 0`, unless it ends a sibling: a call already running beside the awaited one when the prompt opened (Claude's ToolSearch beside AskUserQuestion) says nothing about the answer, so its end only drops it from the sibling set. See [The kind of a wait](activity-engine.md#the-kind-of-a-wait)
 - `ToolStart`/`ToolEnd` carrying `permissionAwaitedToolId`, at ANY depth (the prompt was approved and that exact tool ran - e.g. a tool inside a subagent; without this the flag stays stuck until the subagent stops, since the PTY net deliberately exempts `'permission'`)
 
 That list is every HOOK-driven clear. A manual REJECTION fires no hook at all, so it clears through a separate, out-of-band path instead - the transcript poll described below.

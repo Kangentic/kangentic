@@ -73,6 +73,21 @@ The parser emits NO tool events - hooks own those, and a second emitter would do
 ToolStart/ToolEnd pairs - only usage plus idempotent activity hints (`turn_completed` ->
 Idle, chunks -> Thinking, non-terminal `retry_state` -> Thinking) as a hook backstop.
 
+**Questions and approvals: still the envelope (GitHub #452).** Grok's hooks have no
+permission event, and its `Notification` ("the agent sends a notification", 10-hooks.md)
+documents no type field, so the hook entry keeps it as a log line. Grok's own
+`events.jsonl` beside `updates.jsonl` does write `permission_requested` and
+`permission_resolved`, but not as a wait signal. In the stub-API probes on 1.0.0, Grok wrote
+`permission_requested` for every permission check, automatic allows included, each resolved
+in the same millisecond with `decision: "allow"` and `wait_ms: 0`, so the line cannot tell a
+prompt on screen from an automatic allow until it resolves. It also names no question kind,
+and a second file reader cannot be ordered against the hook stream, whose depth-0 tool start
+clears a wait. Grok copies Claude's hook schema, so its `Notification` may carry a
+`notification_type`, but the entry reads only `message`, `notification` and `text`. xAI's API
+refuses 1.0.0 with `426` ("update to version 1.0.13 or later"), so no turn has reached a
+prompt in a capture. The next step is one capture on a current Grok, with
+`captureHookContext()` on the `Notification` entry.
+
 **Kangentic MCP.** Project-scoped `<cwd>/.grok/config.toml` carries a sentinel-delimited
 `[mcp_servers.kangentic]` block whose every value is an env reference
 (`url = "${KANGENTIC_MCP_URL}"`, token header `${KANGENTIC_MCP_TOKEN}`); grok's documented

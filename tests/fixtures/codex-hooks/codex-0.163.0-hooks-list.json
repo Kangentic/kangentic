@@ -3,13 +3,13 @@
   "result": {
     "data": [
       {
-        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-AiWVhj\\folder",
+        "cwd": "C:\\Users\\dev\\AppData\\Local\\Temp\\kangentic-codex-hooks-1fRSl7\\folder",
         "hooks": [
           {
             "key": "C:\\<session-flags>\\config.toml:pre_tool_use:0:0",
             "eventName": "preToolUse",
             "handlerType": "command",
-            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH tool_start extractTool:eyJmaWVsZCI6InRvb2xfbmFtZSJ9 extractToolId:eyJmaWVsZHMiOlsidG9vbF91c2VfaWQiXX0= extractDetail:eyJmaWVsZHMiOlsiY29tbWFuZCJdLCJuZXN0ZWQiOiJ0b29sX2lucHV0In0=",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH tool_start extractTool:eyJmaWVsZCI6InRvb2xfbmFtZSJ9 extractToolId:eyJmaWVsZHMiOlsidG9vbF91c2VfaWQiXX0= extractDetail:eyJmaWVsZHMiOlsiY29tbWFuZCJdLCJuZXN0ZWQiOiJ0b29sX2lucHV0In0= appendPermissionWaitForTool:eyJ0b29sUGF0aCI6WyJ0b29sX25hbWUiXSwidG9vbCI6InJlcXVlc3RfdXNlcl9pbnB1dCIsIndhaXRLaW5kIjoicXVlc3Rpb24ifQ==",
             "async": false,
             "matcher": null,
             "timeoutSec": 10,
@@ -21,14 +21,14 @@
             "displayOrder": 0,
             "enabled": true,
             "isManaged": false,
-            "currentHash": "sha256:286487e1eeea2d1df2c3aced061ed3e5984b14665eabaf122cfac1333b50329f",
+            "currentHash": "sha256:ecc7f45410e9bf4bc0efb0903dd3d43eea5e17141134d1c9d98fbd3ea6b03b05",
             "trustStatus": "untrusted"
           },
           {
             "key": "C:\\<session-flags>\\config.toml:permission_request:0:0",
             "eventName": "permissionRequest",
             "handlerType": "command",
-            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH idle setDetail:eyJ2YWx1ZSI6InBlcm1pc3Npb24ifQ== extractTool:eyJmaWVsZCI6InRvb2xfbmFtZSJ9",
+            "command": "node .kangentic/codex-event-bridge.cjs env:KANGENTIC_EVENTS_PATH idle setDetail:eyJ2YWx1ZSI6InBlcm1pc3Npb24ifQ== extractTool:eyJmaWVsZCI6InRvb2xfbmFtZSJ9 setWaitKind:eyJraW5kIjoiYXBwcm92YWwifQ==",
             "async": false,
             "matcher": null,
             "timeoutSec": 10,
@@ -40,7 +40,7 @@
             "displayOrder": 1,
             "enabled": true,
             "isManaged": false,
-            "currentHash": "sha256:3b48545dfd8bfc72de020cbf71d4552a6e34cc14337d098b2edc72f7323810fb",
+            "currentHash": "sha256:199f6a8a9f4482670199c8272bce90e65e570137af57073bcf38f8a0a87ac01d",
             "trustStatus": "untrusted"
           },
           {

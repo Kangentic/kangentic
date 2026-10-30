@@ -79,8 +79,8 @@ msgstr "\"{taskTitle}\" foi arquivada."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "\"{taskTitle}\" está pedindo para executar uma ferramenta."
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "\"{taskTitle}\" está fazendo uma pergunta para você."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -97,6 +97,11 @@ msgstr "\"{taskTitle}\" voltou para o quadro."
 #, fuzzy
 msgid "\"{taskTitle}\" is running."
 msgstr "\"{taskTitle}\" está em execução."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "\"{taskTitle}\" está aguardando sua aprovação."
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -325,8 +330,13 @@ msgstr "{sessionIdShort} encerrou com o código {exitCode}."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} está pedindo para executar uma ferramenta."
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} está fazendo uma pergunta para você."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} está aguardando sua aprovação."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
@@ -407,6 +417,21 @@ msgstr "O agente não iniciou"
 #, fuzzy
 msgid "Agent finished"
 msgstr "Agente concluído"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Agente tem uma pergunta"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Agente precisa da sua aprovação"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Agente precisa da sua resposta"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1181,11 +1206,6 @@ msgstr "\"{taskTitle}\" movida para a próxima coluna."
 #, fuzzy
 msgid "Moving project folder..."
 msgstr "Movendo a pasta do projeto..."
-
-#: src/renderer/utils/idle-toast.ts
-#, fuzzy
-msgid "Needs permission"
-msgstr "Requer permissão"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy

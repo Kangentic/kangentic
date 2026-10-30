@@ -99,7 +99,7 @@ describe('DesktopNotifier', () => {
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
     expect(showNotification).toHaveBeenCalledTimes(1);
-    expect(shownInputs()[0]).toEqual({ title: 'Build the thing', body: 'My Project', projectId: 'proj-1', taskId: 'task-1' });
+    expect(shownInputs()[0]).toEqual({ title: 'Agent went idle', body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1' });
     expect(flashFrame).toHaveBeenCalledTimes(1);
   });
 
@@ -133,23 +133,42 @@ describe('DesktopNotifier', () => {
     expect(showNotification).toHaveBeenCalledTimes(1);
   });
 
-  it('permission produces a "Needs permission" body; idle produces the bare project name', () => {
-    sessionManager.getSession.mockReturnValue(makeSession());
-    buildNotifier();
-    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
-    expect(shownInputs()[0].body).toBe('Needs permission: My Project');
+  // The title says what happened, the body which task and where (#452's
+  // signed-off notifications board): one title per wait.
+  describe('the title names the wait', () => {
+    const cases: Array<[string, string, Record<string, unknown>, string]> = [
+      ['a finished turn', 'idle', { kind: 'idle', since: 1 }, 'Agent went idle'],
+      ['a question', 'permission', { kind: 'permission', since: 1, waitKind: 'question' }, 'Agent has a question'],
+      ['an approval (a tool or a plan)', 'permission', { kind: 'permission', since: 1, waitKind: 'approval' }, 'Agent needs your approval'],
+      ['a wait whose agent did not report the kind', 'permission', { kind: 'permission', since: 1 }, 'Agent needs your input'],
+    ];
+    for (const [label, state, reason, title] of cases) {
+      it(`titles ${label} "${title}", over the task title and place`, () => {
+        sessionManager.getSession.mockReturnValue(makeSession());
+        buildNotifier();
+        sessionManager.emit('activity', 'sess-1', state, reason);
+        expect(shownInputs()[0]).toEqual({ title, body: 'Build the thing - My Project', projectId: 'proj-1', taskId: 'task-1' });
+      });
+    }
   });
 
-  it('a transient session uses the Command Terminal label and sentinel taskId', () => {
+  it('a transient session names the Command Terminal and its project in the body, with the sentinel taskId', () => {
     sessionManager.getSession.mockReturnValue(makeSession({ transient: true }));
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
-    expect(shownInputs()[0].title).toBe('Command Terminal');
+    expect(shownInputs()[0].title).toBe('Agent went idle');
     expect(shownInputs()[0].taskId).toBe('__command_terminal__');
     expect(resolveTaskTitle).not.toHaveBeenCalled();
     // No task, so no workflow to look up.
     expect(resolveWorkflowTitle).not.toHaveBeenCalled();
-    expect(shownInputs()[0].body).toBe('My Project');
+    expect(shownInputs()[0].body).toBe('Command Terminal - My Project');
+  });
+
+  it('a transient session waiting on a question titles the question', () => {
+    sessionManager.getSession.mockReturnValue(makeSession({ transient: true }));
+    buildNotifier();
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission', since: 1, waitKind: 'question' });
+    expect(shownInputs()[0]).toMatchObject({ title: 'Agent has a question', body: 'Command Terminal - My Project' });
   });
 
   // #732 board 16: a workflow task's idle and crash bodies name the workflow.
@@ -161,21 +180,24 @@ describe('DesktopNotifier', () => {
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
     expect(shownInputs()[0]).toEqual({
-      title: 'Build the thing',
-      body: 'kangentic: Usage budgets workflow',
+      title: 'Agent went idle',
+      body: 'Build the thing - kangentic: Usage budgets workflow',
       projectId: 'proj-1',
       taskId: 'task-1',
     });
     expect(resolveWorkflowTitle).toHaveBeenCalledWith('proj-1', 'task-1');
   });
 
-  it('a workflow task waiting on permission keeps the prefix before the same place', () => {
+  it('a workflow task waiting on an approval names the same place after its title', () => {
     resolveProjectName.mockReturnValue('kangentic');
     resolveWorkflowTitle.mockReturnValue('Usage budgets');
     sessionManager.getSession.mockReturnValue(makeSession());
     buildNotifier();
-    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
-    expect(shownInputs()[0].body).toBe('Needs permission: kangentic: Usage budgets workflow');
+    sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission', since: 1, waitKind: 'approval' });
+    expect(shownInputs()[0]).toMatchObject({
+      title: 'Agent needs your approval',
+      body: 'Build the thing - kangentic: Usage budgets workflow',
+    });
   });
 
   it('a crashed workflow task names its workflow too', () => {
@@ -191,13 +213,13 @@ describe('DesktopNotifier', () => {
     });
   });
 
-  it('a task outside a workflow keeps the bare project name on idle and crash', () => {
+  it('a task outside a workflow keeps the bare project name as its place on idle and crash', () => {
     config = makeConfig({ cooldownSeconds: 0 });
     sessionManager.getSession.mockReturnValue(makeSession());
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
     sessionManager.emit('exit', 'sess-1', 1, false);
-    expect(shownInputs().map((input) => input.body)).toEqual(['My Project', 'My Project']);
+    expect(shownInputs().map((input) => input.body)).toEqual(['Build the thing - My Project', 'My Project']);
   });
 
   it('a workflow title that already ends in "workflow" is not given a second one', () => {
@@ -417,12 +439,12 @@ describe('DesktopNotifier', () => {
     expect(sessionManager.listenerCount('exit')).toBe(1);
   });
 
-  it('falls back to "A task" when resolveTaskTitle returns undefined for a non-transient session', () => {
+  it('falls back to "A task" in the body when resolveTaskTitle returns undefined for a non-transient session', () => {
     resolveTaskTitle.mockReturnValue(undefined);
     sessionManager.getSession.mockReturnValue(makeSession());
     buildNotifier();
     sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
-    expect(shownInputs()[0].title).toBe('A task');
+    expect(shownInputs()[0]).toMatchObject({ title: 'Agent went idle', body: 'A task - My Project' });
   });
 
   it('falls back to the first 8 characters of the sessionId when resolveTaskTitle returns undefined on crash', () => {
@@ -489,9 +511,9 @@ describe('DesktopNotifier', () => {
       sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
       expect(showNotification).not.toHaveBeenCalled();
 
-      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission', since: 1, waitKind: 'approval' });
       expect(showNotification).toHaveBeenCalledTimes(1);
-      expect(shownInputs()[0].body).toContain('Needs permission');
+      expect(shownInputs()[0].title).toBe('Agent needs your approval');
     });
 
     it('raises the idle notice as before once the move has settled (the control)', () => {
@@ -519,9 +541,9 @@ describe('DesktopNotifier', () => {
       sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle' });
       expect(showNotification).not.toHaveBeenCalled();
 
-      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission' });
+      sessionManager.emit('activity', 'sess-1', 'permission', { kind: 'permission', since: 1, waitKind: 'question' });
       expect(showNotification).toHaveBeenCalledTimes(1);
-      expect(shownInputs()[0].body).toContain('Needs permission');
+      expect(shownInputs()[0].title).toBe('Agent has a question');
     });
 
     it('raises the idle notice as before once the workflow is not running (the control)', () => {

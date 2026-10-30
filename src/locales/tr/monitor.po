@@ -69,15 +69,15 @@ msgstr "Görünümdeki tüm projelerde sizden yanıt bekleyen ajanlar"
 msgid "All projects"
 msgstr "Tüm projeler"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "Size bir soru soruyor {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "Otomasyonlar"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "İzin bekleniyor {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "Görev"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "Görevin ait olduğu iş akışı"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "Onayınız bekleniyor {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "Sizi bekliyor {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

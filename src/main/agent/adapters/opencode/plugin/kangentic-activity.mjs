@@ -14,8 +14,8 @@
 // deletion, so it never removes user-authored plugins.
 //
 // The pure event-extraction helpers (extractSessionEvent /
-// extractToolStartEvent / extractToolEndEvent) are exported so they
-// can be unit-tested against captured OpenCode event fixtures
+// extractWaitEvent / extractToolStartEvent / extractToolEndEvent) are
+// exported so they can be unit-tested against OpenCode event fixtures
 // (tests/fixtures/opencode-plugin-events.json).
 import fs from 'node:fs';
 
@@ -51,6 +51,37 @@ export function extractSessionEvent(event, now = Date.now()) {
   }
   if (eventType === 'session.error') {
     return { ts: now, type: 'idle', detail: 'error' };
+  }
+  return null;
+}
+
+/**
+ * Extract a wait on the user from an OpenCode 1.x `event` payload: the
+ * question tool's prompt (`question.asked`) or a permission prompt
+ * (`permission.asked`). Both are published from inside the tool's own
+ * execution, after `tool.execute.before` wrote the tool's `tool_start`, so the
+ * wait lands after the start (a start after it would clear it), and the
+ * tool's `tool.execute.after` (a depth-0 `tool_end`) ends it once answered.
+ *
+ * The answers (`question.replied`, `question.rejected`, `permission.replied`)
+ * are logged as notifications. They need no clearing event of their own: a
+ * reply lets the tool finish, and a rejection ends the tool or the turn, whose
+ * next `tool_start` or `session.idle` clears the wait. A plain idle here would
+ * be read as the agent's own turn end, which a reply is not.
+ *
+ * OpenCode v2 does not run v1 plugins, so a v2 session reports no waits.
+ */
+export function extractWaitEvent(event, now = Date.now()) {
+  if (!event || typeof event !== 'object') return null;
+  const eventType = event.type;
+  if (eventType === 'question.asked') {
+    return { ts: now, type: 'idle', detail: 'permission', waitKind: 'question' };
+  }
+  if (eventType === 'permission.asked') {
+    return { ts: now, type: 'idle', detail: 'permission', waitKind: 'approval' };
+  }
+  if (eventType === 'question.replied' || eventType === 'question.rejected' || eventType === 'permission.replied') {
+    return { ts: now, type: 'notification', detail: eventType };
   }
   return null;
 }
@@ -115,7 +146,7 @@ function appendEvent(event) {
 
 export const KangenticActivity = async () => ({
   event: async ({ event }) => {
-    appendEvent(extractSessionEvent(event));
+    appendEvent(extractSessionEvent(event) ?? extractWaitEvent(event));
   },
   'tool.execute.before': async (input, output) => {
     appendEvent(extractToolStartEvent(input, output));

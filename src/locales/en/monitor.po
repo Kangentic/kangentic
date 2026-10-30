@@ -57,13 +57,13 @@ msgstr "Agents waiting on a response from you, across every project in view"
 msgid "All projects"
 msgstr "All projects"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Asking you a question {when}"
+msgstr "Asking you a question {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Automations"
 msgstr "Automations"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-msgid "Awaiting permission {when}"
-msgstr "Awaiting permission {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 msgid "Cards"
@@ -291,6 +291,14 @@ msgstr "Task"
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "The workflow the task belongs to"
 msgstr "The workflow the task belongs to"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Waiting for your approval {when}"
+msgstr "Waiting for your approval {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+msgid "Waiting on you {when}"
+msgstr "Waiting on you {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 msgid "Waiting to start"

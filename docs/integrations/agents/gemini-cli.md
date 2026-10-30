@@ -64,6 +64,17 @@ turns that one into the permission `idle` (`extractDetail(['notification_type'])
 shows the task needs you. The `AfterTool` that follows your answer clears it. Any other
 notification writes no idle.
 
+The notification's `details.type` is the dialog's own type, which says what the wait is for:
+`ask_user` is the `ask_user` tool's question, and every other type (`exec`, `edit`, `mcp`, `info`,
+the plan prompt) is an approval. The same entry tags the wait with `setWaitKind('approval')` and
+`setWaitKindWhen({ path: ['details', 'type'], equals: 'ask_user', to: 'question' })`, so the card
+draws the speech bubble or the crested shield. The question's text is not read: the card and the
+notification carry none. Captured on Gemini CLI 0.66.0
+(`tests/fixtures/gemini-hooks/gemini-0.66.0-notification-*.json`): the `ask_user` dialog's
+Notification carries `details: { type: "ask_user", title: "Ask User" }` and lands after the tool's
+`BeforeTool`, a shell command's carries `details.type: "exec"` with the command, and each tool's
+`AfterTool` ends its wait.
+
 Gemini does not declare `supportsPlanAutoApproval`, so its plans always wait for you. Three things
 stand in the way:
 

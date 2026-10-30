@@ -1,0 +1,10 @@
+{"ts":1793325742191,"type":"tool_start","tool":"ask_user"}
+{"ts":1793325742689,"type":"idle","detail":"permission","waitKind":"question"}
+{"ts":1793325752007,"type":"tool_end","tool":"ask_user"}
+{"ts":1793325753898,"type":"tool_start","tool":"powershell"}
+{"ts":1793325755420,"type":"tool_end","tool":"powershell"}
+{"ts":1793325757862,"type":"idle","detail":"end_turn"}
+{"ts":1793325826093,"type":"tool_start","tool":"powershell"}
+{"ts":1793325827095,"type":"idle","detail":"permission","waitKind":"approval"}
+{"ts":1793325834594,"type":"tool_end","tool":"powershell"}
+{"ts":1793325837023,"type":"idle","detail":"end_turn"}

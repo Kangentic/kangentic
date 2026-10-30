@@ -2,6 +2,7 @@ import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { ActivityReason, ActivityState } from '../../shared/types';
 import { requiresUserInteraction } from '../../shared/activity-state';
+import { agentWaitKind } from '../components/board/agent-wait';
 import type { ToastVariant } from '../stores/toast-store';
 
 export interface IdleToastInput {
@@ -30,6 +31,8 @@ export interface IdleToastInput {
   sessionIdShort: string;
   /** `endsOwnCallTurn(reason)`: the idle ends the turn that moved its own task or paused its own workflow. */
   endsOwnCall: boolean;
+  /** The push's reason, which names what a permission wait is for. */
+  reason: ActivityReason | null | undefined;
 }
 
 /**
@@ -73,6 +76,7 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
     taskTitle,
     sessionIdShort,
     endsOwnCall,
+    reason,
   } = input;
 
   if (!enabled) return null;
@@ -103,18 +107,29 @@ export function resolveIdleToast(input: IdleToastInput): IdleToastResult | null 
   // shape is its own message, so the quotes sit inside the sentence a
   // translator sees.
 
-  // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
-  const needsPermission = state === 'permission';
-
   const hasTask = taskTitle !== undefined;
-  if (needsPermission) {
+  // A permission wait says what it waits for, in the desktop notification's
+  // words: a question, an approval (a tool or a plan), or, when the agent did
+  // not report the kind, only that it needs the user.
+  const waitKind = agentWaitKind(state, reason);
+  if (waitKind === 'question') {
     const message = taskTitle !== undefined
-      ? i18n._(msg`"${{ taskTitle }}" is asking to run a tool.`)
-      : i18n._(msg`${{ sessionIdShort }} is asking to run a tool.`);
-    return { title: i18n._(msg`Needs permission`), message, variant: 'warning', hasTask };
+      ? i18n._(msg`"${{ taskTitle }}" is asking you a question.`)
+      : i18n._(msg`${{ sessionIdShort }} is asking you a question.`);
+    return { title: i18n._(msg`Agent has a question`), message, variant: 'warning', hasTask };
   }
+  if (waitKind === 'approval') {
+    const message = taskTitle !== undefined
+      ? i18n._(msg`"${{ taskTitle }}" is waiting for your approval.`)
+      : i18n._(msg`${{ sessionIdShort }} is waiting for your approval.`);
+    return { title: i18n._(msg`Agent needs your approval`), message, variant: 'warning', hasTask };
+  }
+  // A wait of unknown kind and a finished turn share the body; the title tells them apart.
   const message = taskTitle !== undefined
     ? i18n._(msg`"${{ taskTitle }}" is waiting on you.`)
     : i18n._(msg`${{ sessionIdShort }} is waiting on you.`);
+  if (waitKind === 'unknown') {
+    return { title: i18n._(msg`Agent needs your input`), message, variant: 'warning', hasTask };
+  }
   return { title: i18n._(msg`Agent finished`), message, variant: 'info', hasTask };
 }

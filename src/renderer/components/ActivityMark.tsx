@@ -1,7 +1,9 @@
 import React from 'react';
 import '@kangentic/branding/assets/activity/activity.css';
 import activityJson from '@kangentic/branding/assets/activity/activity.json';
+import agentApprovalSvg from '@kangentic/branding/assets/activity/agent-approval.svg?raw';
 import agentIdleSvg from '@kangentic/branding/assets/activity/agent-idle.svg?raw';
+import agentQuestionSvg from '@kangentic/branding/assets/activity/agent-question.svg?raw';
 import agentWorkingSvg from '@kangentic/branding/assets/activity/agent-working.svg?raw';
 import controlPauseIdleSvg from '@kangentic/branding/assets/activity/control-pause-idle.svg?raw';
 import controlPauseWorkingSvg from '@kangentic/branding/assets/activity/control-pause-working.svg?raw';
@@ -13,8 +15,14 @@ import terminalWorkingSvg from '@kangentic/branding/assets/activity/terminal-wor
 
 /**
  * The activity marks, owned upstream in `@kangentic/branding` (`assets/activity/`) and shared
- * with the website and the mobile app. Nine marks over five silhouettes (`activity.json` counts
+ * with the website and the mobile app. Eleven marks over seven silhouettes (`activity.json` counts
  * `control-pause` and `control-stop` separately) on one 24 grid at stroke 2, `currentColor` only.
+ *
+ * An agent waiting on the user wears one of three amber marks, told apart by shape: the
+ * envelope (`agent-idle`) for a finished turn, the speech bubble (`agent-question`) for a
+ * question or a wait whose kind the agent did not report, and the crested shield
+ * (`agent-approval`) for a tool or plan to approve. The shield's ink is a unit taller than its
+ * siblings (18 wide by 20 tall) on purpose; it renders at the same size.
  *
  * Motion is composited, always, because Chromium can only composite `transform` and `opacity` and
  * a non-composited animation stops producing frames for exactly as long as THIS renderer's main
@@ -60,6 +68,8 @@ import terminalWorkingSvg from '@kangentic/branding/assets/activity/terminal-wor
 export const ACTIVITY_MARK_NAMES = [
   'agent-idle',
   'agent-working',
+  'agent-question',
+  'agent-approval',
   'terminal-idle',
   'terminal-working',
   'terminal-new',
@@ -74,6 +84,8 @@ export type ActivityMarkName = (typeof ACTIVITY_MARK_NAMES)[number];
 const RAW_MARKS: Record<ActivityMarkName, string> = {
   'agent-idle': agentIdleSvg,
   'agent-working': agentWorkingSvg,
+  'agent-question': agentQuestionSvg,
+  'agent-approval': agentApprovalSvg,
   'terminal-idle': terminalIdleSvg,
   'terminal-working': terminalWorkingSvg,
   'terminal-new': terminalNewSvg,

@@ -3044,8 +3044,8 @@ msgstr "Gdy uruchamianie zadania zbyt długo czeka w kolejce git podczas przygot
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Gdy agent zakończy turę lub potrzebuje uprawnień"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Gdy agent zakończy turę, ma pytanie lub potrzebuje Twojej zgody"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

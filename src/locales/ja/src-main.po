@@ -39,6 +39,11 @@ msgstr "{provider} はこのサインインを完了しませんでした。"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} ワークフロー"
 
@@ -52,6 +57,26 @@ msgstr "プロジェクト"
 msgid "A task"
 msgstr "タスク"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "エージェントからの質問があります"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "エージェントが承認を求めています"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "エージェントが入力を求めています"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "エージェントがアイドル状態になりました"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "閉じる"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "コマンドターミナル"
+msgid "Command Terminal - {projectName}"
+msgstr "コマンドターミナル - {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "Kangentic がデータベースを読み取れません"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic のウィンドウが応答しなくなりました"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "許可が必要: {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

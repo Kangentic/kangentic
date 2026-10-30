@@ -1,0 +1,15 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.gemini\\tmp\\repo\\chats\\session-2026-10-30T03-11-00000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "Notification",
+  "timestamp": "2026-10-30T03:16:46.238Z",
+  "notification_type": "ToolPermission",
+  "message": "Tool Confirm Shell Command requires execution",
+  "details": {
+    "type": "exec",
+    "title": "Confirm Shell Command",
+    "command": "echo kangentic-probe > gemini-probe.txt",
+    "rootCommand": "echo"
+  }
+}

@@ -11,7 +11,7 @@ paths:
 ---
 # Rule: activity marks come from branding, move on composited properties, and never eat a click
 
-The nine glyphs that express agent and terminal activity are owned upstream in
+The eleven glyphs that express agent and terminal activity are owned upstream in
 `@kangentic/branding` (`assets/activity/`), so desktop, web, and mobile cannot drift.
 `components/ActivityMark.tsx` is the only consumer. Three classes of bug have shipped from this
 one component: a non-composited animation that stops producing frames whenever the renderer's
@@ -67,6 +67,13 @@ measurements, and the upstream geometry history live in
   again, and never move the switch behind a condition. The reduced-motion CSS stays for the web
   build, where a visitor's own preference holds. `.no-motion` zeroes animations only, so a
   transition that reduced motion stops needs its own `.no-motion` line.
+- **An agent's mark comes from `agentActivityMark`** (`components/board/agent-wait.ts`). A
+  session that needs the user wears one of three amber marks: the envelope (`agent-idle`) for a
+  finished turn, the speech bubble (`agent-question`) for a question or a wait whose kind the agent
+  did not report, and the crested shield (`agent-approval`) for a tool or plan to approve. Every
+  surface that draws an agent's mark asks that one function (TaskCard, the Workflows inspector and
+  agent pane, `monitorActivityMark`). The sidebar count and the Monitor's Idle tile keep the
+  envelope for all three waits. The shield's ink is 18 by 20; it renders at the same size.
 - **There is no `-rest` mark.** Rest is the `-idle` geometry in a muted tone. `data-rest` on the
   root is the reduced-motion strategy (`static` / `keep-dash` / `drop-dash`), NOT a tone, and only
   the web build applies it. Test selectors key off `data-mark`.

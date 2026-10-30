@@ -69,12 +69,19 @@ SessionStart, SessionEnd and Notification ever fired. Each event now maps as Cla
 | `PostToolUseFailure` | `tool_end`, or `interrupted` when `is_interrupt` is true |
 | `UserPromptSubmit` / `Stop` | `prompt` / `idle`, both with the session's plan mode |
 | `StopFailure` | `turn_failed` (an API error or loop detection ended the turn) |
-| `PermissionRequest` | `idle` with detail `permission`, naming the tool |
+| `PermissionRequest` | `idle` with detail `permission`, naming the tool, with its kind (`waitKind`): `ask_user_question` is a question, every other tool (the plan exit included) an approval |
 | `SubagentStart` / `SubagentStop` | `subagent_start` / `subagent_stop`, with `agent_type` in `detail` and `agent_id` as the subagent id |
 | `PreCompact` | `compact` |
 | `Notification`, `SessionStart`, `SessionEnd` | the same-named events |
 
-A live 0.25.2 session fires `PreToolUse` and then `PermissionRequest`, the same order as Claude. A
+A live 0.25.2 session fires `PreToolUse` and then `PermissionRequest`, the same order as Claude
+(Qwen's own payload timestamps put the shell tool's `PreToolUse` 344 ms before its
+`PermissionRequest`). The 0.25.3 bundle reads the other way: the scheduler's `_schedule` fires
+`PermissionRequest` before the call waits for approval, and `PreToolUse` fires only in
+`_executeToolCallBody`, after the answer. `ask_user_question` takes that same path. Either order
+gives a correct question wait (GitHub #452): on 0.25.2 the wait lands after its tool's start and
+holds until the tool ends, and on 0.25.3 the wait comes first and the `PreToolUse` that follows
+the answer ends it. The 0.25.3 order was read from the bundle, not captured. A
 subagent fires no `UserPromptSubmit` or `Stop`, in the foreground or the background. It fires
 `SubagentStart`, `SubagentStop` and its own tool events, which carry `agent_id`. A background
 subagent keeps working after the main agent's `Stop`, so the engine needs the subagent count: before

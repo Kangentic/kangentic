@@ -162,6 +162,15 @@ interface DemoSession {
   agent: string;
   status: 'running' | 'suspended' | 'queued';
   activity: 'thinking' | 'idle' | 'permission' | null;
+  /**
+   * What a `permission` session waits for: the kind its agent's adapter reports for the prompt
+   * its recording rests on. A question tool's pick-an-option dialog is a question; a tool prompt
+   * ("Do you want to...", "Apply this change?") and a plan to approve are approvals, as Claude's
+   * PermissionRequest entry tags ExitPlanMode. Its seeded reason carries it, so the card draws
+   * the bubble or the shield. Never chosen to balance the board: a wait no recording shows is
+   * not seeded.
+   */
+  waitKind?: 'question' | 'approval';
   /** How long before its recording's end the live frame opens this working session, when not the manifest's liveTailMs. */
   liveTailMs?: number;
   startedMinutesAgo: number;
@@ -529,7 +538,7 @@ const CLAUDE_ALIASES = [
 const DEFAULT_PERMISSION_MODE = 'acceptEdits';
 
 export const DEMO_SESSIONS: DemoSession[] = [
-  { id: SESSION_WEBSOCKET, taskId: 'task-cw-websocket', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 14, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 12, contextWindowSize: 1000000, costUsd: 0.42, durationMinutes: 14, peek: ['Read src/lib/websocket.ts, src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 2, tool: 'Read', detail: 'src/lib/websocket.ts' }, { minutesAgo: 1, tool: 'Grep', detail: 'websocket' }, { minutesAgo: 0.3, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
+  { id: SESSION_WEBSOCKET, taskId: 'task-cw-websocket', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval',startedMinutesAgo: 14, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 12, contextWindowSize: 1000000, costUsd: 0.42, durationMinutes: 14, peek: ['Read src/lib/websocket.ts, src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 2, tool: 'Read', detail: 'src/lib/websocket.ts' }, { minutesAgo: 1, tool: 'Grep', detail: 'websocket' }, { minutesAgo: 0.3, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
   { id: SESSION_MIDDLEWARE, taskId: TASK_MIDDLEWARE, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'thinking', startedMinutesAgo: 47, model: OPUS, effort: 'high', permissionMode: 'acceptEdits', contextPercent: 53, contextWindowSize: 1000000, costUsd: 2.47, durationMinutes: 47, peek: ['Write server/middleware/auth.ts', 'Edit server/routes.ts', 'Bash npm test'], events: [{ minutesAgo: 6, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 4, tool: 'Write', detail: 'server/middleware/auth.ts' }, { minutesAgo: 2, tool: 'Edit', detail: 'server/routes.ts' }, { minutesAgo: 0.5, tool: 'Bash', detail: 'npm test' }], rateLimits: true },
   // A 25 s tail, so the board flips this card from working to needs-you inside the first 30 s of
   // every loop=1 cycle: the agent's last stretch is its final think, then the "Done." summary lands
@@ -538,13 +547,13 @@ export const DEMO_SESSIONS: DemoSession[] = [
   { id: SESSION_RATE_LIMIT, taskId: 'task-cw-rate-limit', projectId: PROJECT_CONTOSO, agent: 'copilot', status: 'running', activity: 'idle', startedMinutesAgo: 130, model: COPILOT, effort: null, permissionMode: 'acceptEdits', contextPercent: 51, contextWindowSize: 1000000, costUsd: 4.15, durationMinutes: 130, peek: ['Read server/rate-limit.ts', 'Edit server/rate-limit.ts', 'Bash npm test'], events: [{ minutesAgo: 24, tool: 'Read', detail: 'server/rate-limit.ts' }, { minutesAgo: 22, tool: 'Edit', detail: 'server/rate-limit.ts' }, { minutesAgo: 20, tool: 'Bash', detail: 'npm test' }], isolated: true },
   { id: SESSION_INTEGRATION, taskId: 'task-cw-integration', projectId: PROJECT_CONTOSO, agent: 'cursor', status: 'running', activity: 'idle', startedMinutesAgo: 26, model: CURSOR, effort: null, permissionMode: 'acceptEdits', contextPercent: 9, contextWindowSize: 1000000, costUsd: 0.78, durationMinutes: 26, peek: ['Read server/routes.ts', 'Write tests/auth.integration.test.ts'], events: [{ minutesAgo: 3, tool: 'Read', detail: 'server/routes.ts' }, { minutesAgo: 1, tool: 'Write', detail: 'tests/auth.integration.test.ts' }] },
   { id: SESSION_CONTOSO_TERMINAL, taskId: null, projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'idle', startedMinutesAgo: 9, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 4, contextWindowSize: 1000000, costUsd: 0.06, durationMinutes: 9, peek: ['Summarize what this repository does', 'Baked for 13s'], events: [], transient: true, commandTerminalBranch: 'main' },
-  { id: SESSION_EMPTY_STATES, taskId: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 98, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 16, contextWindowSize: 1000000, costUsd: 0.38, durationMinutes: 98, peek: ['Read src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 12, tool: 'Read', detail: 'src/App.tsx' }, { minutesAgo: 9, tool: 'Grep', detail: 'empty' }, { minutesAgo: 6, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
-  { id: SESSION_VITE8, taskId: 'task-cw-vite8', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 51, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 31, contextWindowSize: 1000000, costUsd: 1.05, durationMinutes: 51, peek: ['Bash npx tsc --noEmit', 'Claude wants to fetch content from vitest.dev'], events: [{ minutesAgo: 14, tool: 'Read', detail: 'package.json' }, { minutesAgo: 6, tool: 'Bash', detail: 'npx tsc --noEmit' }, { minutesAgo: 2, tool: 'WebFetch', detail: 'https://vitest.dev/guide/migration.html' }] },
+  { id: SESSION_EMPTY_STATES, taskId: 'task-cw-empty-states', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval',startedMinutesAgo: 98, model: OPUS, effort: 'medium', permissionMode: 'plan', contextPercent: 16, contextWindowSize: 1000000, costUsd: 0.38, durationMinutes: 98, peek: ['Read src/App.tsx', 'Claude has written up a plan and is ready to execute'], events: [{ minutesAgo: 12, tool: 'Read', detail: 'src/App.tsx' }, { minutesAgo: 9, tool: 'Grep', detail: 'empty' }, { minutesAgo: 6, tool: 'ExitPlanMode', detail: 'Plan ready for approval' }], rateLimits: true },
+  { id: SESSION_VITE8, taskId: 'task-cw-vite8', projectId: PROJECT_CONTOSO, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 51, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 31, contextWindowSize: 1000000, costUsd: 1.05, durationMinutes: 51, peek: ['Bash npx tsc --noEmit', 'Claude wants to fetch content from vitest.dev'], events: [{ minutesAgo: 14, tool: 'Read', detail: 'package.json' }, { minutesAgo: 6, tool: 'Bash', detail: 'npx tsc --noEmit' }, { minutesAgo: 2, tool: 'WebFetch', detail: 'https://vitest.dev/guide/migration.html' }] },
 
   { id: SESSION_PETCLINIC_FLAKY, taskId: 'task-pc-flaky-tests', projectId: PROJECT_PETCLINIC, agent: 'codex', status: 'running', activity: 'thinking', startedMinutesAgo: 21, model: CODEX, effort: 'high', permissionMode: 'bypassPermissions', contextPercent: 34, contextWindowSize: 400000, costUsd: 0.91, durationMinutes: 21, peek: ['Read PetClinicIntegrationTests.java', 'rg -n @OrderBy src/main/java'], events: [{ minutesAgo: 8, tool: 'Read', detail: 'src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java' }, { minutesAgo: 2, tool: 'Bash', detail: 'rg -n "@OrderBy\\(" src/main/java' }] },
-  { id: SESSION_PETCLINIC_SEARCH, taskId: 'task-pc-owner-search', projectId: PROJECT_PETCLINIC, agent: 'gemini', status: 'running', activity: 'permission', startedMinutesAgo: 39, model: GEMINI, effort: null, permissionMode: 'default', contextPercent: 18, contextWindowSize: 1000000, costUsd: 0.33, durationMinutes: 39, peek: ['ReadFolder src/main/java/org/springframework/samples/petclinic/owner', 'Allow execution of [Shell] .\\gradlew.bat test?'], events: [{ minutesAgo: 12, tool: 'ReadFile', detail: 'src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java' }, { minutesAgo: 9, tool: 'Shell', detail: '.\\gradlew.bat test' }] },
+  { id: SESSION_PETCLINIC_SEARCH, taskId: 'task-pc-owner-search', projectId: PROJECT_PETCLINIC, agent: 'gemini', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 39, model: GEMINI, effort: null, permissionMode: 'default', contextPercent: 18, contextWindowSize: 1000000, costUsd: 0.33, durationMinutes: 39, peek: ['ReadFolder src/main/java/org/springframework/samples/petclinic/owner', 'Allow execution of [Shell] .\\gradlew.bat test?'], events: [{ minutesAgo: 12, tool: 'ReadFile', detail: 'src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java' }, { minutesAgo: 9, tool: 'Shell', detail: '.\\gradlew.bat test' }] },
   { id: SESSION_PETCLINIC_CACHE, taskId: 'task-pc-caffeine', projectId: PROJECT_PETCLINIC, agent: 'opencode', status: 'running', activity: 'idle', startedMinutesAgo: 58, model: OPENCODE, effort: null, permissionMode: 'acceptEdits', contextPercent: 27, contextWindowSize: 200000, costUsd: 0, durationMinutes: 58, peek: ['Read src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java', 'Grep cache'], events: [{ minutesAgo: 17, tool: 'Read', detail: 'src/main/java/org/springframework/samples/petclinic/system/CacheConfiguration.java' }, { minutesAgo: 9, tool: 'Grep', detail: 'cache' }] },
-  { id: SESSION_PETCLINIC_BOOT35, taskId: 'task-pc-boot-35', projectId: PROJECT_PETCLINIC, agent: 'claude', status: 'running', activity: 'permission', startedMinutesAgo: 133, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 24, contextWindowSize: 1000000, costUsd: 0.83, durationMinutes: 133, peek: ['Edit pom.xml', 'Edit .github/workflows/maven-build.yml'], events: [{ minutesAgo: 40, tool: 'Read', detail: 'pom.xml' }, { minutesAgo: 36, tool: 'Edit', detail: 'pom.xml' }, { minutesAgo: 33, tool: 'Edit', detail: '.github/workflows/maven-build.yml' }] },
+  { id: SESSION_PETCLINIC_BOOT35, taskId: 'task-pc-boot-35', projectId: PROJECT_PETCLINIC, agent: 'claude', status: 'running', activity: 'permission', waitKind: 'approval', startedMinutesAgo: 133, model: OPUS, effort: 'medium', permissionMode: 'acceptEdits', contextPercent: 24, contextWindowSize: 1000000, costUsd: 0.83, durationMinutes: 133, peek: ['Edit pom.xml', 'Edit .github/workflows/maven-build.yml'], events: [{ minutesAgo: 40, tool: 'Read', detail: 'pom.xml' }, { minutesAgo: 36, tool: 'Edit', detail: 'pom.xml' }, { minutesAgo: 33, tool: 'Edit', detail: '.github/workflows/maven-build.yml' }] },
 
   { id: SESSION_BOUTIQUE_REDIS, taskId: 'task-ob-redis-ttl', projectId: PROJECT_BOUTIQUE, agent: 'codex', status: 'running', activity: 'idle', startedMinutesAgo: 33, model: CODEX, effort: 'medium', permissionMode: 'bypassPermissions', contextPercent: 41, contextWindowSize: 400000, costUsd: 1.12, durationMinutes: 33, peek: ['Read src/cartservice/src/cartstore/RedisCartStore.cs', 'Edit RedisCartStore.cs'], events: [{ minutesAgo: 9, tool: 'Read', detail: 'src/cartservice/src/cartstore/RedisCartStore.cs' }, { minutesAgo: 5, tool: 'Edit', detail: 'src/cartservice/src/cartstore/RedisCartStore.cs' }] },
   { id: SESSION_BOUTIQUE_MTLS, taskId: 'task-ob-mtls', projectId: PROJECT_BOUTIQUE, agent: 'opencode', status: 'suspended', activity: null, startedMinutesAgo: 210, model: OPENCODE, effort: null, permissionMode: 'acceptEdits', contextPercent: 18, contextWindowSize: 200000, costUsd: 0, durationMinutes: 62, peek: ['Write istio-manifests/frontend-peerauth.yaml', 'Write istio-manifests/frontend-destinationrule.yaml'], events: [{ minutesAgo: 152, tool: 'Write', detail: 'istio-manifests/frontend-peerauth.yaml' }, { minutesAgo: 150, tool: 'Write', detail: 'istio-manifests/frontend-destinationrule.yaml' }] },
@@ -1296,6 +1305,18 @@ export function buildDemoPreConfig(options: {
       // wants the tool_use_id a PermissionRequest hook carried, and a recording keeps the agent's
       // BYTES, not its hook payloads. Null is what the overlay shows for "not captured"; a
       // plausible id would be the invention this comment exists to refuse.
+      // A waiting session's reason, as main's engine reports it: the moment it started waiting
+      // (its last seeded event) and what it waits for, the kind its recording shows on screen.
+      // The card's mark, its tip and the Monitor's line all read the kind off this.
+      function waitReasonFor(session) {
+        var events = session.events || [];
+        var last = events.length > 0 ? events[events.length - 1] : null;
+        var since = last ? now - last.minutesAgo * 60000 : now;
+        return session.waitKind
+          ? { kind: 'permission', since: since, waitKind: session.waitKind }
+          : { kind: 'permission', since: since };
+      }
+
       function activityStatsFor(session) {
         var events = session.events || [];
         var last = events.length > 0 ? events[events.length - 1] : null;
@@ -1304,7 +1325,7 @@ export function buildDemoPreConfig(options: {
         var permission = session.activity === 'permission';
         var needsUser = session.activity === 'idle' || permission;
         var reason;
-        if (permission) reason = { kind: 'permission', since: lastSignalAt || now };
+        if (permission) reason = waitReasonFor(session);
         else if (thinking) reason = { kind: 'tool', pendingCount: 1, currentTool: last ? last.tool : null };
         else reason = { kind: 'idle', since: lastSignalAt || now };
         // One entry per seeded tool call, which is exactly the run the engine would have recorded,
@@ -1336,6 +1357,7 @@ export function buildDemoPreConfig(options: {
           turnActive: thinking,
           permissionPending: permission,
           permissionAwaitedToolId: null,
+          permissionWaitKind: permission && session.waitKind ? session.waitKind : null,
           msSinceLastSignal: lastSignalAt === null ? null : now - lastSignalAt,
           lastSignalAt: lastSignalAt,
           lastPtyOutputAt: lastSignalAt,
@@ -1545,6 +1567,10 @@ export function buildDemoPreConfig(options: {
             state.activityCache[session.id] = session.activity;
             state.activityStatsCache[session.id] = activityStatsFor(session);
           }
+          // A wait's reason is seeded before the renderer mounts, as the trail below is: it names
+          // what the agent waits for, so the card paints the bubble or the shield from its first
+          // frame. The other sessions keep no seeded reason, as before.
+          if (session.activity === 'permission') state.activityReasonCache[session.id] = waitReasonFor(session);
           // Seeded BEFORE the renderer mounts, not pushed after: syncSessions reconciles the store
           // against the getMessageTrails() snapshot, so a push-only seed would be dropped, and a
           // card would paint its description first and then flip.
@@ -1686,7 +1712,8 @@ export function buildDemoPreConfig(options: {
           agentName: session.agent, modelDisplayName: session.model && hasUsageYet(session) ? session.model.displayName : null,
           effort: session.effort, permissionMode: session.permissionMode,
           startedAt: minutesAgo(session.startedMinutesAgo), exitedAt: null,
-          status: session.status, activity: session.activity, activityReason: null,
+          status: session.status, activity: session.activity,
+          activityReason: session.activity === 'permission' ? waitReasonFor(session) : null,
           lastEvent: null, contextPercent: hasUsageYet(session) ? session.contextPercent : null, isolated: session.isolated || false,
           isCommandTerminal: session.transient || false,
           // The sample install holds no task with its automations off and starts no workflow (a

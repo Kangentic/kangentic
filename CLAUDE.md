@@ -127,7 +127,7 @@ source file maps to.
   re-derived by one layer bridge, ended conversations are recorded and resumable, and the panel
   can move to a window of its own but never shows in both.
   Rules: `.claude/rules/command-terminal.md`. Design history: [docs/architecture/renderer/command-terminal.md](docs/architecture/renderer/command-terminal.md).
-- **Activity marks** - The nine agent/terminal activity glyphs are owned upstream in
+- **Activity marks** - The eleven agent/terminal activity glyphs are owned upstream in
   `@kangentic/branding`, NOT hand-authored here, and render only through
   `components/ActivityMark.tsx`. Motion is always on a COMPOSITED property, marks are
   `currentColor` only (the call site supplies the tone), and an icon that changes ELEMENT TYPE

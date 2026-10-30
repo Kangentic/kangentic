@@ -164,6 +164,27 @@ describe('innerMarkup', () => {
     ).toContain('d="M3 7 L12 12.1566 L21 7"');
   });
 
+  it('keeps the two wait marks on their signed-off silhouettes, static and 18 wide', () => {
+    // The card tells a question (bubble) from an approval (crested shield) from a finished turn
+    // (envelope) by shape alone, all three in the attention tone (#452). Pinned here for the same
+    // reason the envelope is above: an upstream reshape would silently change what a card says.
+    // Both outlines run x 3 to 21, the 18 indicator keyline. The bubble's box is 18 x 18 (y 3 to
+    // 21, its tail included); the shield's is 18 x 20 (y 2 to 22), a unit taller than its
+    // siblings on purpose, and rendered at the same size as every other indicator mark.
+    const question = innerMarkup(readMark('agent-question'));
+    expect(question, 'agent-question lost its speech-bubble outline').toContain(
+      'd="M5 3 H19 A2 2 0 0 1 21 5 V15 A2 2 0 0 1 19 17 H11 L8 21 V17 H5 A2 2 0 0 1 3 15 V5 A2 2 0 0 1 5 3 Z"',
+    );
+    const approval = innerMarkup(readMark('agent-approval'));
+    expect(approval, 'agent-approval lost its crested-shield outline').toContain(
+      'd="M3 6 A1 1 0 0 1 4 5 A12.1667 12.1667 0 0 0 12 2 A12.1667 12.1667 0 0 0 20 5 A1 1 0 0 1 21 6 V11 A11.2222 11.2222 0 0 1 12 22 A11.2222 11.2222 0 0 1 3 11 Z"',
+    );
+    // A wait is a state that lasts, not work in progress: neither mark moves.
+    for (const inner of [question, approval]) {
+      expect(inner).not.toMatch(/kng-(march|spin|blink)/);
+    }
+  });
+
   it('keeps the control glyph as a sibling of the motion group, not inside it', () => {
     // The pause bars / stop square must NOT animate with the ring. They are siblings of the
     // <g class="kng-spin"> in the packaged file; a strip that reordered or nested them would
@@ -329,9 +350,11 @@ describe('activity indicator smoothness', () => {
       + 'restarting the march from zero. Render one slot with a computed `mark` instead.',
     ).toBe(false);
 
-    // Exactly one render site, and its mark is computed rather than literal.
+    // Exactly one render site, and its mark is computed rather than literal: the view model's
+    // `activityMark`, which picks the working ring or one of the three waits' marks.
     expect(taskCard.match(/<ActivityMark/g) ?? []).toHaveLength(1);
-    expect(taskCard).toMatch(/mark=\{isThinking \? 'agent-working' : 'agent-idle'\}/);
+    expect(taskCard).toMatch(/mark=\{activityMark\}/);
+    expect(taskCard).toMatch(/const activityMark = agentActivityMark\(/);
   });
 
   it('ActivityMark anchors mark motion to the document timeline before paint', () => {

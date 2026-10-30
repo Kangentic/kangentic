@@ -354,19 +354,20 @@ async function fireActivityFor(
   sessionId: string,
   taskId: string,
   state: 'thinking' | 'idle' | 'permission',
+  waitKind?: 'question' | 'approval',
 ): Promise<void> {
-  await page.evaluate(({ sessionId, activityState, projectId, taskId }) => {
+  await page.evaluate(({ sessionId, activityState, projectId, taskId, waitKind }) => {
     const fire = (window as unknown as {
       __mockFireActivity?: (s: string, st: string, r: unknown, p: string, t: string) => void;
     }).__mockFireActivity;
     if (!fire) throw new Error('__mockFireActivity not installed - is sessions.onActivity subscribed?');
-    fire(sessionId, activityState, { kind: activityState, since: Date.now() }, projectId, taskId);
-  }, { sessionId, activityState: state, projectId: PROJECT_ID, taskId });
+    fire(sessionId, activityState, { kind: activityState, since: Date.now(), ...(waitKind ? { waitKind } : {}) }, projectId, taskId);
+  }, { sessionId, activityState: state, projectId: PROJECT_ID, taskId, waitKind });
 }
 
 /** Stand in for main's SESSION_ACTIVITY broadcast, for the fixture's one session. */
-async function fireActivity(page: Page, state: 'thinking' | 'idle' | 'permission'): Promise<void> {
-  await fireActivityFor(page, SESSION_ID, TASK_ID, state);
+async function fireActivity(page: Page, state: 'thinking' | 'idle' | 'permission', waitKind?: 'question' | 'approval'): Promise<void> {
+  await fireActivityFor(page, SESSION_ID, TASK_ID, state, waitKind);
 }
 
 /** Give a toast that should not exist a chance to appear, then count it NOW. */
@@ -454,21 +455,29 @@ test.describe('Agent Idle toast', () => {
     }
   });
 
-  test('a permission-blocked session says so instead', async () => {
-    const { browser, page } = await launchWithState();
-    try {
-      await fireActivity(page, 'thinking');
-      await fireActivity(page, 'permission');
+  // #452: a wait names what it waits for, in the desktop notification's words.
+  const waits: Array<{ label: string; waitKind?: 'question' | 'approval'; title: string; body: string }> = [
+    { label: 'a question', waitKind: 'question', title: 'Agent has a question', body: `"${TASK_TITLE}" is asking you a question.` },
+    { label: 'an approval', waitKind: 'approval', title: 'Agent needs your approval', body: `"${TASK_TITLE}" is waiting for your approval.` },
+    { label: 'a wait of unknown kind', title: 'Agent needs your input', body: `"${TASK_TITLE}" is waiting on you.` },
+  ];
+  for (const wait of waits) {
+    test(`a session waiting on ${wait.label} says so instead`, async () => {
+      const { browser, page } = await launchWithState();
+      try {
+        await fireActivity(page, 'thinking');
+        await fireActivity(page, 'permission', wait.waitKind);
 
-      const toast = page.getByTestId('toast');
-      await expect(toast.first()).toBeVisible();
-      await expect(toast.first().getByTestId('toast-title')).toHaveText('Needs permission');
-      await expect(toast.first().getByTestId('toast-body')).toHaveText(`"${TASK_TITLE}" is asking to run a tool.`);
-      expect(await toastCountRightNow(page)).toBe(1);
-    } finally {
-      await browser.close();
-    }
-  });
+        const toast = page.getByTestId('toast');
+        await expect(toast.first()).toBeVisible();
+        await expect(toast.first().getByTestId('toast-title')).toHaveText(wait.title);
+        await expect(toast.first().getByTestId('toast-body')).toHaveText(wait.body);
+        expect(await toastCountRightNow(page)).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+  }
 
   test('no toast when the setting is off', async () => {
     const { browser, page } = await launchWithState();

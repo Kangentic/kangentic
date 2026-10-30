@@ -79,8 +79,8 @@ msgstr "「{taskTitle}」をアーカイブしました。"
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "「{taskTitle}」がツールの実行を求めています。"
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "「{taskTitle}」があなたに質問しています。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -97,6 +97,11 @@ msgstr "「{taskTitle}」をボードに戻しました。"
 #, fuzzy
 msgid "\"{taskTitle}\" is running."
 msgstr "「{taskTitle}」を実行中です。"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "「{taskTitle}」があなたの承認を待っています。"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -325,8 +330,13 @@ msgstr "{sessionIdShort} はコード {exitCode} で終了しました。"
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} がツールの実行を求めています。"
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} があなたに質問しています。"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} があなたの承認を待っています。"
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
@@ -407,6 +417,21 @@ msgstr "エージェントが起動しませんでした"
 #, fuzzy
 msgid "Agent finished"
 msgstr "エージェントが完了しました"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "エージェントからの質問があります"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "エージェントが承認を求めています"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "エージェントが入力を求めています"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1181,11 +1206,6 @@ msgstr "「{taskTitle}」を次の列に移動しました。"
 #, fuzzy
 msgid "Moving project folder..."
 msgstr "プロジェクトフォルダーを移動中..."
-
-#: src/renderer/utils/idle-toast.ts
-#, fuzzy
-msgid "Needs permission"
-msgstr "許可が必要です"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy

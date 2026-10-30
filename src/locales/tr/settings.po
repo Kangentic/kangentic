@@ -3044,8 +3044,8 @@ msgstr "Bir görev başlatılırken hazırlık sırasında git kuyruğunda çok 
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Bir ajan sırasını bitirdiğinde veya izin gerektiğinde"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Bir ajan sırasını bitirdiğinde, bir sorusu olduğunda veya onayınız gerektiğinde"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

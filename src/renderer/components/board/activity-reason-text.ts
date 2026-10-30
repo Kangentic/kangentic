@@ -29,8 +29,13 @@ export function formatActivityReasonText(reason: ActivityReason, now: number = D
       return i18n._(msg`Idle for ${{ duration }}`);
     }
     case 'permission': {
+      // One message per kind, so a language can place the duration where it
+      // reads. A wait whose agent did not report its kind says only that the
+      // agent waits on the user.
       const duration = formatDurationBetween(reason.since, now);
-      return i18n._(msg`Awaiting permission for ${{ duration }}`);
+      if (reason.waitKind === 'question') return i18n._(msg`Asking you a question for ${{ duration }}`);
+      if (reason.waitKind === 'approval') return i18n._(msg`Waiting for your approval for ${{ duration }}`);
+      return i18n._(msg`Waiting on you for ${{ duration }}`);
     }
     case 'tool': {
       if (reason.currentTool) {

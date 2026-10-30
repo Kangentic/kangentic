@@ -30,6 +30,40 @@
     "type": "session.updated",
     "properties": {}
   },
+  "_README_waits": "The question and permission events below follow OpenCode 1.18.31's own schema (packages/schema/src/v1/question.ts and v1/permission.ts): question.asked and permission.asked carry the request, the replies its id. The plugin `event` hook receives them for its directory with no type filter (packages/opencode/src/plugin/index.ts).",
+  "event_question_asked": {
+    "type": "question.asked",
+    "properties": {
+      "id": "que_01JQ7Z3V5K0000000000000000",
+      "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq",
+      "questions": [{ "question": "Which layout should the settings page use?", "header": "Layout", "options": [{ "label": "Tabs", "description": "One tab per area" }, { "label": "Single page", "description": "Every section on one scroll" }] }],
+      "tool": { "messageID": "msg_01JQ7Z3V5K0000000000000001", "callID": "call_question_1" }
+    }
+  },
+  "event_question_replied": {
+    "type": "question.replied",
+    "properties": { "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "requestID": "que_01JQ7Z3V5K0000000000000000", "answers": [["Tabs"]] }
+  },
+  "event_question_rejected": {
+    "type": "question.rejected",
+    "properties": { "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "requestID": "que_01JQ7Z3V5K0000000000000000" }
+  },
+  "event_permission_asked": {
+    "type": "permission.asked",
+    "properties": {
+      "id": "per_01JQ7Z3V5K0000000000000002",
+      "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq",
+      "permission": "bash",
+      "patterns": ["npm test"],
+      "metadata": {},
+      "always": ["npm test"],
+      "tool": { "messageID": "msg_01JQ7Z3V5K0000000000000003", "callID": "call_bash_1" }
+    }
+  },
+  "event_permission_replied": {
+    "type": "permission.replied",
+    "properties": { "sessionID": "ses_2349b5c91ffeKd6qajuUTR4clq", "requestID": "per_01JQ7Z3V5K0000000000000002", "reply": "once" }
+  },
   "tool_before_bash": {
     "input": { "tool": "bash" },
     "output": {

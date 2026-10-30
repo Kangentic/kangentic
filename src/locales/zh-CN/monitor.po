@@ -57,13 +57,14 @@ msgstr "当前视图中所有项目里等待你回复的智能体"
 msgid "All projects"
 msgstr "所有项目"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "{when}起向你提问"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Automations"
 msgstr "自动化"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-msgid "Awaiting permission {when}"
-msgstr "{when}起等待授权"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 msgid "Cards"
@@ -291,6 +292,16 @@ msgstr "任务"
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "The workflow the task belongs to"
 msgstr "任务所属的工作流"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "{when}起等待你的批准"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "{when}起等待你处理"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 msgid "Waiting to start"

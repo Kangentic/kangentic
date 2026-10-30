@@ -446,7 +446,7 @@ export class UsageAccumulator {
       const state = this.toolStats.get(sessionId);
       if (!state) return;
       if (event.detail === IdleReason.Permission) {
-        const awaited = this.newestPendingStart(state);
+        const awaited = this.newestPendingStart(state, event.tool);
         if (awaited) awaited.waited = true;
         return;
       }
@@ -587,12 +587,31 @@ export class UsageAccumulator {
    * its execution. Undefined when nothing started this turn is pending, which
    * is when the engine's own stack is empty too.
    */
-  private newestPendingStart(state: SessionToolState): PendingToolStart | undefined {
+  /**
+   * The newest call pending since the turn began, of `toolName` when the
+   * permission Idle names one and such a call is pending, else of any tool:
+   * the engine's `awaitedPendingTool` rule, so a parallel sibling that
+   * started after the awaited call is not marked waited in its place.
+   */
+  private newestPendingStart(state: SessionToolState, toolName?: string): PendingToolStart | undefined {
+    if (toolName) {
+      const named = this.newestPendingStartOf(state, (pending) => pending.toolName === toolName);
+      if (named) return named;
+    }
+    return this.newestPendingStartOf(state, () => true);
+  }
+
+  private newestPendingStartOf(
+    state: SessionToolState,
+    matches: (pending: PendingToolStart) => boolean,
+  ): PendingToolStart | undefined {
     let newest: PendingToolStart | undefined;
-    for (const pending of state.pendingById.values()) newest = pending;
+    for (const pending of state.pendingById.values()) {
+      if (matches(pending)) newest = pending;
+    }
     for (const accumulator of state.byTool.values()) {
       const last = accumulator.pendingStarts[accumulator.pendingStarts.length - 1];
-      if (last && (!newest || last.startTs > newest.startTs)) newest = last;
+      if (last && matches(last) && (!newest || last.startTs > newest.startTs)) newest = last;
     }
     return newest && newest.startTs >= state.turnStartTs ? newest : undefined;
   }

@@ -20,6 +20,8 @@ export function createSessionEngineState(): SessionEngineState {
     pendingServiceShellIds: new Set<string>(),
     permissionPending: false,
     permissionAwaitedToolId: null,
+    permissionWaitKind: null,
+    permissionSiblingToolIds: new Set(),
     lastSignalAt: null,
     lastPtyOutputAt: null,
     currentTool: null,

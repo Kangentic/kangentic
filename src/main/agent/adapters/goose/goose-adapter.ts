@@ -6,6 +6,7 @@ import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import type { AgentAdapter, AgentInfo, SpawnCommandOptions } from '../../agent-adapter';
 import type { AgentPermissionEntry, PermissionMode, AdapterRuntimeStrategy, SubmissionContextType, SubmissionVerifier } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
+import { GooseProgramStatusParser } from './program-status-parser';
 
 /**
  * Goose CLI adapter - integrates Block's Goose agent CLI (`goose`)
@@ -29,7 +30,9 @@ import { ActivityDetection } from '../../../../shared/types';
  * shape the Antigravity adapter already writes and a payload close to the one
  * `event-bridge.js` consumes, so wiring it is a follow-up, not a blocked path.
  * Until then activity rides the PTY silence timer, with the false-idle exposure
- * that implies.
+ * that implies. The one structured signal read today is Goose 1.56's OSC 7501
+ * program status on the terminal, for the waits on the user
+ * (`program-status-parser.ts`).
  *
  * It differs from Warp in two ways this adapter uses:
  *
@@ -202,6 +205,13 @@ export class GooseAdapter implements AgentAdapter {
     // Only terminal silence says a turn ended.
     reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
+    // Goose 1.56+ writes an OSC 7501 program status to the terminal, the one
+    // place it says it waits on the user (a question or a permission). The
+    // parser reports only those waits; a `pty` agent's stream events never
+    // suppress its tracker, so the silence fallback keeps ending turns.
+    streamOutput: {
+      createParser: () => new GooseProgramStatusParser(),
+    },
   };
 
   // This adapter installs no hook plugin, so there is nothing to remove.

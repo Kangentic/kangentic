@@ -69,15 +69,15 @@ msgstr "A válaszodra váró ügynökök a nézet összes projektjében"
 msgid "All projects"
 msgstr "Összes projekt"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "Kérdést tesz fel Önnek {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "Automatizálások"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "Engedélyre vár {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "Feladat"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "A munkafolyamat, amelyhez a feladat tartozik"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "Az Ön jóváhagyására vár {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "Önre vár {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

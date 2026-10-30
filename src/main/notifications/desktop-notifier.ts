@@ -40,6 +40,11 @@
  * session's language). The names it places in them (task, project and workflow
  * titles) are user data, and a stall or wait reason is main's English, so both
  * stay as written.
+ *
+ * A session waiting on the user is titled by what happened (`waitTitle`) and
+ * bodied by which task and where ("<task title> - <place>"). A question and an
+ * approval each get their own title from the reason's `waitKind`; the settings
+ * keep the one "Agent idle" switch for all three waits.
  */
 import { msg } from '@lingui/core/runtime-macro';
 import { translateText } from '../i18n/main-i18n';
@@ -92,6 +97,23 @@ export interface WorkflowTaskNotice {
 }
 
 /**
+ * The title of the notice a session waiting on the user raises: what happened.
+ * A permission wait names its kind ("Agent has a question", "Agent needs your
+ * approval"); a wait whose agent did not report the kind falls back to "Agent
+ * needs your input"; a finished turn is "Agent went idle". The phone's push
+ * stays generic ("Agent needs your attention", `push-notifier.ts`), so it does
+ * not name the kind.
+ */
+export function waitTitle(state: ActivityState, reason: ActivityReason | undefined): string {
+  // activity-state-ok: granular permission-vs-idle title text, not an idle-vs-active bucket
+  if (state !== 'permission') return translateText(msg`Agent went idle`);
+  const waitKind = reason?.kind === 'permission' ? reason.waitKind : undefined;
+  if (waitKind === 'question') return translateText(msg`Agent has a question`);
+  if (waitKind === 'approval') return translateText(msg`Agent needs your approval`);
+  return translateText(msg`Agent needs your input`);
+}
+
+/**
  * A workflow's title as the notification body names it: "Usage budgets
  * workflow". A title that already ends in the word (the default "Untitled
  * workflow") is not given a second one. The check reads the user's own title,
@@ -125,7 +147,7 @@ export class DesktopNotifier {
     this.options.sessionManager.on('exit', this.onExit);
   }
 
-  private readonly onActivity = (sessionId: string, state: ActivityState, _reason: ActivityReason): void => {
+  private readonly onActivity = (sessionId: string, state: ActivityState, reason: ActivityReason): void => {
     // Never let a notification failure escape into the emit stack. These
     // listeners are attached to SessionManager BEFORE the session handlers
     // (register-all.ts starts this notifier ahead of registerSessionHandlers),
@@ -134,13 +156,13 @@ export class DesktopNotifier {
     // that run after us on the same synchronous emit. A missed notification is
     // an acceptable failure; a skipped session-lifecycle write is not.
     try {
-      this.handleActivity(sessionId, state);
+      this.handleActivity(sessionId, state, reason);
     } catch (error) {
       console.error('[NOTIFICATION] desktop notifier activity handler failed', error);
     }
   };
 
-  private handleActivity(sessionId: string, state: ActivityState): void {
+  private handleActivity(sessionId: string, state: ActivityState, reason: ActivityReason | undefined): void {
     if (!requiresUserInteraction(state)) return;
     if (!this.options.getNotificationConfig().desktop.onAgentIdle) return;
 
@@ -161,17 +183,22 @@ export class DesktopNotifier {
     // activity-state-ok: granular, only the idle half is the step check's.
     if (state === 'idle' && !session.transient && this.options.isWorkflowStepTask?.(session.projectId, session.taskId)) return;
 
-    // A Command Terminal has no task, so no workflow to name.
-    const place = session.transient
-      ? this.projectName(session.projectId)
-      : this.taskPlace(session.projectId, session.taskId);
-    const taskTitle = session.transient ? undefined : this.options.resolveTaskTitle(session.projectId, session.taskId);
-    const label = session.transient ? translateText(msg`Command Terminal`) : (taskTitle ?? translateText(msg`A task`));
-    // activity-state-ok: granular permission-vs-idle message text, not an idle-vs-active bucket
-    const body = state === 'permission' ? translateText(msg`Needs permission: ${{ place }}`) : place;
+    // The title says what happened, the body which task and where: the task's
+    // title, then the place. A Command Terminal has no task, so no workflow to
+    // name either: its body is the terminal and its project.
+    const title = waitTitle(state, reason);
+    let body: string;
+    if (session.transient) {
+      const projectName = this.projectName(session.projectId);
+      body = translateText(msg`Command Terminal - ${{ projectName }}`);
+    } else {
+      const taskTitle = this.options.resolveTaskTitle(session.projectId, session.taskId) ?? translateText(msg`A task`);
+      const place = this.taskPlace(session.projectId, session.taskId);
+      body = translateText(msg`${{ taskTitle }} - ${{ place }}`);
+    }
     const clickTaskId = session.transient ? COMMAND_TERMINAL_NOTIFICATION_TASK_ID : session.taskId;
 
-    this.notify(`idle:${sessionId}`, label, body, session.projectId, clickTaskId);
+    this.notify(`idle:${sessionId}`, title, body, session.projectId, clickTaskId);
   }
 
   private readonly onExit = (sessionId: string, exitCode: number, intentional?: boolean): void => {

@@ -3044,8 +3044,8 @@ msgstr "Amikor egy feladat indítása előkészítés közben túl sokáig vár 
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Amikor egy ügynök befejezi a körét, vagy engedélyre van szüksége"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Amikor egy ügynök befejezi a körét, kérdése van, vagy jóváhagyásra van szüksége"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

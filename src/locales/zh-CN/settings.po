@@ -2457,8 +2457,9 @@ msgid "When a task spawn waits too long on the git queue while preparing"
 msgstr "任务在准备阶段等待 git 队列过久时"
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "When an agent finishes its turn or needs permission"
-msgstr "智能体完成轮次或需要权限时"
+#, fuzzy
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "智能体完成轮次、有疑问或需要你批准时"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too."

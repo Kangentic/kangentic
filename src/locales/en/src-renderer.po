@@ -64,8 +64,8 @@ msgid "\"{taskTitle}\" is archived."
 msgstr "\"{taskTitle}\" is archived."
 
 #: src/renderer/utils/idle-toast.ts
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "\"{taskTitle}\" is asking to run a tool."
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "\"{taskTitle}\" is asking you a question."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 msgid "\"{taskTitle}\" is back in {columnName}."
@@ -79,6 +79,10 @@ msgstr "\"{taskTitle}\" is back on the board."
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "\"{taskTitle}\" is running."
 msgstr "\"{taskTitle}\" is running."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "\"{taskTitle}\" is waiting for your approval."
 
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" is waiting on the git queue."
@@ -261,8 +265,12 @@ msgid "{sessionIdShort} exited with code {exitCode}."
 msgstr "{sessionIdShort} exited with code {exitCode}."
 
 #: src/renderer/utils/idle-toast.ts
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} is asking to run a tool."
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} is asking you a question."
+
+#: src/renderer/utils/idle-toast.ts
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} is waiting for your approval."
 
 #: src/renderer/utils/idle-toast.ts
 msgid "{sessionIdShort} is waiting on you."
@@ -327,6 +335,18 @@ msgstr "Agent didn't start"
 #: src/renderer/utils/idle-toast.ts
 msgid "Agent finished"
 msgstr "Agent finished"
+
+#: src/renderer/utils/idle-toast.ts
+msgid "Agent has a question"
+msgstr "Agent has a question"
+
+#: src/renderer/utils/idle-toast.ts
+msgid "Agent needs your approval"
+msgstr "Agent needs your approval"
+
+#: src/renderer/utils/idle-toast.ts
+msgid "Agent needs your input"
+msgstr "Agent needs your input"
 
 #: src/renderer/App.tsx
 msgid "Agent paused"
@@ -948,10 +968,6 @@ msgstr "Moved \"{taskTitle}\" to the next column."
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Moving project folder..."
 msgstr "Moving project folder..."
-
-#: src/renderer/utils/idle-toast.ts
-msgid "Needs permission"
-msgstr "Needs permission"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"

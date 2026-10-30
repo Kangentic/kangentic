@@ -64,8 +64,9 @@ msgid "\"{taskTitle}\" is archived."
 msgstr "「{taskTitle}」已归档。"
 
 #: src/renderer/utils/idle-toast.ts
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "「{taskTitle}」正在请求运行工具。"
+#, fuzzy
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "「{taskTitle}」正在向你提问。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 msgid "\"{taskTitle}\" is back in {columnName}."
@@ -79,6 +80,11 @@ msgstr "「{taskTitle}」已回到看板。"
 #: src/renderer/stores/board-store/task-slice.ts
 msgid "\"{taskTitle}\" is running."
 msgstr "「{taskTitle}」正在运行。"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "「{taskTitle}」正在等待你批准。"
 
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" is waiting on the git queue."
@@ -261,8 +267,14 @@ msgid "{sessionIdShort} exited with code {exitCode}."
 msgstr "{sessionIdShort} 已退出，退出代码为 {exitCode}。"
 
 #: src/renderer/utils/idle-toast.ts
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} 正在请求运行工具。"
+#, fuzzy
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} 正在向你提问。"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} 正在等待你批准。"
 
 #: src/renderer/utils/idle-toast.ts
 msgid "{sessionIdShort} is waiting on you."
@@ -328,6 +340,21 @@ msgstr "智能体未启动"
 #: src/renderer/utils/idle-toast.ts
 msgid "Agent finished"
 msgstr "智能体已完成"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "智能体有问题"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "智能体需要你批准"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "智能体需要你输入"
 
 #: src/renderer/App.tsx
 msgid "Agent paused"
@@ -949,10 +976,6 @@ msgstr "已将「{taskTitle}」移至下一列。"
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Moving project folder..."
 msgstr "正在移动项目文件夹..."
-
-#: src/renderer/utils/idle-toast.ts
-msgid "Needs permission"
-msgstr "需要权限"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 msgid "New conversation"

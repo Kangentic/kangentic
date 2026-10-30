@@ -1,0 +1,9 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1793325742236,
+  "cwd": "C:\\Users\\dev\\repo",
+  "message": "Which color?",
+  "title": "Information requested",
+  "hook_event_name": "Notification",
+  "notification_type": "elicitation_dialog"
+}

@@ -147,15 +147,15 @@ msgstr "Uygula"
 msgid "Archive"
 msgstr "Arşivle"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "{duration} süredir size bir soru soruyor"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
 msgid "Automations paused"
 msgstr "Otomasyonlar duraklatıldı"
-
-#: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
-msgid "Awaiting permission for {duration}"
-msgstr "{duration} süredir izin bekleniyor"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -547,6 +547,16 @@ msgstr "Tümünü görüntüle"
 #, fuzzy
 msgid "View conversation"
 msgstr "Konuşmayı görüntüle"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "{duration} süredir onayınızı bekliyor"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "{duration} süredir sizi bekliyor"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy

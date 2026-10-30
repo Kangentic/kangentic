@@ -8,6 +8,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useTaskProgress } from '../../utils/task-progress';
+import { useNow } from '../../hooks/useNow';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
@@ -20,6 +21,7 @@ import type {
 } from '../../../shared/types';
 import { activityReasonIcon } from './ActivityReasonTooltip';
 import { formatActivityReasonText } from './activity-reason-text';
+import { agentActivityMark, type AgentActivityMarkName } from './agent-wait';
 import { Tooltip } from '../Tooltip';
 import { AutomationsDisabledStrip } from './AutomationsDisabledStrip';
 import { canTaskRunAutomations } from '../../../shared/automation-manifest';
@@ -100,6 +102,12 @@ export interface TaskCardViewModel {
   isIdle: boolean;
   /** A running session whose agent is working. */
   isThinking: boolean;
+  /**
+   * The mark the title row draws while `isIdle` or `isThinking`: the working
+   * ring, or the envelope, bubble or shield for a finished turn, a question
+   * and an approval (`agentActivityMark`).
+   */
+  activityMark: AgentActivityMarkName;
   shownTrail: AssistantMessageTrailEntry[] | null;
   trailMode: ReturnType<typeof trailModeFor>;
   labelColors: Record<string, string>;
@@ -203,6 +211,9 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
   // shared/activity-state.ts so every consumer agrees.
   const isIdle = displayState.kind === 'running' && requiresUserInteraction(displayState.activity);
   const isThinking = displayState.kind === 'running' && isActive(displayState.activity);
+  // Which of the waits the agent is in, so a question, an approval and a
+  // finished turn each draw their own mark (`agent-wait.ts`).
+  const activityMark = agentActivityMark(displayState.kind === 'running' ? displayState.activity : undefined, activityReason);
 
   // One object per change, not per render, so a host can skip re-rendering the
   // card's content when nothing in it changed (`TaskCard` does, through every
@@ -218,6 +229,7 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
       browserAlive,
       isIdle,
       isThinking,
+      activityMark,
       shownTrail,
       trailMode,
       labelColors,
@@ -229,8 +241,8 @@ export function useTaskCardViewModel(task: Task): TaskCardViewModel {
     }),
     [
       sessionId, isHighlighted, isResuming, activityReason, displayState, browserAlive, isIdle, isThinking,
-      shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity, showTaskNumbers,
-      liveTelemetryUnsupported,
+      activityMark, shownTrail, trailMode, labelColors, taskLabels, archivedRelativeTime, cardDensity,
+      showTaskNumbers, liveTelemetryUnsupported,
     ],
   );
 }
@@ -406,17 +418,52 @@ export function TaskCardBody({ task, view, density, hideDisplayId, idleFooter, h
   );
 }
 
-function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
+/** How often a waiting card re-reads the clock for its elapsed time: the text shows seconds. */
+const WAIT_ELAPSED_TICK_MS = 1000;
+
+interface TitleRowActivityMarkProps {
+  activityMark: AgentActivityMarkName;
+  activityReason: TaskCardViewModel['activityReason'];
+  isIdle: boolean;
+  isThinking: boolean;
+}
+
+/**
+ * The title row's mark and its tip. A card that waits on the user (a finished
+ * turn, a question, an approval) says how long it has waited, so it re-reads the
+ * clock every second, here only: the tick re-renders this mark and its tip, never
+ * the rest of the card. Before, the time was read when the card rendered, and a
+ * card that sat waiting did not render again, so its tip kept saying "for 0s".
+ * One component in both states, so the slot never swaps element types.
+ */
+function TitleRowActivityMark({ activityMark, activityReason, isIdle, isThinking }: TitleRowActivityMarkProps) {
   const { t } = useLingui();
-  const { displayState, isIdle, isThinking, activityReason, shownTrail, trailMode } = view;
+  const now = useNow(WAIT_ELAPSED_TICK_MS, isIdle && Boolean(activityReason));
+  // Read once per render: the mark's name and its tip must match. A wait that
+  // began after the last tick reads "0s" until the next one, at most a second.
+  const reasonText = activityReason ? formatActivityReasonText(activityReason, now) : '';
+  return (
+    <Tooltip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
+      <ActivityMark
+        mark={activityMark}
+        size={16}
+        className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
+        aria-label={reasonText !== ''
+          ? reasonText
+          : isThinking ? t({ message: 'Thinking', context: 'Agent status' }) : t({ message: 'Idle', context: 'Agent status' })}
+      />
+    </Tooltip>
+  );
+}
+
+function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }: TaskCardBodyProps) {
+  const { displayState, isIdle, isThinking, activityMark, activityReason, shownTrail, trailMode } = view;
   const isCompactDensity = density === 'compact';
   // The description slot's clamp per density. Compact used to print no excerpt
   // at all; it now always shows exactly one line, so a compact board still says
   // what each agent is doing. Shared with the monitor card through
   // `excerptLinesFor`, so the two surfaces cannot clamp differently.
   const excerptLines = excerptLinesFor(density);
-  // Read once: the text carries an elapsed time, and the mark's name and its tip must match.
-  const reasonText = activityReason ? formatActivityReasonText(activityReason) : '';
 
   return (
     <>
@@ -432,18 +479,15 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
             update never touches the DOM and only a genuine state change re-injects.
             The engine's reason, when it has one, is both the mark's name and its tip,
             led by the reason's own glyph. The tip repeats the name, so a screen reader
-            hears it once. */}
+            hears it once. A wait on the user swaps the mark's shape (envelope, bubble,
+            shield) inside this same slot, which is a mark flip, not an element swap. */}
         {(isIdle || isThinking) && (
-          <Tooltip label={reasonText} icon={activityReason ? activityReasonIcon(activityReason) : undefined}>
-            <ActivityMark
-              mark={isThinking ? 'agent-working' : 'agent-idle'}
-              size={16}
-              className={`${isThinking ? 'text-active' : 'text-attention'} shrink-0`}
-              aria-label={reasonText !== ''
-                ? reasonText
-                : isThinking ? t({ message: 'Thinking', context: 'Agent status' }) : t({ message: 'Idle', context: 'Agent status' })}
-            />
-          </Tooltip>
+          <TitleRowActivityMark
+            activityMark={activityMark}
+            activityReason={activityReason}
+            isIdle={isIdle}
+            isThinking={isThinking}
+          />
         )}
         <div className="text-sm text-fg font-medium truncate flex-1 min-w-0">{task.title}</div>
         <DisplayIdBadge task={task} view={view} hidden={hideDisplayId} />

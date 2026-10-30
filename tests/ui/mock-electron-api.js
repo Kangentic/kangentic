@@ -50,6 +50,12 @@
   let attachments = [];
   let backlogTasks = [];
   let activityCache = {};
+  // sessionId -> ActivityReason, what sessions.getActivityReason(s) serve
+  // beside activityCache's states. Seeded via __mockPreConfigure: a waiting
+  // session's reason names what it waits for (`waitKind`), which picks its mark
+  // (bubble, shield or envelope). Empty here, so an unseeded wait draws as one
+  // of unknown kind, the production answer for an agent that does not say.
+  let activityReasonCache = {};
   // sessionId -> AssistantMessageTrailEntry[] (oldest first), what
   // sessions.getMessageTrails() serves; __mockFireMessageTrail writes it too
   // so a re-sync after the push sees the same trail main would report.
@@ -2783,16 +2789,13 @@
       getActivity: async function (/* projectId */) {
         return Object.assign({}, activityCache);
       },
-      getActivityReason: async function (/* sessionId */) {
-        // No reason data is mocked; UI tests that assert on the reason
-        // shape should extend this stub. Returning null mirrors the
-        // production "session unknown" path.
-        return null;
+      getActivityReason: async function (sessionId) {
+        // The seeded reason, or null: the production "session unknown" path.
+        return activityReasonCache[sessionId] || null;
       },
       getActivityReasons: async function (/* projectId */) {
-        // Batch reason map; mirrors getActivity's mock. UI tests don't
-        // assert on reason content, so an empty record is fine.
-        return {};
+        // Batch reason map; mirrors getActivity's mock.
+        return Object.assign({}, activityReasonCache);
       },
       getActivityStats: async function (sessionId) {
         // Debug overlay only; UI tests rarely need this. Returning null
@@ -7204,6 +7207,7 @@
       sessions: sessions,
       backlogTasks: backlogTasks,
       activityCache: activityCache,
+      activityReasonCache: activityReasonCache,
       messageTrailCache: messageTrailCache,
       activityStatsCache: activityStatsCache,
       eventCache: eventCache,

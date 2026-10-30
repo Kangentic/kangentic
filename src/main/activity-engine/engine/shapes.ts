@@ -1,5 +1,5 @@
 import { EventType } from '../../../shared/types';
-import type { ActivityState, ActivityReason, SessionEvent } from '../../../shared/types';
+import type { ActivityState, ActivityReason, PermissionWaitKind, SessionEvent } from '../../../shared/types';
 
 /**
  * Shapes for the activity engine: types, default constants, and
@@ -485,9 +485,10 @@ export interface SessionEngineState {
   permissionPending: boolean;
   /**
    * Correlation id of the tool the pending permission prompt was raised
-   * for: the top of `pendingToolStack` when `idle:permission` fired
-   * (permission prompts fire between PreToolUse and execution, and
-   * permission idles leave the stack intact). Lets the engine clear
+   * for: the newest entry of `pendingToolStack` named by the
+   * `idle:permission` event's `tool`, else the stack top (permission
+   * prompts fire between PreToolUse and execution, and permission idles
+   * leave the stack intact). Lets the engine clear
    * `permissionPending` when THAT tool starts/ends at any subagent
    * depth. Without it, an approved tool inside a subagent leaves the
    * flag stuck until the subagent stops: the depth-0 gate ignores its
@@ -496,6 +497,23 @@ export interface SessionEngineState {
    * tool carried no correlation id.
    */
   permissionAwaitedToolId: string | null;
+  /**
+   * Ids of the other tools already running when the pending permission
+   * prompt was raised: its parallel siblings. A depth-0 ToolEnd of one of
+   * them does not clear the prompt, because a sibling finishing says
+   * nothing about the answer. Measured on Claude Code with a ToolSearch
+   * run beside AskUserQuestion: the search ended 30 ms after the question
+   * opened, and clearing on it hid a question still on screen. Emptied
+   * with `permissionPending`; engine-internal, not in the snapshot.
+   */
+  permissionSiblingToolIds: Set<string>;
+  /**
+   * What the pending wait is for, from the `waitKind` of the `idle:permission`
+   * event that raised it: a question or an approval. Null when no wait is
+   * pending or the agent did not report a kind. Set and cleared in lockstep
+   * with `permissionPending`; a later permission idle replaces it.
+   */
+  permissionWaitKind: PermissionWaitKind | null;
   /**
    * Wall-clock ms of the most recent activity-proving signal. Used by
    * the bg-shell escape hatch and stale-thinking watchdog.
@@ -803,6 +821,8 @@ export interface ActivityStatsSnapshot {
   permissionPending: boolean;
   /** The tool_use_id awaiting a permission decision when `permissionPending` is true, else null. See `SessionEngineState.permissionAwaitedToolId`. */
   permissionAwaitedToolId: string | null;
+  /** What the pending wait is for, or null. See `SessionEngineState.permissionWaitKind`. */
+  permissionWaitKind: PermissionWaitKind | null;
   msSinceLastSignal: number | null;
   /** Wall-clock ms of the most recent thinking-signal. Lets the
    *  debug-overlay timeline render the active watchdog deadline as

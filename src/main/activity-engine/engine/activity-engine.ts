@@ -26,7 +26,7 @@ import type {
 } from './shapes';
 import { snapshotCounters, formatCounterDelta } from './counter-snapshot';
 import { createSessionEngineState } from './state-factory';
-import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTurn } from './predicate';
+import { derivePredicate, deriveReason, deriveActivityAndReason, idleHintEndsTurn, sameReasonShape } from './predicate';
 import {
   updateCounters,
   updatePermissionFlag,
@@ -218,6 +218,7 @@ export class ActivityEngine {
       turnActive: state.turnActive,
       permissionPending: state.permissionPending,
       permissionAwaitedToolId: state.permissionAwaitedToolId,
+      permissionWaitKind: state.permissionWaitKind,
       msSinceLastSignal: lastSignalAt === null ? null : this.now() - lastSignalAt,
       lastSignalAt,
       lastPtyOutputAt,
@@ -408,6 +409,8 @@ export class ActivityEngine {
         state.turnForcedByHeartbeat = false;
         state.permissionPending = false;
         state.permissionAwaitedToolId = null;
+        state.permissionWaitKind = null;
+        state.permissionSiblingToolIds.clear();
         state.idleAuthoritative = true;
         this.applyInterruptedBypass(sessionId, state, before, event);
       }
@@ -601,6 +604,8 @@ export class ActivityEngine {
     state.lastSignalAt = this.now();
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
+    state.permissionWaitKind = null;
+    state.permissionSiblingToolIds.clear();
     state.pendingIdleAt = null;
     state.idleHintPending = false;
     state.retryFailurePending = false;
@@ -629,6 +634,8 @@ export class ActivityEngine {
     state.turnForcedByHeartbeat = false;
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
+    state.permissionWaitKind = null;
+    state.permissionSiblingToolIds.clear();
     if (!keepBackgroundShells) {
       state.lastSignalAt = null;
       state.lastPtyOutputAt = null;
@@ -984,6 +991,8 @@ export class ActivityEngine {
 
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
+    state.permissionWaitKind = null;
+    state.permissionSiblingToolIds.clear();
 
     const pendingIndex = state.pendingToolStack.findIndex((entry) => entry.id === toolId);
     if (pendingIndex >= 0) {
@@ -1138,11 +1147,14 @@ export class ActivityEngine {
    *
    * Kind only, never deep-equal. `pendingCount` and `currentTool` change on
    * nearly every event, so a deep-equal gate turns a channel that needs about
-   * 180 reports over a five-minute turn into about a thousand.
+   * 180 reports over a five-minute turn into about a thousand. The one field
+   * compared beside the kind is a permission wait's `waitKind`: a question
+   * raised while an approval is open stays `permission` throughout, and the
+   * card must still swap its mark.
    */
   private reportReasonIfChanged(sessionId: string, state: SessionEngineState): void {
     const reason = deriveReason(state);
-    if (state.lastPushedReason && state.lastPushedReason.kind === reason.kind) return;
+    if (state.lastPushedReason && sameReasonShape(state.lastPushedReason, reason)) return;
     state.lastPushedReason = reason;
     this.callbacks.onReasonChange?.(sessionId, state.activity, reason);
   }

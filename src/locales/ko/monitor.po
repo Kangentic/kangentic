@@ -69,15 +69,15 @@ msgstr "현재 보기의 모든 프로젝트에서 응답을 기다리는 에이
 msgid "All projects"
 msgstr "모든 프로젝트"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "질문하는 중 {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "자동화"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "권한 대기 중 {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "작업"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "작업이 속한 워크플로"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "승인 대기 중 {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "응답 대기 중 {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

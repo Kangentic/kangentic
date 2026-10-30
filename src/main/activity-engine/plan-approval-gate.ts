@@ -13,7 +13,7 @@ import type { SessionEvent } from '../../shared/types';
  * and the plan exit's ToolEnd followed the marker 130 to 170 ms later.
  *
  * Letting that idle through would flip the card to amber, raise the desktop
- * "Needs permission" notification and push the phone, all for a prompt nobody
+ * "Agent needs your approval" notification and push the phone, all for a prompt nobody
  * has to answer. So, before anything else in the pipeline reads it:
  *
  * - a plan-exit permission idle, for a session whose decision approves plans or

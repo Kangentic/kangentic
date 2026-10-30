@@ -3,8 +3,10 @@ import {
   applyProjectScope,
   bucketOf,
   filterRows,
+  formatMonitorStatus,
   groupRows,
   isLiveBucket,
+  monitorActivityMark,
   monitorSlotKind,
   sortRows,
   summarize,
@@ -77,6 +79,39 @@ describe('bucketOf', () => {
 
   it('treats a running session with no reported activity as working', () => {
     expect(bucketOf(makeRow({ status: 'running', activity: null }))).toBe('working');
+  });
+});
+
+// The Monitor draws the board card's own marks and names each wait (#452): a
+// question, an approval and a finished turn are told apart on the cards and the
+// list, while the summary tiles keep one count for all three.
+describe('monitorActivityMark', () => {
+  it('draws each wait\'s own mark for a task agent', () => {
+    expect(monitorActivityMark(makeRow({ activity: 'idle', activityReason: { kind: 'idle', since: 1 } }), true)).toBe('agent-idle');
+    expect(monitorActivityMark(makeRow({ activity: 'permission', activityReason: { kind: 'permission', since: 1, waitKind: 'question' } }), true)).toBe('agent-question');
+    expect(monitorActivityMark(makeRow({ activity: 'permission', activityReason: { kind: 'permission', since: 1, waitKind: 'approval' } }), true)).toBe('agent-approval');
+    expect(monitorActivityMark(makeRow({ activity: 'permission', activityReason: { kind: 'permission', since: 1 } }), true)).toBe('agent-question');
+    expect(monitorActivityMark(makeRow({ activity: 'thinking' }), false)).toBe('agent-working');
+  });
+
+  it('keeps the terminal chip for a Command Terminal, which has no wait marks', () => {
+    const terminalRow = makeRow({ isCommandTerminal: true, activity: 'permission', activityReason: { kind: 'permission', since: 1, waitKind: 'question' } });
+    expect(monitorActivityMark(terminalRow, true)).toBe('terminal-idle');
+  });
+
+  it('never draws the working ring for a row the caller drew as waiting', () => {
+    expect(monitorActivityMark(makeRow({ activity: null }), true)).toBe('agent-idle');
+  });
+});
+
+describe('formatMonitorStatus for a wait', () => {
+  const since = Date.now() - 2 * 60_000;
+
+  it('names what the wait is for, and leaves a finished turn unlabelled', () => {
+    expect(formatMonitorStatus(makeRow({ activityReason: { kind: 'permission', since, waitKind: 'question' } }))).toMatch(/^Asking you a question /);
+    expect(formatMonitorStatus(makeRow({ activityReason: { kind: 'permission', since, waitKind: 'approval' } }))).toMatch(/^Waiting for your approval /);
+    expect(formatMonitorStatus(makeRow({ activityReason: { kind: 'permission', since } }))).toMatch(/^Waiting on you /);
+    expect(formatMonitorStatus(makeRow({ activityReason: { kind: 'idle', since } }))).not.toMatch(/^(Asking|Waiting)/);
   });
 });
 

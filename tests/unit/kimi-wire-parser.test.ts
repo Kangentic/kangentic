@@ -507,7 +507,7 @@ describe('parseWireJsonl', () => {
   });
 
   describe('Approval / Question flow (Requests)', () => {
-    it('ApprovalRequest emits an Idle with IdleReason.Permission and forces no activity', () => {
+    it('ApprovalRequest emits an approval wait (Idle with IdleReason.Permission) and forces no activity', () => {
       const result = parseWireJsonl(envelope('ApprovalRequest', {
         id: 'req-1',
         tool_call_id: 'tc-1',
@@ -520,11 +520,12 @@ describe('parseWireJsonl', () => {
         expect.objectContaining({
           type: EventType.Idle,
           detail: IdleReason.Permission,
+          waitKind: 'approval',
         }),
       ]);
     });
 
-    it('QuestionRequest also emits an Idle with IdleReason.Permission', () => {
+    it('QuestionRequest emits the same wait, tagged as a question', () => {
       const result = parseWireJsonl(envelope('QuestionRequest', {
         id: 'q-1',
         tool_call_id: 'tc-2',
@@ -535,6 +536,7 @@ describe('parseWireJsonl', () => {
         expect.objectContaining({
           type: EventType.Idle,
           detail: IdleReason.Permission,
+          waitKind: 'question',
         }),
       ]);
     });

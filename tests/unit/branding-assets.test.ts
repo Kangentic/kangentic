@@ -55,7 +55,7 @@ const SUPPORTED_SEQUENCES = ['none', 'wave-once', 'blink-loop'];
 // Derived, not a second hand-maintained list: a fourth supported sequence must be required too.
 const REQUIRED_SEQUENCES = SUPPORTED_SEQUENCES.filter((key) => key !== 'none');
 
-// The activity marks: the nine glyphs that express agent/terminal activity, consumed via the
+// The activity marks: the eleven glyphs that express agent/terminal activity, consumed via the
 // shipped contract (assets/activity/activity.css + activity.json) rather than hand-authored
 // here, so desktop, web, and mobile cannot drift. ActivityMark.tsx is the single consumer; this
 // pins the marks it renders against the installed package, so a branding upgrade that renames or

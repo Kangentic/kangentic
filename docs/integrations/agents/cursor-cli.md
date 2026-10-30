@@ -66,7 +66,7 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
 
 ## Limitations
 
-- No hooks, no structured status pipeline (PTY silence timer only)
+- No hooks wired and no structured status pipeline (PTY silence timer only). The CLI does run hooks: it reads the same `<project>/.cursor/hooks.json` and `~/.cursor/hooks.json` as the editor, and Cursor's forum lists `beforeShellExecution`, `afterShellExecution`, `afterFileEdit`, `postToolUse`, `stop` and `sessionStart` as working in the CLI, with reports of hooks not firing on some Linux and Windows builds. Kangentic wires none. None of those events marks a wait on the user either (its AskQuestion tool raises no hook, stream event or file), so a Cursor wait stays on the envelope (GitHub #452)
 - No settings merge, no trust mechanism
 - Kangentic's MCP server reaches every session through the project's `.cursor/mcp.json` (a static
   `${env:...}` entry beside the user's servers, `project-mcp-config.ts`) and `--approve-mcps`, which

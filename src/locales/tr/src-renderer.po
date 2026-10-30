@@ -79,8 +79,8 @@ msgstr "\"{taskTitle}\" arşivlendi."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "\"{taskTitle}\" bir araç çalıştırmak için izin istiyor."
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "\"{taskTitle}\" size bir soru soruyor."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -97,6 +97,11 @@ msgstr "\"{taskTitle}\" tekrar panoda."
 #, fuzzy
 msgid "\"{taskTitle}\" is running."
 msgstr "\"{taskTitle}\" çalışıyor."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "\"{taskTitle}\" onayınızı bekliyor."
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -325,8 +330,13 @@ msgstr "{sessionIdShort}, {exitCode} çıkış koduyla sonlandı."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} bir araç çalıştırmak için izin istiyor."
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} size bir soru soruyor."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} onayınızı bekliyor."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
@@ -407,6 +417,21 @@ msgstr "Ajan başlamadı"
 #, fuzzy
 msgid "Agent finished"
 msgstr "Ajan tamamladı"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Ajanın bir sorusu var"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Ajan onayınızı bekliyor"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Ajan girdinizi bekliyor"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1181,11 +1206,6 @@ msgstr "\"{taskTitle}\" sonraki sütuna taşındı."
 #, fuzzy
 msgid "Moving project folder..."
 msgstr "Proje klasörü taşınıyor..."
-
-#: src/renderer/utils/idle-toast.ts
-#, fuzzy
-msgid "Needs permission"
-msgstr "İzin gerekiyor"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy

@@ -12,6 +12,7 @@ import { i18n, type MessageDescriptor } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { formatActivityReasonText } from '../board/activity-reason-text';
+import { agentActivityMark, type AgentWaitKind } from '../board/agent-wait';
 import { formatRelativeTime } from '../../lib/datetime';
 import type { ActivityMarkName } from '../ActivityMark';
 import type {
@@ -73,13 +74,21 @@ export function bucketOf(row: MonitorSessionRow): MonitorStateBucket {
 /**
  * The activity mark a live row wears, shared by the card's glyph and the table's
  * state cell. A Command Terminal speaks the terminal marks, the identity it wears
- * in the title bar and the sidebar; a task agent speaks the agent marks. The two
- * families share the 18-wide indicator keyline, so swapping one for the other
- * never moves the title.
+ * in the title bar and the sidebar; a task agent speaks the agent marks, the
+ * board card's own (`agentActivityMark`): the envelope for a finished turn, the
+ * bubble for a question and the shield for an approval. The terminal family has
+ * no wait marks, so a Command Terminal's wait keeps its idle chip. The families
+ * share the 18-wide indicator keyline, so swapping one for the other never moves
+ * the title.
  */
 export function monitorActivityMark(row: MonitorSessionRow, needsYou: boolean): ActivityMarkName {
   if (row.isCommandTerminal) return needsYou ? 'terminal-idle' : 'terminal-working';
-  return needsYou ? 'agent-idle' : 'agent-working';
+  if (!needsYou) return 'agent-working';
+  // `needsYou` already decided the row waits; the helper picks which wait.
+  // A running row whose activity is unreported buckets as working, so an
+  // absent activity here is a paused row the caller drew as idle.
+  const mark = agentActivityMark(row.activity ?? undefined, row.activityReason);
+  return mark === 'agent-working' ? 'agent-idle' : mark;
 }
 
 /**
@@ -148,23 +157,32 @@ function hasDescription(row: MonitorSessionRow): boolean {
 }
 
 /**
- * Label for the reason variants that carry a `since` timestamp. A lookup rather
- * than an equality check on `reason.kind`, because those kind names overlap with
+ * Label for a permission wait's `since` line, by what the wait is for. A lookup
+ * rather than equality checks, because the kind names overlap with
  * `ActivityState` members and a bare `=== 'permission'` reads as (and is scanned
  * for) hand-rolled activity bucketing.
  *
- * Plain `idle` is deliberately UNLABELLED: the amber tone, the Mail glyph, and
- * the "Needs you" section header already say idle three times before any word
- * does, so the pill just reports when ("9 minutes ago"). `permission` keeps its
- * label because it says something the colour cannot - the agent is blocked on a
- * specific approval, not merely waiting.
+ * Plain `idle` is deliberately UNLABELLED: the amber tone, the envelope, and the
+ * "Needs you" section header already say idle three times before any word does,
+ * so the pill just reports when ("9 minutes ago"). A wait keeps its label because
+ * it says something the colour cannot: the agent asked a question or wants an
+ * approval, not merely finished. A wait whose agent did not report its kind
+ * says only that it waits on you.
  *
- * Each entry is the whole line around the relative time ("Awaiting permission 2
- * minutes ago"), one message, so a language can put the time where it reads.
+ * Each entry is the whole line around the relative time ("Asking you a question
+ * 2 minutes ago"), one message, so a language can put the time where it reads.
  */
-const SINCE_PHRASES: Partial<Record<ActivityReason['kind'], (when: string) => string>> = {
-  permission: (when) => i18n._(msg`Awaiting permission ${{ when }}`),
+const WAIT_PHRASES: Record<AgentWaitKind, (when: string) => string> = {
+  question: (when) => i18n._(msg`Asking you a question ${{ when }}`),
+  approval: (when) => i18n._(msg`Waiting for your approval ${{ when }}`),
+  unknown: (when) => i18n._(msg`Waiting on you ${{ when }}`),
 };
+
+/** The kind of wait a `since`-carrying reason is, or null for a finished turn. */
+function sinceReasonWaitKind(reason: Extract<ActivityReason, { since: number }>): AgentWaitKind | null {
+  // activity-state-ok: reads the reason's own kind to name the wait it is, not a bucket.
+  return reason.kind === 'permission' ? reason.waitKind ?? 'unknown' : null;
+}
 
 /**
  * The row's "doing now" text.
@@ -182,9 +200,9 @@ const SINCE_PHRASES: Partial<Record<ActivityReason['kind'], (when: string) => st
 export function formatMonitorStatus(row: MonitorSessionRow): string {
   const reason = row.activityReason;
   if (reason && 'since' in reason) {
-    const phrase = SINCE_PHRASES[reason.kind];
+    const waitKind = sinceReasonWaitKind(reason);
     const when = formatRelativeTime(reason.since);
-    return phrase ? phrase(when) : when;
+    return waitKind ? WAIT_PHRASES[waitKind](when) : when;
   }
   if (reason) return formatActivityReasonText(reason);
   if (row.status === 'exited') {

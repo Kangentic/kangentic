@@ -77,6 +77,13 @@ describe('ActivityReasonTooltip mark selection', () => {
     const output = ActivityReasonTooltip({ reason: { kind: 'turn-active' }, now: Date.now() });
     expect(markPropOfFirstChild(output)).toBe('agent-working');
   });
+
+  it('a permission wait leads with its own mark: the bubble for a question or an unknown kind, the shield for an approval', () => {
+    const now = Date.now();
+    expect(markPropOfFirstChild(ActivityReasonTooltip({ reason: { kind: 'permission', since: now, waitKind: 'question' }, now }))).toBe('agent-question');
+    expect(markPropOfFirstChild(ActivityReasonTooltip({ reason: { kind: 'permission', since: now, waitKind: 'approval' }, now }))).toBe('agent-approval');
+    expect(markPropOfFirstChild(ActivityReasonTooltip({ reason: { kind: 'permission', since: now }, now }))).toBe('agent-question');
+  });
 });
 
 describe('formatActivityReasonText', () => {
@@ -87,11 +94,13 @@ describe('formatActivityReasonText', () => {
     expect(formatActivityReasonText({ kind: 'idle', since })).toBe('Idle for 12m 34s');
   });
 
-  it('permission includes elapsed wait time computed from reason.since', () => {
+  it('a permission wait names its kind and includes elapsed wait time computed from reason.since', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-07-22T01:30:00Z'));
     const since = new Date('2026-07-22T00:00:00Z').getTime();
-    expect(formatActivityReasonText({ kind: 'permission', since })).toBe('Awaiting permission for 1h 30m');
+    expect(formatActivityReasonText({ kind: 'permission', since, waitKind: 'question' })).toBe('Asking you a question for 1h 30m');
+    expect(formatActivityReasonText({ kind: 'permission', since, waitKind: 'approval' })).toBe('Waiting for your approval for 1h 30m');
+    expect(formatActivityReasonText({ kind: 'permission', since })).toBe('Waiting on you for 1h 30m');
   });
 
   it('every other reason kind is unaffected by the since field', () => {
@@ -133,15 +142,15 @@ describe('ActivityReasonTooltip duration follows the now prop', () => {
 
   it('permission measures elapsed time against the now prop, not the wall clock', () => {
     const firstOutput = ActivityReasonTooltip({
-      reason: { kind: 'permission', since },
+      reason: { kind: 'permission', since, waitKind: 'approval' },
       now: since + 12 * 60_000 + 34_000,
     });
-    expect(textOfSecondChild(firstOutput)).toBe('Awaiting permission for 12m 34s');
+    expect(textOfSecondChild(firstOutput)).toBe('Waiting for your approval for 12m 34s');
 
     const secondOutput = ActivityReasonTooltip({
-      reason: { kind: 'permission', since },
+      reason: { kind: 'permission', since, waitKind: 'approval' },
       now: since + 90 * 60_000,
     });
-    expect(textOfSecondChild(secondOutput)).toBe('Awaiting permission for 1h 30m');
+    expect(textOfSecondChild(secondOutput)).toBe('Waiting for your approval for 1h 30m');
   });
 });

@@ -1,12 +1,13 @@
 ---
 type: Reference
 title: Droid
-description: Factory's Droid, a bare droid --cwd command since autonomy is set in its TUI, session ids polled from ~/.factory/sessions cwd-slug files, a project .factory/mcp.json holding only an environment reference for the token, and why live telemetry is unsupported.
+description: Factory's Droid, a droid --cwd command with autonomy left to its TUI (the --auto flag Kangentic does not pass), a per-session --settings file holding only hooks for tool calls and question and approval waits, session ids polled from ~/.factory/sessions cwd-slug files, a project .factory/mcp.json holding only an environment reference for the token, and why live telemetry is unsupported.
 tags: [agents, adapter, droid]
 sources:
   - resource: src/main/agent/adapters/droid/droid-adapter.ts
   - resource: src/main/agent/adapters/droid/detector.ts
   - resource: src/main/agent/adapters/droid/command-builder.ts
+  - resource: src/main/agent/adapters/droid/hook-manager.ts
   - resource: src/main/agent/adapters/droid/session-id-capture.ts
 ---
 # Droid
@@ -22,10 +23,32 @@ Droid is Factory's coding agent CLI (the `droid` binary). Detection follows the 
 `src/main/agent/adapters/droid/command-builder.ts`
 
 ```
-droid --cwd <cwd> [--resume <uuid>] "<prompt>"
+droid --cwd <cwd> [--settings <session dir>/droid-settings.json] [--resume <uuid>] "<prompt>"
 ```
 
-Empirically validated against Droid 0.109.1 (see `scripts/probe-droid.js`). The adapter is intentionally minimal - the bare command with cwd + optional resume + prompt is the production path. Other CLI behavior (model picker, autonomy mode, BYOK) is configured in Droid's TUI and persisted in `~/.factory/settings.json`. Trying to shadow these with Kangentic-managed `--settings` overrides was rejected by user feedback as unnecessary custom layering.
+Empirically validated against Droid 0.109.1 (see `scripts/probe-droid.js`). The adapter is intentionally minimal: cwd, optional resume and prompt. Other CLI behavior (model picker, autonomy mode, BYOK) is configured in Droid's TUI and persisted in `~/.factory/settings.json`. Trying to shadow these with Kangentic-managed `--settings` overrides was rejected by user feedback as unnecessary custom layering. The one `--settings` file Kangentic passes holds its activity hooks and nothing else (see [Hooks](#hooks)).
+
+## Hooks
+
+`src/main/agent/adapters/droid/hook-manager.ts`
+
+Droid reports the waits on the user through hooks (GitHub #452). Kangentic writes them to a per-session settings file, `droid-settings.json` in the session's own folder beside `events.jsonl`, and passes it with `--settings`, which 0.218.0's `--help` describes as "Path to runtime settings file merged for this process only". The user's `~/.factory/settings.json` is never touched.
+
+| Droid hook | Kangentic event |
+|------------|-----------------|
+| `PreToolUse` (`*`) | `tool_start` (tool, command or file path) |
+| `PostToolUse` (`*`) | `tool_end`, the end of a wait on that tool |
+| `UserPromptSubmit` | `prompt`, which also ends a wait whose tool never ended (a rejected prompt) |
+| `Notification` | the permission `idle`, only for `notification_type` `elicitation_dialog` (the AskUser tool's question, `waitKind: 'question'`) or `permission_prompt` (a tool to allow, `'approval'`); every other type (`idle_prompt`, `auth_success`) writes nothing |
+
+Stop is not wired. Droid's turn ends stay with the PTY silence timer (`reportsTurnEnd: false`, `activity: pty`): a `pty` agent's hook events never suppress its tracker, so the silence fallback keeps ending turns, and the silence timer leaves a wait alone because it fires only while the session is thinking. The hooks' events reach the engine through `runtime.statusFile` (`parseEvent`; Droid writes no status line).
+
+What was measured on Droid 0.218.0 in `droid exec`:
+
+- A hook in the `--settings` file and one in the project's `.factory/settings.json` for the same event both ran, the runtime file's first: Droid concatenates hooks per event, so a user's own hooks keep running in a Kangentic session. (The user layer, `~/.factory/settings.json`, was not tested separately.)
+- The hook command `node "<forward-slashed path>" <args>` ran on Windows, the quoting `DROID_HOOK_SHELL` produces for an ordinary path. The 0.218.0 payloads for SessionStart, PreToolUse, PostToolUse and Stop are in `tests/fixtures/droid-hooks/`.
+
+What is not verified: the TUI asks for a Factory sign-in even with a BYOK model, so no TUI session has run, and the Notification's shape comes from Factory's hooks reference (`message`, `notification_type` with values `permission_prompt`, `idle_prompt`, `auth_success`, `elicitation_dialog`). It carries no question text. Whether the TUI fires `UserPromptSubmit` is also unknown (`droid exec` did not). A Droid installed in a WSL distro gets no hooks: they would need the WSL hook transport, which is not wired here, so it runs on the PTY tracker as before.
 
 ## Session ID Capture
 
@@ -35,7 +58,7 @@ Empirically validated against Droid 0.109.1 (see `scripts/probe-droid.js`). The 
 
 ## Permission Modes
 
-Droid does not accept a CLI flag for autonomy mode. The adapter surfaces a single `default` mode and the user cycles autonomy in the TUI directly (shift+tab toggles low/medium/high). Kangentic does not translate `permissionMode` into a flag override.
+Droid 0.218.0 has an autonomy flag, `--auto <level>` (`low|medium|high`), and the TUI cycles autonomy with shift+tab. Kangentic passes neither: the adapter surfaces a single `default` mode and the user sets autonomy in the TUI directly, so it does not translate `permissionMode` into a flag override.
 
 ## MCP Setup
 
@@ -77,7 +100,7 @@ Tracked upstream at [Factory-AI/factory#TBD](https://github.com/Factory-AI/facto
 
 ### Other gaps
 
-- No status events or activity log integration; the terminal panel is the only signal of agent state.
+- Activity stays PTY-driven. The hooks add tool calls and the waits to the activity log, but turn ends come from terminal silence.
 - No trust dialog (`ensureTrust` is a no-op; Droid does not prompt for directory approval).
 - No cross-agent handoff source: `locateSessionHistoryFile` returns null because Droid's JSONL transcript format has not yet been wired into the handoff pipeline.
 

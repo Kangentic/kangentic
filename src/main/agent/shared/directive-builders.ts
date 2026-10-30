@@ -1,4 +1,4 @@
-import type { AgentTool, EventType } from '../../../shared/types';
+import type { AgentTool, EventType, PermissionWaitKind } from '../../../shared/types';
 import type { BackgroundCallMatch, BackgroundLaunchMatch } from '../../../shared/background-command-spec';
 
 /**
@@ -307,4 +307,79 @@ export function appendBackgroundLaunch(match: BackgroundLaunchDirective): string
  */
 export function appendBackgroundStop(match: BackgroundCallMatch): string {
   return encodeDirective('appendBackgroundStop', match);
+}
+
+/**
+ * Set `event.waitKind`: what a permission wait is for. List it on the entry
+ * that emits the `idle:permission`, and follow it with `setWaitKindWhen` for
+ * the case that differs (an agent's catch-all prompt hook is an approval
+ * except for its question tool).
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op). The wait then carries no kind and draws as unknown, never as
+ * the wrong kind.
+ */
+export function setWaitKind(kind: PermissionWaitKind): string {
+  return encodeDirective('setWaitKind', { kind });
+}
+
+/** `setWaitKindWhen`'s rule: the stdin value at `path` must stringify to `equals`. */
+export interface WaitKindWhenRule {
+  /** The stdin location, top-level first (`['tool_name']`, `['details', 'type']`). */
+  path: string[];
+  /** The stringified value that selects `to`. */
+  equals: string;
+  /** The kind to set when the value matches. */
+  to: PermissionWaitKind;
+}
+
+/** Set `event.waitKind = rule.to` when the stdin value at `rule.path` equals `rule.equals`. */
+export function setWaitKindWhen(rule: WaitKindWhenRule): string {
+  if (rule.path.length === 0) throw new Error('setWaitKindWhen requires a non-empty path');
+  return encodeDirective('setWaitKindWhen', rule);
+}
+
+/** `appendPermissionWaitForTool`'s rule. */
+export interface PermissionWaitForToolRule {
+  /** The stdin location of the tool name (`['tool_name']`, `['toolCall', 'name']`). */
+  toolPath: string[];
+  /** The tool whose start is a wait on the user. */
+  tool: string;
+  /** What that wait is for. */
+  waitKind: PermissionWaitKind;
+}
+
+/**
+ * When the tool at `rule.toolPath` is `rule.tool`, write an `idle:permission`
+ * carrying `rule.waitKind` AFTER the hook's own event. Register it on the
+ * pre-tool entry, whose own event is the tool's `tool_start`.
+ *
+ * For a question tool whose CLI raises no permission hook for it (Codex's
+ * `request_user_input`): the tool's start is the wait. The engine records the
+ * tool on top of its pending stack as the awaited one, so the tool's own
+ * `tool_end` (the answer) ends the wait. One hook process writes both lines in
+ * order, which a second hook entry could not promise on a CLI that runs a
+ * hook event's entries concurrently. A wait written before the `tool_start`
+ * would be cleared by it at once.
+ *
+ * Its own kind, so a stale bridge copy skips it as unknown: the tool start
+ * still lands and no wait is reported, which is the behavior before this
+ * directive.
+ */
+export function appendPermissionWaitForTool(rule: PermissionWaitForToolRule): string {
+  if (rule.toolPath.length === 0) throw new Error('appendPermissionWaitForTool requires a non-empty toolPath');
+  return encodeDirective('appendPermissionWaitForTool', rule);
+}
+
+/**
+ * The hook's answer on stdout: the bridge process writes `JSON(reply)` before
+ * it touches the events file, and nothing else ever reaches its stdout. For a
+ * CLI that reads a decision from a hook it waits on: Antigravity's PreToolUse
+ * treats a reply with no `decision` as a deny, and `{ decision: 'allow' }`
+ * defers to its own policy (measured on agy 1.3.4: the question and command
+ * dialogs still showed). Never put it on a CLI that rejects hook stdout
+ * (Gemini). Its own kind, so a stale bridge copy writes no reply and logs it.
+ */
+export function replyJson(reply: Record<string, unknown>): string {
+  return encodeDirective('replyJson', { reply });
 }

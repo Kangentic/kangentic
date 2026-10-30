@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: GitHub Copilot CLI
-description: GitHub Copilot CLI with caller-owned --session-id (--resume failed on unseen ids), a per-session --config-dir holding hooks/kangentic.json plus settings.json and config.json copies, cleanup that spares session-state, and plan exit read from exit_plan_mode result text.
+description: GitHub Copilot CLI with caller-owned --session-id (--resume failed on unseen ids), a per-session --config-dir holding hooks/kangentic.json plus settings.json and config.json copies, cleanup that spares session-state, plan exit read from exit_plan_mode result text, and questions and approvals from the notification hook.
 tags: [agents, adapter, copilot]
 sources:
   - resource: src/main/agent/adapters/copilot/copilot-adapter.ts
@@ -29,7 +29,7 @@ A resume carries no prompt. `-i <prompt>` starts an interactive session with one
 
 Per-session config is written to `<eventsOutputPath dir>/copilot-config/` and passed with `--config-dir`, which Copilot 1.0.97 still honors by setting `COPILOT_HOME` (it prints a deprecation line). Three files go there:
 
-- `hooks/kangentic.json` holds the hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`) as `{ "version": 1, "hooks": ... }`. Copilot reads every `*.json` in `<COPILOT_HOME>/hooks/` as user hooks, and has since 0.0.422, so one file covers every version.
+- `hooks/kangentic.json` holds the hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`, `notification`) as `{ "version": 1, "hooks": ... }`. Copilot reads every `*.json` in `<COPILOT_HOME>/hooks/` as user hooks, and has since 0.0.422, so one file covers every version.
 - `settings.json` is a copy of the user's `~/.copilot/settings.json` plus the `statusLine` bridge and `banner: never`. Copilot 1.0.93 reads user settings only from this file.
 - `config.json` is a copy of the user's (signed-in account, trusted folders) with the same two settings for older versions. It never carries hooks: 1.0.8 through 1.0.92 read config.json hooks as well as the hooks folder, so hooks in both would fire twice. Earlier Kangentic versions wrote their hooks there, which 1.0.93 ignores.
 
@@ -57,6 +57,20 @@ A Copilot installed in a WSL distro runs there (`supportsWslCli`) when its CLI p
 ## Status & Events
 
 The `CopilotStatusParser` reads a `status.json` written by Copilot's `statusLine` config (full-rewrite). Activity uses `hooksAndPty` - hooks primary, PTY silence timer as fallback.
+
+### Questions and approvals
+
+The `notification` hook tells a question from an approval (GitHub #452). GitHub's hooks reference lists its `notification_type` values. Two of them are a wait on the user: `elicitation_dialog` ("the agent requests additional information from the user", the `ask_user` question) and `permission_prompt` (a tool to allow). The entry writes the permission `idle` for those two only, tagged `waitKind: 'question'` or `'approval'`, and drops every other type (`shell_completed`, `agent_completed`, `agent_idle`, ...). `permissionRequest` is not used: it fires before Copilot's permission service, so it also fires for calls that rules or session approvals allow without asking.
+
+Measured on a live 1.0.100 session in a `/preview` (`tests/fixtures/copilot-hooks/copilot-1.0.100-waits.jsonl` and the two `copilot-1.0.100-notification-*.json` payloads):
+
+- The payload names the type in snake_case `notification_type` (with `hook_event_name: "Notification"`), even under the camelCase `notification` key, beside the camelCase `sessionId`.
+- The notification lands after the waiting tool's `preToolUse`: 45 ms after `ask_user`'s by Copilot's own timestamps, and after the shell tool's for a permission prompt. The tool's `postToolUse` ends the wait, and `agentStop` ends the turn.
+- An `echo` ran without a prompt in default mode, so it raised no wait.
+
+The hook is fire-and-forget, so Copilot does not wait for it. An answer given before its process writes could land the tool's end first and leave the wait up. The next tool start or the turn's `agentStop` then clears it.
+
+Copilot's tool hooks carry no tool id, so the engine's sibling rule (a parallel call that finishes does not end a wait, [The kind of a wait](../../architecture/activity/activity-engine.md#the-kind-of-a-wait)) cannot apply. A read tool run beside `ask_user` that ends while the question is open clears it, as it did on Claude before the rule.
 
 ## Limitations
 

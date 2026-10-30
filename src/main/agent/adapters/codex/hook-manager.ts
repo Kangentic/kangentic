@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { isKangenticHookCommand, safelyUpdateSettingsFile, EVENTS_PATH_FROM_ENVIRONMENT } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractDetail, setDetail } from '../../shared/directive-builders';
+import { appendPermissionWaitForTool, extractTool, extractToolId, extractDetail, setDetail, setWaitKind } from '../../shared/directive-builders';
 
 /**
  * The workspace copy of the event bridge Codex's hooks run, relative to the
@@ -45,6 +45,13 @@ function codexHookCommand(runner: CodexHookRunner, eventType: string, ...directi
 }
 
 /**
+ * Codex's pick-an-option question tool (Plan mode only by default). Codex
+ * raises no PermissionRequest for it: the question shows once the tool starts
+ * and is answered when it ends.
+ */
+export const CODEX_QUESTION_TOOL = 'request_user_input';
+
+/**
  * Codex hook events Kangentic wires (task #859), measured on 0.163.0 in the
  * TUI and in `exec`. Each payload is snake_case. A yielded `exec_command` fires
  * PreToolUse and no PostToolUse; `write_stdin` fires none; an Esc interrupt
@@ -52,6 +59,12 @@ function codexHookCommand(runner: CodexHookRunner, eventType: string, ...directi
  * session-history-parser.ts). PermissionRequest carries no `tool_use_id`, and
  * the engine awaits the pending tool PreToolUse opened. SessionEnd is left out:
  * Codex clamps its timeout to 3 s before hashing it.
+ *
+ * The waits (#452): every PermissionRequest is an approval. A question comes
+ * from `request_user_input`'s own PreToolUse, whose single entry writes the
+ * tool start and then the question wait. Codex runs one event's hook entries
+ * concurrently, so a second entry for the wait could land before the start,
+ * which clears it; the tool's PostToolUse (the answer) ends the wait.
  */
 function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [event: string, command: string]> {
   const command = (eventType: string, ...directives: string[]): string => codexHookCommand(runner, eventType, ...directives);
@@ -61,13 +74,15 @@ function codexHookCommands(runner: CodexHookRunner): ReadonlyArray<readonly [eve
     ['PreToolUse', command(EventType.ToolStart,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']),
-      extractDetail(['command'], { nested: 'tool_input' }))],
+      extractDetail(['command'], { nested: 'tool_input' }),
+      appendPermissionWaitForTool({ toolPath: ['tool_name'], tool: CODEX_QUESTION_TOOL, waitKind: 'question' }))],
     ['PostToolUse', command(EventType.ToolEnd,
       extractTool('tool_name'),
       extractToolId(['tool_use_id']))],
     ['PermissionRequest', command(EventType.Idle,
       setDetail('permission'),
-      extractTool('tool_name'))],
+      extractTool('tool_name'),
+      setWaitKind('approval'))],
     ['Stop', command(EventType.Idle)],
     ['PreCompact', command(EventType.Compact)],
   ];

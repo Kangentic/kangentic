@@ -97,7 +97,8 @@ export class WarpAdapter implements AgentAdapter {
    * Runtime strategy: Warp has no hooks and no session resume.
    *
    * - Activity: PTY-only with silence timer. `oz agent run` is a
-   *   one-shot cloud agent runner - it streams output then exits.
+   *   one-shot runner that runs the agent locally, in the cwd (the
+   *   remote form is `oz agent run-cloud`) - it streams output then exits.
    *   There is no interactive idle prompt. The silence timer handles
    *   the idle transition once output stops streaming.
    * - Session ID: omitted - Warp has no CLI-level resume mechanism.
