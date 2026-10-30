@@ -27,16 +27,19 @@
  *      inside its own try/catch - so "the move threw" does not imply "the DB is
  *      unchanged". Announcing only on success would silently reproduce the very
  *      bug this whole mechanism exists to prevent.
- *   4. WHEN the bus hears about it. The bus emits TWICE per committed move: once
- *      at the commit point inside Phase 1, before any of the slow work (a Done
- *      move's suspend + reap + worktree removal, an auto-spawn move's worktree
- *      creation + spawn), and once from the settle-time `finally`. The first is
- *      what lets a paired phone settle an optimistic move without waiting out
- *      the desktop's tail; the second is what corrects a committed-then-rolled-
- *      back move. The origin-keyed renderer push fires at settle time ONLY,
- *      because two of the origin channels toast per push. The commit point also
- *      fires the `onCommitted` option, which is how the mobile bridge verb
- *      answers the phone inside its 10s budget.
+ *   4. WHEN the bus and the renderer hear about it. The bus emits TWICE per
+ *      committed move: once at the commit point inside Phase 1, before any of
+ *      the slow work (a Done move's suspend + reap + worktree removal, an
+ *      auto-spawn move's worktree creation + spawn), and once from the
+ *      settle-time `finally`. The first is what lets a paired phone settle an
+ *      optimistic move without waiting out the desktop's tail; the second is
+ *      what corrects a committed-then-rolled-back move. The renderer gets the
+ *      same two beats for every origin but its own: a quiet board reload at the
+ *      commit point, so the card leaves its column before a Done move's
+ *      teardown, and the origin's own push at settle, where the `agent` and
+ *      `auto-move` toasts fire once. The commit point also fires the
+ *      `onCommitted` option, which is how the mobile bridge verb answers the
+ *      phone inside its 10s budget.
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
@@ -418,7 +421,7 @@ describe('what each origin announces', () => {
       change: 'task-updated',
       ids: [TASK_ID],
     });
-    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
     expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 
@@ -431,7 +434,8 @@ describe('what each origin announces', () => {
 
   it('sends the quiet mobile channel, and never the agent one, for a phone move', async () => {
     const context = await move('mobile');
-    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    // Twice: at the commit point and again at settle, both quiet.
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
     expect(pushedChannels(context)).not.toContain(IPC.TASK_UPDATED_BY_AGENT);
 
     // Bare projectId, matching the other quiet channels - no title to toast with.
@@ -441,8 +445,12 @@ describe('what each origin announces', () => {
     );
   });
 
-  it('sends the agent channel with the task title for an agent move', async () => {
+  it('sends a quiet reload at commit and the agent channel with the task title once, at settle, for an agent move', async () => {
     const context = await move('agent');
+    // The agent channel toasts per push, so it fires once; the commit point's
+    // reload is the quiet resync.
+    expect(pushedChannels(context)).toEqual([IPC.TASK_SESSION_RESYNC, IPC.TASK_UPDATED_BY_AGENT]);
+    expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_SESSION_RESYNC, 'proj-test');
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.TASK_UPDATED_BY_AGENT,
       TASK_ID,
@@ -451,8 +459,9 @@ describe('what each origin announces', () => {
     );
   });
 
-  it('sends the auto-moved channel with the destination lane for a plan-exit move', async () => {
+  it('sends a quiet reload at commit and the auto-moved channel with the destination lane once, at settle, for a plan-exit move', async () => {
     const context = await move('auto-move');
+    expect(pushedChannels(context)).toEqual([IPC.TASK_SESSION_RESYNC, IPC.TASK_AUTO_MOVED]);
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(
       IPC.TASK_AUTO_MOVED,
       TASK_ID,
@@ -670,9 +679,9 @@ describe('a committed move announces even when the move later fails', () => {
       ),
     ).resolves.toBeUndefined();
 
-    // Commit-time emit plus the settle-time one; the push is settle-only.
+    // Commit-time emit and push, plus the settle-time ones.
     expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
-    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
     // moveSucceeded is set once runMove resolves without throwing, and the
     // abort path returns rather than throwing - so PR linking, which is gated
     // on moveSucceeded (not "the caller's promise resolved cleanly with no
@@ -779,7 +788,8 @@ describe('the announce block never clobbers the move outcome', () => {
   it('resolves cleanly when the renderer push throws after a successful bus emit', async () => {
     // Pins that BOTH calls in the announce block are inside the try, not just
     // the first one - a narrowing regression (try around the emit only) would
-    // let this throw escape uncaught.
+    // let this throw escape uncaught. The commit-time push throws too, and is
+    // fenced the same way.
     const context = makeContext(makeTask());
     context.mainWindow.webContents.send.mockImplementation(() => {
       throw new Error('renderer push exploded');
@@ -794,6 +804,28 @@ describe('the announce block never clobbers the move outcome', () => {
     ).resolves.toBeUndefined();
 
     expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
+  });
+
+  it('runs the Done cleanup when the commit-time push throws', async () => {
+    // The commit-time push runs inside the Phase 1 lock, right before the Done
+    // branch. A throw that escaped would leave the task archived with its
+    // worktree still on disk and turn a committed move into a rejection.
+    const context = makeContext(makeTask({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
+    context.mainWindow.webContents.send.mockImplementation(() => {
+      throw new Error('renderer push exploded');
+    });
+
+    await expect(
+      handleTaskMove(
+        context as never,
+        { taskId: TASK_ID, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+        'agent',
+      ),
+    ).resolves.toBeUndefined();
+
+    expect(mockDeleteTaskWorktree).toHaveBeenCalledTimes(1);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_SESSION_RESYNC, IPC.TASK_UPDATED_BY_AGENT]);
   });
 });
 
@@ -896,8 +928,8 @@ describe('the commit signal fires when the row lands, before the slow work', () 
         change: 'task-updated',
         ids: [TASK_ID],
       });
-      // The renderer push is settle-only, so nothing yet.
-      expect(pushedChannels(context)).toEqual([]);
+      // The desktop board has its quiet reload already, too.
+      expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
       // And the row really did land before the signal: move + archive both ran.
       const { tasks } = mockGetProjectRepos.mock.results[0].value;
       expect(tasks.move).toHaveBeenCalledTimes(1);
@@ -909,7 +941,39 @@ describe('the commit signal fires when the row lands, before the slow work', () 
 
     expect(onCommitted).toHaveBeenCalledTimes(1);
     expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
-    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
+  });
+
+  it('reloads the desktop board on an agent\'s Done move while the worktree removal is still running, and toasts once at settle', async () => {
+    // The reported case: a task's own agent moved it to Done, and the board
+    // kept the card in its old column, unarchived, through the whole teardown.
+    // Its paused session offered a Resume that main then refused.
+    let releaseRemoval: (deleted: boolean) => void = () => {};
+    mockDeleteTaskWorktree.mockImplementation(
+      () => new Promise<boolean>((resolve) => { releaseRemoval = resolve; }),
+    );
+    const context = makeContext(makeTask({ worktree_path: '/mock/project/.kangentic/worktrees/1' }));
+
+    let movePromiseSettled = false;
+    const move = handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: DONE_LANE_ID, targetPosition: 0 },
+      'agent',
+    ).finally(() => { movePromiseSettled = true; });
+
+    try {
+      await settleUntil(() => mockDeleteTaskWorktree.mock.calls.length > 0);
+
+      expect(movePromiseSettled).toBe(false);
+      // Quiet: the "Task updated by agent" toast has not fired yet.
+      expect(pushedChannels(context)).toEqual([IPC.TASK_SESSION_RESYNC]);
+      expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(IPC.TASK_SESSION_RESYNC, 'proj-test');
+    } finally {
+      releaseRemoval(true);
+    }
+    await move;
+
+    expect(pushedChannels(context)).toEqual([IPC.TASK_SESSION_RESYNC, IPC.TASK_UPDATED_BY_AGENT]);
   });
 
   it('does not fire onCommitted when the move never committed', async () => {
@@ -949,7 +1013,7 @@ describe('the commit signal fires when the row lands, before the slow work', () 
 
     expect(mockDeleteTaskWorktree).toHaveBeenCalledTimes(1);
     expect(context.boardEvents.emitBoardChanged).toHaveBeenCalledTimes(2);
-    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE]);
+    expect(pushedChannels(context)).toEqual([IPC.TASK_MOVED_BY_MOBILE, IPC.TASK_MOVED_BY_MOBILE]);
     expect(mockAutoLinkPRForTask).toHaveBeenCalledTimes(1);
   });
 

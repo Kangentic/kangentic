@@ -82,7 +82,15 @@ export function announceTaskBoardChange(
   }
 }
 
-function announceToMainWindow(
+/**
+ * The main-window half of `announceTaskWrite` on its own, for a write that has
+ * to reach the main window before it settles. TASK_MOVE calls it from
+ * `handleTaskMove`'s `onCommitted`: a Done move from the detached Agent Monitor
+ * otherwise reached the main window's board only after its suspend, reap and
+ * worktree removal. The handler's settle-time `announceTaskWrite` still runs,
+ * because a move can commit and then roll back.
+ */
+export function announceToMainWindow(
   context: IpcContext,
   event: { sender: WebContents } | null | undefined,
   projectId: string | null,

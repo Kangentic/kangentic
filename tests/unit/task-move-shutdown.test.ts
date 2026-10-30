@@ -160,6 +160,9 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   // and before the worktree delete. Inert here; covered by
   // session-leftover-reap-wiring.test.ts and task-tagged-reap.test.ts.
   reapTaskLeftovers: vi.fn(async () => {}),
+  // A move out of a column that is not To Do runs its exit automations and
+  // reports their failures through this.
+  reportAutomationFailures: vi.fn(),
 }));
 
 // ---------------------------------------------------------------------------
@@ -588,15 +591,44 @@ describe('handleTaskMove shutdown protection', () => {
       (handler as (...args: unknown[]) => Promise<unknown>)({}, MOVE_INPUT),
     ).rejects.toThrow('Worktree setup failed');
   });
+
+  // =========================================================================
+  // Test 6: The commit-time renderer push honors the shutdown gate
+  //
+  // Every origin but the renderer's own sends a quiet board reload at the
+  // commit point (MOVE_COMMIT_PUSH_BY_ORIGIN); for an agent move it is
+  // TASK_SESSION_RESYNC. Once the quit has begun the window is going away and
+  // sendToRenderer would still record the push, so the commit point is gated
+  // the way the settle-time push is.
+  // =========================================================================
+
+  it('sends no commit-time renderer push for an agent move once shutdown has begun', async () => {
+    mockIsShuttingDown.mockReturnValue(true);
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await expect(
+      handleTaskMove(context as never, MOVE_INPUT, 'agent', 'proj-test'),
+    ).resolves.toBeUndefined();
+
+    // The move reached its commit point, so a silent window is the gate's
+    // doing and not an earlier bail.
+    expect(taskRepo.move).toHaveBeenCalledTimes(1);
+    const pushedChannels = context.mainWindow.webContents.send.mock.calls
+      .map((call: unknown[]) => call[0]);
+    expect(pushedChannels).not.toContain(IPC.TASK_SESSION_RESYNC);
+    // The settle-time TASK_UPDATED_BY_AGENT is gated too: no push at all.
+    expect(pushedChannels).toEqual([]);
+  });
 });
 
 // ---------------------------------------------------------------------------
 // The same wrapper tells the main window about a move made from another window
 // (the detached Agent Monitor), whose own stores the main window cannot see.
-// It announces from a `finally`, so a move that committed and then failed is
-// still announced; a throw in there would replace the move's own error, which
-// is why the shutdown gate sits on it too. The helper's sender rules are pinned
-// in task-write-announce.test.ts.
+// It announces at the move's commit point (`onCommitted`), so the main board
+// is current before a Done move's teardown, and again from a `finally`, so a
+// move that committed and then failed is still announced; a throw in there
+// would replace the move's own error, which is why the shutdown gate sits on it
+// too. The helper's sender rules are pinned in task-write-announce.test.ts.
 // ---------------------------------------------------------------------------
 
 describe('TASK_MOVE wrapper announces a move from another window', () => {
@@ -636,20 +668,64 @@ describe('TASK_MOVE wrapper announces a move from another window', () => {
       .filter((call: unknown[]) => call[0] === IPC.TASK_CHANGED_IN_OTHER_WINDOW);
   }
 
-  it('pushes the move\'s project to the main window', async () => {
+  it('pushes the move\'s project to the main window at the commit and again at settle', async () => {
     const context = makeContext(taskRepo, swimlaneRepo);
     await registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test');
-    expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+    expect(otherWindowPushes(context)).toEqual([
+      [IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test'],
+      [IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test'],
+    ]);
   });
 
-  it('still pushes when the move committed and then failed', async () => {
+  it('still pushes at settle when the move committed and then failed', async () => {
     mockEnsureTaskWorktree.mockRejectedValue(new Error('git error: branch locked'));
     const context = makeContext(taskRepo, swimlaneRepo);
     await expect(registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test'))
       .rejects.toThrow('Worktree setup failed');
     // The forward move was written before Phase 2 failed, so the board changed.
     expect(taskRepo.move).toHaveBeenCalled();
-    expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+    expect(otherWindowPushes(context)).toEqual([
+      [IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test'],
+      [IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test'],
+    ]);
+  });
+
+  it('reaches the main window on a Done move while the worktree removal is still running', async () => {
+    // The detached Agent Monitor moved a task to Done. The settle-time push
+    // waits for the suspend, reap and worktree removal, so without the
+    // commit-time one the main board kept the card in its old column, with a
+    // paused session offering a Resume main refused.
+    const doneLaneId = 'lane-done';
+    const doneTaskRepo = {
+      ...makeTaskRepo(makeTask({ id: 'task-aaa00001', swimlane_id: SOURCE_LANE_ID, worktree_path: '/mock/project/.kangentic/worktrees/1' })),
+      setWorktreeSkipReason: vi.fn(),
+    };
+    const doneSwimlaneRepo = makeSwimlaneRepo([
+      makeSwimlane(SOURCE_LANE_ID, { role: null }),
+      makeSwimlane(doneLaneId, { role: 'done', auto_spawn: false }),
+    ]);
+    let releaseRemoval: (deleted: boolean) => void = () => {};
+    mockDeleteTaskWorktree.mockImplementationOnce(
+      () => new Promise<boolean>((resolve) => { releaseRemoval = resolve; }),
+    );
+    const context = makeContext(doneTaskRepo, doneSwimlaneRepo);
+
+    const move = registeredMoveHandler(context)(FROM_OTHER_WINDOW, { ...MOVE_INPUT, targetSwimlaneId: doneLaneId }, 'proj-test');
+    // Released in a `finally` so a failed assertion cannot leave the task's
+    // lifecycle lock held for the cases after this one.
+    try {
+      for (let attempt = 0; attempt < 200 && mockDeleteTaskWorktree.mock.calls.length === 0; attempt++) {
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      expect(mockDeleteTaskWorktree).toHaveBeenCalledTimes(1);
+      expect(doneTaskRepo.archive).toHaveBeenCalledTimes(1);
+      expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+    } finally {
+      releaseRemoval(true);
+    }
+    await move;
+
+    expect(otherWindowPushes(context)).toHaveLength(2);
   });
 
   it('sends nothing for the main window\'s own move', async () => {
@@ -673,13 +749,21 @@ describe('TASK_MOVE wrapper announces a move from another window', () => {
     expect(context.boardEvents.emitBoardChanged.mock.calls).toEqual([[expectedEmit], [expectedEmit]]);
   });
 
-  it('sends nothing while the app is shutting down', async () => {
+  it('sends nothing at settle once the app started shutting down after the commit', async () => {
     mockEnsureTaskWorktree.mockImplementation(async () => {
       mockIsShuttingDown.mockReturnValue(true);
       throw new TypeError('The database connection is not open');
     });
     const context = makeContext(taskRepo, swimlaneRepo);
     await expect(registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test')).resolves.toBeUndefined();
+    // Only the commit-time push, sent before the quit began.
+    expect(otherWindowPushes(context)).toEqual([[IPC.TASK_CHANGED_IN_OTHER_WINDOW, 'proj-test']]);
+  });
+
+  it('sends nothing at all when the app is already shutting down at the commit', async () => {
+    mockIsShuttingDown.mockReturnValue(true);
+    const context = makeContext(taskRepo, swimlaneRepo);
+    await registeredMoveHandler(context)(FROM_OTHER_WINDOW, MOVE_INPUT, 'proj-test');
     expect(otherWindowPushes(context)).toEqual([]);
   });
 });

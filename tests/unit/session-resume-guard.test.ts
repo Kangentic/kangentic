@@ -13,7 +13,8 @@
  *   (a) the CONTRACT - the pure predicate every consumer reads;
  *   (b) the STRUCTURAL parity check - that `resumeTaskSession`
  *       (`handlers/session-resume.ts`, the body SESSION_RESUME and a phone
- *       resume share) actually calls it at both lane checks. (a) alone is
+ *       resume share) actually calls it before the lock and at both locked
+ *       lane checks. (a) alone is
  *       green the moment it is written and says nothing about the handler
  *       where the bug lived, so (b) is the regression guard.
  */
@@ -176,31 +177,56 @@ describe('SESSION_RESUME routes both lane checks through the shared predicate', 
     expect(source.match(bareRoleCheck) ?? []).toEqual([]);
   });
 
-  it('checks eligibility at BOTH the Phase 1 and Phase 3 lane checks', () => {
-    // Phase 2 (worktree git I/O) runs unlocked, so Phase 3 must re-check against
-    // the re-read row: a concurrent move to Done archives the task in that gap.
+  it('checks eligibility before the lock and at BOTH the Phase 1 and Phase 3 lane checks', () => {
+    // The pre-check (`resumeRefusalBeforeLock`) answers a refusal the row
+    // already shows without queueing behind a Done move's teardown. Phase 2
+    // (worktree git I/O) runs unlocked, so Phase 3 must re-check against the
+    // re-read row: a concurrent move to Done archives the task in that gap.
     const callSites = source.match(/resumeBlockReasonForTask\(/g) ?? [];
-    expect(callSites).toHaveLength(2);
+    expect(callSites).toHaveLength(3);
   });
 
-  it('hands the row to the predicate at both call sites, the re-read one in Phase 3', () => {
+  it('hands the row to the predicate at the locked call sites, the re-read one in Phase 3', () => {
     // The predicate reads archived_at itself, so passing the row is what makes
     // the archive state count. Phase 3 must pass the row it re-read under the
     // lock, not the Phase 1 snapshot, or a move to Done in the gap goes unseen.
     // Its role comes off the column's own row: the profile fold passes `role`
     // through, and the check has to run before the try that reports failures.
-    expect(source).toMatch(/resumeBlockReasonForTask\(\{ task, laneRole: lane\?\.role \}\)/);
+    expect(source.match(/resumeBlockReasonForTask\(\{ task, laneRole: lane\?\.role \}\)/g) ?? []).toHaveLength(2);
     expect(source).toMatch(/resumeBlockReasonForTask\(\{ task: current, laneRole: currentRow\?\.role \}\)/);
   });
 
-  it('keeps the self-heal early return ahead of the eligibility check', () => {
+  it('keeps the self-heal early return ahead of the Phase 1 eligibility check', () => {
     // Handing back a PTY that already exists spawns nothing, and it is the only
     // path that re-attaches a renderer whose view drifted to 'suspended'.
     // Ordering it after the check would strand that renderer on an archived task.
+    const phase1Start = source.indexOf('const phase1Result = await withTaskLock(');
     const selfHealIndex = source.indexOf("return { kind: 'live' as const, session: liveSession }");
-    const firstGuardIndex = source.indexOf('resumeBlockReasonForTask(');
-    expect(selfHealIndex).toBeGreaterThan(-1);
-    expect(firstGuardIndex).toBeGreaterThan(selfHealIndex);
+    const phase1GuardIndex = source.indexOf('resumeBlockReasonForTask(', phase1Start);
+    expect(phase1Start).toBeGreaterThan(-1);
+    expect(selfHealIndex).toBeGreaterThan(phase1Start);
+    expect(phase1GuardIndex).toBeGreaterThan(selfHealIndex);
+  });
+
+  it('lets a live session through the pre-check, so the self-heal still answers it', () => {
+    // The same contract, before the lock: a task with a live PTY is never
+    // refused there, even archived, because Phase 1 hands that PTY back.
+    const preCheckStart = source.indexOf('export function resumeRefusalBeforeLock(');
+    const liveCheckIndex = source.indexOf('findLiveSessionByTaskId(taskId)) return null', preCheckStart);
+    const preCheckGuardIndex = source.indexOf('resumeBlockReasonForTask(', preCheckStart);
+    expect(preCheckStart).toBeGreaterThan(-1);
+    expect(liveCheckIndex).toBeGreaterThan(preCheckStart);
+    expect(preCheckGuardIndex).toBeGreaterThan(liveCheckIndex);
+  });
+
+  it('runs the pre-check before it cancels an in-flight resume or queues on the lock', () => {
+    // A refused click must not cancel another resume, and a move to Done
+    // holds the lock through its whole teardown.
+    const bodyStart = source.indexOf('export function resumeTaskSession(');
+    const preCheckCall = source.indexOf('resumeRefusalBeforeLock(context,', bodyStart);
+    expect(preCheckCall).toBeGreaterThan(bodyStart);
+    expect(source.indexOf('abortInFlightResume(taskId)', bodyStart)).toBeGreaterThan(preCheckCall);
+    expect(source.indexOf('withTaskLock(', bodyStart)).toBeGreaterThan(preCheckCall);
   });
 });
 

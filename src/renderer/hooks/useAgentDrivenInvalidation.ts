@@ -24,7 +24,8 @@
  *   - `onSessionResync` fires after a column-model-change restart (and the
  *     orphan-worktree prune, and auto-spawn reconcile) to keep the board
  *     store's task.session_id current - a board-consistency reconcile the
- *     user already knows they triggered.
+ *     user already knows they triggered. An agent's or a plan exit's move
+ *     sends it at its commit point, ahead of its one toast at settle.
  *   - `onPrLinkChanged` fires when the app resolved a task's PR link itself:
  *     the refresh sweep, the session-idle auto-link, the re-resolve that
  *     follows a link write, or the task-detail "Link / refresh PR" control.
@@ -203,6 +204,10 @@ export function useAgentDrivenInvalidation(): void {
         }
         // Deliberately no toast: this is a quiet board-consistency reconcile
         // after the user's own column model-change restart, not agent news.
+        // An agent's move and a plan exit's move send it too, the moment the
+        // move commits, so the card leaves its column before a Done move's
+        // teardown. Their toast comes once, on onUpdatedByAgent or onAutoMoved,
+        // when the move settles.
       }));
     }
 
