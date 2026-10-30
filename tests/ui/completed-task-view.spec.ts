@@ -476,20 +476,26 @@ test.describe('Completed task view', () => {
     }
   });
 
-  test('a non-zero exit reads Exited with its code, and a null exit reads Completed', async () => {
-    const exited = await launchWithState(makePreConfig({ withSummary: true, exitCode: 1 }));
+  // One app launch per test. These were a single test that launched two browsers
+  // inside one 15s budget, which a starved CI runner overran (passed on retry,
+  // so --fail-on-flaky-tests failed the shard).
+  test('a non-zero exit reads Exited with its code', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, exitCode: 1 }));
     try {
-      await openCompletedTask(exited.page);
-      await expect(exited.page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Exited (1)');
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Exited (1)');
     } finally {
-      await exited.browser.close();
+      await browser.close();
     }
-    const suspended = await launchWithState(makePreConfig({ withSummary: true, exitCode: null }));
+  });
+
+  test('a null exit reads Completed', async () => {
+    const { browser, page } = await launchWithState(makePreConfig({ withSummary: true, exitCode: null }));
     try {
-      await openCompletedTask(suspended.page);
-      await expect(suspended.page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Completed');
+      await openCompletedTask(page);
+      await expect(page.locator('[data-testid="completed-status"]')).toHaveAttribute('aria-label', 'Completed');
     } finally {
-      await suspended.browser.close();
+      await browser.close();
     }
   });
 
