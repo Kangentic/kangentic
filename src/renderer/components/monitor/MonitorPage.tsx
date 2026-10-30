@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { SquareActivity, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
@@ -94,9 +94,24 @@ export function MonitorPage() {
   // monitor first showed the moved card in its old column, its paused session
   // offering a Resume main refused. The move committed at its start, so a reload
   // on the way out finds the task where it is.
-  useEffect(() => () => {
-    const openProjectId = useProjectStore.getState().currentProject?.id;
-    if (openProjectId) resyncBoardAfterMonitorWrite(openProjectId);
+  //
+  // Deferred one tick, and cancelled by the effect running again. StrictMode
+  // (dev and the UI tier) runs this cleanup right after the first mount, and a
+  // reload then refetches the monitor snapshot over a peek or activity push that
+  // has just landed. A real close has no remount to cancel it.
+  const closeResyncTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    if (closeResyncTimerRef.current !== null) {
+      clearTimeout(closeResyncTimerRef.current);
+      closeResyncTimerRef.current = null;
+    }
+    return () => {
+      closeResyncTimerRef.current = setTimeout(() => {
+        closeResyncTimerRef.current = null;
+        const openProjectId = useProjectStore.getState().currentProject?.id;
+        if (openProjectId) resyncBoardAfterMonitorWrite(openProjectId);
+      }, 0);
+    };
   }, []);
 
   return (
