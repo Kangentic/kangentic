@@ -8,7 +8,7 @@ import type { SearchHit, Project } from '../../../shared/types';
 import { isAnswerCaller } from './caller-url';
 import { ANSWER_SEARCH_BUDGET, answerSearchProjects, claimAnswerSearch, isAnswerSearchWatched, publishAnswerSearch } from './answer-search-trace';
 import type { RelatedWork, RelatedWorkTask } from '../../retrieval/related-work';
-import { PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
+import { PASSAGES_SHOWN, relatedQueryTexts, TASK_TEXT_CHARS } from '../../retrieval/related-query-text';
 import {
   INDEX_RESTARTING,
   rankRelatedWork,
@@ -317,12 +317,6 @@ function handedSessionIds(ranked: Pick<RankedRelatedWork, 'sessionIdByDocKey'>, 
     .filter((sessionId): sessionId is string => Boolean(sessionId))))];
 }
 
-/**
- * Characters of the task's title and description a relatedToTask ranking reads,
- * the same budget the task window's prior work uses: enough to carry the task's
- * meaning, and past it the embedding blurs.
- */
-const RELATED_TO_TASK_TEXT_CHARS = 1_200;
 /** Rows relatedToTask returns, every one with its summary and passage. */
 export const RELATED_TO_TASK_ROWS = 12;
 
@@ -369,7 +363,7 @@ async function searchRelatedToTask(input: {
   if (input.callerSessionId && !claimAnswerSearch(input.callerSessionId)) return answerBudgetSpent();
 
   const focus = input.query?.trim() ?? '';
-  const text = `${focus ? `${focus}. ` : ''}${task.title}\n${task.description ?? ''}`.slice(0, RELATED_TO_TASK_TEXT_CHARS);
+  const text = `${focus ? `${focus}. ` : ''}${task.title}\n${task.description ?? ''}`.slice(0, TASK_TEXT_CHARS);
   // The task is left out of its own ranking, conversations and record both.
   const ranked = await rankRelatedWork({
     projectId: input.project.id,
