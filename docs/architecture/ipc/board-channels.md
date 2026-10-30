@@ -6,6 +6,8 @@ tags: [ipc, channels, board, tasks]
 sources:
   - resource: src/shared/ipc-channels.ts
     title: IPC channel constants
+  - resource: src/main/ipc/helpers/task-delete.ts
+    title: The task delete TASK_DELETE and a workflow delete share
 ---
 # Board IPC channels
 
@@ -49,7 +51,7 @@ sources:
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |
 | `task:create` | invoke | Create task with title, description, swimlane |
 | `task:update` | invoke | Update task properties |
-| `task:delete` | invoke | Delete task and clean up session/worktree |
+| `task:delete` | invoke | Delete task and clean up session/worktree (`deleteTaskWithCleanup`, which a workflow delete also runs for its tasks that never started) |
 | `task:move` | invoke | Move task between swimlanes (triggers transitions) |
 | `task:list-archived` | invoke | Fetch archived tasks |
 | `task:list-archived-preview` | invoke | Fetch the newest N archived tasks plus the total archived count (cheap hydration payload; the full list loads lazily via `task:list-archived`) |
@@ -140,13 +142,13 @@ The Workflows view. Every call names the workflow's home project; a task is addr
 
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
-| `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts |
+| `workflow:list` | invoke | The picker's rows: every unfinished workflow with its done, in progress, queued and blocked counts, and how many of its To Do tasks never started (`neverStartedCount`, for the Delete confirm) |
 | `workflow:listSupersessions` | invoke | Every task of the project a workflow replaced at Start, by the workflow's current title and color, finished workflows included: the Done row's "Superseded by" line (`WorkflowRepository.listSupersessions`) |
 | `workflow:get` | invoke | One workflow as the view draws it (`WorkflowDetail`): tasks with their route steps, links, card positions, each board's name and To Do and Done columns, and each task's plan approval (`WorkflowViewTask.planApproval`, a `TaskPlanApproval`: its own value, the value that applies, the plan columns' own, whether any plan column on its route runs an agent whose plans Kangentic can approve, the agent that cannot, or with a capable one on the route the agent whose plans still wait, the deciding column and whether the task has passed it; null with no plan column on its route) |
 | `workflow:create` | invoke | New workflow, from a To Do task (its brief) or from nothing |
 | `workflow:rename` | invoke | Rename a workflow |
 | `workflow:setTaskPlanApproval` | invoke | A task's own Plan approval, from the inspector or task detail's Workflow panel, by task key: `automatic`, `manual`, or null to follow the plan columns on its route (`setViewPlanApproval`). The columns' own value is stored as null, except while the workflow still holds a legacy whole-workflow value, when the pick is stored as given. Before Start it edits the draft task; after, it writes the task row (`TaskRepository.setPlanApproval`), bumps the revision and announces the task's board. Refused for a task past its plan column or in Done, and any other value is refused |
-| `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks |
+| `workflow:delete` | invoke | Delete a workflow; once started, its unfinished tasks stay as ordinary tasks. With `{ deleteNeverStarted: true }`, the ones that never started are then deleted through the task delete (`deleteNeverStartedTasks`). Answers a `WorkflowDeleteReport` (`deleted`, `failed`); the renderer toasts the tasks it could not delete |
 | `workflow:start` | invoke | Create the planned tasks in To Do and their links |
 | `workflow:pause` | invoke | Pause every task's agent, a held task's included. Answers a `WorkflowPauseReport` (`paused`, `notLive`, `failed`); the renderer toasts the tasks it could not pause |
 | `workflow:resume` | invoke | Resume every paused agent in its task's current column, and start one for an agent-column task with none (not a held task). Answers a `WorkflowResumeReport` (`resumed`, `started`, `alreadyRunning`, `failed`) |

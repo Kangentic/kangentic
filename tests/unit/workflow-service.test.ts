@@ -50,6 +50,10 @@ vi.mock('../../src/main/automations/turn-end/turn-end-passes', async (importOrig
   supersedeTurnEndWork: vi.fn(),
 }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
+// A workflow delete takes its tasks that never started through the board's own
+// task delete. Its cleanup needs sessions and git; the cases below give it a
+// double that asks the in-lock check and drops the row, as the real one does.
+vi.mock('../../src/main/ipc/helpers/task-delete', () => ({ deleteTaskWithCleanup: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-changed', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/workflows/workflow-changed')>()),
   notifyWorkflowChanged: vi.fn(),
@@ -63,6 +67,8 @@ const { autoSpawnForTask } = await import('../../src/main/ipc/helpers/agent-spaw
 const { notifySpawnBlocked } = await import('../../src/main/ipc/helpers/task-git');
 const { supersedeTurnEndWork } = await import('../../src/main/automations/turn-end/turn-end-passes');
 const { notifyWorkflowChanged } = await import('../../src/main/workflows/workflow-changed');
+const { deleteTaskWithCleanup } = await import('../../src/main/ipc/helpers/task-delete');
+const { SessionRepository } = await import('../../src/main/db/repositories/session-repository');
 const { runProjectMigrations } = await import('../../src/main/db/migrations/project-schema');
 const { TaskRepository } = await import('../../src/main/db/repositories/task-repository');
 const { SwimlaneRepository } = await import('../../src/main/db/repositories/swimlane-repository');
@@ -1342,9 +1348,205 @@ describe('workflow operations', () => {
     service.savePlan(context, 'home', workflow.id, plan());
     await service.startWorkflow(context, 'home', workflow.id);
     const result = service.deleteWorkflow(context, 'home', workflow.id);
-    expect(result.released).toBe(3);
+    expect(result.released).toHaveLength(3);
     expect(tasksOf('home').listByWorkflow(workflow.id)).toEqual([]);
     expect(tasksOf('mobile').listByWorkflow(workflow.id)).toEqual([]);
+  });
+
+  // "Also delete its tasks that never started": a task in To Do that never had a
+  // session, has no worktree and was never in another column. A move back to To
+  // Do wipes a task's sessions and worktree, so only its moves say it ran.
+  describe('deleting the tasks that never started', () => {
+    beforeEach(() => {
+      vi.mocked(deleteTaskWithCleanup).mockReset();
+      vi.mocked(deleteTaskWithCleanup).mockImplementation(async (_context, projectId, _projectPath, taskId, onlyIf) => {
+        const tasks = tasksOf(projectId!);
+        const task = tasks.getById(taskId);
+        if (task && onlyIf && !onlyIf(task)) return false;
+        tasks.delete(taskId);
+        return true;
+      });
+      // The delete ends the workflow agent's session in the background; this context has none to end.
+      vi.spyOn(console, 'error').mockImplementation(() => {});
+    });
+
+    /** A started workflow whose tasks have each done one thing a task that ran does. */
+    async function startedWithHistory() {
+      const workflow = service.createWorkflow('home', {});
+      service.savePlan(context, 'home', workflow.id, {
+        title: 'Usage budgets',
+        tasks: [
+          { key: 'fresh', title: 'Never started' },
+          { key: 'ran', title: 'Had a session' },
+          { key: 'checkout', title: 'Has a worktree' },
+          { key: 'bounced', title: 'Left To Do and came back' },
+          { key: 'phone', title: 'Never started on the phone', project: 'kangentic-mobile' },
+        ],
+        links: [],
+      });
+      await service.startWorkflow(context, 'home', workflow.id);
+      const home = tasksOf('home');
+      const byTitle = (title: string) => home.listByWorkflow(workflow.id).find((task) => task.title === title)!;
+      const ran = byTitle('Had a session');
+      // An exited session: the row's session_id is clear, only the record says it ran.
+      new SessionRepository(harness.dbs.get('home') as Database.Database).insert({
+        id: 'session-ran', task_id: ran.id, session_type: 'claude_agent', isolated_swimlane_id: null,
+        agent_session_id: 'agent-ran', command: 'claude', cwd: '/projects/home', permission_mode: null, prompt: null,
+        status: 'exited', exit_code: 0, started_at: '2026-10-01T00:00:00.000Z', suspended_at: null,
+        exited_at: '2026-10-01T00:10:00.000Z', suspended_by: null,
+      });
+      const checkout = byTitle('Has a worktree');
+      home.update({ id: checkout.id, worktree_path: '/projects/home/.kangentic/worktrees/checkout' });
+      const bounced = byTitle('Left To Do and came back');
+      const lanes = lanesOf('home');
+      const planning = lanes.find((lane) => lane.name === 'Planning')!;
+      const todo = lanes.find((lane) => lane.role === 'todo')!;
+      home.move({ taskId: bounced.id, targetSwimlaneId: planning.id, targetPosition: 0 }, { origin: 'renderer' });
+      home.move({ taskId: bounced.id, targetSwimlaneId: todo.id, targetPosition: 0 }, { origin: 'renderer' });
+      const [phone] = tasksOf('mobile').listByWorkflow(workflow.id);
+      return { workflow, fresh: byTitle('Never started'), ran, checkout, bounced, phone };
+    }
+
+    /** The `task-deleted` board events emitted so far: which board heard them, and the task ids each names. */
+    function taskDeletedEvents(): Array<{ projectId: string; change: string; ids: string[] }> {
+      return vi.mocked(context.boardEvents.emitBoardChanged).mock.calls
+        .map(([event]) => event as { projectId: string; change: string; ids?: string[] })
+        .filter((event) => event.change === 'task-deleted')
+        .map((event) => ({ projectId: event.projectId, change: event.change, ids: event.ids ?? [] }));
+    }
+
+    it('marks only the tasks that never started, on every board', async () => {
+      const { workflow, fresh, phone } = await startedWithHistory();
+
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+
+      expect(released.filter((task) => task.neverStarted).map((task) => task.taskId).sort()).toEqual([fresh.id, phone.id].sort());
+      expect(released.find((task) => task.taskId === phone.id)).toMatchObject({ board: 'kangentic-mobile', displayId: phone.display_id });
+      expect(released.find((task) => task.taskId === fresh.id)?.board).toBeNull();
+      // Released: nothing is deleted until the caller asks.
+      expect(tasksOf('home').getById(fresh.id)?.workflow_id).toBeNull();
+      expect(deleteTaskWithCleanup).not.toHaveBeenCalled();
+    });
+
+    it('deletes those through the task delete on their own boards, and keeps every task that ran', async () => {
+      const { workflow, fresh, ran, checkout, bounced, phone } = await startedWithHistory();
+
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+      const result = await service.deleteNeverStartedTasks(context, released);
+
+      expect(result.deleted.map((task) => task.taskId).sort()).toEqual([fresh.id, phone.id].sort());
+      expect(result.kept.map((task) => task.taskId).sort()).toEqual([ran.id, checkout.id, bounced.id].sort());
+      expect(result.failed).toEqual([]);
+      expect(tasksOf('home').getById(fresh.id)).toBeUndefined();
+      expect(tasksOf('mobile').getById(phone.id)).toBeUndefined();
+      for (const stays of [ran, checkout, bounced]) expect(tasksOf('home').getById(stays.id)?.workflow_id).toBeNull();
+      const phoneCall = vi.mocked(deleteTaskWithCleanup).mock.calls.find((call) => call[3] === phone.id);
+      expect(phoneCall?.slice(1, 3)).toEqual(['mobile', '/projects/mobile']);
+      // Each board hears the event every other delete sends, naming its own deleted tasks.
+      const deletedEvents = vi.mocked(context.boardEvents.emitBoardChanged).mock.calls
+        .map(([event]) => event)
+        .filter((event) => event.change === 'task-deleted');
+      expect(deletedEvents).toEqual(expect.arrayContaining([
+        { projectId: 'home', change: 'task-deleted', ids: [fresh.id] },
+        { projectId: 'mobile', change: 'task-deleted', ids: [phone.id] },
+      ]));
+      expect(deletedEvents).toHaveLength(2);
+    });
+
+    it('keeps a task that started between the ask and its lock', async () => {
+      const { workflow, fresh, phone } = await startedWithHistory();
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+      // A drag starts it after the delete chose it: its session is on the row by the time the lock is taken.
+      tasksOf('home').update({ id: fresh.id, session_id: 'session-late' });
+
+      const result = await service.deleteNeverStartedTasks(context, released);
+
+      expect(result.kept.map((task) => task.taskId)).toContain(fresh.id);
+      expect(result.deleted.map((task) => task.taskId)).not.toContain(fresh.id);
+      expect(tasksOf('home').getById(fresh.id)).toBeDefined();
+      // Nothing of it changed, so no board event names it. The other board's delete ran, so its event is the control.
+      const namedIds = taskDeletedEvents().flatMap((event) => event.ids);
+      expect(namedIds).not.toContain(fresh.id);
+      expect(taskDeletedEvents()).toEqual([{ projectId: 'mobile', change: 'task-deleted', ids: [phone.id] }]);
+    });
+
+    it('keeps a task that another workflow took in between the ask and its lock', async () => {
+      const { workflow, fresh } = await startedWithHistory();
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+      expect(released.find((task) => task.taskId === fresh.id)?.neverStarted).toBe(true);
+      // The task gets no session, worktree or move, so it still reads as never started: only its membership says it is not free.
+      const otherWorkflow = service.createWorkflow('home', {});
+      tasksOf('home').setWorkflowMembership(fresh.id, {
+        workflow_id: otherWorkflow.id, workflow_project_id: 'home',
+        route_start_swimlane_id: null, route_last_swimlane_id: null, skipped_swimlane_ids: [],
+        canvas_x: null, canvas_y: null, plan_approval: null,
+      });
+
+      const result = await service.deleteNeverStartedTasks(context, released);
+
+      // The in-lock check refused it, not the pass-through double skipping it.
+      expect(vi.mocked(deleteTaskWithCleanup).mock.calls.some((call) => call[3] === fresh.id)).toBe(true);
+      expect(result.kept.map((task) => task.taskId)).toContain(fresh.id);
+      expect(result.deleted.map((task) => task.taskId)).not.toContain(fresh.id);
+      expect(result.failed).toEqual([]);
+      expect(tasksOf('home').getById(fresh.id)?.workflow_id).toBe(otherWorkflow.id);
+      expect(taskDeletedEvents().flatMap((event) => event.ids)).not.toContain(fresh.id);
+    });
+
+    it('names a task whose delete failed and goes on with the rest', async () => {
+      const { workflow, fresh, phone } = await startedWithHistory();
+      const { released } = service.deleteWorkflow(context, 'home', workflow.id);
+      const passThrough = vi.mocked(deleteTaskWithCleanup).getMockImplementation()!;
+      vi.mocked(deleteTaskWithCleanup).mockImplementation(async (...args) => {
+        if (args[3] === fresh.id) throw new Error('worktree removal timed out');
+        return passThrough(...args);
+      });
+
+      const result = await service.deleteNeverStartedTasks(context, released);
+
+      expect(result.failed).toEqual([expect.objectContaining({ taskId: fresh.id, reason: 'worktree removal timed out' })]);
+      expect(result.deleted.map((task) => task.taskId)).toEqual([phone.id]);
+      // A failed delete may have removed its attachments while the row stayed, so its board's event names it, as a failed TASK_DELETE does.
+      expect(taskDeletedEvents()).toEqual(expect.arrayContaining([
+        { projectId: 'home', change: 'task-deleted', ids: [fresh.id] },
+        { projectId: 'mobile', change: 'task-deleted', ids: [phone.id] },
+      ]));
+      expect(taskDeletedEvents()).toHaveLength(2);
+    });
+  });
+
+  it('names the board task a planned task takes in at Start, by its number', () => {
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const existing = tasksOf('home').create({ title: 'Budgets API', description: '', swimlane_id: todo.id });
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      title: 'Usage budgets',
+      tasks: [{ key: 'api', title: 'Budgets API', existingTask: existing.id }, { key: 'ui', title: 'Budgets UI' }],
+      links: [],
+    });
+
+    const [takenIn, created] = service.readWorkflow(context, 'home', workflow.id).tasks;
+
+    expect(takenIn).toMatchObject({ column: `To Do (#${existing.display_id}, taken in at Start)`, displayId: existing.display_id });
+    expect(created).toMatchObject({ column: 'To Do (created at Start)', displayId: null });
+  });
+
+  it('still says a planned task takes in a board task whose row was deleted after the plan was saved, with no number', () => {
+    const todo = lanesOf('home').find((lane) => lane.role === 'todo')!;
+    const existing = tasksOf('home').create({ title: 'Budgets API', description: '', swimlane_id: todo.id });
+    const workflow = service.createWorkflow('home', {});
+    service.savePlan(context, 'home', workflow.id, {
+      title: 'Usage budgets',
+      tasks: [{ key: 'api', title: 'Budgets API', existingTask: existing.id }, { key: 'ui', title: 'Budgets UI' }],
+      links: [],
+    });
+    tasksOf('home').delete(existing.id);
+
+    const [takenIn, created] = service.readWorkflow(context, 'home', workflow.id).tasks;
+
+    // The plan still holds the take-in, so the read names it though the board task cannot be read.
+    expect(takenIn).toMatchObject({ taskId: existing.id, column: 'To Do (taken in at Start)', displayId: null });
+    expect(created).toMatchObject({ taskId: null, column: 'To Do (created at Start)', displayId: null });
   });
 
   it('lets a task its deleted workflow left in Done join a new workflow, once it is back in To Do', async () => {

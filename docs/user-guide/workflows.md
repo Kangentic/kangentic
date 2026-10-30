@@ -52,7 +52,11 @@ base branch and profile. Start creates the tasks, with those settings, in To Do
 (the ones with nothing to wait for start at once) and moves the To Do task the workflow was made
 from, if any, to Done. A task can go on another project's board; the inspector then names each
 task's board. Delete removes a workflow that has not started, with its planned tasks; once
-started, its unfinished tasks stay where they are as ordinary tasks. Its tasks in Done stay in Done,
+started, its unfinished tasks stay where they are as ordinary tasks. When some of them never
+started (still in To Do, with no session ever, no worktree, and never in another column), the
+confirm offers "Also delete its N tasks that never started", off by default. Ticked, those go
+through the board's own task delete, and a task that has run stays. A task that cannot be deleted
+stays in To Do as an ordinary task, and a toast names it. Its tasks in Done stay in Done,
 and once the workflow is gone they are ordinary tasks, so Backlog, Move to and New workflow work on
 them as on any task. Deleting a project does to its workflows what deleting each of its tasks would.
 A workflow it was home to goes, and its tasks on other boards become ordinary tasks. A task

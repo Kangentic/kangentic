@@ -8,6 +8,8 @@ import type {
   WorkflowAgentStatus,
   WorkflowCanvasPosition,
   WorkflowChangedEvent,
+  WorkflowDeleteFailure,
+  WorkflowDeleteOptions,
   WorkflowDetail,
   WorkflowSummary,
   WorkflowSupersession,
@@ -18,6 +20,7 @@ import { describeIpcError, asSentence } from '../lib/ipc-error';
 import { useProjectStore } from './project-store';
 import { useSessionStore } from './session-store';
 import { useToastStore } from './toast-store';
+import { openTaskFromNotification } from '../utils/open-task-from-notification';
 
 /** Why a watched workflow's latest read failed (see `watchedDetails`). */
 export type WatchedReadFailure = 'gone' | 'unreadable';
@@ -60,7 +63,8 @@ interface WorkflowStore {
 
   createWorkflow: (sourceTaskId: string | null) => Promise<Workflow | null>;
   renameWorkflow: (title: string) => Promise<boolean>;
-  deleteWorkflow: () => Promise<boolean>;
+  /** With `deleteNeverStarted`, its tasks that never started go with it. */
+  deleteWorkflow: (options?: WorkflowDeleteOptions) => Promise<boolean>;
   startWorkflow: () => Promise<boolean>;
   pauseWorkflow: () => Promise<boolean>;
   resumeWorkflow: () => Promise<boolean>;
@@ -225,6 +229,24 @@ function reportStillRunning(failed: readonly WorkflowAgentFailure[]): void {
     message: i18n._(msg`Still running: ${{ tasks }}.`),
     variant: 'error',
   });
+}
+
+/**
+ * A delete asked to take the tasks that never started names each one it could
+ * not delete, with main's reason, and its card opens the task: it stays in To
+ * Do as an ordinary task. The workflow itself is gone.
+ */
+function reportNotDeleted(failed: readonly WorkflowDeleteFailure[]): void {
+  for (const failure of failed) {
+    const displayId = failure.displayId;
+    const reason = asSentence(failure.reason);
+    useToastStore.getState().addToast({
+      title: i18n._(msg`Couldn't delete task`),
+      message: i18n._(msg`#${{ displayId }} stays in To Do. ${{ reason }}`),
+      variant: 'error',
+      onOpen: () => openTaskFromNotification(failure.projectId, failure.taskId),
+    });
+  }
 }
 
 /**
@@ -678,11 +700,12 @@ const createWorkflowStore = () => create<WorkflowStore>((set, get) => {
       (await onSelected(msg`Couldn't rename the workflow`, (projectId, workflowId) =>
         window.electronAPI.workflows.rename(projectId, workflowId, title))).ok,
 
-    deleteWorkflow: async () => {
+    deleteWorkflow: async (options) => {
       const deletedId = get().selectedWorkflowId;
       const result = await onSelected(msg`Couldn't delete the workflow`, (projectId, workflowId) =>
-        window.electronAPI.workflows.delete(projectId, workflowId));
+        window.electronAPI.workflows.delete(projectId, workflowId, options));
       if (result.ok) {
+        if (result.value.failed.length > 0) reportNotDeleted(result.value.failed);
         // Another workflow picked while the delete ran keeps its selection.
         if (get().selectedWorkflowId === deletedId) set({ selectedWorkflowId: null, detail: null, selectedTaskKey: null });
         await get().loadWorkflows();

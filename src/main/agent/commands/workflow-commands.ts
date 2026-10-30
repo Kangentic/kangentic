@@ -14,6 +14,7 @@ import {
   checkPlannedModel,
   checkPlannedModels,
   createWorkflowWithPlan,
+  deleteNeverStartedTasks,
   deleteWorkflow,
   linkTasks,
   pauseWorkflow,
@@ -26,7 +27,9 @@ import {
   setTaskRoute,
   startWorkflow,
   unlinkTasks,
+  type NeverStartedDeletion,
   type PlannedTaskInput,
+  type ReleasedWorkflowTask,
 } from '../../workflows/workflow-service';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 
@@ -473,14 +476,59 @@ export const handleRequestProjectAccess: CommandHandler = (params, context) => {
   }
 };
 
-export const handleDeleteWorkflow: CommandHandler = (params, context) => {
+/**
+ * "#12", or ""kangentic-mobile" #12" for a task on another board, whose number
+ * can repeat on this one. The board comes first so that, in a list, it names
+ * that one task and not the numbers before it.
+ */
+function releasedLabel(task: ReleasedWorkflowTask): string {
+  return task.board === null ? `#${task.displayId}` : `"${task.board}" #${task.displayId}`;
+}
+
+function listOf(labels: string[]): string {
+  return labels.length === 1 ? labels[0] : `${labels.slice(0, -1).join(', ')} and ${labels[labels.length - 1]}`;
+}
+
+function releasedRef(task: ReleasedWorkflowTask): { taskId: string; displayId: number; projectId: string; board: string | null } {
+  return { taskId: task.taskId, displayId: task.displayId, projectId: task.projectId, board: task.board };
+}
+
+export const handleDeleteWorkflow: CommandHandler = async (params, context) => {
   try {
+    // Checked before anything is deleted: a bad value must not delete the workflow without its option.
+    const deleteNeverStarted = params.deleteNeverStarted;
+    if (deleteNeverStarted !== undefined && deleteNeverStarted !== null && typeof deleteNeverStarted !== 'boolean') {
+      throw new WorkflowRequestError('deleteNeverStarted must be true or false.');
+    }
     const workflow = workflowParam(params, context);
-    const result = deleteWorkflow(requireWorkflowRuntimeContext(), context.projectId, workflow.id);
-    const message = result.workflow.state === 'draft'
-      ? `Deleted "${result.workflow.title}" and its planned tasks. Nothing else changed.`
-      : `Deleted "${result.workflow.title}". Its ${result.released} unfinished tasks stay where they are, as ordinary tasks.`;
-    return { success: true, message };
+    const runtime = requireWorkflowRuntimeContext();
+    const result = deleteWorkflow(runtime, context.projectId, workflow.id);
+    if (result.workflow.state === 'draft') {
+      return { success: true, message: `Deleted "${result.workflow.title}" and its planned tasks. Nothing else changed.` };
+    }
+    const deletion: NeverStartedDeletion = deleteNeverStarted === true
+      ? await deleteNeverStartedTasks(runtime, result.released)
+      : { deleted: [], kept: result.released, failed: [] };
+    const sentences = [`Deleted "${result.workflow.title}".`];
+    const { kept, deleted, failed } = deletion;
+    if (kept.length > 0) {
+      const stays = kept.length === 1 ? 'stays where it is, as an ordinary task' : 'stay where they are, as ordinary tasks';
+      sentences.push(`${listOf(kept.map(releasedLabel))} ${stays}.`);
+    }
+    if (deleted.length > 0) sentences.push(`Deleted ${listOf(deleted.map(releasedLabel))}, which never started.`);
+    for (const failure of failed) {
+      sentences.push(`Could not delete ${releasedLabel(failure)} (${failure.reason}). It stays in To Do as an ordinary task.`);
+    }
+    if (kept.length + deleted.length + failed.length === 0) sentences.push('Its tasks in Done stay in Done.');
+    return {
+      success: true,
+      message: sentences.join(' '),
+      data: {
+        kept: kept.map(releasedRef),
+        deleted: deleted.map(releasedRef),
+        failed: failed.map((failure) => ({ ...releasedRef(failure), reason: failure.reason })),
+      },
+    };
   } catch (error) {
     return fail(error);
   }

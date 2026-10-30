@@ -20,6 +20,7 @@ import {
 } from '../helpers';
 import { resolveProjectContext } from '../helpers/project-repos';
 import { announceTaskWrite } from '../helpers/task-write-announce';
+import { deleteTaskWithCleanup, drainAutoNameAskedIds } from '../helpers/task-delete';
 import { trackEvent } from '../../analytics/analytics';
 import { reportHandledError } from '../../analytics/error-reporting';
 import { trackMilestone } from '../../analytics/usage';
@@ -302,27 +303,10 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
 
   ipcMain.handle(IPC.TASK_DELETE, async (event, id, projectId?: string | null) => {
     const { projectId: resolvedProjectId, projectPath: resolvedProjectPath } = resolveProjectContext(context, projectId);
-    const { tasks, attachments } = getProjectRepos(context, resolvedProjectId);
-    // Serialize against any in-flight session lifecycle op for this task so
-    // the long awaits inside cleanup don't race with spawn/resume/etc.
-    let deletedTask: Task | undefined;
-    const deletion = withTaskLock(id, async () => {
-      const task = tasks.getById(id);
-      deletedTask = task;
-      if (task) {
-        attachments.deleteByTaskId(id);
-        await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
-      }
-      tasks.delete(id);
-    });
     // Announced however the delete settles: the attachments and the session go
     // before the row does, so a failed cleanup has still changed the card.
     try {
-      await deletion;
-      drainAutoNameAskedIds(context, [id]);
-      // A deleted blocker's links went with it, so what waited for it may start.
-      wakeWorkflowEngine();
-      notifyWorkflowOfTask(deletedTask, resolvedProjectId);
+      await deleteTaskWithCleanup(context, resolvedProjectId, resolvedProjectPath, id);
     } finally {
       announceTaskWrite(context, event, resolvedProjectId, { change: 'task-deleted', ids: [id] });
     }
@@ -379,6 +363,8 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
         console.log(`[TASK_BULK_DELETE] start ${shortId}`);
 
         try {
+          // The steps of `deleteTaskWithCleanup`, with a deadline on the cleanup
+          // and the row deleted whatever it did. A step added to one belongs in both.
           await withTaskLock(id, async () => {
             const task = tasks.getById(id);
             deletedTask = task;
@@ -466,33 +452,4 @@ export function registerTaskCrudHandlers(context: IpcContext): void {
       announceTaskWrite(context, event, resolvedProjectId, { change: 'task-deleted', ids });
     }
   });
-}
-
-/**
- * Remove the given task IDs from `AppConfig.autoNameAskedTaskIds` so the
- * persisted "don't re-ask" set does not accumulate stale entries for tasks
- * the user has deleted. No-op when the config field is absent, no IDs match,
- * or the configManager isn't fully wired (defensive: this drain is a best-
- * effort cleanup, not load-bearing for the delete operation).
- * @internal Exported for unit tests only; not part of the public API.
- */
-export function drainAutoNameAskedIds(context: IpcContext, taskIds: string[]): void {
-  if (taskIds.length === 0) return;
-  const configManager = context.configManager;
-  if (typeof configManager?.load !== 'function' || typeof configManager?.save !== 'function') return;
-  let config: { autoNameAskedTaskIds?: string[] };
-  try {
-    config = configManager.load();
-  } catch {
-    return;
-  }
-  const current = config.autoNameAskedTaskIds ?? [];
-  if (current.length === 0) return;
-  const removeSet = new Set(taskIds);
-  const next = current.filter((entry) => !removeSet.has(entry));
-  if (next.length === current.length) return;
-  // Best-effort: save() no longer throws (see write-failure-notice.ts), and a
-  // failed write here just means the next launch sees a slightly larger
-  // asked-set - not worth surfacing to the user beyond the shared toast.
-  configManager.save({ autoNameAskedTaskIds: next });
 }

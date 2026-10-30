@@ -46,7 +46,7 @@ Implementations live next to each adapter. The run's `cwd` is the shared answer 
 
 ## Configuration knobs
 
-- `AppConfig.autoNameAskedTaskIds: string[]` - persisted "don't re-ask" set, drained when a task is deleted (single and bulk delete in `task-crud.ts`).
+- `AppConfig.autoNameAskedTaskIds: string[]` - persisted "don't re-ask" set, drained when a task is deleted (`drainAutoNameAskedIds` in `src/main/ipc/helpers/task-delete.ts`, reached from the single delete, a workflow delete's never-started deletions, and the bulk delete handler in `task-crud.ts`).
 - `AppConfig.autoNameRateLimitPerHour: number` (default 60, 0 disables) - sliding-window cap on summarize CLI calls per hour. One window is shared by task titles (`agent:summarize`) and Command Terminal names (`src/main/agent/shared/summarize-rate-limit.ts`).
 
 ## Verification

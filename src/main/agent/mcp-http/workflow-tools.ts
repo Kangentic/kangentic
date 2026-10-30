@@ -307,13 +307,19 @@ export function registerWorkflowTools(
   server.registerTool(
     'kangentic_delete_workflow',
     {
-      description: 'Delete a workflow. One not started loses its plan and nothing else changes. A started one\'s unfinished tasks stay where they are as ordinary tasks; its tasks in Done stay in Done. Delete only when the user asks to.',
+      description: 'Delete a workflow. One not started loses its plan and nothing else changes. A started one\'s unfinished tasks stay where they are as ordinary tasks, unless deleteNeverStarted also deletes the ones that never started; its tasks in Done stay in Done. The reply names the tasks kept and deleted. Delete only when the user asks to.',
       inputSchema: z.object({
         workflow: z.string().describe(WORKFLOW_DESCRIPTION),
+        deleteNeverStarted: z.boolean().optional().describe('Also delete its tasks that never started: still in To Do, with no session ever and no worktree. A task that has run stays. Off by default.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ workflow, project }) => withProject(resolver, project, (ctx) => callHandler('delete_workflow', { workflow }, ctx, 'Failed to delete the workflow')),
+    async ({ workflow, deleteNeverStarted, project }) => withProject(resolver, project, (ctx) => callHandler(
+      'delete_workflow',
+      { workflow, deleteNeverStarted },
+      ctx,
+      'Failed to delete the workflow',
+    )),
   );
 }

@@ -300,6 +300,22 @@ describe('the Workflows view operations', () => {
       expect(summary).toMatchObject({ taskCount: 3, doneCount: 0, inProgressCount: 0, queuedCount: 2, blockedCount: 1 });
     });
 
+    it('counts the tasks the Delete confirm may delete: in To Do and never started', async () => {
+      const { workflow, api, ui } = await started();
+      const tasks = new TaskRepository(homeDb());
+      // One that left To Do and came back: the reset wiped what it ran, but not its moves.
+      const lanes = new SwimlaneRepository(homeDb()).list();
+      const planning = lanes.find((lane) => lane.name === 'Planning')!;
+      const todo = lanes.find((lane) => lane.role === 'todo')!;
+      tasks.move({ taskId: api.id, targetSwimlaneId: planning.id, targetPosition: 0 }, { origin: 'renderer' });
+      tasks.move({ taskId: api.id, targetSwimlaneId: todo.id, targetPosition: 0 }, { origin: 'renderer' });
+      // And one with a worktree.
+      tasks.update({ id: ui.id, worktree_path: '/projects/home/.kangentic/worktrees/ui' });
+
+      const summary = view.listWorkflowSummaries(context, 'home').find((candidate) => candidate.workflow.id === workflow.id);
+      expect(summary?.neverStartedCount).toBe(1);
+    });
+
     it('gives each board card what it waits for, where a hand may move it, and whether it has links', async () => {
       const { workflow, api, ui, docs } = await started();
       const [before] = view.listWorkflowSummaries(context, 'home');

@@ -40,6 +40,10 @@ msgstr "{inProgressCount} in progress"
 msgid "{name}, {countText}"
 msgstr "{name}, {countText}"
 
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{neverStarted, plural, one {Also delete its # task that never started} other {Also delete its # tasks that never started}}"
+msgstr "{neverStarted, plural, one {Also delete its # task that never started} other {Also delete its # tasks that never started}}"
+
 #: src/renderer/components/workflows/workflow-text.ts
 msgid "{progress}."
 msgstr "{progress}."
@@ -79,6 +83,10 @@ msgstr "{taskCount, plural, one {Deletes its # planned task and the agent conver
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
 msgstr "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+msgid "{unfinished, plural, =0 {The agent conversation is deleted.} one {Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+msgstr "{unfinished, plural, =0 {The agent conversation is deleted.} one {Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 msgid "{unfinished, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"

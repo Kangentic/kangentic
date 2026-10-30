@@ -373,6 +373,11 @@ msgstr "{value} (nie na tej tablicy)"
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
 msgstr "{worktreeCount, plural, one {Nie udało się wyczyścić {failedCount} z # drzewa roboczego.} few {Nie udało się wyczyścić {failedCount} z # drzew roboczych.} many {Nie udało się wyczyścić {failedCount} z # drzew roboczych.} other {Nie udało się wyczyścić {failedCount} z # drzewa roboczego.}}"
 
+#: src/renderer/stores/workflow-store.ts
+#, fuzzy
+msgid "#{displayId} stays in To Do. {reason}"
+msgstr "#{displayId} pozostaje w kolumnie Do zrobienia. {reason}"
+
 #: src/renderer/App.tsx
 #, fuzzy
 msgid "A project"
@@ -626,6 +631,7 @@ msgstr "Nie udało się utworzyć przepływu pracy"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't delete task"
 msgstr "Nie udało się usunąć zadania"

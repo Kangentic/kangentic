@@ -34,6 +34,7 @@ import { isHumanGate } from './workflow-lock-check';
 import { isInWorkflow } from './workflow-home';
 import { workflowAgentSummary } from './workflow-agent';
 import { linkEndState, readWorkflowTasks } from './workflow-tasks';
+import { isNeverStarted } from './workflow-never-started';
 import { adoptLegacyPlanApproval, readPlannedTaskPlanApproval, readTaskPlanApproval } from '../plan-approval/workflow-plan-approval';
 import {
   MAX_WORKFLOW_TASKS,
@@ -207,16 +208,27 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
       inProgressCount: 0,
       queuedCount: 0,
       blockedCount: 0,
+      neverStartedCount: 0,
       boardTasks: {},
       agent: workflowAgentSummary(context, workflow.id),
       stalledTasks: [],
     };
   }
   const { tasks: created, unreadProjectIds } = readWorkflowTasks(context, homeProjectId, workflow.id);
+  // Each board's columns, read once: every task on it asks for them, twice for one in To Do.
+  const lanesByProject = new Map<string, Swimlane[]>();
+  const lanesOf = (projectId: string): Swimlane[] => {
+    let lanes = lanesByProject.get(projectId);
+    if (!lanes) {
+      lanes = safeLanes(projectId);
+      lanesByProject.set(projectId, lanes);
+    }
+    return lanes;
+  };
   const places = new Map<string, Exclude<WorkflowTaskPlace, 'planned'>>();
   const displayIds = new Map<string, number>();
   for (const { projectId, task } of created) {
-    places.set(task.id, taskPlace(safeLanes(projectId), task));
+    places.set(task.id, taskPlace(lanesOf(projectId), task));
     displayIds.set(task.id, task.display_id);
   }
   const present = new Set(displayIds.keys());
@@ -226,6 +238,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
   let inProgressCount = 0;
   let queuedCount = 0;
   let blockedCount = 0;
+  let neverStartedCount = 0;
   const boardTasks: Record<string, WorkflowBoardTask> = {};
   const stallOf = stallReader(workflow);
   const stalledTasks: WorkflowSummary['stalledTasks'] = [];
@@ -251,6 +264,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
         });
       if (waitingFor.length > 0) blockedCount += 1;
       else queuedCount += 1;
+      if (isNeverStarted(projectId, task, lanesOf(projectId))) neverStartedCount += 1;
     }
     if (place !== 'done') {
       const stallReason = stallOf(projectId, task);
@@ -265,6 +279,7 @@ function summarize(context: IpcContext, homeProjectId: string, workflow: Workflo
     inProgressCount,
     queuedCount,
     blockedCount,
+    neverStartedCount,
     boardTasks,
     agent: workflowAgentSummary(context, workflow.id),
     stalledTasks,

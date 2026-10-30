@@ -515,7 +515,7 @@ export function WorkflowsView() {
       {dialog?.kind === 'delete' && selected && (
         <DeleteWorkflowDialog
           summary={selected}
-          onConfirm={() => { setDialog(null); void deleteWorkflow(); }}
+          onConfirm={(deleteNeverStarted) => { setDialog(null); void deleteWorkflow({ deleteNeverStarted }); }}
           onCancel={() => setDialog(null)}
         />
       )}

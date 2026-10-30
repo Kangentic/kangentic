@@ -740,7 +740,7 @@ const api: ElectronAPI = {
     rename: (projectId, workflowId, title) => ipcRenderer.invoke(IPC.WORKFLOW_RENAME, projectId, workflowId, title),
     setTaskPlanApproval: (projectId, workflowId, key, planApproval) =>
       ipcRenderer.invoke(IPC.WORKFLOW_SET_TASK_PLAN_APPROVAL, projectId, workflowId, key, planApproval),
-    delete: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_DELETE, projectId, workflowId),
+    delete: (projectId, workflowId, options) => ipcRenderer.invoke(IPC.WORKFLOW_DELETE, projectId, workflowId, options),
     start: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_START, projectId, workflowId),
     pause: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_PAUSE, projectId, workflowId),
     resume: (projectId, workflowId) => ipcRenderer.invoke(IPC.WORKFLOW_RESUME, projectId, workflowId),

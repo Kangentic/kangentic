@@ -57,16 +57,24 @@ export function StartWorkflowDialog({ summary, sourceTaskLabel, onConfirm, onCan
   );
 }
 
-/** Delete, in every state. Before Start it takes the planned tasks with it; after, they stay as ordinary tasks. */
+/**
+ * Delete, in every state. Before Start it takes the planned tasks with it;
+ * after, they stay as ordinary tasks. A started workflow with tasks that never
+ * started offers to delete those too, off by default, and the first line then
+ * counts only the tasks that stay.
+ */
 export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
   summary: WorkflowSummary;
-  onConfirm: () => void;
+  onConfirm: (deleteNeverStarted: boolean) => void;
   onCancel: () => void;
 }) {
   const { t } = useLingui();
+  const [deleteNeverStarted, setDeleteNeverStarted] = useState(false);
   const state = summary.workflow.state;
   const workflowTitle = summary.workflow.title;
   const taskCount = summary.taskCount;
+  const neverStarted = state === 'draft' ? 0 : summary.neverStartedCount;
+  const deletesNeverStarted = deleteNeverStarted && neverStarted > 0;
   let message: React.ReactNode;
   if (state === 'draft') {
     message = taskCount > 0
@@ -81,21 +89,53 @@ export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
       )
       : <p><Trans>Deletes the agent conversation. Nothing else changes.</Trans></p>;
   } else {
-    const unfinished = summary.taskCount - summary.doneCount;
+    // The unfinished tasks that stay: with the box ticked, the ones that never
+    // started go. Named `unfinished` in every message, so the catalog's
+    // existing translations still match.
+    const unfinished = summary.taskCount - summary.doneCount - (deletesNeverStarted ? neverStarted : 0);
     message = (
       <>
         <p>
-          <Plural
-            value={unfinished}
-            _0="Its tasks are done and stay where they are. The agent conversation is deleted."
-            one="Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted."
-            other="Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted."
-          />
+          {deletesNeverStarted
+            ? (
+              <Plural
+                value={unfinished}
+                _0="The agent conversation is deleted."
+                one="Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted."
+                other="Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted."
+              />
+            )
+            : (
+              <Plural
+                value={unfinished}
+                _0="Its tasks are done and stay where they are. The agent conversation is deleted."
+                one="Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted."
+                other="Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted."
+              />
+            )}
         </p>
         {state === 'paused' && unfinished > 0 && (
           <p className="mt-2.5">
             <Plural value={unfinished} one="It stays paused until you resume it." other="They stay paused until you resume them." />
           </p>
+        )}
+        {neverStarted > 0 && (
+          <label className="mt-2.5 flex items-center gap-2 cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={deleteNeverStarted}
+              onChange={(event) => setDeleteNeverStarted(event.target.checked)}
+              className="accent-accent rounded border-edge-input bg-surface"
+              data-testid="workflow-delete-never-started"
+            />
+            <span>
+              <Plural
+                value={neverStarted}
+                one="Also delete its # task that never started"
+                other="Also delete its # tasks that never started"
+              />
+            </span>
+          </label>
         )}
       </>
     );
@@ -107,7 +147,7 @@ export function DeleteWorkflowDialog({ summary, onConfirm, onCancel }: {
       confirmLabel={t`Delete`}
       variant="danger"
       testId="workflow-delete-confirm"
-      onConfirm={() => onConfirm()}
+      onConfirm={() => onConfirm(deletesNeverStarted)}
       onCancel={onCancel}
     />
   );
