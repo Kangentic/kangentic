@@ -132,6 +132,12 @@ Read the new version from `packages/protocol/package.json` to confirm it matches
    - Commit message here (abc1234)
    ```
    Omit any category with no entries.
+
+   A feature commit may already have written this release's entry as an `## [Unreleased]` section
+   under the marker. When one is there, make it the entry instead of inserting a second one: rename
+   its heading to `## [protocol-vX.Y.Z] - YYYY-MM-DD`, keep its prose, add each bullet's short hash,
+   and add a bullet for any Step 0 commit it does not list. A new entry inserted above it would
+   publish a stale `[Unreleased]` block.
 4. Stage `packages/protocol/CHANGELOG.md` (done in Step 4, not here).
 
 ## Step 4 -- Commit
