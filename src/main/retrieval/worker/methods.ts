@@ -30,7 +30,6 @@ import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
 import type {
   KnowledgeGraphBuildProgress,
-  KnowledgeGraphQueryHit,
   KnowledgeGraphSnapshotWire,
   SessionSummary,
   SubagentUsageTotals,
@@ -252,7 +251,7 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
     params: { projectIds: string[] };
     result: Array<ProjectIndexSummaryRow | null>;
   };
-  /** Conversation search (Quick Find, `kangentic_search`, prior work): hybrid
+  /** Conversation search (Quick Find, `kangentic_search`): hybrid
    *  keyword and vector search, one best hit per session. */
   'search.conversations': {
     params: {
@@ -271,8 +270,9 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
     result: Array<CommitHit & { projectName: string }>;
   };
   /**
-   * `kangentic_search`'s task ranking (groupBy "task", relatedToTask): one
-   * project's related work, ranked as Ask ranks it, with what its rows show.
+   * `kangentic_search`'s task ranking (groupBy "task", relatedToTask) and the
+   * task window's prior work: one project's related work, ranked as Ask ranks
+   * it, with what its rows show.
    * `excludeTaskId` leaves one task out entirely, its conversations and its
    * record. The query vectors are used in the order sent.
    */
@@ -288,25 +288,14 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
       rows?: number;
       /** Read each shown row's facts and its summary (for the strongest). */
       withExtras: boolean;
+      /**
+       * The task window's prior work for a task created at this ISO time: only
+       * tasks created before it, each through a conversation, ranked as
+       * `SearchRelatedWorkInput.priorWork` says.
+       */
+      priorWorkBefore?: string;
     };
     result: RankedRelatedWork;
-  };
-  /**
-   * The task window's prior work: earlier conversations near one task, one row
-   * per other task, strongest first. `query` is the task's own text; its own
-   * conversations are dropped after ranking, since they match it best.
-   */
-  'task.priorWork': {
-    params: {
-      project: ProjectRef;
-      taskId: string;
-      query: string;
-      queryVectors: QueryVectors | null;
-      /** Fetched before the task's own conversations are dropped. */
-      overfetch: number;
-      rows: number;
-    };
-    result: KnowledgeGraphQueryHit[];
   };
 }
 
@@ -460,11 +449,23 @@ export const retrievalHandlers: RetrievalHandlers = {
     }
   }),
   'related.rank': async (params, context) => {
-    const { projectId, excludeTaskId } = params;
-    const nodes = indexedConversationNodes(projectId, context.getDb).filter((node) => !excludeTaskId || node.taskId !== excludeTaskId);
+    const { projectId, excludeTaskId, priorWorkBefore } = params;
+    // Prior work reaches only tasks created before the one it is for, and only
+    // through their conversations: a row names its task and opens one. The
+    // cutoff is parsed once here, and a time that does not parse reaches nothing.
+    const priorWorkBeforeMs = priorWorkBefore === undefined ? undefined : Date.parse(priorWorkBefore);
+    const earlierTaskIds = priorWorkBeforeMs === undefined
+      ? null
+      : new RetrievalStore(context.getDb(projectId)).taskIdsCreatedBefore(priorWorkBeforeMs);
+    const nodes = indexedConversationNodes(projectId, context.getDb).filter((node) => (
+      (!excludeTaskId || node.taskId !== excludeTaskId)
+      && (!earlierTaskIds || (node.taskId !== null && earlierTaskIds.has(node.taskId)))
+    ));
     // Unscoped: every board task is in reach of its own record, so a task with
     // no indexed conversation still ranks.
-    const recordOnlyTasks = boardRecordTasks(projectId, context.getDb).filter((record) => record.taskId !== excludeTaskId);
+    const recordOnlyTasks = earlierTaskIds
+      ? []
+      : boardRecordTasks(projectId, context.getDb).filter((record) => record.taskId !== excludeTaskId);
     const { embedder, vectors } = vectorsOf(params.queryVectors);
     const related = await searchRelatedWork({
       question: params.question,
@@ -475,6 +476,7 @@ export const retrievalHandlers: RetrievalHandlers = {
       embedder,
       queryVectors: vectors,
       getDb: context.getDb,
+      priorWork: priorWorkBeforeMs === undefined ? undefined : { before: priorWorkBeforeMs, taskId: excludeTaskId ?? null },
     });
     const shown = related.handed.slice(0, params.rows ?? related.handed.length);
     const handedDocKeys = new Set(shown.flatMap((task) => task.docKeys));
@@ -501,48 +503,5 @@ export const retrievalHandlers: RetrievalHandlers = {
       }
     }
     return { related, sessionIdByDocKey, factsByTaskId, summaryByTaskId };
-  },
-  'task.priorWork': async ({ project, taskId, query, queryVectors, overfetch, rows }, context) => {
-    const hits = await searchConversationMemory({
-      query,
-      projects: [project],
-      embedder: queryVectors ? precomputedEmbedder(queryVectors) : null,
-      // Over-fetch: this task's own conversations are usually the strongest
-      // matches (its description IS the query), so they must be dropped after
-      // ranking, not before.
-      k: overfetch,
-      getDb: context.getDb,
-    });
-    const docKeys = new RetrievalStore(context.getDb(project.id)).docKeysForChunks(hits.map((hit) => hit.chunkId));
-    // One row per TASK, not per session: a task usually has several sessions,
-    // and for "what have I already worked on" the task is the unit. Hits arrive
-    // score-ordered, so the first one kept per task is its strongest.
-    const seenTaskIds = new Set<string>();
-    return hits
-      .filter((hit) => {
-        if (hit.taskId === taskId) return false;
-        if (hit.taskId !== null) {
-          if (seenTaskIds.has(hit.taskId)) return false;
-          seenTaskIds.add(hit.taskId);
-        }
-        return true;
-      })
-      .slice(0, rows)
-      .flatMap((hit): KnowledgeGraphQueryHit[] => {
-        const docKey = docKeys.get(hit.chunkId);
-        if (docKey === undefined) return [];
-        return [{
-          docKey,
-          sessionId: hit.sessionId,
-          taskId: hit.taskId,
-          taskTitle: hit.taskTitle,
-          agentName: hit.agentName,
-          snippet: hit.snippet,
-          score: hit.score,
-          matchKind: hit.matchKind,
-          matchCount: hit.matchCount,
-          turnTs: hit.turnTs,
-        }];
-      });
   },
 };

@@ -79,19 +79,23 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
         <ul className="px-1.5 pb-1.5">
           {hits.map((hit) => (
             <li key={hit.sessionId}>
-              <Tooltip label={t`Open this conversation`}>
+              {/* The row is the matched task's title, and its tip is the passage
+                  that matched. A close passage can sit deep inside a task whose
+                  title reads as unrelated (the conversation where this task
+                  was first worked out, filed under another one), so the title
+                  alone looked like noise. The passage is prose, since prior
+                  work never matches on tool output, and stays in the tip so a
+                  row is one line. */}
+              <Tooltip
+                label={hit.snippet || t`Open this conversation`}
+                detail={hit.snippet ? t`Open this conversation` : undefined}
+              >
                 <button
                   type="button"
                   onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}
                   className="w-full text-left rounded px-2 py-1.5 hover:bg-surface-hover cursor-pointer"
                   data-testid="task-prior-work-item"
                 >
-                  {/* Title only, deliberately. In the Knowledge Graph's search
-                      results a snippet earns its place by showing WHY a
-                      conversation matched the query. Here there is no query, so
-                      the snippet is just an arbitrary chunk - in practice often
-                      raw tool-call JSON, which reads as noise and buries the one
-                      line that is actually useful. */}
                   <div className="text-xs text-fg truncate">{hit.taskTitle ?? t`Untitled conversation`}</div>
                 </button>
               </Tooltip>

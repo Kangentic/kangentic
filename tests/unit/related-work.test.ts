@@ -21,8 +21,14 @@ import {
   KEYWORD_TERMS,
   rollUpRelatedWork,
   selectHandedTasks,
+  selectPriorWork,
+  priorWorkBackground,
   MIN_HANDED,
   MAX_HANDED,
+  PRIOR_WORK_BACKGROUND_RANK,
+  PRIOR_WORK_FLOOR,
+  PRIOR_WORK_MARGIN,
+  PRIOR_WORK_ROWS,
   type RelatedWorkNode,
   type RelatedWorkTask,
 } from '../../src/main/retrieval/related-work';
@@ -326,6 +332,7 @@ describe('choosing the handed set', () => {
       displayId: index,
       title: `Task ${index}`,
       score,
+      relevance: score,
       strength: score / scores[0],
       matches: 1,
       firstMs: null,
@@ -361,5 +368,164 @@ describe('choosing the handed set', () => {
     const handed = selectHandedTasks(rankedWithScores(scores), new Set(['t25']));
     expect(handed).toHaveLength(MIN_HANDED + 1);
     expect(handed.map((task) => task.key)).toContain('t25');
+  });
+});
+
+/**
+ * The task window's prior work (the "N earlier conversations about this"
+ * line). Measured on the dogfood index, it showed on every task because nothing
+ * filtered by time or by tool output and its only gate was a cutoff nearly
+ * every chunk clears. See the header of `related-work.ts`.
+ */
+describe('prior work on a task', () => {
+  const CREATED_MS = 10_000;
+
+  // Red-green: drop the `beforeMs` check in the rollup and both later chunks
+  // count, so t-later ranks and t-earlier's best passage is the later one.
+  it('counts only chunks from before the task was created, and none with no time', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [
+        { chunkId: 1, relevance: 0.6 },
+        { chunkId: 2, relevance: 0.9 },
+        { chunkId: 3, relevance: 0.8 },
+        { chunkId: 4, relevance: 0.7 },
+      ],
+      lexical: [],
+      placements: new Map([
+        [1, placement(1, 'earlier', CREATED_MS - 1)],
+        [2, placement(2, 'earlier', CREATED_MS + 1)],
+        [3, placement(3, 'later', CREATED_MS)],
+        [4, placement(4, 'undated', null)],
+      ]),
+      nodesByDocKey: nodes(['earlier', 't-earlier', 1], ['later', 't-later', 2], ['undated', 't-undated', 3]),
+      beforeMs: CREATED_MS,
+    });
+    expect(ranked.map((task) => task.key)).toEqual(['t-earlier']);
+    expect(ranked[0].bestChunkId).toBe(1);
+    expect(ranked[0].relevance).toBe(0.6);
+  });
+
+  it('counts nothing when the cutoff is not a number', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [{ chunkId: 1, relevance: 0.6 }],
+      lexical: [],
+      placements: new Map([[1, placement(1, 'a', 5)]]),
+      nodesByDocKey: nodes(['a', 't1', 1]),
+      beforeMs: Number.NaN,
+    });
+    expect(ranked).toEqual([]);
+  });
+
+  // Red-green: drop the `excludedChunkIds` check and chunk 1 wins t1's row,
+  // so the row opens on tool output.
+  it('lets an excluded chunk neither score nor win a row, as a keyword or a vector hit', () => {
+    const ranked = rollUpRelatedWork({
+      semantic: [
+        { chunkId: 1, relevance: 0.9 },
+        { chunkId: 2, relevance: 0.5 },
+      ],
+      lexical: [{ chunkId: 1, rank: 1 }],
+      placements: new Map([
+        [1, placement(1, 'a')],
+        [2, placement(2, 'b')],
+      ]),
+      nodesByDocKey: nodes(['a', 't1', 1], ['b', 't1', 1]),
+      excludedChunkIds: new Set([1]),
+    });
+    expect(ranked).toHaveLength(1);
+    expect(ranked[0].bestChunkId).toBe(2);
+    expect(ranked[0].relevance).toBe(0.5);
+    expect(ranked[0].matches).toBe(1);
+  });
+
+  describe('the background a task is measured against', () => {
+    const pool = (count: number, start = 0): Array<[number, number]> => (
+      Array.from({ length: count }, (_unused, index) => [start + index, 1 - index / 1000])
+    );
+
+    it('is the PRIOR_WORK_BACKGROUND_RANKth best relevance', () => {
+      const relevance = new Map(pool(PRIOR_WORK_BACKGROUND_RANK + 50));
+      expect(priorWorkBackground(relevance, new Map(), 'own')).toBeCloseTo(1 - (PRIOR_WORK_BACKGROUND_RANK - 1) / 1000);
+    });
+
+    // The task's own conversations match its text best, and are not what the
+    // rest of the index looks like near it.
+    //
+    // Red-green: drop the own-task filter and the background is the 100th best
+    // of everything, which the own chunks push up.
+    it('leaves out the task\'s own chunks', () => {
+      const own = Array.from({ length: 30 }, (_unused, index): [number, number] => [5000 + index, 0.99]);
+      const relevance = new Map([...own, ...pool(PRIOR_WORK_BACKGROUND_RANK + 50)]);
+      const placements = new Map(own.map(([chunkId]): [number, ChunkPlacement] => [chunkId, { ...placement(chunkId, 'mine'), taskId: 'own' }]));
+      expect(priorWorkBackground(relevance, placements, 'own')).toBeCloseTo(1 - (PRIOR_WORK_BACKGROUND_RANK - 1) / 1000);
+    });
+
+    it('is null when fewer chunks than the rank are left to measure', () => {
+      const relevance = new Map(pool(PRIOR_WORK_BACKGROUND_RANK - 1));
+      expect(priorWorkBackground(relevance, new Map(), 'own')).toBeNull();
+    });
+  });
+
+  describe('choosing the rows', () => {
+    function row(key: string, relevance: number, overrides: Partial<RelatedWorkTask> = {}): RelatedWorkTask {
+      return {
+        key,
+        taskId: key,
+        displayId: null,
+        title: `Task ${key}`,
+        // A score that disagrees with relevance, so ordering by it would show.
+        score: 1 - relevance,
+        relevance,
+        strength: 1,
+        matches: 1,
+        firstMs: null,
+        lastMs: null,
+        docKeys: [`conversation::${key}`],
+        bestChunkId: null,
+        sessionId: `session-${key}`,
+        turnUuid: null,
+        ...overrides,
+      };
+    }
+    const BACKGROUND = 0.4;
+    const CLEARS = BACKGROUND + PRIOR_WORK_MARGIN;
+
+    it('shows nothing when no task stands far enough above the background', () => {
+      expect(selectPriorWork([row('a', CLEARS - 0.001), row('b', 0.2)], BACKGROUND)).toEqual([]);
+    });
+
+    it('shows nothing when there is no background to measure against', () => {
+      expect(selectPriorWork([row('a', 0.95)], null)).toEqual([]);
+    });
+
+    it('shows the tasks that clear the margin, best passage first', () => {
+      const shown = selectPriorWork([row('low', CLEARS), row('high', CLEARS + 0.1), row('under', CLEARS - 0.01)], BACKGROUND);
+      expect(shown.map((task) => task.key)).toEqual(['high', 'low']);
+    });
+
+    // A sparse neighborhood has a low background, so the margin alone would
+    // pass a passage that is not close in any absolute sense.
+    it('holds the absolute floor when the background is low', () => {
+      const low = 0.1;
+      expect(low + PRIOR_WORK_MARGIN).toBeLessThan(PRIOR_WORK_FLOOR);
+      expect(selectPriorWork([row('a', PRIOR_WORK_FLOOR - 0.01)], low)).toEqual([]);
+      expect(selectPriorWork([row('a', PRIOR_WORK_FLOOR)], low)).toHaveLength(1);
+    });
+
+    // A row names its task and opens a conversation.
+    it('skips a task matched with no conversation to open, and a conversation with no task', () => {
+      const shown = selectPriorWork([
+        row('no-session', 0.9, { sessionId: null }),
+        row('no-task', 0.9, { taskId: null }),
+        row('kept', 0.9),
+      ], BACKGROUND);
+      expect(shown.map((task) => task.key)).toEqual(['kept']);
+    });
+
+    // Unlike the handed set, there is no minimum: a few rows, or none.
+    it('shows at most PRIOR_WORK_ROWS', () => {
+      const ranked = Array.from({ length: PRIOR_WORK_ROWS + 3 }, (_unused, index) => row(`t${index}`, 0.9 - index / 100));
+      expect(selectPriorWork(ranked, BACKGROUND)).toHaveLength(PRIOR_WORK_ROWS);
+    });
   });
 });
