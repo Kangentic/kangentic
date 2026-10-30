@@ -79,6 +79,8 @@ function makeSnapshot(overrides: Partial<ActivityStatsSnapshot> = {}): ActivityS
     exemptBackgroundShellIds: [],
     turnActive: false,
     permissionPending: false,
+    permissionAwaitedToolId: null,
+    permissionWaitKind: null,
     msSinceLastSignal: null,
     lastSignalAt: null,
     lastPtyOutputAt: null,
@@ -190,6 +192,29 @@ describe('reasonsEqual', () => {
   describe('kind: permission', () => {
     it('returns true for two distinct permission reasons', () => {
       expect(reasonsEqual({ kind: 'permission', since: 1700000000000 }, { kind: 'permission', since: 1700000000000 })).toBe(true);
+    });
+
+    // The kind of a wait (#452) can change inside one permission stay (a
+    // subagent's approval prompt opening beside the parent's question), so the
+    // overlay's identity-preserving poll has to see it as a different reason.
+    it('returns true for two distinct permission reasons that report the same waitKind', () => {
+      const reasonA: ActivityReason = { kind: 'permission', since: 1700000000000, waitKind: 'question' };
+      const reasonB: ActivityReason = { kind: 'permission', since: 1700000000000, waitKind: 'question' };
+      expect(reasonsEqual(reasonA, reasonB)).toBe(true);
+    });
+
+    it('returns false when only the waitKind differs (question vs approval)', () => {
+      const question: ActivityReason = { kind: 'permission', since: 1700000000000, waitKind: 'question' };
+      const approval: ActivityReason = { kind: 'permission', since: 1700000000000, waitKind: 'approval' };
+      expect(reasonsEqual(question, approval)).toBe(false);
+      expect(reasonsEqual(approval, question)).toBe(false);
+    });
+
+    it('returns false when only one side reports a waitKind', () => {
+      const withKind: ActivityReason = { kind: 'permission', since: 1700000000000, waitKind: 'approval' };
+      const withoutKind: ActivityReason = { kind: 'permission', since: 1700000000000 };
+      expect(reasonsEqual(withKind, withoutKind)).toBe(false);
+      expect(reasonsEqual(withoutKind, withKind)).toBe(false);
     });
   });
 
@@ -356,6 +381,28 @@ describe('snapshotsContentEqual', () => {
   it('returns false when permissionPending differs', () => {
     const snapshotA = makeSnapshot({ permissionPending: false });
     const snapshotB = makeSnapshot({ permissionPending: true });
+    expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
+  });
+
+  it('returns false when only permissionWaitKind differs', () => {
+    // A wait changing kind inside one permission stay moves nothing else in the
+    // snapshot, so this comparison alone re-renders the overlay's wait line.
+    const snapshotA = makeSnapshot({ permissionPending: true, permissionWaitKind: 'question' });
+    const snapshotB = makeSnapshot({ permissionPending: true, permissionWaitKind: 'approval' });
+    expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
+    expect(snapshotsContentEqual(makeSnapshot({ permissionPending: true, permissionWaitKind: null }), snapshotA)).toBe(false);
+  });
+
+  it('returns true when permissionWaitKind matches on two separate snapshots', () => {
+    const snapshotA = makeSnapshot({ permissionPending: true, permissionWaitKind: 'approval' });
+    const snapshotB = makeSnapshot({ permissionPending: true, permissionWaitKind: 'approval' });
+    expect(snapshotA).not.toBe(snapshotB);
+    expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(true);
+  });
+
+  it('returns false when a permission reason differs only in waitKind', () => {
+    const snapshotA = makeSnapshot({ reason: { kind: 'permission', since: 1700000000000, waitKind: 'question' } });
+    const snapshotB = makeSnapshot({ reason: { kind: 'permission', since: 1700000000000, waitKind: 'approval' } });
     expect(snapshotsContentEqual(snapshotA, snapshotB)).toBe(false);
   });
 

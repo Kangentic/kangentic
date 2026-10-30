@@ -892,6 +892,89 @@ test.describe('Workflows inspector plan approval', () => {
   });
 });
 
+/**
+ * Main's SESSION_ACTIVITY push for the session `sessionTaskId` seeds on a task,
+ * carrying the reason the engine reports: the state's own kind, started two
+ * seconds ago, and the kind of a permission wait when the agent reported one.
+ */
+async function fireTaskActivity(page: Page, taskId: string, state: 'idle' | 'permission', waitKind?: 'question' | 'approval'): Promise<void> {
+  await page.evaluate(({ sessionId, ownerTaskId, projectId, activityState, reportedKind }) => {
+    const fire = (window as unknown as {
+      __mockFireActivity?: (session: string, activity: string, reason: unknown, project: string, task: string) => void;
+    }).__mockFireActivity;
+    if (!fire) throw new Error('__mockFireActivity not installed - is sessions.onActivity subscribed?');
+    fire(sessionId, activityState, { kind: activityState, since: Date.now() - 2000, ...(reportedKind ? { waitKind: reportedKind } : {}) }, projectId, ownerTaskId);
+  }, { sessionId: `sess-${taskId}`, ownerTaskId: taskId, projectId: PROJECT_ID, activityState: state, reportedKind: waitKind });
+}
+
+/**
+ * The three waits an agent can be in on the user, with the mark each draws
+ * (`agentActivityMark`) and the name the inspector's title chip gives it
+ * (`formatActivityReasonText`). A wait with no reported kind takes the bubble,
+ * the general "waiting on your answer", which is why the shield is the case that
+ * fails when the reason stops reaching the mark: an unknown kind and a question
+ * draw the same shape.
+ */
+const WAIT_MARKS: Array<{ label: string; waitKind?: 'question' | 'approval'; mark: string; name: RegExp }> = [
+  { label: 'a question', waitKind: 'question', mark: 'agent-question', name: /^Asking you a question for \d+s$/ },
+  { label: 'an approval', waitKind: 'approval', mark: 'agent-approval', name: /^Waiting for your approval for \d+s$/ },
+  { label: 'a wait of unknown kind', mark: 'agent-question', name: /^Waiting on you for \d+s$/ },
+];
+
+test.describe('Workflows inspector wait marks', () => {
+  test('the title chip draws the selected task\'s wait and names it, and a finished turn stays the envelope named Idle', async () => {
+    const { browser, page } = await launch('running', { sessionTaskId: 't414' });
+    try {
+      await card(page, 't414').click();
+      const title = byTestId(page, 'workflow-inspector-title');
+      await expect(title).toContainText('Refuse to spawn past the hard cap');
+      const chip = title.locator('span[role="img"]');
+      const mark = chip.locator('svg[data-mark]');
+      // A session nothing has pushed activity for rests as a finished turn, so every wait below is the push's.
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+      await expect(chip).toHaveAccessibleName('Idle');
+
+      for (const wait of WAIT_MARKS) {
+        await fireTaskActivity(page, 't414', 'permission', wait.waitKind);
+        await expect(mark, wait.label).toHaveAttribute('data-mark', wait.mark);
+        await expect(chip, wait.label).toHaveAccessibleName(wait.name);
+      }
+
+      // The control: a finished turn is the envelope, and its name is the plain label.
+      await fireTaskActivity(page, 't414', 'idle');
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+      await expect(chip).toHaveAccessibleName('Idle');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the run-order row draws the task\'s wait mark under Waiting for you, and a finished turn stays the envelope', async () => {
+    const { browser, page } = await launch('running', { sessionTaskId: 't414' });
+    try {
+      // Cleared of a selection, the inspector lists the run order.
+      await page.locator('.react-flow__pane').click({ position: { x: 8, y: 8 } });
+      await expect(page.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(9);
+      const row = page.locator('[data-testid="workflow-run-order-row"][data-task-key="t414"]');
+      const mark = row.locator('svg[data-mark]');
+      // A session nothing has pushed activity for rests as a finished turn, so every wait below is the push's.
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+
+      for (const wait of WAIT_MARKS) {
+        await fireTaskActivity(page, 't414', 'permission', wait.waitKind);
+        await expect(mark, wait.label).toHaveAttribute('data-mark', wait.mark);
+        await expect(row.locator('span[role="img"]'), wait.label).toHaveAccessibleName('Waiting for you');
+      }
+
+      await fireTaskActivity(page, 't414', 'idle');
+      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+      await expect(row.locator('span[role="img"]')).toHaveAccessibleName('Waiting for you');
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
 test.describe('Workflows inspector', () => {
   test('opens on the first task in the run order; cleared, it shows the run order, and a row selects its card', async () => {
     const { browser, page } = await launch('running');

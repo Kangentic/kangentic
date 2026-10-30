@@ -239,6 +239,59 @@ test('the pane folds to a strip, which unmounts its terminal, and back', async (
   }
 });
 
+/**
+ * Main's SESSION_ACTIVITY push for the workflow agent's session. A working
+ * session carries no reason; a wait carries the state's own kind, started two
+ * seconds ago, and the kind of a permission wait when the agent reported one.
+ */
+async function fireAgentActivity(page: Page, sessionId: string, state: 'thinking' | 'idle' | 'permission', waitKind?: 'question' | 'approval'): Promise<void> {
+  await page.evaluate(({ id, projectId, workflowId, activityState, reportedKind }) => {
+    const reason = activityState === 'thinking'
+      ? null
+      : { kind: activityState, since: Date.now() - 2000, ...(reportedKind ? { waitKind: reportedKind } : {}) };
+    window.__mockFireActivity(id, activityState, reason, projectId, workflowId);
+  }, { id: sessionId, projectId: PROJECT_ID, workflowId: WORKFLOW_ID, activityState: state, reportedKind: waitKind });
+}
+
+// The strip is what a folded pane leaves of the agent: its mark says what the
+// agent needs, by the same function the board card asks (`agentActivityMark`).
+// A wait of unknown kind and a question draw the same bubble, so the approval
+// is the case that goes red when the strip stops reading the session's reason.
+test('the folded strip draws the agent\'s wait as the card does: bubble for a question, shield for an approval, envelope for a finished turn', async () => {
+  const { browser, page } = await launch();
+  try {
+    const sessionId = await agentSessionId(page);
+    await byTestId(page, 'workflow-agent-pane-collapse').click();
+    const pane = byTestId(page, 'workflow-agent-pane');
+    await expect(pane).toHaveAttribute('data-collapsed', 'true');
+    const strip = pane.locator('span[role="img"]');
+    const mark = strip.locator('svg[data-mark]');
+    // An agent nothing has pushed activity for rests as a finished turn.
+    await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+    await expect(strip).toHaveAccessibleName('Workflow agent is waiting for you');
+
+    const waits: Array<{ label: string; waitKind?: 'question' | 'approval'; mark: string }> = [
+      { label: 'a question', waitKind: 'question', mark: 'agent-question' },
+      { label: 'an approval', waitKind: 'approval', mark: 'agent-approval' },
+      { label: 'a wait of unknown kind', mark: 'agent-question' },
+    ];
+    for (const wait of waits) {
+      await fireAgentActivity(page, sessionId, 'permission', wait.waitKind);
+      await expect(mark, wait.label).toHaveAttribute('data-mark', wait.mark);
+      await expect(strip, wait.label).toHaveAccessibleName('Workflow agent is waiting for you');
+    }
+
+    // The controls: a finished turn is the envelope, and a working agent the ring.
+    await fireAgentActivity(page, sessionId, 'idle');
+    await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+    await fireAgentActivity(page, sessionId, 'thinking');
+    await expect(mark).toHaveAttribute('data-mark', 'agent-working');
+    await expect(strip).toHaveAccessibleName('Workflow agent is working');
+  } finally {
+    await browser.close();
+  }
+});
+
 test('while the agent works, Start and Add task wait with the reason, and the canvas says why', async () => {
   const { browser, page } = await launch();
   try {
