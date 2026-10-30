@@ -1,0 +1,36 @@
+---
+description: "TypeScript style (no `any`, full descriptive names)"
+alwaysApply: true
+---
+# Rule: TypeScript style (no `any`, full descriptive names)
+
+New code is TypeScript strict mode. Two style rules are load-bearing for maintainability: no
+`any`, and no shorthand variable names. The first is checked by ESLint; the second is a review
+convention.
+
+## The rule
+
+- **TypeScript strict mode.** New code compiles under `tsc` strict mode (`tsconfig` `strict: true`); do not loosen it.
+- **No `any` types.** Never use `any` in new code. Use proper types from `src/shared/types.ts`,
+  `unknown` with type guards, or generic constraints. Replace existing `any` casts when you
+  touch the file.
+- **No shorthand variable names.** Use full, descriptive names everywhere (variables, refs,
+  parameters, callback arguments): `currentIndex` not `curIdx`, `previousValue` not `prev`,
+  `session` not `sess`.
+
+## Enforcement (self-maintaining)
+
+- **Lint (`any`):** ESLint `@typescript-eslint/no-explicit-any` is set to `error` in
+  `eslint.config.mjs` for `src/**` and `tests/**`. Run with `npm run lint`.
+- **Type system:** `tsc --noEmit` (`npm run typecheck`) enforces strict mode and runs in CI.
+- **Review:** `/code-review` flags `any` and shorthand names. Shorthand names are review-only
+  (not reliably mechanizable).
+
+`npm run lint` runs in CI (see `.github/workflows/ci.yml`), so `no-explicit-any` is enforced on
+every push, in addition to editors and review.
+
+## Scope
+
+Authored TypeScript and TSX under `src/` and `tests/`. Bridge `.js` scripts under
+`src/main/agent/` are CommonJS and exempt from the TypeScript rules (see
+`esbuild-cjs-imports.md`).

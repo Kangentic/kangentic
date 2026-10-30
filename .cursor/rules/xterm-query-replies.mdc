@@ -1,0 +1,65 @@
+---
+description: "a terminal that talks to a PTY answers no XTVERSION and no optional VT queries"
+globs: src/renderer/hooks/useTerminal.ts, src/renderer/utils/terminal-query-replies.ts, src/main/pty/buffer/headless-frame.ts, scripts/probe-terminal-peek-grid.js, scripts/probe-claude-headless-statusline.js, tests/unit/terminal-query-replies.test.ts, tests/ui/terminal-query-replies.spec.ts
+alwaysApply: false
+---
+# Rule: a terminal that talks to a PTY answers no XTVERSION and no optional VT queries
+
+Only the renderer's xterm answers an agent's capability queries: `useTerminal`'s `onData` writes to
+the PTY, and main's headless parser has no `onData` consumer. So whether a session sees a reply
+depends on whether its terminal was on screen when the agent booted. xterm 6.1 answers XTVERSION
+(`CSI > q`) unconditionally (xtermjs/xterm.js#5502), and Claude Code keys two behaviors on that one
+reply: sync-output awareness (DEC 2026) and its DECSTBM scroll region. Measured with
+`claude --debug` under xterm 6.0, a terminal with no reply logs `XTVERSION: no reply`, then
+`DECSTBM: gated` and `DECRQM(2026): skipped`. Answering would split sessions in two by an accident
+of what was visible, and would make the replay scroll-region gap that
+`HeadlessFrameBuffer.scrollRegionSuffix` guards against live. xterm 6.1 also answers the
+color-scheme query (`CSI ? 996 n`) by default, and pushes unsolicited reports under DECSET 2031,
+which is the same split.
+
+## The rule
+
+- **Swallow XTVERSION on every terminal whose `onData` reaches a PTY.** Call
+  `swallowXtversionQuery(terminal)` (`src/renderer/utils/terminal-query-replies.ts`) right after
+  construction, beside `activateUnicode11`, before `open()` and before any write. The mount
+  replay re-parses the agent's boot bytes, and Claude Code's carry the query (`\x1b[?u\x1b[>q`), so
+  a handler registered later would type a reply into a live agent's input. A CommonJS probe that
+  cannot import the helper inlines the same `registerCsiHandler({ prefix: '>', final: 'q' },
+  () => true)`.
+- **Construct it with `vtExtensions: TERMINAL_VT_EXTENSIONS`.** That pins `colorSchemeQuery`,
+  `kittyKeyboard` and `win32InputMode` off. `colorSchemeQuery` defaults to true in 6.1. The other
+  two default to false today, and naming them keeps a later default flip from turning either on.
+  A CommonJS probe spells the same keys out as `false` in its constructor options.
+- **Turning XTVERSION on is its own decision,** made with a fresh `claude --debug` measurement and
+  a plan for the scroll-region replay, never a side effect of an xterm upgrade.
+- **On an xterm upgrade, diff the reply sites.** List the literal `triggerDataEvent(` payloads in
+  the old and new `lib/xterm.mjs` and handle every new reply that is on by default. From 6.0.0 to
+  6.1.0-beta.304 there were three: XTVERSION, the color-scheme report and the kitty keyboard
+  query. Every other reply (DA1, DA2, DSR, DECRQM, DECRQSS, OSC color, window ops, focus) already
+  existed.
+- A terminal whose `onData` goes nowhere (main's headless parser, the devtools re-parse, the web
+  demo's replay emulator) answers into the void and is exempt.
+
+## Enforcement (self-maintaining)
+
+- **Test (behavior and sites):** `tests/unit/terminal-query-replies.test.ts` drives a real
+  `@xterm/headless` terminal. It shows that the beta answers XTVERSION without the helper (so the
+  case is not vacuous), that it answers neither `CSI > q` nor `CSI > 0 q` with it, that DA1 and DA2
+  still answer, and that the pinned extensions silence the kitty keyboard query that the same
+  option answers when on. It scans `src/`, `demo/` and `scripts/`. For each terminal assigned as
+  `x = new ...Terminal(` whose `x.onData(` is called, it fails unless `x` itself is swallowed and
+  its constructor options hold every `TERMINAL_VT_EXTENSIONS` key off. It pins that the scan
+  visits `useTerminal.ts` and both probes, and that `useTerminal` passes the extensions and swallows
+  before `open()`. Runs in CI via `npm run test:unit`.
+- **Test (browser bundle):** `tests/ui/terminal-query-replies.spec.ts` sends XTVERSION and the
+  color-scheme query to a mounted terminal and reads the mock's `sessions.write` log, fenced and
+  positively controlled by a device-attributes query. The color-scheme reply comes from the browser
+  core only, so this is its one guard. It reads red with either half of the fix removed.
+- The scan matches a terminal by its assignment and a direct `x.onData(` call. A terminal handed
+  to a helper that subscribes to `onData` elsewhere escapes it. Review covers that gap.
+
+## Scope
+
+Every xterm `Terminal` in the repo whose `onData` output is written to a PTY: the renderer's
+`useTerminal`, and the dev probes that stand in for it. The phone's terminal (the `Kangentic/mobile`
+repo) is out of mechanical reach; `docs/integrations/mobile-bridge/data-feeds.md` carries the contract note.

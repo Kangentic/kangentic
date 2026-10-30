@@ -1,0 +1,45 @@
+---
+description: "use ES `import`, not bare `require()`, in bundled main-process code"
+globs: src/main/**, src/preload/**
+alwaysApply: false
+---
+# Rule: use ES `import`, not bare `require()`, in bundled main-process code
+
+esbuild builds the main and preload bundles in CJS mode. Bare `require()` calls pass through
+unbundled, so a `require('some-package')` of a static string survives into the build and breaks
+in the packaged app (the dependency is not resolvable at runtime). Only ES `import` statements
+get bundled.
+
+## The rule
+
+In bundled TypeScript main-process and preload code (`src/main/**`, `src/preload/**`), import
+production dependencies with ES `import`, never a bare `require('<literal>')`.
+
+Legitimate exceptions, each marked with
+`// eslint-disable-next-line @typescript-eslint/no-require-imports` on the preceding line:
+
+- Deliberate externals that must stay unbundled (e.g. `require('original-fs')` in
+  `src/main/git/original-fs.ts`).
+- A lazy `require('child_process')` in the synchronous shutdown failsafe (`src/main/shutdown.ts`).
+- Dynamic non-literal requires (`require(moduleName)`) where unbundled behavior is intended.
+
+The `.js` bridge and hook scripts under `src/main/agent/` (e.g. `event-bridge.js`,
+`status-bridge.js`) are NOT bundled by esbuild; they run as plain CommonJS injected into the
+agent CLI and correctly use `require`. ESLint disables `no-require-imports` for them via the
+`src/main/agent/*.js` override in `eslint.config.mjs`.
+
+## Enforcement (self-maintaining)
+
+- **Lint:** ESLint `@typescript-eslint/no-require-imports` (from the typescript-eslint
+  recommended preset) flags bare requires; intentional ones use `eslint-disable-next-line`.
+- **Test:** `tests/unit/esbuild-cjs-imports.test.ts` is a focused guard that scans `src/main`
+  and `src/preload` TypeScript for `require('<literal>')` not carrying the
+  `eslint-disable-next-line` marker, with a clear failure message. Runs in CI via `npm run test:unit`.
+
+`npm run lint` runs in CI, so the broader ESLint `no-require-imports` rule enforces this on every
+push; the vitest test is a complementary fast check.
+
+## Scope
+
+Bundled main and preload TypeScript. Unbundled bridge `.js` scripts and the intentional
+externals listed above are exempt.

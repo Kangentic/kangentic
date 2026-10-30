@@ -1,0 +1,51 @@
+---
+description: "when to delegate to a subagent and how to route Task"
+globs: .cursor/skills/**, .cursor/agents/**
+alwaysApply: false
+---
+# Rule: skill invocation and agent routing
+
+Cursor has no `context: fork` field. Isolation is a Task (subagent) spawn: a fresh prompt, no
+prior conversation history, and a summary back to the main loop. Choosing Task versus staying
+inline makes skills slow, lossy, or unsafe if it is wrong.
+
+## The rule
+
+- **Stay in the main loop** when ANY hold: it is a gated, mutating workflow (commit, rebase, push,
+  tag, admin-merge) that needs main-loop visibility and confirmations; it is a knowledge-injection
+  skill whose whole purpose is to enrich the MAIN context (`session-lifecycle`, `cross-platform`,
+  `ipc-bridge`, `debug-activity`); it is active implementation tied to the current conversation;
+  or it is spawned as an incidental side-check while a gated/mutating skill remains active in the
+  same conversation. An ambiguous prompt can cause a subagent to complete the skill's remaining
+  steps independently (this shipped a duplicate PR during `pull-request`). `test` and `sync-docs`
+  stay inline for this reason.
+- **Delegate with Task** for heavy, self-contained judgment that should not pollute the main
+  session: `add-ipc-endpoint` to `ipc-auditor`, `add-migration` to `migration-safety`, and
+  `code-review` to its dimension auditors (`ipc-auditor`, `hmr-parity`, `platform-guard`,
+  `session-debugger`, `migration-safety`) fanned out as parallel in-session subagents and
+  synthesized in the main loop. `test` delegates to `test-builder` for coverage audits and test
+  writing in a single in-session pass; `code-review` likewise delegates coverage-hole test-writing
+  to `test-builder` in its Apply Phase, so `test-builder` stays the single source of truth for
+  tier classification.
+- **Gated mutating skills** (`commit`, `pull-request`, `merge-pull-request`, `merge-back`,
+  `release`, `release-protocol`, `test`, `preview`, `sentry`, `code-review`) set
+  `disable-model-invocation: true` so they run only when named. Knowledge skills omit that field
+  so the agent can pull them in from the description.
+- **Read-only auditor agents** set `readonly: true`. Agents that write tests or capture assets
+  (`test-builder`, `marketing-captures`) set `readonly: false`. Cursor has no per-tool allowlist.
+  Use `model: inherit` unless a specific model ID is required.
+- **Cursor does not preload skills from agent frontmatter.** An auditor whose Claude copy used
+  `skills:` must Read the matching `.cursor/skills/<name>/SKILL.md` in its body.
+- **Never route a fixing or mutating skill to `explore`.** That built-in subagent is read-only and
+  drops project conventions (no em-dashes, no `any`). Keep mutating work on the default agent or
+  a project subagent that loads `AGENTS.md`.
+
+## Enforcement (self-maintaining)
+
+- **Review:** judgment-based, applied when authoring or editing a skill or agent. No mechanical
+  test - skill routing is a design decision, not a code shape.
+
+## Scope
+
+Skill and agent authoring under `.cursor/`. Does not govern product code. The `.claude/` copies
+stay for Claude Code sessions and for the product's agent spawn path.

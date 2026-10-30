@@ -1,0 +1,38 @@
+---
+description: "an IPC endpoint must be wired through all 7 layers"
+globs: src/shared/ipc-channels.ts, src/preload/**, src/main/ipc/**, src/renderer/stores/**
+alwaysApply: false
+---
+# Rule: an IPC endpoint must be wired through all 7 layers
+
+The renderer talks to the main process through a 7-layer bridge. An endpoint added to some
+layers but not others fails at runtime (missing handler), at type-check (missing type), or
+silently in tests (missing mock). All seven must stay in sync.
+
+## The rule
+
+When you add or change an IPC endpoint, wire it through every layer:
+
+1. **Channel constant** in `src/shared/ipc-channels.ts` (single source of truth).
+2. **Types** on the `ElectronAPI` interface in `src/shared/types.ts`.
+3. **Preload** bridge in `src/preload/preload.ts` (`contextBridge`).
+4. **Handler** in `src/main/ipc/handlers/*.ts` (`ipcMain.handle`), guarded with
+   `!mainWindow.isDestroyed()` for push events and filtered by `projectId` where relevant.
+5. **Service / repository** the handler delegates to.
+6. **Store** consumer in `src/renderer/stores/*-store.ts` (the Zustand IPC bridge).
+7. **Mock** in `tests/ui/mock-electron-api.js` so UI tests exercise the new surface.
+
+The `add-ipc-endpoint` skill scaffolds all seven layers; the `ipc-bridge` skill is the full
+checklist with the invoke vs send vs push-event patterns.
+
+## Enforcement (self-maintaining)
+
+- **Review:** the `ipc-auditor` agent cross-references all seven layers after changes to any IPC
+  layer file.
+- **Skills:** `add-ipc-endpoint` and `ipc-bridge` encode the layering.
+- No single mechanical test spans all seven layers; `ipc-auditor` is the enforcement.
+
+## Scope
+
+The IPC bridge between renderer and main. Direct main-process-internal calls and renderer-only
+state are not IPC and are not subject to this rule.

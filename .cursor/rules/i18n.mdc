@@ -1,0 +1,104 @@
+---
+description: "user-facing text goes through Lingui"
+globs: src/renderer/**/*.tsx, src/renderer/**/*.ts, src/main/i18n/**, src/main/index.ts, src/main/ipc/handlers/system.ts, src/main/db/global-db-dialog.ts, src/main/notifications/desktop-notifier.ts, src/main/diagnostics/renderer-recovery.ts, src/main/window-open-policy.ts, src/shared/**/*.ts, src/preload/**, src/locales/**, lingui.config.ts
+alwaysApply: false
+---
+# Rule: user-facing text goes through Lingui
+
+Kangentic's UI is translated with Lingui 6 (GitHub #489). English stays inline in the source, and a
+message's ID is a hash of its English, so rewording a string makes it new to every translation. A
+production renderer keeps only each message's ID. Text that never reached a catalog therefore shows
+as a raw ID like `z3fd2`, and text never wrapped in a macro shows English in every language. The
+setup, the catalog layout and the decision record are in
+[docs/architecture/i18n.md](../../docs/architecture/i18n.md).
+
+## The rule
+
+- **Macro by file type.** A `.tsx` file uses `<Trans>`, `<Plural>` and `useLingui()`'s `t` from
+  `@lingui/react/macro`. Every `.ts` module, renderer ones included, uses `msg` from
+  `@lingui/core/runtime-macro` with `i18n._(...)` or `translateText(...)`. Main bundles with plain
+  esbuild, and Playwright and the capture rig load `.ts` modules outside Vite. A build-time macro
+  throws in all three places.
+- **Translate where it renders, never at module load.** A module-level list holds `msg`
+  descriptors, resolved with `translateText` (`src/renderer/i18n/translate.ts`) or `settingProps`
+  where they render. Type a converted list's field `MessageDescriptor`, not `LocalizedText`, so a new
+  entry cannot be a plain string. Keep `LocalizedText` only where a plain string is a real value
+  (a protocol token, an example URL). A `t` at module scope runs before the session's catalog loads, so
+  it stays English for good.
+- **Text with two audiences resolves at each reader.** The renderer uses `translateText`; main's
+  agent text, stored run reasons and persisted names use `englishText`. A `${descriptor}` in a
+  template literal prints `[object Object]` and no compiler catches it. A refusal main throws stays
+  English and comes paired with a message for the UI (`WORKFLOW_REFUSALS` and
+  `WORKFLOW_REFUSAL_MESSAGES`), because the renderer matches the thrown text exactly.
+- **Name placeholders.** Pull a member expression into a local first, so the translator sees
+  `{projectName}`, not `{0}`. The runtime macro takes them labeled, `${{ name }}` and
+  `plural({ count }, ...)`: outside the transform (main) a raw `${count}` or `plural(count, ...)`
+  throws.
+- **Plurals are ICU plurals**, `<Plural value={count} one="# task" other="# tasks" />` or
+  `plural(...)`, never `count === 1 ? '' : 's'`.
+- **Give ambiguous short strings a `context`** (`msg({ message: 'Done', context: 'column name' })`).
+  "Done", "Merge" and "Open" read differently in different places, and one English string is one ID.
+  A string drawn in more than one area with different translations needs a context too. The renderer
+  merges a locale's areas into one map, and an untranslated copy can replace a translation
+  (`tests/unit/i18n-boundaries.test.ts` fails on that). The extractor reads only a literal context.
+- **Quote literal braces.** ICU treats `{` as a placeholder, so literal template keywords are quoted:
+  `'{{task_xml}}'` renders `{{task_xml}}`.
+- **The preload imports nothing that holds `msg`.** The runtime macro needs `node:crypto`, which a
+  sandboxed preload cannot load. Put a constant the preload needs in its own module, as
+  `src/shared/pop-out-arg.ts` does.
+- **Text an agent reads stays English.** MCP tool output, agent prompts, reasons stored for
+  `kangentic_get_automation_runs`, and template keyword names resolve a descriptor with `englishText`
+  (`src/shared/i18n/english.ts`), never with the UI translator and never with `descriptor.message`.
+- **Each area owns one PO file per locale** (`src/locales/<locale>/<area>.po`). An area is a folder
+  under `src/renderer/components/`, or one of `src-renderer`, `src-shared` and `src-main`
+  (lingui.config.ts). Run `npm run i18n:extract` after adding, changing or removing a message, and
+  commit `src/locales` with it. Commit only your own area's catalogs.
+- **A machine translation is marked `fuzzy` until reviewed.** `npm run i18n:translate` drafts empty
+  entries and marks each one. Clear the flag only after reviewing the entry, and never hand-mark a
+  reviewed entry `fuzzy`, since `--redraft` rewrites marked entries
+  ([docs/contributing/translations.md](../../docs/contributing/translations.md)).
+- **A language ships deliberately.** `SHIPPED_LOCALES` (`src/shared/i18n/locales.ts`) lists the
+  languages the picker offers and the first-launch suggestion may offer. Add one only once its
+  catalogs are translated, the six first-launch strings (`LANGUAGE_PROMPT_MESSAGES`) included, and
+  give it a translated README with `npm run i18n:translate-readme -- --locales <code>`.
+
+## Enforcement (self-maintaining)
+
+- **Test:** `tests/unit/i18n-hardcoded-text.test.ts` parses every renderer `.tsx` and fails on JSX
+  text, a literal child, or a literal UI prop (label, placeholder, aria-label, a dialog's title...)
+  outside a macro, and on a module-scope `t`. Files not yet extracted are allowlisted by catalog area
+  in `tests/unit/helpers/i18n-unconverted-files.ts`, and a listed file with nothing left fails, so the
+  list only shrinks. Text that must stay as written takes `{/* i18n-ok: <reason> */}`. A second scan
+  in the same file reads every renderer `.ts` and `.tsx` for a literal `title`, `message` or
+  `action.label` handed to `addToast(...)` or `updateToast(id, ...)`, which the JSX scan cannot see;
+  its own shrink-only list is `tests/unit/helpers/i18n-unconverted-toast-files.ts`. It reads only
+  an object literal written in the call, so a toast raised through an alias of `addToast`, a toast
+  object built in a variable first, and a shorthand field (`{ title }`) are out of its reach.
+- **Test:** `tests/unit/i18n-boundaries.test.ts` fails when a file that declares messages is in no
+  catalog or in two, when two catalogs share a file, when a `.ts` module imports a build-time macro,
+  when MCP or agent command code imports the UI translator, when main's esbuild bundle stops
+  resolving a shared list's descriptors, when the preload bundle reaches `@lingui`, when a
+  runtime-macro placeholder or `plural`/`select` argument is not labeled, when a shipped language
+  lacks the first-launch strings, and
+  when one message reads one way in one area and another way, or untranslated, in another. The
+  renderer merges a locale's areas and the last one wins, so a correction to one copy of a message
+  does not show until every copy matches. `npm run i18n:translate` copies a message another area
+  already translates instead of drafting it again.
+- **Test:** `tests/unit/readme-translations.test.ts` fails when a shipped language has no
+  `i18n/README.<locale>.md`, a translated README's language is not shipped or its file sits at the
+  root, and when a README's switcher does not list exactly `SHIPPED_LOCALES` in order. `/release`
+  refreshes stale translations ([docs/contributing/translations.md](../../docs/contributing/translations.md)).
+- **Gate (CI and release):** `npm run i18n:check` (`scripts/i18n-catalogs.js`) runs `lingui check
+  sync`, which fails exactly when `lingui extract` would change a file, and `lingui check missing` for
+  English. CI's checks job runs it as its own step, and `scripts/build.js` (the release build) and
+  `scripts/build-demo.js` (the demo deploy) run it before building, failing loudly with the fix.
+- **Test:** `tests/unit/vite-refresh-hook-signatures.test.ts` fails when a renderer Vite config or
+  `vitest.config.mts` drops the Lingui plugin or the catalog hot update.
+- **Review:** `/code-review` checks message quality the scans cannot: a `context` where the same
+  English means two things, a placeholder a translator can read, a sentence not split across messages.
+
+## Scope
+
+User-facing text in the renderer, the shared lists main and the renderer both import, and main's own
+menus, dialogs and notifications. What stays English (agent and terminal output, MCP text, seeded
+column names, release notes, Monaco's and Chromium's own strings) is listed in the docs concept.

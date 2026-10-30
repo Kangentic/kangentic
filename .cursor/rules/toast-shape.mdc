@@ -1,0 +1,57 @@
+---
+description: "every toast is a title over one line, timed or persistent"
+globs: src/renderer/**
+alwaysApply: false
+---
+# Rule: every toast is a title over one line, timed or persistent
+
+The app raised 161 toasts in nine shapes before the redesign: one-line toasts and two-line ones, an
+action as an inline link on some and a button on others, buttons on toasts that closed in four
+seconds while the user reached for them, and "Failed to", "Could not" and "Couldn't" for the same
+kind of failure. A card that took clicks with nothing to do on them once swallowed the Board
+Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and the type holds it.
+
+## The rule
+
+- **Every toast has a `title` and a body (`message`).** The title says what happened in a few
+  words (a translated title that runs past the 380px card wraps to a second line instead of
+  being cut off); the body gives the task, the place or the detail, as one sentence that fits one line at
+  the card's 380px width. Only a task or file name may make it wrap. A reason main or the error
+  wrote may follow as a second sentence (`asSentence`). A failure's title says what did not
+  happen, most often "Couldn't ..." ("Couldn't resume session", "Automation failed"), and its body
+  is the reason.
+- **A timed toast carries no button.** It closes on its own (`durationMs`, the Notifications
+  setting by default), and a button on it can leave while the user reaches for it. When the toast
+  is about one thing, give it `onOpen`: the card opens that thing (a task through
+  `openTaskFromNotification`, a list, a workflow, a folder) on a click.
+- **A toast with a button is `persistent: true`.** Its `action` carries a label and an icon
+  (`review`, `settings`, `retry`, `update`), drawn at the card's bottom right. A persistent toast
+  may also have no button (its card opens its subject, or it closes when what it reports ends).
+- **Change a toast in place with `updateToast`**, never dismiss-and-add for a count that grows.
+- **Do not reintroduce a clickable card that opens nothing.** A card without `onOpen` is
+  `pointer-events: none` and only its buttons take clicks. While a dialog, the settings panel or the
+  search palette is open (`useRegisterOpenOverlay`, `utils/overlay-gate.ts`), nothing on a toast
+  takes a click. A new modal overlay registers there.
+- **The countdown is the store's, not a keyframe's.** A timed toast's remaining time lives in the
+  toast store (held while the pointer is over it, kept across a Fast Refresh); the bottom line only
+  draws it. `.no-motion` zeroes CSS animation durations, so no CSS animation may be the clock.
+
+## Enforcement (self-maintaining)
+
+- **Type system:** `ToastInput` is a union of a timed input (no `action`) and a persistent one, and
+  `title` is required on both, so `npm run typecheck` fails a toast without a title or a button on
+  a timed toast.
+- **Tests:** `tests/unit/toast-store-hmr.test.ts` pins the store (the countdown hold and release,
+  `updateToast`, the stack limit that never evicts a persistent toast for a timed one);
+  `tests/ui/toast-behavior.spec.ts` pins the card (title over body, the countdown line, the hover
+  hold on a click-through card, a card click that opens, the dialog gate including a panel opened by
+  keyboard, the stepped line with Animations off, a toast in a pop-out);
+  `tests/ui/toast-click-through.spec.ts` pins that a card that opens nothing never eats a click on
+  what is under it.
+- **Review:** the copy (one sentence, one line, "Couldn't") is judgment; `/code-review` checks it
+  against [[writing-style]].
+
+## Scope
+
+Toasts raised in the renderer, the main window's and every pop-out's. Main never raises a toast:
+it pushes the facts, and the renderer titles them (a body main composes keeps to one sentence).

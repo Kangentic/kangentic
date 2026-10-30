@@ -1,0 +1,80 @@
+---
+name: preview
+description: Open dev server for previewing live code changes
+disable-model-invocation: true
+---
+
+# Preview
+
+Open a new terminal window running a Kangentic dev server for previewing live code changes in the current worktree.
+
+## Instructions
+
+1. If the user passed `--fresh` (e.g. `/preview --fresh`), run `node scripts/worktree-preview.js --fresh`. Otherwise run `node scripts/worktree-preview.js`. Forward every `--env KEY=VALUE` the user passed, verbatim and repeatable (`node scripts/worktree-preview.js --env KANGENTIC_TELEMETRY=1 --env KANGENTIC_ERROR_REPORTING=0`). That flag is the only way a variable reliably reaches the dev server. Terminal.app and gnome-terminal start the command from their own long-running process, so a variable set in the Bash call itself is silently dropped there. Windows Terminal 1.24 does pass the launcher's environment into the new tab (measured), so the task's own tag reaches a Windows preview, but `--env` is the path that works everywhere.
+2. Report the output - it will show the assigned port, PID, and a `Watch:` command.
+3. If the command fails, report the error message and stop.
+4. Unless the user passed `--no-watch`, or the launcher reported `PID: unknown` (the watcher cannot attach without a live PID file and would exit `1` immediately), run the printed `Watch:` command (`node scripts/worktree-preview.js --wait --port=<port> --kangentic-no-activity-hold`) as a **separate Bash call with `run_in_background: true`**. Do not poll it, do not wrap it in a `Monitor`, and do not schedule a `ScheduleWakeup` fallback - it blocks until the preview exits, and the harness delivers a `<task-notification>` with its exit code on its own.
+
+   Run the `Watch:` line **exactly as printed**, `--kangentic-no-activity-hold` included. The script ignores that flag; Kangentic's activity engine reads it out of the command string and exempts the shell from holding the session ACTIVE. Drop it and the board shows this task as working for the preview's entire lifetime, so the user loses the signal that says which agent needs them.
+5. When that notification arrives, tell the user what happened and stop offering a `--stop` command for that port:
+   - exit `0` - exited cleanly (user closed the terminal, a `--stop` you or the user ran, or the task's end stopping it)
+   - exit `2` - crashed; point the user at the preview terminal's scrollback
+   - exit `3` - force-killed or the terminal was hard-closed
+   - exit `1` - the watcher couldn't attach (unlikely right after a successful launch)
+   - **no exit code** (the notification says the command was `stopped` with no completion record):
+     the WATCHER died, usually with a session teardown. This says nothing about the preview, so
+     treat its state as UNKNOWN, not as running. Either verify before saying anything about it, or
+     say nothing. Do not re-offer `--stop` on the strength of a teardown notice.
+
+6. **Offer the `--stop` command once, when you launch the preview.** Do not append it to later
+   messages about unrelated work. Repeating it every turn is noise, and because a preview the user
+   already stopped leaves no notification you will see, the repeated offer is frequently just wrong.
+   Re-offer only when the user asks about the preview, or when you have re-verified it is alive in
+   the same turn.
+
+7. **Never state that a preview is running from memory.** Liveness is external state that changes
+   without telling you: the user can close the terminal, run `--stop`, or reboot. A launch you
+   performed earlier in the conversation is not evidence it is still up. If it matters, check in
+   that turn (`tasklist` / `Get-Process` on the recorded PID, or the lockfile); otherwise do not
+   make the claim at all.
+
+## Notes
+
+- **A preview forces the cheap Claude tier.** Every preview project is seeded with
+  `default_agent: claude`, `default_model: haiku`, and `default_effort: low`
+  (`src/devtools/main/ephemeral-projects.ts`), so agent-driven preview testing does not bill the
+  developer's subscription at the committed board's Opus tier.
+
+  Those are Claude family names, and a model id is adapter-specific, so the project default does
+  NOT follow a column or task that overrides the agent: `projectModelDefaultsApply`
+  (`src/main/transition-engine/spawn-preamble.ts`) drops the project tier whenever the resolved
+  agent is not the project's default agent. A Codex column in a preview therefore spawns with no
+  `--model` flag and Codex's own default applies. No per-column override is needed just to make a
+  non-Claude column run.
+
+  Set a column's own model override only when you want a specific model (`gpt-5.5` for Codex),
+  via the Board Manager or `kangentic_devtools_run_command` `update_column`
+  `{"modelOverride": "gpt-5.5"}`. The one case that still inherits `haiku` is changing the
+  preview project's OWN default agent to a non-Claude one, which leaves the seeded Claude model
+  name in place.
+
+- This script must be run from inside a `.kangentic/worktrees/` directory. It will error with a clear message if run from the project root.
+- Creates a filesystem junction (Windows) or symlink (Unix) from `<worktree>/node_modules` → `<root>/node_modules` - no `npm install` or rebuild needed. The exception is a branch whose `package-lock.json` declares a different dependency tree from the root's (it adds, removes or bumps a dependency; a release that only moves the app's or a workspace package's own version does not count): a real `npm install` in the worktree is then KEPT, since the root's packages cannot run that branch, and a worktree still on the junction gets a printed warning telling you to install.
+- The preview instance runs on a dynamically assigned port (starting from 5174) so it does not conflict with the root dev server on 5173.
+- Each preview instance has its own empty board - board state does NOT sync between instances. Use the root instance for task management.
+- **An in-app restart keeps the board.** A restart the app itself asks for (Settings > Performance > Graphics acceleration, or `window.electronAPI.gpuHealth.setAccelerationAndRestart(true)` through `kangentic_devtools_eval`) makes dev.js respawn Electron on the same data dir: the same projects, tasks, and session records, with suspended sessions resumed. That is how to test anything that must survive an app restart. `--stop` and a closed terminal still wipe everything.
+- When the preview terminal is closed, the worktree's `.kangentic/` and `.vite/` directories are automatically cleaned up (ephemeral mode). Two things stay for instant restarts: the node_modules junction, and `.kangentic/vite-cache`, the worktree's own Vite dependency cache, so a relaunch does not bundle every dependency again.
+- **One preview per worktree.** All previews of a worktree share `<worktree>/.kangentic/data`, so the launcher refuses a second one while one is running (report its error and the `--stop` command it prints; do not stop the running preview yourself) and waits for one that is still shutting down. Previews of DIFFERENT worktrees run side by side, each on its own port with its own watcher. To restart, `--stop` and wait for "stopped cleanly" before launching again.
+- Pass `--fresh` to launch without auto-opening a project (shows the Welcome Screen). Useful for testing the first-launch experience. Example: `/preview --fresh`
+- Pass `--env KEY=VALUE` (repeatable) to set a variable in the dev server's environment; the launcher splices it into the terminal command, so it is visible in the process list and must not carry a secret. Values may not contain quotes, newlines, or `& | < > ^ %`. The analytics rig is the standing example (`docs/telemetry/usage-analytics.md`, "Local verification"): `/preview --env KANGENTIC_TELEMETRY=1 --env KANGENTIC_APTABASE_APP_KEY=A-DEV-0000000000 --env KANGENTIC_ERROR_REPORTING=0`.
+- **Stopping goes through Electron's real quit path.** `--stop` writes the stop file, and `dev.js` then asks the app to quit over the inspection bridge (`POST /quit`) before falling back to a kill after 8s. So a stopped preview runs its synchronous cleanup (sessions suspended, PTYs killed, the run recorded as a clean exit) instead of being terminated with its PTY children orphaned. The kill fallback still exists for an app whose bridge is off or wedged. The cleanup moves `.kangentic/` (all but its Vite dependency cache) and `.vite/` into a trash folder and a detached process deletes it, so `--stop`, a closed terminal, and a closed app window all finish in about a second. A `--stop` that takes many seconds means a held handle refused that move and the clones are being deleted in place; the launcher still waits up to 45s before force-killing.
+- **Stopping a preview (restarts):** run `node scripts/worktree-preview.js --stop --port=<port>` instead of `taskkill`. It writes a stop file that dev.js watches, so the server cleans up and exits 0 and its terminal tab closes itself; a `taskkill /F` exits non-zero and leaves a dead "[process exited with code 1]" tab behind on every restart. `--stop` falls back to a force kill automatically if the server does not exit within 45s (e.g. an instance launched from a checkout predating the stop-file watcher). Omitting `--port` stops every preview this worktree is running.
+- **The task's end stops it.** In a dev build with "Stop leftover processes" on, moving the task to Done or To Do, or deleting it, stops every preview in its worktree through the same stop file `--stop` writes, before the worktree is removed (`src/devtools/main/worktree-preview-stop.ts`). Two differences: the stop file says the worktree is being removed, so `dev.js` skips its ephemeral cleanup (no trash move, no detached deleter), and the stop waits for the rest of the preview's tree, the tab's `cmd` included, before the leftover reap scans. There is nothing to stop by hand first.
+- **Watching only observes.** It never stops or restarts the preview - do not run `/preview` again automatically just because a watcher fired.
+- A notification arriving immediately after you ran `--stop` yourself is the expected confirmation of that stop, not a new event to alarm the user about.
+- The watcher holds a background task slot for the preview's whole lifetime, which can be hours. It does NOT hold the board's activity indicator, as long as it carries `--kangentic-no-activity-hold` (see step 4). Pass `--no-watch` to skip the watcher entirely and launch fire-and-forget.
+- If the Claude Code session restarts, a pending watch notification is lost. The preview is not killed BY the restart, but that is not the same as it still being up: once the watcher is gone you have no signal at all, so a later `--stop` (or a closed terminal) is invisible to you. Treat the state as unknown from that point on and re-verify before saying anything about it. Re-attach with `node scripts/worktree-preview.js --wait --port=<port> --kangentic-no-activity-hold` to restore the signal. This command is hand-typed rather than printed by the launcher, so carry the flag deliberately - omitting it re-pins the task ACTIVE for as long as the preview runs.
+
+## Allowed Tools
+
+Only use `Bash` (for the `node` command). Run from the current working directory - do not chain commands.

@@ -27,13 +27,17 @@ import path from 'node:path';
 // same reason: SCAN_DIRS does not name i18n/.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const SCAN_DIRS = ['src', 'scripts', 'docs', 'demo', '.claude/rules', '.claude/skills', '.claude/agents'];
-const SCAN_ROOT_FILES = ['README.md', 'CLAUDE.md'];
+const SCAN_DIRS = [
+  'src', 'scripts', 'docs', 'demo',
+  '.claude/rules', '.claude/skills', '.claude/agents',
+  '.cursor/rules', '.cursor/skills', '.cursor/agents',
+];
+const SCAN_ROOT_FILES = ['README.md', 'CLAUDE.md', 'AGENTS.md'];
 // .mts and .cts are here because demo/vite.config.mts is the largest config file in a scanned
 // tree and is comment-dense; without them the extension list would silently skip it. .po is the
-// English i18n catalog.
+// English i18n catalog. .mdc is Cursor project rules under .cursor/rules/.
 const TEXT_EXTENSIONS = new Set([
-  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.json', '.html', '.po',
+  '.ts', '.tsx', '.mts', '.cts', '.js', '.jsx', '.mjs', '.cjs', '.css', '.md', '.mdc', '.json', '.html', '.po',
 ]);
 // Mirrors the .gitignore entries that drop agent scratch prose inside a scanned tree.
 const SKIP_DIRECTORY_NAMES = new Set(['superpowers']);
@@ -114,7 +118,10 @@ function findOffendingLines(
   return offenders;
 }
 
-const isMarkdown = (filePath: string): boolean => path.extname(filePath) === '.md';
+const isMarkdown = (filePath: string): boolean => {
+  const extension = path.extname(filePath);
+  return extension === '.md' || extension === '.mdc';
+};
 
 /** The em-dash/en-dash predicate, pulled out so the fixture describe block below can drive the
  *  exact same check the live-corpus scan uses, rather than a hand-copied duplicate. */
@@ -225,10 +232,12 @@ describe('writing-style character detectors (fixtures, not the live corpus)', ()
     expect(scanned.some((file) => file.startsWith('src/locales/') && !file.startsWith('src/locales/en/'))).toBe(false);
   });
 
-  it('scopes isMarkdown to .md paths, so the src/ curly-quote exemption is intentional rather than borrowed from one file', () => {
+  it('scopes isMarkdown to .md and .mdc paths, so the src/ curly-quote exemption is intentional rather than borrowed from one file', () => {
     expect(isMarkdown('docs/example.md')).toBe(true);
     expect(isMarkdown('README.md')).toBe(true);
     expect(isMarkdown('CLAUDE.md')).toBe(true);
+    expect(isMarkdown('AGENTS.md')).toBe(true);
+    expect(isMarkdown('.cursor/rules/writing-style.mdc')).toBe(true);
     expect(isMarkdown('src/main/agent/shared/auto-name.ts')).toBe(false);
   });
 });

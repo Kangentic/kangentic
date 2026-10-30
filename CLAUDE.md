@@ -2,6 +2,9 @@
 
 Cross-platform desktop Kanban for Claude Code agents.
 
+Cursor-primary development copies of these instructions live in `AGENTS.md` and `.cursor/`. Keep
+this file and `.claude/` for Claude Code sessions and for the product's agent spawn path.
+
 ## Tech Stack
 
 - **Runtime:** Electron 45 + Node 24

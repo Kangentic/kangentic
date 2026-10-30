@@ -1,0 +1,63 @@
+---
+description: "external (unbundled) scripts copy parity"
+globs: scripts/build.js, scripts/dev.js, scripts/copy-external-scripts.js, src/main/agent/**
+alwaysApply: false
+---
+# Rule: external (unbundled) scripts copy parity
+
+A few agent integration scripts run OUTSIDE the esbuild bundle as raw `.js`/`.mjs` injected into
+the agent CLI: the hook bridges (`src/main/agent/status-bridge.js`,
+`src/main/agent/event-bridge.js`) and adapter plugins (e.g. OpenCode's
+`src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs`). esbuild does not bundle them,
+so they must be physically copied next to the bundle, where `resolveBridgeScript` /
+`resolvePluginScript` (`src/main/agent/shared/bridge-utils.ts`) locate them by returning the
+first existing candidate (candidate #0 is the copied `.vite/build/` path).
+
+This shipped as a bug. `event-bridge.js` source moved to a new base64 directive format
+(`directive-builders.ts`) while a stale `.vite/build/event-bridge.js` copy still spoke the old
+format and silently dropped every hook directive. The reason it went stale: `scripts/build.js`
+copied the bridges but `scripts/dev.js` (used by `npm start` / `npm run dev`) did not, so the
+running dev app permanently ran whatever copy a prior `npm run build` left behind. ExitPlanMode
+events went untagged and plan-exit auto-move broke with no error. `status-bridge.js` and the
+plugin were "in sync by luck" - latent landmines one edit away from the same break.
+
+## The rule
+
+Every external (unbundled) script consumed via `resolveBridgeScript` / `resolvePluginScript`
+must be deployed through the single shared copy list:
+
+1. Register it as ONE entry in `EXTERNAL_SCRIPTS` in `scripts/copy-external-scripts.js`. The
+   entry's `name` must equal the literal passed to the resolver, and its `destDir`/`destFile`
+   must match the resolver's candidate-#0 layout (bridge -> `<build>/<name>.js`; plugin ->
+   `<build>/plugins/<adapter>/<name>.mjs`).
+2. Deploy it from BOTH `scripts/build.js` (production) and `scripts/dev.js` (dev) by calling
+   `copyExternalScripts(projectDir)`. Never hardcode an inline `fs.copyFileSync` copy list, and
+   never let only one of the two scripts copy.
+3. Call the resolver with a STRING LITERAL so registration is statically verifiable.
+
+If a new script-deploying entry point is ever added beyond `build.js` / `dev.js`, extend the
+deploy-script list in the enforcement test below to cover it.
+
+## Enforcement (self-maintaining)
+
+- **Test (mechanical, CI):** `tests/unit/external-scripts-parity.test.ts` imports
+  `EXTERNAL_SCRIPTS` and asserts (a) every `resolveBridgeScript` / `resolvePluginScript` literal
+  under `src/main/agent/**` is registered, and resolver arguments are string literals; (b) BOTH
+  `scripts/build.js` and `scripts/dev.js` call `copyExternalScripts()`; (c) each entry's source
+  exists and destinations are unique; (d) each entry's destination matches the resolver
+  candidate-#0 layout. Runs in CI via `npm run test:unit`. Invariant (b) is the direct guard
+  against the original regression. Do not weaken these by deleting the `dev.js` assertion to
+  silence a refactor - that reintroduces the exact gap.
+- **Review:** `/code-review` flags a new resolver call site without a matching `EXTERNAL_SCRIPTS`
+  entry, or a script that copies in only one of `build.js` / `dev.js`.
+
+Content/format drift between source and a deployed copy cannot be caught by a CI test (in CI/source
+there is no separate copy to compare against). That class is closed operationally: `dev.js` now
+refreshes the copies on every `npm start`, so source and the deployed copy match on each launch.
+
+## Scope
+
+External, unbundled scripts under `src/main/agent/` that are copied into `.vite/build/` and
+resolved by `resolveBridgeScript` / `resolvePluginScript`. Does not cover esbuild-bundled
+TypeScript (that ships inside `index.js` / `preload.js`) or files copied by `electron-builder`
+packaging config (`electron-builder.yml` `files` / `asarUnpack`), which is a separate concern.
