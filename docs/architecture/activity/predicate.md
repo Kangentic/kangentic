@@ -57,6 +57,7 @@ Known residual, not fixed: the depth drops at the FIRST stop, so during the ~12s
 Set when an `Idle` event fires with `detail: 'permission'`. The engine also records `permissionAwaitedToolId`, the tool the prompt was raised for: the newest `pendingToolStack` entry named by the event's `tool`, else the top of the stack (permission prompts fire between PreToolUse and execution, and permission idles leave the stack intact). The other pending ids are recorded as the prompt's siblings (`permissionSiblingToolIds`). Cleared by:
 - `Prompt` (user typed something new)
 - `Interrupted` (Esc)
+- `TurnFailed` and a terminal `TurnRetrying` (a turn that ended in an API error)
 - `SubagentStart` (main agent spawning a child)
 - `Idle` with non-permission detail (agent ended turn)
 - `ToolStart` at `subagentDepth === 0` (main agent activity)
