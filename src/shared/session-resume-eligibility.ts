@@ -83,12 +83,10 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
 export interface TaskSessionStates {
   /** Tasks with a live (`running` or `queued`) session. */
   liveTaskIds: Set<string>;
-  /** Tasks with a paused session (`isPausedTaskSession`) and no live one. */
-  pausedTaskIds: Set<string>;
   /**
-   * The registry id of each `pausedTaskIds` task's paused row, keyed by task.
-   * Its keys are exactly `pausedTaskIds`. A task holding two paused rows maps
-   * to the later one in registry order, which is the newer row.
+   * Each task with a paused session (`isPausedTaskSession`) and no live one,
+   * mapped to that paused row's registry id. A task holding two paused rows
+   * maps to the one registered later.
    */
   pausedSessionIdByTaskId: Map<string, string>;
 }
@@ -120,33 +118,25 @@ export interface TaskSessionStates {
 export function taskSessionStatesOf(
   sessions: ReadonlyArray<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>>,
 ): TaskSessionStates {
-  const pausedTaskIds = new Set<string>();
   const pausedSessionIdByTaskId = new Map<string, string>();
   const liveTaskIds = new Set<string>();
   for (const session of sessions) {
     if (!session.taskId) continue;
-    if (isPausedTaskSession(session)) {
-      pausedTaskIds.add(session.taskId);
-      pausedSessionIdByTaskId.set(session.taskId, session.id);
-    } else if (isLiveSessionStatus(session.status)) {
-      liveTaskIds.add(session.taskId);
-    }
+    if (isPausedTaskSession(session)) pausedSessionIdByTaskId.set(session.taskId, session.id);
+    else if (isLiveSessionStatus(session.status)) liveTaskIds.add(session.taskId);
   }
-  for (const taskId of liveTaskIds) {
-    pausedTaskIds.delete(taskId);
-    pausedSessionIdByTaskId.delete(taskId);
-  }
-  return { liveTaskIds, pausedTaskIds, pausedSessionIdByTaskId };
+  for (const taskId of liveTaskIds) pausedSessionIdByTaskId.delete(taskId);
+  return { liveTaskIds, pausedSessionIdByTaskId };
 }
 
 /**
- * The ids of the tasks that have a paused session and no live one: the paused
- * half of `taskSessionStatesOf`. `isTaskPaused` runs it over one task's rows,
- * which is how `startTaskSession` chooses the Resume path. read-board reads
+ * The ids of the tasks that have a paused session and no live one: the keys
+ * of `taskSessionStatesOf`'s paused half. `isTaskPaused` runs it over one
+ * task's rows, which is how `startTaskSession` chooses the Resume path. read-board reads
  * `taskSessionStatesOf` directly, because it needs the live half as well.
  */
 export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>>): Set<string> {
-  return taskSessionStatesOf(sessions).pausedTaskIds;
+  return new Set(taskSessionStatesOf(sessions).pausedSessionIdByTaskId.keys());
 }
 
 /**
