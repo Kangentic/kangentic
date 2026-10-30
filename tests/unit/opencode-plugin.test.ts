@@ -2,15 +2,19 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import {
+import * as pluginExports from '../../src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs';
+import { KangenticActivity } from '../../src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import type { SessionEvent } from '../../src/shared/types';
+
+// The helpers ride on the plugin, not on the module's exports (see the next test).
+const {
   extractSessionEvent,
   extractToolDetail,
   extractToolStartEvent,
   extractToolEndEvent,
   extractWaitEvent,
-} from '../../src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs';
-import { ActivityEngine } from '../../src/main/activity-engine/engine';
-import type { SessionEvent } from '../../src/shared/types';
+} = KangenticActivity.helpers;
 
 const fixturePath = path.join(__dirname, '..', 'fixtures', 'opencode-plugin-events.json');
 const fixtures = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
@@ -26,6 +30,16 @@ interface PluginModule {
 }
 
 describe('opencode-plugin', () => {
+  describe('the module OpenCode loads', () => {
+    it('exports the plugin and nothing else, since OpenCode calls every export as a plugin', () => {
+      // OpenCode 1.18.31's loader walks Object.values(module), calls each
+      // function as a plugin factory and throws on any other value. An exported
+      // helper would run as a plugin and leave its return value among the hooks.
+      expect(Object.keys(pluginExports)).toEqual(['KangenticActivity']);
+      expect(typeof pluginExports.KangenticActivity).toBe('function');
+    });
+  });
+
   describe('extractSessionEvent', () => {
     it('maps session.created to session_start with sessionID hookContext', () => {
       const result = extractSessionEvent(fixtures.event_session_created, FIXED_TIMESTAMP);

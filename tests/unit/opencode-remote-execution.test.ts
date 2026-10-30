@@ -187,7 +187,7 @@ describe('OpenCodeCommandBuilder - remote attach', () => {
         eventsOutputPath: path.join(projectDir, 'events.jsonl'),
         executionTarget: REMOTE_TARGET,
       });
-      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs'))).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(false);
     } finally {
       fs.rmSync(projectDir, { recursive: true, force: true });
     }

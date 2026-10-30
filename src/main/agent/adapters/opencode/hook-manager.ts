@@ -8,9 +8,9 @@ import { ensureLocalGitExcludes } from '../../shared/git-exclude';
  * OpenCode plugin events mapped to event-bridge event types. Documented
  * here to give tests a canonical mapping to assert against. The actual
  * event-handler logic lives inside the plugin file
- * (`plugin/kangentic-activity.mjs`), because OpenCode plugins run inline
- * in the OpenCode process and write JSONL directly rather than shelling
- * out to event-bridge.
+ * (`plugin/kangentic-activity.mjs`, installed as `kangentic-activity.js`),
+ * because OpenCode plugins run inline in the OpenCode process and write
+ * JSONL directly rather than shelling out to event-bridge.
  *
  * OpenCode plugin event names (verified against
  * https://opencode.ai/docs/plugins/, April 2026):
@@ -32,9 +32,19 @@ export const OPENCODE_HOOK_EVENTS: Array<{
   { hook: 'tool.execute.after', bridgeEventType: EventType.ToolEnd },
 ];
 
-const PLUGIN_FILENAME = 'kangentic-activity.mjs';
+/**
+ * The installed copy's name. OpenCode loads a project plugin only when its
+ * file matches `{plugin,plugins}/*.{ts,js}` (read from the 1.18.31 binary's
+ * plugin loader), so the packaged `.mjs` is installed under a `.js` name.
+ * OpenCode's Bun runtime loads ES module syntax from a `.js` file. Earlier
+ * builds installed `kangentic-activity.mjs`, which OpenCode never loaded,
+ * so every OpenCode session ran on the PTY fallback alone.
+ */
+const PLUGIN_FILENAME = 'kangentic-activity.js';
+/** The name earlier builds installed, removed so a project keeps no dead copy. */
+const LEGACY_PLUGIN_FILENAME = 'kangentic-activity.mjs';
 const PLUGIN_SENTINEL = '// kangentic-activity';
-const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.mjs';
+const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.js';
 
 /** Directory under a project root where OpenCode auto-loads plugins. */
 function pluginsDir(projectRoot: string): string {
@@ -43,6 +53,23 @@ function pluginsDir(projectRoot: string): string {
 
 function pluginPath(projectRoot: string): string {
   return path.join(pluginsDir(projectRoot), PLUGIN_FILENAME);
+}
+
+/**
+ * Delete a plugin file only when line 1 carries Kangentic's sentinel, so a
+ * user-authored plugin at the same path is never touched. True when it was ours.
+ */
+function removeKangenticPluginFile(file: string): boolean {
+  if (!fs.existsSync(file)) return false;
+  try {
+    const firstLine = fs.readFileSync(file, 'utf-8').split('\n', 1)[0] ?? '';
+    if (!firstLine.includes(PLUGIN_SENTINEL)) return false;
+    fs.unlinkSync(file);
+    return true;
+  } catch (error) {
+    console.error(`[opencode-hooks] Failed to remove ${file}:`, error);
+    return false;
+  }
 }
 
 /**
@@ -55,7 +82,8 @@ function pluginPath(projectRoot: string): string {
  * parameter of this function. Idempotent: skips the copy when the
  * destination file is byte-identical to the packaged source. Concurrent
  * OpenCode sessions in the same project share one plugin file (held per
- * session in `OpenCodeAdapter.hookHolds`).
+ * session in `OpenCodeAdapter.hookHolds`). Also deletes the `.mjs` copy an
+ * earlier build installed, when its sentinel says Kangentic wrote it.
  */
 export function buildHooks(projectRoot: string): void {
   const sourcePath = resolvePluginScript('opencode', 'kangentic-activity');
@@ -73,6 +101,8 @@ export function buildHooks(projectRoot: string): void {
     console.error(`[opencode-hooks] Failed to create ${destinationDir}:`, error);
     return;
   }
+
+  removeKangenticPluginFile(path.join(destinationDir, LEGACY_PLUGIN_FILENAME));
 
   let needsCopy = true;
   if (fs.existsSync(destinationFile)) {
@@ -108,29 +138,19 @@ export function buildHooks(projectRoot: string): void {
 }
 
 /**
- * Remove the Kangentic-authored plugin file from a project's
- * `.opencode/plugins/` directory. Verifies the sentinel comment on
- * line 1 before deletion so user-authored plugins are never touched.
+ * Remove the Kangentic-authored plugin from a project's
+ * `.opencode/plugins/` directory: the current `.js` copy and the `.mjs`
+ * an earlier build installed. Verifies the sentinel comment on line 1
+ * before each deletion so user-authored plugins are never touched.
  *
  * Best-effort cleanup of empty `.opencode/plugins/` and `.opencode/`
  * directories: leaves them in place if other files exist.
  */
 export function removeHooks(directory: string): void {
-  const file = pluginPath(directory);
-  if (!fs.existsSync(file)) return;
-
-  try {
-    const contents = fs.readFileSync(file, 'utf-8');
-    const firstLine = contents.split('\n', 1)[0] ?? '';
-    if (!firstLine.includes(PLUGIN_SENTINEL)) {
-      // Not our file. Leave it alone.
-      return;
-    }
-    fs.unlinkSync(file);
-  } catch (error) {
-    console.error(`[opencode-hooks] Failed to remove ${file}:`, error);
-    return;
-  }
+  // The current copy and the `.mjs` an earlier build left; either may be there.
+  const removedCurrent = removeKangenticPluginFile(pluginPath(directory));
+  const removedLegacy = removeKangenticPluginFile(path.join(pluginsDir(directory), LEGACY_PLUGIN_FILENAME));
+  if (!removedCurrent && !removedLegacy) return;
 
   // Best-effort directory cleanup. Ignore errors: a non-empty directory
   // means the user has other plugins or assets we should not touch.
