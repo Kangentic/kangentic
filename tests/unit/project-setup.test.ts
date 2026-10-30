@@ -6,7 +6,7 @@
  *   2. .claude/settings.local.json
  *   3. kangentic.local.json
  *
- * The OpenCode activity plugin entry (.opencode/plugins/kangentic-activity.mjs)
+ * The OpenCode activity plugin entry (.opencode/plugins/kangentic-activity.js)
  * is intentionally NOT written here - it is added lazily by the OpenCode
  * adapter's buildHooks() at spawn time, so projects that never use OpenCode
  * never receive a stray ignore line. See opencode-hook-manager.test.ts for
@@ -66,7 +66,7 @@ const EXPECTED_ENTRIES = [
   'kangentic.local.json',
 ];
 
-const OPENCODE_PLUGIN_ENTRY = '.opencode/plugins/kangentic-activity.mjs';
+const OPENCODE_PLUGIN_ENTRY = '.opencode/plugins/kangentic-activity.js';
 
 // ── Tests ──────────────────────────────────────────────────────────────────
 

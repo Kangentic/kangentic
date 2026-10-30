@@ -7,7 +7,13 @@ import { buildHooks, removeHooks } from '../../src/main/agent/adapters/opencode'
 
 let projectDir: string;
 
+/** The installed copy: OpenCode 1.18.31 loads only `{plugin,plugins}/*.{ts,js}`. */
 function pluginPath(): string {
+  return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js');
+}
+
+/** The `.mjs` copy earlier builds installed, which OpenCode never loaded. */
+function legacyPluginPath(): string {
   return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs');
 }
 
@@ -76,6 +82,46 @@ describe('opencode-hook-manager', () => {
       expect(contents).not.toContain('outdated stub');
       expect(contents).toContain('export const KangenticActivity');
     });
+
+    it('installs under a name OpenCode loads, and removes the dead .mjs copy an earlier build left', () => {
+      fs.mkdirSync(path.dirname(legacyPluginPath()), { recursive: true });
+      fs.writeFileSync(legacyPluginPath(), '// kangentic-activity\n// earlier build\n');
+
+      buildHooks(projectDir);
+
+      expect(path.basename(pluginPath())).toMatch(/\.(ts|js)$/);
+      expect(fs.existsSync(pluginPath())).toBe(true);
+      expect(fs.existsSync(legacyPluginPath())).toBe(false);
+    });
+
+    it('leaves a user-authored file at the legacy name alone', () => {
+      fs.mkdirSync(path.dirname(legacyPluginPath()), { recursive: true });
+      fs.writeFileSync(legacyPluginPath(), '// the user\'s own plugin\nexport const Mine = async () => ({});\n');
+
+      buildHooks(projectDir);
+
+      expect(fs.existsSync(legacyPluginPath())).toBe(true);
+    });
+
+    it('survives a legacy path it cannot read, still installs the plugin, and leaves that path alone', () => {
+      // A directory at the legacy name makes existsSync true while readFileSync
+      // throws EISDIR, on every platform. A throw that
+      // escaped here would abort the spawn before the current plugin was copied.
+      fs.mkdirSync(legacyPluginPath(), { recursive: true });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      try {
+        expect(() => buildHooks(projectDir)).not.toThrow();
+
+        expect(fs.existsSync(pluginPath())).toBe(true);
+        expect(fs.statSync(legacyPluginPath()).isDirectory()).toBe(true);
+        // The failure is logged, not swallowed silently.
+        expect(errorSpy).toHaveBeenCalledOnce();
+        expect(String(errorSpy.mock.calls[0][0])).toContain(legacyPluginPath());
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 
   describe('removeHooks', () => {
@@ -130,10 +176,53 @@ describe('opencode-hook-manager', () => {
     it('handles missing project gracefully', () => {
       expect(() => removeHooks(projectDir)).not.toThrow();
     });
+
+    it('also removes a legacy .mjs copy, and cleans up the folders it leaves empty', () => {
+      fs.mkdirSync(path.dirname(legacyPluginPath()), { recursive: true });
+      fs.writeFileSync(legacyPluginPath(), '// kangentic-activity\n// earlier build\n');
+
+      removeHooks(projectDir);
+
+      expect(fs.existsSync(legacyPluginPath())).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+    });
+
+    it('removes both the current plugin and a legacy .mjs left beside it, then the empty folders', () => {
+      // The real upgrade state: buildHooks installed the current .js, and an
+      // earlier build's sentinel-carrying .mjs is still in the same folder.
+      buildHooks(projectDir);
+      fs.writeFileSync(legacyPluginPath(), '// kangentic-activity\n// earlier build\n');
+      expect(fs.existsSync(pluginPath())).toBe(true);
+      expect(fs.existsSync(legacyPluginPath())).toBe(true);
+
+      removeHooks(projectDir);
+
+      expect(fs.existsSync(pluginPath())).toBe(false);
+      expect(fs.existsSync(legacyPluginPath())).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+    });
+
+    it('does not throw on a plugin path it cannot read, and leaves that path alone', () => {
+      // A directory at the current plugin name makes existsSync true while
+      // readFileSync throws EISDIR, on every platform.
+      fs.mkdirSync(pluginPath(), { recursive: true });
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+      try {
+        expect(() => removeHooks(projectDir)).not.toThrow();
+
+        expect(fs.statSync(pluginPath()).isDirectory()).toBe(true);
+        // The failure is logged, not swallowed silently.
+        expect(errorSpy).toHaveBeenCalledOnce();
+        expect(String(errorSpy.mock.calls[0][0])).toContain(pluginPath());
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
   });
 
   describe('buildHooks git-exclude behavior', () => {
-    const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.mjs';
+    const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.js';
 
     function excludePath(): string {
       return path.join(projectDir, '.git', 'info', 'exclude');
@@ -192,7 +281,7 @@ describe('opencode-hook-manager', () => {
       buildHooks(projectDir);
 
       // The plugin must still install...
-      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs'))).toBe(true);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(true);
       // ...but no exclude file must be created.
       expect(fs.existsSync(excludePath())).toBe(false);
     });

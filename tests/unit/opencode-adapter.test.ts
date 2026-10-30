@@ -548,13 +548,14 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
   // Strategy: use a real temp directory as the project root so buildCommand
   // actually installs the plugin (via buildHooks). The plugin source file at
   // src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs is present
-  // in the dev tree, so resolvePluginScript finds it and the copy succeeds.
+  // in the dev tree, so resolvePluginScript finds it and the copy succeeds. It
+  // installs as `.js`, the extension OpenCode's plugin glob loads.
 
   let projectDir: string;
   let concurrentAdapter: OpenCodeAdapter;
 
   function pluginPath(): string {
-    return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.mjs');
+    return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js');
   }
 
   function makeBuildOptions(ptySessionId: string, overrides: Partial<SpawnCommandOptions> = {}): SpawnCommandOptions {

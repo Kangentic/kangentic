@@ -1,7 +1,9 @@
 // kangentic-activity
 // OpenCode plugin that emits structured activity events into the
 // Kangentic events.jsonl pipeline. Discovered automatically by
-// OpenCode via the project-shared `.opencode/plugins/` directory.
+// OpenCode via the project-shared `.opencode/plugins/` directory, where
+// hook-manager.ts installs it as `kangentic-activity.js`: OpenCode 1.18.31
+// loads only `{plugin,plugins}/*.{ts,js}`, so a `.mjs` copy never ran.
 //
 // The plugin runs inline in the OpenCode process and writes JSONL
 // entries that match the shape produced by Kangentic's other agent
@@ -13,10 +15,13 @@
 // hook-manager.ts uses it to identify files it authored before
 // deletion, so it never removes user-authored plugins.
 //
-// The pure event-extraction helpers (extractSessionEvent /
-// extractWaitEvent / extractToolStartEvent / extractToolEndEvent) are
-// exported so they can be unit-tested against OpenCode event fixtures
-// (tests/fixtures/opencode-plugin-events.json).
+// The module exports the plugin and nothing else. OpenCode 1.18.31 calls
+// every export of a plugin module as a plugin factory. Its loader walks
+// `Object.values(module)` and throws on a value that is not a function, so
+// an exported helper would run as a plugin and leave its return value among
+// the hooks. The pure event-extraction helpers ride on the plugin as
+// `KangenticActivity.helpers` instead, for the unit tests against OpenCode
+// event fixtures (tests/fixtures/opencode-plugin-events.json).
 import fs from 'node:fs';
 
 /**
@@ -30,7 +35,7 @@ import fs from 'node:fs';
  *  - `session.idle`:    emit `idle` (the agent has stopped working).
  *  - `session.error`:   emit `idle` with `detail: 'error'`.
  */
-export function extractSessionEvent(event, now = Date.now()) {
+function extractSessionEvent(event, now = Date.now()) {
   if (!event || typeof event !== 'object') return null;
   const eventType = event.type;
   if (eventType === 'session.created' || eventType === 'session.start') {
@@ -71,7 +76,7 @@ export function extractSessionEvent(event, now = Date.now()) {
  *
  * OpenCode v2 does not run v1 plugins, so a v2 session reports no waits.
  */
-export function extractWaitEvent(event, now = Date.now()) {
+function extractWaitEvent(event, now = Date.now()) {
   if (!event || typeof event !== 'object') return null;
   const eventType = event.type;
   if (eventType === 'question.asked') {
@@ -103,7 +108,7 @@ function truncate(value) {
  * Tries common arg field names in priority order; falls back to undefined
  * for unknown tools (the consumer is fine with no detail).
  */
-export function extractToolDetail(args) {
+function extractToolDetail(args) {
   if (!args || typeof args !== 'object') return undefined;
   return truncate(args.command ?? args.filePath ?? args.path ?? args.pattern ?? null);
 }
@@ -112,7 +117,7 @@ export function extractToolDetail(args) {
  * Extract a `tool_start` event from OpenCode's `tool.execute.before`
  * (input, output) handler arguments.
  */
-export function extractToolStartEvent(input, output, now = Date.now()) {
+function extractToolStartEvent(input, output, now = Date.now()) {
   const detail = extractToolDetail(output?.args);
   return {
     ts: now,
@@ -125,7 +130,7 @@ export function extractToolStartEvent(input, output, now = Date.now()) {
 /**
  * Extract a `tool_end` event from OpenCode's `tool.execute.after` input.
  */
-export function extractToolEndEvent(input, now = Date.now()) {
+function extractToolEndEvent(input, now = Date.now()) {
   return {
     ts: now,
     type: 'tool_end',
@@ -155,3 +160,13 @@ export const KangenticActivity = async () => ({
     appendEvent(extractToolEndEvent(input));
   },
 });
+
+// Not exports: see the header. A property on the plugin function is invisible
+// to OpenCode's loader, which reads only the module's export values.
+KangenticActivity.helpers = {
+  extractSessionEvent,
+  extractWaitEvent,
+  extractToolDetail,
+  extractToolStartEvent,
+  extractToolEndEvent,
+};
