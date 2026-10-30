@@ -13,6 +13,8 @@
  *   Don't ask again switch, and Escape on that dialog closes the dialog, not the
  *   monitor behind it.
  * - A row of ANOTHER project writes with that project's id.
+ * - Closing the in-app monitor reloads the board, so a write that has not
+ *   settled yet (a Done move still removing its worktree) still shows.
  * - The detached monitor's writes reach the main window through main's quiet
  *   `task:changedInOtherWindow` push, whose renderer half is driven here through
  *   the mock. The UI tier cannot open a second window, so main's half is pinned
@@ -234,6 +236,35 @@ test.describe('a task detail hosted by the Agent Monitor reaches the board', () 
       await closeMonitor(page);
       await expect(cardInLane(page, 'Done', taskId)).toBeVisible();
       await expect(cardInLane(page, 'Executing', taskId)).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+test.describe('closing the in-app monitor reloads the board', () => {
+  test('a write that has not settled when the monitor closes shows on the board', async () => {
+    // The monitor's writes resync the board when they settle. A move to Done
+    // settles only after its worktree removal, so a user who closed the monitor
+    // before then saw the card in its old column.
+    const taskId = 'task-mw-close';
+    const { browser, page } = await launch({ tasks: [{ id: taskId, displayId: 51, title: 'Moved while the monitor was open', lane: 'To Do' }] });
+    try {
+      await expect(cardInLane(page, 'To Do', taskId)).toBeVisible();
+      await openMonitor(page);
+
+      // The write has landed in main's store, and no resync has run for it yet.
+      await page.evaluate(async ({ id, projectId }) => {
+        const api = (window as unknown as {
+          electronAPI: { tasks: { move: (input: Record<string, unknown>, projectId: string) => Promise<void> } };
+        }).electronAPI;
+        await api.tasks.move({ taskId: id, targetSwimlaneId: 'lane-mw-2', targetPosition: 0 }, projectId);
+      }, { id: taskId, projectId: PROJECT_ID });
+      await expect(cardInLane(page, 'To Do', taskId)).toHaveCount(1);
+
+      await closeMonitor(page);
+      await expect(cardInLane(page, 'Executing', taskId)).toBeVisible();
+      await expect(cardInLane(page, 'To Do', taskId)).toHaveCount(0);
     } finally {
       await browser.close();
     }

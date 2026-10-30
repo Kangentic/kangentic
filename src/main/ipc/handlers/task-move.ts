@@ -28,7 +28,7 @@ import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
 import { resolveProjectContext } from '../helpers/project-repos';
-import { announceTaskBoardChange, announceTaskWrite } from '../helpers/task-write-announce';
+import { announceTaskBoardChange, announceTaskWrite, announceToMainWindow } from '../helpers/task-write-announce';
 import { interpolateTaskTemplate, resolveTaskTemplateVars } from '../../agent/shared';
 import { trackEvent } from '../../analytics/analytics';
 import { trackMilestone } from '../../analytics/usage';
@@ -240,8 +240,13 @@ type MoveSpawnPlan = {
  */
 export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move' | 'automation' | 'workflow';
 
+type MovePush = (context: IpcContext, projectId: string, input: { taskId: string; targetSwimlaneId: string }, title: string) => void;
+
 /**
- * The renderer push for each origin, or null for "say nothing".
+ * The renderer push for each origin once the move has settled, or null for
+ * "say nothing". The commit point sends its own, quiet, push first
+ * (`MOVE_COMMIT_PUSH_BY_ORIGIN`). That table reuses the `mobile`,
+ * `automation` and `workflow` entries here, so they must stay toast-free.
  *
  * A `Record` rather than a switch so a new `TaskMoveOrigin` member is a compile
  * error here too. The asymmetry is deliberate:
@@ -256,10 +261,7 @@ export type TaskMoveOrigin = 'renderer' | 'agent' | 'mobile' | 'auto-move' | 'au
  * The board-changed bus emit is NOT part of this table: it is unconditional for
  * every origin. See the announce block at the end of `handleTaskMove` for why.
  */
-const MOVE_PUSH_BY_ORIGIN: Record<
-  TaskMoveOrigin,
-  ((context: IpcContext, projectId: string, input: { taskId: string; targetSwimlaneId: string }, title: string) => void) | null
-> = {
+const MOVE_PUSH_BY_ORIGIN: Record<TaskMoveOrigin, MovePush | null> = {
   renderer: null,
   agent: (context, projectId, input, title) =>
     sendToRenderer(context.mainWindow, IPC.TASK_UPDATED_BY_AGENT, input.taskId, title, projectId),
@@ -274,6 +276,31 @@ const MOVE_PUSH_BY_ORIGIN: Record<
     sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
   workflow: (context, projectId) =>
     sendToRenderer(context.mainWindow, IPC.TASK_MOVED_BY_AUTOMATION, projectId),
+};
+
+/**
+ * The renderer push for each origin at the commit point, before any slow work,
+ * or null for "say nothing". Every one is a quiet board reload, so the card
+ * leaves its old column the moment the row lands. Without it the board read
+ * the task in its old column through a Done move's own-call turn wait,
+ * suspend, reap and worktree removal: an agent's move of its own task to Done
+ * kept the card there, unarchived, for 25 s, and its paused session offered a
+ * Resume that main then refused.
+ *
+ * `agent` and `auto-move` reload on `TASK_SESSION_RESYNC` here because their
+ * own channels toast, and the toast stays with the settle-time push, once per
+ * move. `renderer` moved the card itself.
+ */
+const quietBoardReload: MovePush = (context, projectId) =>
+  sendToRenderer(context.mainWindow, IPC.TASK_SESSION_RESYNC, projectId);
+
+const MOVE_COMMIT_PUSH_BY_ORIGIN: Record<TaskMoveOrigin, MovePush | null> = {
+  renderer: null,
+  agent: quietBoardReload,
+  mobile: MOVE_PUSH_BY_ORIGIN.mobile,
+  'auto-move': quietBoardReload,
+  automation: MOVE_PUSH_BY_ORIGIN.automation,
+  workflow: MOVE_PUSH_BY_ORIGIN.workflow,
 };
 
 export async function handleTaskMove(
@@ -581,26 +608,30 @@ export async function handleTaskMove(
       // phone that had moved a card optimistically had no board snapshot to
       // settle against until its own verb timed out.
       //
-      // Bus only. The origin-keyed renderer push stays at settle time: the
-      // `agent` and `auto-move` pushes each raise a toast per push, so pushing
-      // here too would toast the same move twice. The second bus emit from the
-      // `finally` is cheap: the Agent Monitor debounces it into the push it
-      // already scheduled, and a paired phone gets one more small board event,
-      // which it already tolerates (the session-lifecycle feed double-emits by
-      // design). That second emit is what corrects a committed-then-rolled-back
-      // move. Same row, same shape, two emits.
+      // The second bus emit from the `finally` is cheap: the Agent Monitor
+      // debounces it into the push it already scheduled, and a paired phone
+      // gets one more small board event, which it already tolerates (the
+      // session-lifecycle feed double-emits by design). That second emit is
+      // what corrects a committed-then-rolled-back move. Same row, same shape,
+      // two emits.
       emitBoardChanged();
       // An open Workflows view shows where each of its tasks is.
       notifyWorkflowOfTask(task, announceProjectId);
-      // Kangentic's own moves (a Move to column row, a workflow step or start)
-      // have no optimistic renderer write behind them, so without this the card
-      // sat in its old column until the move settled: through a Done move's
-      // suspend, reap and worktree removal, while the Workflow Complete toast
-      // had already said it was done. Their push is the quiet board reload
-      // (no toast), so sending it now and again at settle costs one extra
-      // reload, never a second toast.
-      if (announceProjectId && (origin === 'automation' || origin === 'workflow')) {
-        MOVE_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, task.title);
+      // Every move but the renderer's own has no optimistic renderer write
+      // behind it, so without this the card sat in its old column until the
+      // move settled: through a Done move's suspend, reap and worktree removal,
+      // while the session view offered Resume on a task main had already
+      // archived. Quiet for every origin (`MOVE_COMMIT_PUSH_BY_ORIGIN`): the
+      // `agent` and `auto-move` toasts stay with the settle-time push, so the
+      // pair costs one extra reload, never a second toast. Fenced like the
+      // callback below, for the same reason, and silent once the quit has
+      // begun, as the settle-time push is.
+      if (announceProjectId && !isShuttingDown()) {
+        try {
+          MOVE_COMMIT_PUSH_BY_ORIGIN[origin]?.(context, announceProjectId, input, task.title);
+        } catch (pushError) {
+          console.error(`[TASK_MOVE] Commit-time push failed for task ${input.taskId.slice(0, 8)}:`, pushError);
+        }
       }
 
       // Commit signal for a caller that answers on the row landing (the mobile
@@ -1770,8 +1801,9 @@ export async function handleTaskMove(
       // This is the SECOND bus emit for the move (the first fired at the commit
       // point inside Phase 1). It is not redundant: this one runs after the
       // rollback, so it is what tells a phone that a committed-then-failed
-      // move went back. The renderer push fires here ONLY, since two of the
-      // origin channels toast per push.
+      // move went back. The renderer push here is the origin's own: the commit
+      // point sent a quiet reload, and the `agent` and `auto-move` toasts fire
+      // here only, once per move.
       //
       // The push is wrapped because this runs in a `finally`: a throwing
       // sendToRenderer would REPLACE whatever error runMove was already
@@ -1820,9 +1852,12 @@ export function registerTaskMoveHandlers(context: IpcContext): void {
       // 'renderer': the board already moved the card optimistically, so this is
       // the one origin that sends no origin push. It still reaches paired phones
       // and the Monitor via the unconditional board-changed emit inside the
-      // handler, and a move from another window reaches the main window's board
-      // through the `finally` below.
-      return await handleTaskMove(context, input, 'renderer', resolved.projectId, resolved.projectPath);
+      // handler. A move from another window (the detached Agent Monitor) reaches
+      // the main window's board at its commit point, before a Done move's
+      // teardown, and again through the `finally` below.
+      return await handleTaskMove(context, input, 'renderer', resolved.projectId, resolved.projectPath, {
+        onCommitted: () => announceToMainWindow(context, event, resolved.projectId),
+      });
     } catch (error) {
       // Shutdown closes the DB synchronously; any handler that crossed an
       // await boundary will throw "database connection is not open" or an

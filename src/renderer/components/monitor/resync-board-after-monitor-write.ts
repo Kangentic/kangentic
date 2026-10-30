@@ -6,9 +6,11 @@
  * The monitor writes straight to the project-stamped IPC (its row may belong to
  * any project), so the board store never sees the write. Main sends no push for
  * a write from the main window (`renderer`-origin moves and plain updates are
- * silent, because the board updates optimistically), and closing the monitor
- * reloads nothing. Without this the board under the overlay kept a moved card in
- * its old column, or showed a deleted one, until some other reload.
+ * silent, because the board updates optimistically). Without this the board
+ * under the overlay kept a moved card in its old column, or showed a deleted
+ * one, until some other reload. Each caller runs it when its write settles, so
+ * `MonitorPage` also runs it as the overlay closes: a move to Done settles only
+ * after its worktree removal, and the user can close the monitor before then.
  *
  * The Workflows canvas menu calls it after a Move to on a card of another board
  * and after its Pause or Resume session row, and the board card after its own

@@ -32,7 +32,7 @@ import { getProjectRepos } from '../helpers/project-repos';
 import { autoSpawnForTask } from '../helpers/agent-spawn';
 import { notifySpawnBlocked } from '../helpers/task-git';
 import { reconcileTaskSessionRef } from './session-reconcile';
-import { resumeTaskSession, type ResumeAcceptance } from './session-resume';
+import { resumeRefusalBeforeLock, resumeTaskSession, type ResumeAcceptance } from './session-resume';
 import { isTaskPaused, resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
 import type { IpcContext } from '../ipc-context';
 
@@ -68,12 +68,20 @@ export type StartTaskSessionResult =
  * already told `starting`, which is the drag path's outcome too. A resume
  * re-gates in its own Phase 1 before it accepts, so the phone gets the
  * desktop's Resume copy as ok:false instead.
+ *
+ * A refusal the task's row already shows is thrown before the lock
+ * (`resumeRefusalBeforeLock`). A move to Done holds the lock through its
+ * worktree removal, which can outlast the phone's 10 s verb budget, so a
+ * refusal behind the lock reached the phone as a timeout.
  */
 export async function startTaskSession(
   context: IpcContext,
   projectId: string,
   taskId: string,
 ): Promise<StartTaskSessionResult> {
+  const refusal = resumeRefusalBeforeLock(context, projectId, taskId);
+  if (refusal) throw new Error(refusal);
+
   const decision = await withTaskLock(taskId, async () => {
     const { task, liveSession } = reconcileTaskSessionRef(context, projectId, taskId);
     if (liveSession) return { path: 'live' as const };

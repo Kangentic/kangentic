@@ -5,7 +5,9 @@ import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useConfigStore } from '../../stores/config-store';
 import { useMonitorStore } from '../../stores/monitor-store';
 import { useBoardStore } from '../../stores/board-store';
+import { useProjectStore } from '../../stores/project-store';
 import { DetachableSurfaceHeader } from '../../pop-out/DetachableSurfaceHeader';
+import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 import { Tooltip } from '../Tooltip';
 import { LazyMonitor } from './LazyMonitor';
 import { MonitorDetailLayer } from './MonitorDetailLayer';
@@ -84,6 +86,17 @@ export function MonitorPage() {
       if (timer) clearTimeout(timer);
       unsubscribe();
     };
+  }, []);
+
+  // Those resyncs run when each write SETTLES, and a move to Done settles only
+  // after its suspend, reap and worktree removal, which take seconds on a large
+  // `node_modules`. The board is under this overlay until then, so closing the
+  // monitor first showed the moved card in its old column, its paused session
+  // offering a Resume main refused. The move committed at its start, so a reload
+  // on the way out finds the task where it is.
+  useEffect(() => () => {
+    const openProjectId = useProjectStore.getState().currentProject?.id;
+    if (openProjectId) resyncBoardAfterMonitorWrite(openProjectId);
   }, []);
 
   return (

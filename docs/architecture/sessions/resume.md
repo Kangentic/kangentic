@@ -62,6 +62,23 @@ chokepoint, so the refusal never applies to it. The main-process guard is the co
 detail hides the control so it is never offered. Pausing a session that is genuinely live is NOT
 refused in any of those states, so a stray agent can still be stopped from the window showing it.
 
+The guard runs three times. `resumeRefusalBeforeLock` reads the task row before the resume cancels
+anything or queues on the task lock, and refuses at once. A move to Done holds that lock through its
+suspend, reap and worktree removal (17 s on a project with a large `node_modules`), so a refusal
+that waited for the lock reached the user only after all of it. A task with a live session passes
+that read, because Phase 1's self-heal hands its PTY back even on an archived task. Phase 1 and
+Phase 3 still check under the lock, which catches a move that commits after the read.
+`startTaskSession` runs the same read before its own lock, inside the phone's 10 s budget.
+
+The task detail's gate is only as fresh as the renderer's board. Every move whose card the renderer
+did not move itself (an agent's `kangentic_move_task`, a plan exit, a phone, an automation, a
+workflow) sends a quiet board reload at its commit point. Before that, an agent's move of its own
+task to Done reached the board only once the move settled: the card stayed in its old column,
+unarchived, while its paused session offered a Resume that main refused. A move from the detached
+Agent Monitor sends `task:changedInOtherWindow` at its commit point too. The in-app Monitor covers
+the board while it is open and reloads it as it closes, since its own moves resync the board only
+when they settle.
+
 ## A resume the CLI cannot serve starts fresh instead
 
 Two cases spawn `--resume <id>` for a conversation the CLI cannot find. It answers "No conversation

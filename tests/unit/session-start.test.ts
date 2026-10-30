@@ -71,10 +71,18 @@ vi.mock('../../src/main/ipc/helpers/agent-spawn', () => ({
 vi.mock('../../src/main/ipc/handlers/session-reconcile', () => ({
   reconcileTaskSessionRef: (...args: unknown[]) => mockReconcileTaskSessionRef(...args),
 }));
+// The pre-lock refusal. Refuses nothing by default, so the locked decision
+// answers every case below but the one that drives it.
+const mockResumeRefusalBeforeLock = vi.fn((_context: unknown, _projectId: string, _taskId: string): string | null => null);
+const preCheckLockDepths: number[] = [];
 vi.mock('../../src/main/ipc/handlers/session-resume', () => ({
   resumeTaskSession: (context: unknown, taskId: string, options: ResumeOptions) => {
     resumeLockDepths.push(lockDepth);
     return mockResumeTaskSession(context, taskId, options);
+  },
+  resumeRefusalBeforeLock: (context: unknown, projectId: string, taskId: string) => {
+    preCheckLockDepths.push(lockDepth);
+    return mockResumeRefusalBeforeLock(context, projectId, taskId);
   },
 }));
 // Watched so the test can say a start never reads its task's workflow.
@@ -121,8 +129,11 @@ describe('startTaskSession', () => {
     mockSwimlaneGetById.mockReset();
     mockAutoSpawnForTask.mockClear();
     mockResumeTaskSession.mockClear();
+    mockResumeRefusalBeforeLock.mockReset();
+    mockResumeRefusalBeforeLock.mockReturnValue(null);
     autoSpawnLockDepths.length = 0;
     resumeLockDepths.length = 0;
+    preCheckLockDepths.length = 0;
     registryRows = [];
     lockDepth = 0;
     mockSwimlaneGetById.mockReturnValue({ id: LANE_ID, name: 'Working', role: null });
@@ -178,6 +189,22 @@ describe('startTaskSession', () => {
 
     await expect(startTaskSession(makeContext(), PROJECT_ID, TASK_ID)).rejects.toThrow(message);
     expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+  });
+
+  it('refuses what the pre-check refuses before taking the task lock, deciding nothing under it', async () => {
+    // A move to Done holds the task lock through its worktree removal, which
+    // can outlast the phone's 10 s budget, so the refusal cannot wait for it.
+    const message = 'This task is complete. Move it out of Done to continue working on it.';
+    mockResumeRefusalBeforeLock.mockReturnValue(message);
+    const context = makeContext();
+
+    await expect(startTaskSession(context, PROJECT_ID, TASK_ID)).rejects.toThrow(message);
+
+    expect(mockResumeRefusalBeforeLock).toHaveBeenCalledWith(context, PROJECT_ID, TASK_ID);
+    expect(preCheckLockDepths).toEqual([0]);
+    expect(mockReconcileTaskSessionRef).not.toHaveBeenCalled();
+    expect(mockAutoSpawnForTask).not.toHaveBeenCalled();
+    expect(mockResumeTaskSession).not.toHaveBeenCalled();
   });
 
   it('refuses an archived task in a custom column and spawns nothing', async () => {

@@ -60,6 +60,33 @@ function columnEnteredWhilePaused(
   return { fromSwimlaneId: entry.from_swimlane_id };
 }
 
+/**
+ * The refusal a Resume (or a phone Start of a paused task) gets for a task in
+ * To Do, in Done, or archived, read before the caller queues on the task lock.
+ * A move to Done holds that lock through its suspend, reap and worktree
+ * removal, which took 17 s on a project with a large `node_modules`, so a
+ * refusal that waited for the lock reached the user only after all of it.
+ *
+ * An early exit only: the locked checks still decide, and still catch a move
+ * that commits after this read. Plain reads, never `reconcileTaskSessionRef`,
+ * which writes. Null when the task has a live session, because the locked
+ * self-heal hands that back even on an archived task, and null when the task is
+ * gone or a read throws, so the locked path reports those as it always has.
+ */
+export function resumeRefusalBeforeLock(context: IpcContext, projectId: string, taskId: string): string | null {
+  try {
+    const { tasks, swimlanes } = getProjectRepos(context, projectId);
+    const task = tasks.getById(taskId);
+    if (!task) return null;
+    if (context.sessionManager.findLiveSessionByTaskId(taskId)) return null;
+    const lane = swimlanes.getById(task.swimlane_id);
+    const blocked = resumeBlockReasonForTask({ task, laneRole: lane?.role });
+    return blocked ? resumeBlockMessage(blocked) : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The two steps an accepted resume can fail at. */
 export type ResumeFailureStep = Extract<SpawnFailureStep, 'worktree' | 'agent'>;
 
@@ -101,19 +128,35 @@ export interface ResumeTaskSessionOptions {
  * Resolves with the resumed session, the live one Phase 1 found, or null when
  * a newer resume, a suspend, a reset, or a project relocation aborted this one.
  * Rejects with the desktop's own Resume copy for a To Do, Done, or archived
- * task, and with "Worktree setup failed: ..." when the git phase fails.
+ * task, and with "Worktree setup failed: ..." when the git phase fails. A
+ * refusal the task's row already shows rejects at once
+ * (`resumeRefusalBeforeLock`), without waiting on the task lock.
  *
- * Cancels any resume already in flight for the task first, for every caller. A
- * second Resume click replaces the first, and a phone Resume does exactly
- * what a desktop one does (decided for the phone deliberately: it mirrors the
- * desktop, rather than registering alongside the way the phone's plain Start
- * does in `autoSpawnForTask`).
+ * Cancels any resume already in flight for the task first, for every caller
+ * but a refused one. A second Resume click replaces the first, and a phone
+ * Resume does exactly what a desktop one does (decided for the phone
+ * deliberately: it mirrors the desktop, rather than registering alongside the
+ * way the phone's plain Start does in `autoSpawnForTask`).
  */
 export function resumeTaskSession(
   context: IpcContext,
   taskId: string,
   options: ResumeTaskSessionOptions = {},
 ): Promise<Session | null> {
+  // Refuse a To Do, Done or archived task BEFORE cancelling anything or
+  // queueing on the lock: a refused click must not cancel another resume (the
+  // same order `handleTaskMove`'s workflow pre-check keeps), and a move to Done
+  // holds the lock through its whole teardown. A rejected promise rather than a
+  // throw, since callers chain on the result. The id the locked path
+  // resolves, read without `resolveProjectContext`'s project lookup, which can
+  // throw before there is a promise to reject.
+  const precheckProjectId = options.projectId ?? context.currentProjectId;
+  const refusal = precheckProjectId ? resumeRefusalBeforeLock(context, precheckProjectId, taskId) : null;
+  if (refusal) {
+    console.log(`[SESSION_RESUME] Refused resume for task ${taskId.slice(0, 8)} before the task lock: ${refusal}`);
+    return Promise.reject(new Error(refusal));
+  }
+
   // Cancel any in-flight resume BEFORE queueing on the lock. Moving this
   // outside the lock is required because Phase 2 (worktree git I/O) runs
   // unlocked - a second resume must be able to cancel the first's in-flight
