@@ -66,6 +66,7 @@ export function AsanaSetupDialog({ onClose, onSaved }: AsanaSetupDialogProps) {
       icon={<KanbanSquare size={18} className="text-accent" />}
       testId="asana-setup-dialog"
       className="w-[480px]"
+      save={{ onSave: () => void handleSave(), disabled: submitting || token.trim().length === 0 }}
       footer={
         <div className="flex justify-end gap-2">
           <button

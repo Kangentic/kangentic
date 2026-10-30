@@ -207,6 +207,7 @@ export function RenameWorkflowDialog({ name, onRename, onCancel }: {
       icon={<Pencil size={16} className="text-fg-muted" data-testid="workflow-rename-icon" />}
       onClose={onCancel}
       testId="workflow-rename-dialog"
+      save={{ onSave: submit, disabled: !canRename }}
       footer={(
         // The confirms' own footer pair (ConfirmDialog), so Rename reads as one of them.
         <div className="flex justify-end gap-3">

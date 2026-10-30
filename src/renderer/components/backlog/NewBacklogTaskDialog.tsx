@@ -83,6 +83,8 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
   const [previewAttachment, setPreviewAttachment] = useState<DisplayAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ctrl+S submits through the form, so it runs the same onSubmit the Create / Save button does.
+  const formRef = useRef<HTMLFormElement>(null);
   const nextIdRef = useRef(0);
   // Highest pasted-filename index handed out so far, per prefix. Monotonic on
   // purpose - see reserveNextPastedIndex.
@@ -393,9 +395,17 @@ export function NewBacklogTaskDialog({ onClose, onCreate, editTask, onUpdate, on
 
   return (
     <>
-      <form onSubmit={handleSubmit}>
+      <form ref={formRef} onSubmit={handleSubmit}>
         <BaseDialog
           onClose={onClose}
+          // requestSubmit ignores a disabled submit button, so the button's
+          // disabled state is passed too. The attachment preview is not a
+          // BaseDialog, so it is not on the overlay stack; while it covers the
+          // form the key does nothing.
+          save={{
+            onSave: () => formRef.current?.requestSubmit(),
+            disabled: submitting || !title.trim() || previewAttachment !== null,
+          }}
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
           title={

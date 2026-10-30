@@ -115,6 +115,8 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
   const [previewAttachment, setPreviewAttachment] = useState<PendingAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Ctrl+S submits through the form, so it runs the same onSubmit the Create button does.
+  const formRef = useRef<HTMLFormElement>(null);
   const nextIdRef = useRef(0);
   // Highest pasted-filename index handed out so far, per prefix. Monotonic on
   // purpose - see reserveNextPastedIndex.
@@ -404,7 +406,14 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!title.trim() || submitting) return;
+    if (submitting) return;
+    // Create stays enabled on an empty title, so a click or Ctrl+S ends here.
+    // Ctrl+S blurred the focused field first, so focus would otherwise sit on
+    // nothing: put the caret back in the title.
+    if (!title.trim()) {
+      inputRef.current?.focus();
+      return;
+    }
     if (branchNameError || heldReason) return;
     setSubmitting(true);
     try {
@@ -500,10 +509,19 @@ export function NewTaskDialog({ swimlaneId, onClose, workflow }: NewTaskDialogPr
 
   return (
     <>
-      <form onSubmit={handleSubmit}>
+      <form ref={formRef} onSubmit={handleSubmit}>
         <BaseDialog
           onClose={onClose}
           closeRef={dialogCloseRef}
+          // requestSubmit ignores a disabled submit button, so the button's
+          // disabled state is passed too. An empty title is not one of them:
+          // Create stays enabled and handleSubmit refuses it, as for a click.
+          // The attachment preview is not a BaseDialog, so it is not on the
+          // overlay stack; while it covers the form the key does nothing.
+          save={{
+            onSave: () => formRef.current?.requestSubmit(),
+            disabled: submitting || !!branchNameError || heldReason !== null || previewAttachment !== null,
+          }}
           onHeaderDoubleClick={handleToggleMaximized}
           onCloseRequest={handleCloseAttempt}
           testId="new-task-dialog"

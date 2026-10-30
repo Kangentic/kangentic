@@ -151,6 +151,10 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
   const [confirmDiscard, setConfirmDiscard] = useState(false);
   const dirty = draft !== initial;
   const toggleMaximized = useCallback(() => setMaximized((current) => !current), []);
+  const saveAndClose = (): void => {
+    onSave(draft);
+    onClose();
+  };
   const handleCloseAttempt = useCallback(() => {
     if (confirmDiscard) return false;
     if (dirty) {
@@ -187,10 +191,12 @@ export function WorkflowAgentPromptDialog({ initial, onSave, onClose }: {
         zIndex="z-[60]"
         bodyClassName="flex min-h-0 flex-1 flex-col"
         testId="workflow-agent-prompt-dialog"
+        // Opened over the Settings panel, so it is the topmost overlay and takes Ctrl+S.
+        save={{ onSave: saveAndClose }}
         footer={
           <DialogFooterActions
             onCancel={onClose}
-            onConfirm={() => { onSave(draft); onClose(); }}
+            onConfirm={saveAndClose}
             confirmLabel={t`Save`}
             cancelTestId="workflow-agent-prompt-dialog-cancel"
             confirmTestId="workflow-agent-prompt-dialog-save"

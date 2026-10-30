@@ -56,6 +56,7 @@ import {
 import type { ColumnStepDirection } from '../../components/dialogs/task-detail';
 import { useLayerStore } from '../context';
 import { taskDetailSurfaceFor } from '../../utils/task-progress';
+import { isAnyOverlayOpen } from '../../utils/overlay-gate';
 import { registerWindowCloser, unregisterWindowCloser } from '../store/window-close-registry';
 import { isWindowDormant } from '../store/types';
 import { classifySnapZone, nextSnap } from '../dnd/snap-zones';
@@ -716,6 +717,10 @@ export function TaskDetailWindow({
   // refused in the handler rather than through `enabled`, so edit mode always
   // consumes the key. A key that fell through would open the web build's Save
   // Page dialog.
+  //
+  // This listener is capture phase on `window`, ahead of every dialog's on
+  // `document`, so it also yields while any overlay is open (`when`, read live):
+  // New Task opened with Mod+N over the form, or a confirm, takes the key.
   const saveShortcutEnabled = windowOwnsKeys
     && isEditing
     && !confirmDiscard
@@ -732,7 +737,7 @@ export function TaskDetailWindow({
     const focused = document.activeElement;
     if (focused instanceof HTMLElement) flushSync(() => focused.blur());
     void latestHandleSaveRef.current();
-  }, { capture: true, enabled: saveShortcutEnabled });
+  }, { capture: true, enabled: saveShortcutEnabled, when: () => !isAnyOverlayOpen() });
   // The panel-toggle hotkeys stay inert while editing: edit mode swaps in the
   // edit form (not TaskDetailBody) and a kebab-less title bar, so firing one
   // would silently flip hidden state and, being capture-phase, swallow the

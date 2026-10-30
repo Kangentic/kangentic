@@ -1014,18 +1014,13 @@ msgstr "Rosyjski"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save board configuration"
-msgstr "Zapisz konfigurację tablicy"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save edits"
 msgstr "Zapisz zmiany"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save the task edit form, the same as its Save button."
-msgstr "Zapisz formularz edycji zadania, tak jak przycisk Zapisz."
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "Zapisz otwarty formularz, tak jak przycisk Zapisz, Utwórz lub Gotowe."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

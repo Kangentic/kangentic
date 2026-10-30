@@ -1014,18 +1014,13 @@ msgstr "orosz"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save board configuration"
-msgstr "Táblakonfiguráció mentése"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save edits"
 msgstr "Módosítások mentése"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save the task edit form, the same as its Save button."
-msgstr "A feladatszerkesztő űrlap mentése, ugyanúgy, mint a Mentés gombbal."
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "A megnyitott űrlap mentése, ugyanúgy, mint a Mentés, Létrehozás vagy Kész gombbal."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
