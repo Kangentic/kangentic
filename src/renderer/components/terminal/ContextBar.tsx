@@ -10,7 +10,7 @@ import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/progress-color';
 import { windowElapsedPercentage } from '../../utils/rate-limit-window';
-import { formatTokenCount, isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
+import { formatTokenCount, isContextWindowKnown, isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatMonthDayTime, formatTimeAgo } from '../../lib/datetime';
 import { agentDisplayName } from '../../utils/agent-display-name';
@@ -342,15 +342,19 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   const cacheTokens = usage.contextWindow.cacheTokens ?? 0;
   const { contextWindowSize } = usage.contextWindow;
 
-  // Render the context fraction/bar/percent whenever the window is KNOWN (a
-  // positive size - 0 is the "unknown size" sentinel before any window has
-  // been learned for this session's model). `pct` is the shared clamped
-  // display percentage: an over-budget pairing (usedTokens > window) is a
-  // legitimate critical state on this authoritative status.json snapshot, not a
-  // broken denominator, so contextWindowDisplayPercent forces a full 100%
-  // critical bar rather than hiding it - a near-full/auto-compacting session
-  // still shows a full bar instead of vanishing.
+  // Render the context fraction/bar/percent whenever occupancy is known: a
+  // positive window size, or a percentage-only report (Cursor interactive
+  // TUI, no window and no token counts). `pct` is the shared clamped display
+  // percentage: an over-budget pairing (usedTokens > window) is a legitimate
+  // critical state on an authoritative status.json snapshot, not a broken
+  // denominator, so contextWindowDisplayPercent forces a full 100% critical
+  // bar rather than hiding it.
   const windowKnown = isContextWindowKnown(contextWindowSize);
+  const occupancyKnown = isContextOccupancyKnown(
+    contextWindowSize,
+    usedTokens,
+    usage.contextWindow.usedPercentage,
+  );
   const pct = contextWindowDisplayPercent(contextWindowSize, usedTokens, usage.contextWindow.usedPercentage);
   const progressColor = getProgressColor(pct);
 
@@ -557,22 +561,26 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           When only the fraction is enabled (bar off), it renders as a minimal
           pill so the toggle stays meaningful. */}
       {(() => {
-        // No bar/fraction/percent when the window is unknown (size 0, no
-        // denominator to draw a bar against): show the model name only. An
-        // over-budget window (usedTokens > size) still renders below, clamped
-        // to a full 100% critical bar rather than hidden. The hidden sentinel
-        // keeps the state queryable for tests without adding a visible element.
-        if (!windowKnown) {
+        // No bar/fraction/percent when occupancy is unknown: show the model
+        // name only. Percentage-only occupancy (Cursor interactive TUI) still
+        // renders the bar and percent, without a used/total fraction there is
+        // no window to name. An over-budget window still renders below,
+        // clamped to a full 100% critical bar. The hidden sentinel keeps the
+        // state queryable for tests without adding a visible element.
+        if (!occupancyKnown) {
           return <span data-context-window="unknown" className="hidden" />;
         }
         // Shared so the bar-embedded fraction and the bare-fraction pill render
-        // the identical "used / total" string from one source.
-        const fractionLabel = `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowSize)}`;
+        // the identical "used / total" string from one source. Omitted when
+        // occupancy is percentage-only: "0 / 0" would be a fake denominator.
+        const fractionLabel = windowKnown
+          ? `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowSize)}`
+          : null;
         const remainingPercent = 100 - pct;
         if (showProgressBar) {
           return (
             <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 basis-0 min-w-[160px]`}>
-              {showFraction && (
+              {showFraction && fractionLabel !== null && (
                 <Tooltip label={t`Context tokens used / total window size`}>
                   <span ref={fractionRef} className="tabular-nums text-fg-faint whitespace-nowrap">
                     {fractionLabel}
@@ -585,7 +593,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                   leave the bar drawing at the right size but never animating, and
                   no test asserts motion. See ContextUsageFooter.tsx, which carries
                   the same treatment for the board and monitor cards. */}
-              <Tooltip label={barTooltip}>
+              <Tooltip label={windowKnown ? barTooltip : t`${remainingPercent}% remaining`}>
                 <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
                   <div
                     className="h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
@@ -600,7 +608,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
             </div>
           );
         }
-        if (showFraction) {
+        if (showFraction && fractionLabel !== null) {
           return (
             <Tooltip label={t`Context tokens used / total window size`}>
               <span ref={fractionRef} className={`${pill} text-fg-muted tabular-nums`}>

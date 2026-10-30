@@ -5,17 +5,18 @@
  * bottom-bar case, computes the SAME gate as ContextBar but on its own
  * separate render path:
  *
- *   windowKnown = contextWindowSize > 0
+ *   occupancyKnown = contextWindowSize > 0
+ *     OR (usedTokens <= 0 AND usedPercentage > 0)
  *   overBudget = contextWindowSize > 0 && usedTokens > contextWindowSize
  *
- * When the window is unknown, the card footer renders `<div
- * data-testid="usage-bar" data-context-window="unknown"><span>{modelName}
- * </span></div>` with the bar reserved at 0% (stable card height) - no
- * denominator to draw a real bar against. When the window is known but
- * over budget (the near-full/auto-compaction state), the bar still renders,
- * clamped to a full 100% critical bar. When usage fits comfortably, it
- * renders the model name + `{pct}%` label + the bar track
- * (`div.h-full.rounded-full`).
+ * When occupancy is unknown, the card footer renders `<div
+ * data-testid="usage-bar" data-context-window="unknown">` with the bar
+ * reserved at 0% (stable card height). Percentage-only occupancy (Cursor
+ * interactive TUI) still paints the percent, without the unknown stamp.
+ * When the window is known but over budget (the near-full/auto-compaction
+ * state), the bar still renders, clamped to a full 100% critical bar. When
+ * usage fits comfortably, it renders the model name + `{pct}%` label + the
+ * bar track (`div.h-full.rounded-full`).
  *
  * The card must have already streamed a model displayName (else it shows the
  * "Starting agent..." spinner), so usage is seeded via a `sessions.getUsage`
@@ -267,6 +268,34 @@ test.describe('TaskCard context-window render gate', () => {
       await expect(percentLabel).toHaveText('0%');
       await expect(percentLabel).not.toHaveText('-');
       await expect(usageBar).toHaveAttribute('data-context-window', 'unknown');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('percentage-only occupancy (no window) prints the TUI percent, not 0%', async () => {
+    // Cursor interactive Skip Approvals reports occupancy as `Composer 2.5 · 7.8%`
+    // with no token counts and no window. The card used to sit at 0% while the
+    // open terminal already showed 7.8%. contextWindowDisplayPercent(0, 0, 7.8)
+    // rounds to 8, and isContextOccupancyKnown is true so the unknown stamp
+    // does not apply.
+    const { browser, page } = await launchWithState(makePreConfig({
+      usedPercentage: 7.8,
+      usedTokens: 0,
+      cacheTokens: 0,
+      totalInputTokens: 0,
+      totalOutputTokens: 0,
+      contextWindowSize: 0,
+    }));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const usageBar = page.locator(`[data-task-id="${TASK_ID}"] [data-testid="usage-bar"]`);
+      await expect(usageBar).toBeVisible({ timeout: 10000 });
+
+      const percentLabel = usageBar.locator('[data-testid="usage-bar-percent"]');
+      await expect(percentLabel).toHaveText('8%');
+      await expect(usageBar).not.toHaveAttribute('data-context-window', 'unknown');
     } finally {
       await browser.close();
     }

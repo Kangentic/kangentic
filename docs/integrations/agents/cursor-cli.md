@@ -38,7 +38,7 @@ User confirms changes in the PTY. `permissionMode === 'default'`.
 agent --trust --force "prompt text"
 ```
 
-Selected when `permissionMode === 'acceptEdits'`. The session screen stays open. `--force` (alias `--yolo`) allows commands unless one is explicitly denied. `--trust` skips the workspace prompt. This mode prints no stream-json, so the context bar learns the model from `agent about`, the same as confirm-changes. A resume is `agent --trust --force --resume="<chat-id>"`.
+Selected when `permissionMode === 'acceptEdits'`. The session screen stays open. `--force` (alias `--yolo`) allows commands unless one is explicitly denied. `--trust` skips the workspace prompt. This mode prints no stream-json, so the context bar learns the model from `agent about` and the occupancy percent from the TUI status bar (`Composer 2.5 · 7.8%`), the same as confirm-changes. A resume is `agent --trust --force --resume="<chat-id>"`.
 
 ### New Session (Non-Interactive)
 
@@ -82,7 +82,7 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
 
 ## Limitations
 
-- No hooks wired and no structured status pipeline (PTY silence timer only). The CLI does run hooks: it reads the same `<project>/.cursor/hooks.json` and `~/.cursor/hooks.json` as the editor, and Cursor's forum lists `beforeShellExecution`, `afterShellExecution`, `afterFileEdit`, `postToolUse`, `stop` and `sessionStart` as working in the CLI, with reports of hooks not firing on some Linux and Windows builds. Kangentic wires none. None of those events marks a wait on the user either (its AskQuestion tool raises no hook, stream event or file), so a Cursor wait stays on the envelope (GitHub #452)
+- No hooks wired and no structured status pipeline (PTY silence timer only). The CLI does run hooks: it reads the same `<project>/.cursor/hooks.json` and `~/.cursor/hooks.json` as the editor, and Cursor's forum lists `beforeShellExecution`, `afterShellExecution`, `afterFileEdit`, `postToolUse`, `stop` and `sessionStart` as working in the CLI, with reports of hooks not firing on some Linux and Windows builds. Kangentic wires none. None of those events marks a wait on the user either (its AskQuestion tool raises no hook, stream event or file), so a Cursor wait stays on the envelope (GitHub #452). Interactive occupancy is read from the TUI status bar (`Composer 2.5 · 7.8%`) in `stream-parser.ts`, not from a statusline command.
 - No settings merge. Workspace trust is the `--trust` flag on every spawn except confirm-changes (and on those resumes), not a file Kangentic writes. Confirm-changes leaves Cursor's own prompt so the user can decide.
 - Kangentic's MCP server reaches every session through the project's `.cursor/mcp.json` (a static
   `${env:...}` entry beside the user's servers, `project-mcp-config.ts`) and `--approve-mcps`, which

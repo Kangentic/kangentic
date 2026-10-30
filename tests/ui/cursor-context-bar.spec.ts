@@ -240,4 +240,44 @@ test.describe('Cursor ContextBar model pill', () => {
       await browser.close();
     }
   });
+
+  test('shows the percent bar without a used/total fraction for percentage-only occupancy', async () => {
+    const { browser, page } = await launchWithState(CURSOR_INTERACTIVE_PRECONFIG);
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+      const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
+      await expect(contextBar).toBeVisible({ timeout: 10000 });
+
+      await page.evaluate(
+        (sessionId: string) => {
+          const stores = (window as unknown as {
+            __zustandStores?: {
+              session: { getState: () => { updateUsage: (id: string, data: unknown) => void } };
+            };
+          }).__zustandStores;
+          stores?.session.getState().updateUsage(sessionId, {
+            model: { id: 'composer-2.5', displayName: 'Composer 2.5' },
+            contextWindow: {
+              usedPercentage: 7.8,
+              usedTokens: 0,
+              cacheTokens: 0,
+              totalInputTokens: 0,
+              totalOutputTokens: 0,
+              contextWindowSize: 0,
+            },
+            cost: { totalCostUsd: 0, totalDurationMs: 0 },
+          });
+        },
+        SESSION_ID,
+      );
+
+      await expect.poll(async () => contextBar.textContent(), { timeout: 5000 }).toMatch(/Composer 2\.5/);
+      await expect(contextBar).toContainText('8%');
+      await expect(contextBar.locator('[data-context-window="unknown"]')).toHaveCount(0);
+      await expect(contextBar).not.toContainText('/');
+    } finally {
+      await browser.close();
+    }
+  });
 });

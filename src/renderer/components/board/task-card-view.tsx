@@ -9,7 +9,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useTaskProgress } from '../../utils/task-progress';
 import { useNow } from '../../hooks/useNow';
-import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
+import { isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
 import { ContextUsageFooter } from './ContextUsageFooter';
@@ -551,16 +551,20 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
       // Always render the full bar layout (model + percent + track) once
       // the model name is known, so the card height is STABLE - the bar
       // does not mount in later and shove the card taller (the boot-window
-      // jank). The bar sits at 0% until a KNOWN window exists: a positive
-      // contextWindowSize (0 is the "unknown size" sentinel). It animates
-      // to the real value when telemetry fills in. An over-budget window
-      // (usedTokens > window, only reachable via Claude's authoritative
-      // status.json replace path) forces the percent to a full 100 rather
-      // than hiding the bar - a near-full/auto-compacting session still
-      // shows a full critical bar. The label is never > 100% because of
-      // this clamp, not because of the render gate.
+      // jank). The bar sits at 0% until occupancy is known: a positive
+      // contextWindowSize, or a percentage-only report (Cursor interactive
+      // TUI, no window and no token counts). It animates to the real value
+      // when telemetry fills in. An over-budget window (usedTokens > window,
+      // only reachable via Claude's authoritative status.json replace path)
+      // forces the percent to a full 100 rather than hiding the bar. The
+      // label is never > 100% because of this clamp, not because of the
+      // render gate.
       const usage = displayState.usage;
-      const windowKnown = !!usage && isContextWindowKnown(usage.contextWindow.contextWindowSize);
+      const occupancyKnown = !!usage && isContextOccupancyKnown(
+        usage.contextWindow.contextWindowSize,
+        usage.contextWindow.usedTokens,
+        usage.contextWindow.usedPercentage ?? 0,
+      );
       const pct = usage
         ? contextWindowDisplayPercent(
             usage.contextWindow.contextWindowSize,
@@ -573,7 +577,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
         <ContextUsageFooter
           modelName={resolvedModelName}
           percent={pct}
-          windowKnown={windowKnown}
+          windowKnown={occupancyKnown}
           divider={divider}
         />
       );

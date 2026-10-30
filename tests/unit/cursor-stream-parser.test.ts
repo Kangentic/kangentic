@@ -172,4 +172,41 @@ describe('CursorStreamParser', () => {
     const result = parser.parseTelemetry(`${odd}\n`);
     expect(result?.events?.[0].tool).toBe('tool');
   });
+
+  it('reads occupancy from the interactive TUI status bar', () => {
+    const parser = new CursorStreamParser();
+    const result = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(result?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+  });
+
+  it('reads occupancy through ANSI wrapping and extra status segments', () => {
+    const parser = new CursorStreamParser();
+    const framed =
+      '\x1b[6;1H\x1b[2mAuto\x1b[0m \u00b7 8.3% \u00b7 1 file edited\x1b[?25l';
+    const result = parser.parseTelemetry(framed);
+    expect(result?.usage?.contextWindow?.usedPercentage).toBe(8.3);
+  });
+
+  it('does not treat a tool duration or a hidden-output hint as occupancy', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('\x1b[2m7.8s\x1b[22m\n')).toBeNull();
+    expect(parser.parseTelemetry('12 output lines hidden · ctrl+o to expand\n')).toBeNull();
+    expect(parser.parseTelemetry('Claude 4 Sonnet · ready\x1b[?25l')).toBeNull();
+  });
+
+  it('skips identical TUI redraws and emits again when the percent changes', () => {
+    const parser = new CursorStreamParser();
+    const first = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(first?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(parser.parseTelemetry('Composer 2.5 · 7.8%\n')).toBeNull();
+    const next = parser.parseTelemetry('Composer 2.5 · 9.1%\n');
+    expect(next?.usage?.contextWindow?.usedPercentage).toBe(9.1);
+  });
+
+  it('reassembles occupancy split across a ConPTY flush', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('Composer 2.5 · 7.')).toBeNull();
+    const second = parser.parseTelemetry('8%\n');
+    expect(second?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+  });
 });

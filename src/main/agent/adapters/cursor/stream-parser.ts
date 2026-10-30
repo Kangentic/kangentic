@@ -1,3 +1,4 @@
+import { stripAnsiEscapes } from '../../../../shared/ansi-strip';
 import {
   EventType,
   type SessionEvent,
@@ -5,6 +6,19 @@ import {
   type StreamOutputParser,
 } from '../../../../shared/types';
 import { resolveCachedCursorModel } from './capability-discovery';
+
+/**
+ * Cursor's interactive TUI paints occupancy on the status bar as
+ * `Composer 2.5 · 7.8%` (forum: `Auto · 8.3% · 1 file edited`). Interactive
+ * Skip Approvals (`--trust --force`) prints no stream-json, so this is the
+ * only live percent the card can read. The separator is a middle dot, not a
+ * hyphen, so `7.8s` tool timings and `12 output lines hidden · ctrl+o` do not
+ * match.
+ */
+const TUI_OCCUPANCY = /[·•∙]\s*(\d+(?:\.\d+)?)\s*%/g;
+
+/** Tail of stripped TUI text kept across chunks so `· 7.8%` can straddle a flush. */
+const TUI_TAIL = 64;
 
 /**
  * Parses Cursor CLI's `--output-format stream-json` NDJSON stream as it
@@ -47,6 +61,10 @@ export class CursorStreamParser implements StreamOutputParser {
    * any point and a buffered carry-over keeps us safe.
    */
   private carry = '';
+  /** Last occupancy percent emitted from the TUI path, to skip identical redraws. */
+  private lastTuiPercent: number | null = null;
+  /** Trailing stripped TUI text, so occupancy can straddle a ConPTY flush. */
+  private tuiTail = '';
 
   parseTelemetry(data: string): {
     usage?: Partial<SessionUsage>;
@@ -123,8 +141,38 @@ export class CursorStreamParser implements StreamOutputParser {
       }
     }
 
+    const tuiPercent = this.readTuiOccupancy(data);
+    if (tuiPercent !== null) {
+      usage = {
+        ...usage,
+        contextWindow: { usedPercentage: tuiPercent } as SessionUsage['contextWindow'],
+      };
+    }
+
     if (!usage && !events) return null;
     return { usage, events };
+  }
+
+  /**
+   * Occupancy from the interactive status bar. Returns null when this chunk
+   * has no new percent (nothing matched, or the same value as last time).
+   * Uses the LAST match so a tail that still holds the previous `· 7.8%`
+   * cannot hide a later `· 9.1%` on the same scan.
+   */
+  private readTuiOccupancy(data: string): number | null {
+    const stripped = stripAnsiEscapes(data);
+    const scan = this.tuiTail + stripped;
+    this.tuiTail = scan.length > TUI_TAIL ? scan.slice(scan.length - TUI_TAIL) : scan;
+    let latest: number | null = null;
+    for (const match of scan.matchAll(TUI_OCCUPANCY)) {
+      const percent = Number.parseFloat(match[1]);
+      if (Number.isFinite(percent) && percent >= 0) {
+        latest = Math.min(100, percent);
+      }
+    }
+    if (latest === null || latest === this.lastTuiPercent) return null;
+    this.lastTuiPercent = latest;
+    return latest;
   }
 }
 

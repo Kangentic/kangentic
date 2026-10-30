@@ -195,8 +195,9 @@ export class CursorAdapter implements AgentAdapter {
   // event on the first NDJSON line is the only place Cursor exposes the
   // model + session ID together over a documented public schema, so this
   // mode is what lets ContextBar resolve the model pill and what lets
-  // `--resume=<id>` work reliably. Interactive mode is still selectable
-  // by the user but produces no machine-readable telemetry.
+  // `--resume=<id>` work reliably. Interactive mode is still selectable.
+  // Its TUI status bar (`Composer 2.5 · 7.8%`) is parsed for occupancy,
+  // and `agent about` still fills the model pill.
   readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   // Cursor CLI uses the shared AgentDetector via composition.
@@ -408,7 +409,9 @@ export class CursorAdapter implements AgentAdapter {
    *     {"type":"system","subtype":"init","session_id":"<uuid>",
    *      "model":"<display>",...}
    * - streamOutput: same init event populates SessionUsage.model so
-   *   ContextBar can lift its "Starting agent..." spinner.
+   *   ContextBar can lift its "Starting agent..." spinner. Interactive
+   *   TUI occupancy (`Composer 2.5 · 7.8%`) is parsed from the same
+   *   stream so the board card does not sit at 0%.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     // Only terminal silence says a turn ended.

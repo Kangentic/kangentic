@@ -125,10 +125,14 @@ function resolveProject(
  */
 function resolveContextPercent(usage: SessionUsage | undefined): number | null {
   if (!usage) return null;
-  const { usedPercentage, contextWindowSize } = usage.contextWindow;
-  if (!contextWindowSize || contextWindowSize <= 0) return null;
+  const { usedPercentage, usedTokens, contextWindowSize } = usage.contextWindow;
   if (!Number.isFinite(usedPercentage)) return null;
-  return Math.min(100, Math.max(0, Math.round(usedPercentage)));
+  const clamped = Math.min(100, Math.max(0, Math.round(usedPercentage)));
+  if (contextWindowSize && contextWindowSize > 0) return clamped;
+  // Percentage-only occupancy (Cursor interactive TUI: a percent, no window,
+  // no token counts). Same rule as isContextOccupancyKnown in format-tokens.ts.
+  if ((!usedTokens || usedTokens <= 0) && usedPercentage > 0) return clamped;
+  return null;
 }
 
 /**

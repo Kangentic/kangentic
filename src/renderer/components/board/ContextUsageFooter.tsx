@@ -19,16 +19,16 @@ export function ContextUsageFooter({
   /** Human model name (e.g. "Opus 5"). Never the raw model id - users don't read those. */
   modelName: string;
   percent: number;
-  /** False when the agent has not reported a usable context window; the track sits at 0. */
+  /** False when the agent has not reported occupancy; the track sits at 0. */
   windowKnown?: boolean;
   /**
    * Replaces the percent label with this text when `windowKnown` is false. Omit
    * to keep printing `{percent}%` regardless, which is the board's behavior:
-   * TaskCard deliberately holds the track at 0% until a known window arrives
-   * (see the comment above its call site), so the label reads as the value of
-   * the track it labels rather than contradicting it. The monitor card has no
-   * such track-matching intent and passes `"-"`, the unknown state
-   * `MonitorTable` already renders for the same null `contextPercent`.
+   * TaskCard holds the track at 0% until occupancy arrives (a known window, or
+   * a percentage-only TUI report), so the label reads as the value of the track
+   * it labels rather than contradicting it. The monitor card has no such
+   * track-matching intent and passes `"-"`, the unknown state `MonitorTable`
+   * already renders for the same null `contextPercent`.
    */
   unknownLabel?: string;
   testId?: string;

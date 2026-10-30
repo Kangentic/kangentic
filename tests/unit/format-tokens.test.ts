@@ -6,6 +6,7 @@ import {
   formatTokenCount,
   formatContextWindow,
   isContextWindowKnown,
+  isContextOccupancyKnown,
   isContextWindowOverBudget,
   contextWindowDisplayPercent,
   modelContextBadgeLabel,
@@ -175,6 +176,26 @@ describe('isContextWindowKnown', () => {
   });
 });
 
+describe('isContextOccupancyKnown', () => {
+  it('is known for a positive window size, including a genuine 0%', () => {
+    expect(isContextOccupancyKnown(200_000, 0, 0)).toBe(true);
+    expect(isContextOccupancyKnown(1_000_000, 85_000, 8.5)).toBe(true);
+  });
+
+  it('is known for a percentage-only report (Cursor interactive TUI)', () => {
+    expect(isContextOccupancyKnown(0, 0, 7.8)).toBe(true);
+  });
+
+  it('rejects the unknown-window sentinel with no occupancy', () => {
+    expect(isContextOccupancyKnown(0, 0, 0)).toBe(false);
+    expect(isContextOccupancyKnown(-1, 0, 0)).toBe(false);
+  });
+
+  it('rejects leftover tokens paired with a missing window', () => {
+    expect(isContextOccupancyKnown(0, 100_000, 42)).toBe(false);
+  });
+});
+
 describe('isContextWindowOverBudget', () => {
   it('flags usedTokens exceeding a known window', () => {
     expect(isContextWindowOverBudget(200_000, 250_000)).toBe(true);
@@ -199,9 +220,14 @@ describe('contextWindowDisplayPercent', () => {
     expect(contextWindowDisplayPercent(200_000, 130_000, 65)).toBe(65);
   });
 
-  it('returns 0 for an unknown window regardless of the reported percentage', () => {
+  it('returns 0 for leftover tokens paired with a missing window', () => {
     expect(contextWindowDisplayPercent(0, 100_000, 42)).toBe(0);
     expect(contextWindowDisplayPercent(-1, 100_000, 42)).toBe(0);
+  });
+
+  it('rounds a percentage-only report (Cursor interactive TUI, no window)', () => {
+    expect(contextWindowDisplayPercent(0, 0, 7.8)).toBe(8);
+    expect(contextWindowDisplayPercent(0, 0, 0)).toBe(0);
   });
 
   it('forces 100 when usedTokens exceeds a known window', () => {
