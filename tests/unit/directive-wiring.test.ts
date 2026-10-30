@@ -44,6 +44,10 @@ const KNOWN_KINDS = new Set([
   'emitOnlyWhenDetailMatches',
   'appendBackgroundLaunch',
   'appendBackgroundStop',
+  'setWaitKind',
+  'setWaitKindWhen',
+  'appendPermissionWaitForTool',
+  'replyJson',
 ]);
 
 // A directive token is `<kind>:<base64>`: letters, a colon, then standard
