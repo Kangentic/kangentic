@@ -126,16 +126,19 @@ export async function handleReadBoard(
   // event, so a phone re-reads all three. `resumable` is derived from the same
   // `paused` answer, so it can never be true while `paused` is false, and one
   // scan yields both the paused and the live set, so `pausable` and `paused`
-  // are never both true.
+  // are never both true. `paused` itself is derived from `paused_session_id`,
+  // the paused row's registry id, which is the id `send-user-message` holds a
+  // message for. A restart re-registers that row under a new id, and its
+  // `session-changed` reaches the phone as a board event like any other edge.
   const swimlaneRows = repos.swimlanes.list();
   const laneRoleById = new Map(swimlaneRows.map((swimlane) => [swimlane.id, swimlane.role]));
-  const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(context.sessionManager.listSessions());
+  const { liveTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf(context.sessionManager.listSessions());
   const toTaskWire = (task: Task, workflow: BoardTaskWorkflowWire | null): BoardTaskWire => {
-    const paused = pausedTaskIds.has(task.id);
+    const pausedSessionId = pausedSessionIdByTaskId.get(task.id) ?? null;
     const laneRole = laneRoleById.get(task.swimlane_id);
     return toBoardTaskWire(task, spawnProgressByTaskId[task.id] ?? null, {
-      paused,
-      resumable: isResumeOffered({ hasPausedSession: paused, task, laneRole }),
+      pausedSessionId,
+      resumable: isResumeOffered({ hasPausedSession: pausedSessionId !== null, task, laneRole }),
       pausable: isPauseOffered({ hasLiveSession: liveTaskIds.has(task.id), laneRole }),
     }, workflow);
   };

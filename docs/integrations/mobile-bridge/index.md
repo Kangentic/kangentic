@@ -12,7 +12,7 @@
 ## What a phone can do
 
 * [Capability verbs](capability-verbs.md) - The verbs a paired phone can call and each handler's contract: when move-task, start-session and pause-session answer, command-terminal refusal codes, interactive-terminal grid ownership, permission-prompt id binding, the unsupported-verb refusal, and which board tools the allowlist leaves out.
-* [Data feeds](data-feeds.md) - How read-stream, read-board and read-diff feed a phone: the data-tap seed barrier and terminal seed shrinking, transcript delta sync, board snapshot fields (spawn_progress, resumable, paused, pausable, commandTerminals), and the board-changed bus with its lifecycle and spawn-progress feeds.
+* [Data feeds](data-feeds.md) - How read-stream, read-board and read-diff feed a phone: the data-tap seed barrier and terminal seed shrinking, transcript delta sync, board snapshot fields (spawn_progress, resumable, paused, paused_session_id, pausable, commandTerminals), and the board-changed bus with its lifecycle and spawn-progress feeds.
 * [Push notifications](push-notifications.md) - How the desktop sends end-to-end encrypted pushes through Expo: device registration, the XChaCha20-Poly1305 envelope with recipient-key AAD, the six categories and their debounce, presence suppression and cooldown, iOS versus Android payload shape, and clear messages that remove stale alerts.
 
 ## Connection and history

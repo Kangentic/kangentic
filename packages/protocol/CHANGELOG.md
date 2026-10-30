@@ -2,6 +2,26 @@
 
 <!-- releases -->
 
+## [Unreleased]
+
+Names a paused task's session on its board row, so a phone can send chat to
+any paused task. Additive on the wire; `PROTOCOL_VERSION` stays '3'.
+
+`BoardTaskWire` gains an optional `paused_session_id`: the id of the task's
+paused session while `paused` is true, and null otherwise. It is the id to name
+in `send-user-message`, which holds the message for the task's next agent
+(0.26.0). A desktop pause clears `session_id`, and a desktop restart
+re-registers the paused session under a new id, so before this a phone that
+opened a paused task fresh had no id to name, and one it remembered from
+before the restart answered `unknown-session`. The restart's new id reaches the
+phone as a `task-updated` board event, so the next snapshot carries it.
+`session_id` keeps its meaning and stays null while paused. Null or absent also
+means an older desktop. `parseBoardTaskWire` populates the key from every wire
+response. The `SendUserMessageRequestPayload.sessionId` doc names the field.
+
+### Features
+- Name a paused task's session on its board row for held chat
+
 ## [protocol-v0.26.0] - 2026-10-30
 
 Tells a phone what an agent's wait is for, carries a Notify me automation row

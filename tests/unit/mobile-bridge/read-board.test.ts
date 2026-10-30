@@ -211,7 +211,7 @@ describe('handleReadBoard', () => {
       // An ordinary task carries a null workflow: the key is always sent.
       // automations_disabled is a real false even though the row left the
       // column out. An absent key would read on the phone as an older desktop.
-      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, pausable: false, automations_disabled: false, workflow: null }],
+      tasks: [{ id: 't-1', session_id: 'sess-1', spawn_progress: null, resumable: false, paused: false, paused_session_id: null, pausable: false, automations_disabled: false, workflow: null }],
       backlog: [{ id: 'b-1' }],
       projectColor: deriveProjectAccentColor('proj-1'),
       showTicketNumbers: false,
@@ -494,10 +494,10 @@ describe('handleReadBoard', () => {
 
       // tasks.list() leaves archived rows out, so this page is the only way a
       // completed task's paused session reaches the phone.
-      const archived = (response.payload as { archivedTasks: Array<{ id: string; paused: boolean | null; resumable: boolean | null }> }).archivedTasks;
-      expect(archived.map((task) => ({ id: task.id, paused: task.paused, resumable: task.resumable }))).toEqual([
-        { id: 't-paused-archived', paused: true, resumable: false },
-        { id: 't-ended', paused: false, resumable: false },
+      const archived = (response.payload as { archivedTasks: Array<{ id: string; paused: boolean | null; paused_session_id: string | null; resumable: boolean | null }> }).archivedTasks;
+      expect(archived.map((task) => ({ id: task.id, paused: task.paused, paused_session_id: task.paused_session_id, resumable: task.resumable }))).toEqual([
+        { id: 't-paused-archived', paused: true, paused_session_id: 'sess-4', resumable: false },
+        { id: 't-ended', paused: false, paused_session_id: null, resumable: false },
       ]);
     });
   });
@@ -557,6 +557,47 @@ describe('handleReadBoard', () => {
       for (const task of tasks) {
         if (task.resumable === true) expect(task.paused).toBe(true);
       }
+    });
+
+    it('names the paused row\'s registry id exactly while the row reads paused (protocol 0.27.0)', async () => {
+      const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+
+      const tasks = (response.payload as { tasks: Array<{ id: string; session_id: string | null; paused: boolean | null; paused_session_id: string | null }> }).tasks;
+      expect(Object.fromEntries(tasks.map((task) => [task.id, task.paused_session_id]))).toEqual({
+        't-paused': 'sess-1',
+        // No column gate, as `paused` has none: a hold for a task in Done is
+        // the verb's to refuse.
+        't-paused-done': 'sess-2',
+        't-paused-todo': 'sess-3',
+        // The queued successor makes the task live, so its paused row is not named.
+        't-paused-queued-successor': null,
+        't-queued': null,
+        't-running': null,
+        't-ended': null,
+        't-fresh': null,
+        // A Command Terminal session is never a task's paused session.
+        't-terminal': null,
+      });
+      for (const task of tasks) {
+        expect(task.paused_session_id !== null).toBe(task.paused === true);
+      }
+      // session_id keeps its meaning: still null on a paused row.
+      expect(tasks.find((task) => task.id === 't-paused')?.session_id).toBeNull();
+    });
+
+    it('a restart that re-registers the paused session under a new id reaches the next snapshot', async () => {
+      const readPausedSessionId = async (): Promise<string | null | undefined> => {
+        const response = await handleReadBoard(fakeRequest({ projectId: 'proj-1', view: 'full' }), fakeSession(), boardContext(), new SubscriptionRegistry(), noSpawnProgressFeed);
+        const tasks = (response.payload as { tasks: Array<{ id: string; paused_session_id: string | null }> }).tasks;
+        return tasks.find((task) => task.id === 't-paused')?.paused_session_id;
+      };
+      expect(await readPausedSessionId()).toBe('sess-1');
+
+      // registerSuspendedPlaceholder mints a fresh id for the same paused task,
+      // and its session-changed reaches the phone as a task-updated board event.
+      registryRows = registryRows.map((row) => (row.id === 'sess-1' ? { ...row, id: 'sess-placeholder-after-restart' } : row));
+
+      expect(await readPausedSessionId()).toBe('sess-placeholder-after-restart');
     });
   });
 

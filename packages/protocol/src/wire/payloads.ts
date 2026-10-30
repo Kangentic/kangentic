@@ -656,6 +656,11 @@ function parseReadDiffRequestPayload(payload: JsonValue): ReadDiffRequestPayload
 // === send-user-message ===
 
 export interface SendUserMessageRequestPayload {
+  /**
+   * The session to send to. For a running task it is `BoardTaskWire.session_id`;
+   * for a paused task, which has none, it is `BoardTaskWire.paused_session_id`
+   * (from 0.27.0).
+   */
   sessionId: string;
   text: string;
 }

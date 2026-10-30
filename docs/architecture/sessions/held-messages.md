@@ -52,7 +52,10 @@ call it.
   phone `delivered: true`. A refused hold answers with the refusal the phone got before, with the
   same error code and the hold's reason as its text. A Command Terminal or a workflow's own agent
   (transient) has no task, so it is refused as before. No rate window applies: that window stops
-  an agent's send loop, and a person's sends are not one.
+  an agent's send loop, and a person's sends are not one. A pause clears the task's `session_id`,
+  so the phone names the paused session by its board row's `paused_session_id`, the registry id
+  of the paused row. A restart re-registers that row under a new id, and the phone's next board
+  snapshot carries it.
 
 A task in Done (or archived) holds nothing and the hold is refused: the move into Done clears what
 is held, and the move out of Done is a recovery move that sends the agent no messages, so a message
