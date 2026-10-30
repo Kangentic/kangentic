@@ -25,9 +25,12 @@ vi.mock('electron', () => ({
 const service = vi.hoisted(() => ({
   pauseWorkflow: vi.fn(),
   resumeWorkflow: vi.fn(),
+  deleteWorkflow: vi.fn(),
+  deleteNeverStartedTasks: vi.fn(),
 }));
 vi.mock('../../src/main/workflows/workflow-service', () => ({
-  deleteWorkflow: vi.fn(),
+  deleteNeverStartedTasks: service.deleteNeverStartedTasks,
+  deleteWorkflow: service.deleteWorkflow,
   pauseWorkflow: service.pauseWorkflow,
   renameWorkflow: vi.fn(),
   resumeWorkflow: service.resumeWorkflow,
@@ -61,7 +64,7 @@ vi.mock('../../src/main/workflows/workflow-agent', () => ({
 import { ipcMain } from 'electron';
 import { registerWorkflowHandlers } from '../../src/main/ipc/handlers/workflows';
 import { IPC } from '../../src/shared/ipc-channels';
-import type { WorkflowPauseReport, WorkflowResumeReport } from '../../src/shared/types';
+import type { WorkflowDeleteReport, WorkflowPauseReport, WorkflowResumeReport } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const context = {} as unknown as IpcContext;
@@ -113,5 +116,50 @@ describe('Workflows view Pause and Resume channels', () => {
 
     await expect(findHandler(IPC.WORKFLOW_PAUSE)({}, 'proj-1', 'wf-1')).rejects.toThrow('nothing to pause');
     await expect(findHandler(IPC.WORKFLOW_RESUME)({}, 'proj-1', 'wf-1')).rejects.toThrow('not paused');
+  });
+});
+
+/**
+ * The Delete confirm's channel. Its tasks that never started go only when the
+ * user ticked the box, and the answer is the report alone: how many went, and
+ * the ones that could not, by number, without the main-only fields.
+ */
+describe('Workflows view Delete channel', () => {
+  const released = [
+    { projectId: 'proj-1', taskId: 't-12', displayId: 12, board: null, neverStarted: false },
+    { projectId: 'proj-1', taskId: 't-14', displayId: 14, board: null, neverStarted: true },
+    { projectId: 'proj-2', taskId: 't-3', displayId: 3, board: 'kangentic-mobile', neverStarted: true },
+  ];
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    registerWorkflowHandlers(context);
+    service.deleteWorkflow.mockReturnValue({ workflow: { id: 'wf-1' }, released });
+  });
+
+  it('deletes no task when the box was not ticked', async () => {
+    const response = await findHandler(IPC.WORKFLOW_DELETE)({}, 'proj-1', 'wf-1');
+
+    expect(service.deleteWorkflow).toHaveBeenCalledWith(context, 'proj-1', 'wf-1');
+    expect(service.deleteNeverStartedTasks).not.toHaveBeenCalled();
+    const expected: WorkflowDeleteReport = { deleted: 0, failed: [] };
+    expect(response).toStrictEqual(expected);
+  });
+
+  it('deletes the tasks that never started when it was, and reports them', async () => {
+    service.deleteNeverStartedTasks.mockResolvedValue({
+      deleted: [released[2]],
+      kept: [released[0]],
+      failed: [{ ...released[1], reason: 'worktree removal timed out' }],
+    });
+
+    const response = await findHandler(IPC.WORKFLOW_DELETE)({}, 'proj-1', 'wf-1', { deleteNeverStarted: true });
+
+    expect(service.deleteNeverStartedTasks).toHaveBeenCalledWith(context, released);
+    const expected: WorkflowDeleteReport = {
+      deleted: 1,
+      failed: [{ projectId: 'proj-1', taskId: 't-14', displayId: 14, reason: 'worktree removal timed out' }],
+    };
+    expect(response).toStrictEqual(expected);
   });
 });

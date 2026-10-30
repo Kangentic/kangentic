@@ -48,6 +48,11 @@ msgstr "W toku: {inProgressCount}"
 msgid "{name}, {countText}"
 msgstr "{name}, {countText}"
 
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{neverStarted, plural, one {Also delete its # task that never started} other {Also delete its # tasks that never started}}"
+msgstr "{neverStarted, plural, one {Usuń też jego # zadanie, które nie zostało uruchomione} few {Usuń też jego # zadania, które nie zostały uruchomione} many {Usuń też jego # zadań, które nie zostały uruchomione} other {Usuń też jego # zadania, które nie zostały uruchomione}}"
+
 #: src/renderer/components/workflows/workflow-text.ts
 #, fuzzy
 msgid "{progress}."
@@ -97,6 +102,11 @@ msgstr "{taskCount, plural, one {Usuwa # zaplanowane zadanie i rozmowę z agente
 #, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
 msgstr "{unfinished, plural, =0 {Jego zadania są ukończone i pozostają na miejscu. Rozmowa z agentem zostanie usunięta.} one {Jego # nieukończone zadanie pozostaje na miejscu jako zwykłe zadanie. Rozmowa z agentem zostanie usunięta.} few {Jego # nieukończone zadania pozostają na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.} many {Jego # nieukończonych zadań pozostaje na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.} other {Jego # nieukończonego zadania pozostaje na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{unfinished, plural, =0 {The agent conversation is deleted.} one {Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+msgstr "{unfinished, plural, =0 {Rozmowa z agentem zostanie usunięta.} one {Jego # inne nieukończone zadanie pozostaje na miejscu jako zwykłe zadanie. Rozmowa z agentem zostanie usunięta.} few {Jego # inne nieukończone zadania pozostają na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.} many {Jego # innych nieukończonych zadań pozostaje na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.} other {Jego # innego nieukończonego zadania pozostaje na miejscu jako zwykłe zadania. Rozmowa z agentem zostanie usunięta.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #, fuzzy

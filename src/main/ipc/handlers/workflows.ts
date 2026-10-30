@@ -1,10 +1,18 @@
 import { ipcMain } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import type { WorkflowCanvasPosition, WorkflowPauseReport, WorkflowResumeReport, WorkflowTaskInput } from '../../../shared/types';
+import type {
+  WorkflowCanvasPosition,
+  WorkflowDeleteOptions,
+  WorkflowDeleteReport,
+  WorkflowPauseReport,
+  WorkflowResumeReport,
+  WorkflowTaskInput,
+} from '../../../shared/types';
 import { isPlanApproval } from '../../../shared/plan-approval';
 import { WORKFLOW_REFUSALS } from '../../../shared/workflow-refusals';
 import type { IpcContext } from '../ipc-context';
 import {
+  deleteNeverStartedTasks,
   deleteWorkflow,
   pauseWorkflow,
   renameWorkflow,
@@ -60,9 +68,18 @@ export function registerWorkflowHandlers(context: IpcContext): void {
     setViewPlanApproval(context, projectId, workflowId, key, planApproval);
   });
 
-  ipcMain.handle(IPC.WORKFLOW_DELETE, (_, projectId: string, workflowId: string) => {
-    deleteWorkflow(context, projectId, workflowId);
-  });
+  ipcMain.handle(
+    IPC.WORKFLOW_DELETE,
+    async (_, projectId: string, workflowId: string, options?: WorkflowDeleteOptions): Promise<WorkflowDeleteReport> => {
+      const { released } = deleteWorkflow(context, projectId, workflowId);
+      if (options?.deleteNeverStarted !== true) return { deleted: 0, failed: [] };
+      const { deleted, failed } = await deleteNeverStartedTasks(context, released);
+      return {
+        deleted: deleted.length,
+        failed: failed.map(({ projectId: taskProjectId, taskId, displayId, reason }) => ({ projectId: taskProjectId, taskId, displayId, reason })),
+      };
+    },
+  );
 
   ipcMain.handle(IPC.WORKFLOW_START, async (_, projectId: string, workflowId: string) => {
     requireWorkflowAgentIdle(context, workflowId);

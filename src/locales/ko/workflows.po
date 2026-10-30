@@ -48,6 +48,11 @@ msgstr "{inProgressCount}개 진행 중"
 msgid "{name}, {countText}"
 msgstr "{name}, {countText}"
 
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{neverStarted, plural, one {Also delete its # task that never started} other {Also delete its # tasks that never started}}"
+msgstr "{neverStarted, plural, other {시작되지 않은 작업 #개도 삭제}}"
+
 #: src/renderer/components/workflows/workflow-text.ts
 #, fuzzy
 msgid "{progress}."
@@ -97,6 +102,11 @@ msgstr "{taskCount, plural, other {계획된 작업 #개와 에이전트 대화�
 #, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
 msgstr "{unfinished, plural, =0 {작업이 모두 완료되었으며 그대로 유지됩니다. 에이전트 대화는 삭제됩니다.} other {완료되지 않은 작업 #개는 일반 작업으로 그대로 유지됩니다. 에이전트 대화는 삭제됩니다.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{unfinished, plural, =0 {The agent conversation is deleted.} one {Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+msgstr "{unfinished, plural, =0 {에이전트 대화는 삭제됩니다.} other {완료되지 않은 다른 작업 #개는 일반 작업으로 그대로 유지됩니다. 에이전트 대화는 삭제됩니다.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #, fuzzy

@@ -300,6 +300,11 @@ msgstr "{value}（不在此看板上）"
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
 msgstr "{worktreeCount, plural, other {# 個工作樹中有 {failedCount} 個無法清除。}}"
 
+#: src/renderer/stores/workflow-store.ts
+#, fuzzy
+msgid "#{displayId} stays in To Do. {reason}"
+msgstr "#{displayId} 仍留在待辦。{reason}"
+
 #: src/renderer/App.tsx
 msgid "A project"
 msgstr "某個專案"
@@ -504,6 +509,7 @@ msgstr "無法建立工作流程"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#: src/renderer/stores/workflow-store.ts
 msgid "Couldn't delete task"
 msgstr "無法刪除任務"
 

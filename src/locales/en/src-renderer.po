@@ -300,6 +300,10 @@ msgstr "{value} (not on this board)"
 msgid "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
 msgstr "{worktreeCount, plural, one {{failedCount} of # worktree could not be cleaned up.} other {{failedCount} of # worktrees could not be cleaned up.}}"
 
+#: src/renderer/stores/workflow-store.ts
+msgid "#{displayId} stays in To Do. {reason}"
+msgstr "#{displayId} stays in To Do. {reason}"
+
 #: src/renderer/App.tsx
 msgid "A project"
 msgstr "A project"
@@ -504,6 +508,7 @@ msgstr "Couldn't create the workflow"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/stores/board-store/task-slice.ts
+#: src/renderer/stores/workflow-store.ts
 msgid "Couldn't delete task"
 msgstr "Couldn't delete task"
 

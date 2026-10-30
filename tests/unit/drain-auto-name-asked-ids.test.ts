@@ -1,10 +1,10 @@
 /**
  * Unit tests for `drainAutoNameAskedIds` in
- * src/main/ipc/handlers/task-crud.ts.
+ * src/main/ipc/helpers/task-delete.ts, which TASK_DELETE and TASK_BULK_DELETE
+ * both run after a delete.
  *
- * The function is @internal-exported so it can be tested without going through
- * the full IPC handler. All dependencies (electron, DB modules, etc.) are
- * mocked to keep this test self-contained and fast.
+ * Tested directly, without going through an IPC handler. All dependencies
+ * (electron, DB modules, etc.) are mocked to keep this test self-contained and fast.
  *
  * Covers:
  *   - removes matching IDs and saves the filtered array
@@ -84,12 +84,13 @@ vi.mock('../../src/main/agent/shared', () => ({
 vi.mock('../../src/main/ipc/task-lifecycle-lock', () => ({
   withTaskLock: vi.fn(async (_id: string, fn: () => Promise<unknown>) => fn()),
 }));
+vi.mock('../../src/main/ipc/helpers/task-cleanup', () => ({ cleanupTaskResources: vi.fn(async () => {}) }));
 
 // ---------------------------------------------------------------------------
 // Import the function under test
 // ---------------------------------------------------------------------------
 
-import { drainAutoNameAskedIds } from '../../src/main/ipc/handlers/task-crud';
+import { drainAutoNameAskedIds } from '../../src/main/ipc/helpers/task-delete';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 // ---------------------------------------------------------------------------

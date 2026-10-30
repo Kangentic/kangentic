@@ -36,6 +36,7 @@ src/main/workflows/
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
   workflow-task-hold.ts      # one task's own hold (its automations switch): what putting it on and taking it off does
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
+  workflow-never-started.ts  # a task in To Do with no session, worktree or move out, which a delete may take along
   workflow-limits.ts         # MAX_WORKFLOW_TASKS, imported by the service and the MCP save tool's schema
   workflow-view-service.ts   # the view's read model (detail, summaries) and planned-workflow edits by key
   workflow-changed.ts        # the coalesced workflow:changed push and the onWorkflowChanged listener

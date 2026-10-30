@@ -5835,7 +5835,7 @@
       function summary(entry) {
         var workflow = entry.workflow;
         if (workflow.state === 'draft') {
-          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [] };
+          return { workflow: JSON.parse(JSON.stringify(workflow)), taskCount: (workflow.draft || { tasks: [] }).tasks.length, doneCount: 0, inProgressCount: 0, queuedCount: 0, blockedCount: 0, neverStartedCount: 0, boardTasks: {}, agent: agentSummary(workflow.id), stalledTasks: [] };
         }
         var created = createdTasks(workflow.id);
         var counts = { done: 0, working: 0, queued: 0, blocked: 0 };
@@ -5873,7 +5873,8 @@
         });
         return {
           workflow: JSON.parse(JSON.stringify(workflow)), taskCount: created.length, doneCount: counts.done,
-          inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked, boardTasks: boardTasks,
+          inProgressCount: counts.working, queuedCount: counts.queued, blockedCount: counts.blocked,
+          neverStartedCount: created.filter(neverStarted).length, boardTasks: boardTasks,
           agent: agentSummary(workflow.id),
           stalledTasks: stalledTasks,
         };
@@ -5926,6 +5927,13 @@
         // A workflow column like the route: Start copies the planned task's.
         task.plan_approval = route.plan_approval || null;
       }
+      // Main's isNeverStarted (src/main/workflows/workflow-never-started.ts) also
+      // reads the task's session records and its moves; the mock keeps neither,
+      // so a task in To Do with no session and no worktree is one that never started.
+      function neverStarted(task) {
+        return placeOf(task) === 'todo' && !task.session_id && !task.worktree_path;
+      }
+
       function release(task) {
         task.workflow_id = null;
         task.workflow_project_id = null;
@@ -6073,16 +6081,23 @@
           entry.workflow.revision += 1;
           emit(homeOf(entry), workflowId, true);
         },
-        delete: async function (projectId, workflowId) {
+        delete: async function (projectId, workflowId, options) {
           var entry = requireEntry(projectId, workflowId);
+          var doomedIds = [];
           if (entry.workflow.state !== 'draft') {
             createdTasks(workflowId).forEach(function (task) {
-              if (placeOf(task) !== 'done') release(task);
+              if (placeOf(task) === 'done') return;
+              if (options && options.deleteNeverStarted === true && neverStarted(task)) doomedIds.push(task.id);
+              release(task);
             });
           }
           entries = entries.filter(function (candidate) { return candidate !== entry; });
           links = links.filter(function (link) { return link.workflow_id !== workflowId; });
+          // Main deletes each through the board's own task delete (deleteNeverStartedTasks).
+          tasks = tasks.filter(function (task) { return doomedIds.indexOf(task.id) === -1; });
+          attachments = attachments.filter(function (attachment) { return doomedIds.indexOf(attachment.task_id) === -1; });
           emit(homeOf(entry), workflowId, true);
+          return { deleted: doomedIds.length, failed: [] };
         },
         start: async function (projectId, workflowId) {
           var entry = requireEntry(projectId, workflowId);

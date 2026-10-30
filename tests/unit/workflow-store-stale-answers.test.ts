@@ -20,15 +20,16 @@
  * selection.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Workflow, WorkflowDetail, WorkflowSummary, WorkflowViewTask } from '../../src/shared/types';
+import type { Workflow, WorkflowDeleteReport, WorkflowDetail, WorkflowSummary, WorkflowViewTask } from '../../src/shared/types';
 
 // The project on screen, which a test changes to switch projects mid-call.
 const projectHarness = vi.hoisted(() => ({ currentProjectId: 'p' }));
 vi.mock('../../src/renderer/stores/project-store', () => ({
   useProjectStore: { getState: () => ({ currentProject: { id: projectHarness.currentProjectId } }) },
 }));
+const toastHarness = vi.hoisted(() => ({ addToast: vi.fn() }));
 vi.mock('../../src/renderer/stores/toast-store', () => ({
-  useToastStore: { getState: () => ({ addToast: vi.fn() }) },
+  useToastStore: { getState: () => ({ addToast: toastHarness.addToast }) },
 }));
 
 const { useWorkflowStore } = await import('../../src/renderer/stores/workflow-store');
@@ -650,17 +651,17 @@ describe('deleteWorkflow', () => {
 
   it('keeps the workflow the user picked while the delete was in flight', async () => {
     const bridge = installBridge();
-    const deletion = deferred<void>();
+    const deletion = deferred<WorkflowDeleteReport>();
     const reload = deferred<WorkflowSummary[]>();
     bridge.delete.mockReturnValue(deletion.promise);
     bridge.list.mockReturnValue(reload.promise);
     bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
 
     const deleting = state().deleteWorkflow();
-    expect(bridge.delete).toHaveBeenCalledWith('p', 'a');
+    expect(bridge.delete).toHaveBeenCalledWith('p', 'a', undefined);
     // The user picks another workflow while main deletes the first.
     state().selectWorkflow('b');
-    deletion.resolve(undefined);
+    deletion.resolve({ deleted: 0, failed: [] });
     // The picker reload starts only after the delete's own bookkeeping ran.
     await vi.waitFor(() => expect(bridge.list).toHaveBeenCalledTimes(1));
     expect(state().selectedWorkflowId).toBe('b');
@@ -675,7 +676,7 @@ describe('deleteWorkflow', () => {
   it('clears the selection when the workflow deleted is still the one on screen, so the picker moves on (the control)', async () => {
     const bridge = installBridge();
     const reload = deferred<WorkflowSummary[]>();
-    bridge.delete.mockResolvedValue(undefined);
+    bridge.delete.mockResolvedValue({ deleted: 0, failed: [] });
     bridge.list.mockReturnValue(reload.promise);
     bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => detailOf(workflowId));
 
@@ -688,6 +689,52 @@ describe('deleteWorkflow', () => {
     reload.resolve([summaryOf('c')]);
     await expect(deleting).resolves.toBe(true);
     expect(state().selectedWorkflowId).toBe('c');
+  });
+
+  it('moves on as soon as main says the workflow is gone, while the delete still waits on its tasks', async () => {
+    // Main deletes the workflow, pushes the change, then deletes each task that
+    // never started, so the answer can come seconds after the push.
+    const bridge = installBridge();
+    const deletion = deferred<WorkflowDeleteReport>();
+    bridge.delete.mockReturnValue(deletion.promise);
+    bridge.list.mockResolvedValue([summaryOf('c')]);
+    bridge.get.mockImplementation(async (_projectId: string, workflowId: string) => {
+      if (workflowId === 'a') throw new Error('No workflow "a".');
+      return detailOf(workflowId);
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    const deleting = state().deleteWorkflow({ deleteNeverStarted: true });
+    state().handleChanged({ projectId: 'p', workflowId: 'a' });
+
+    // Off the deleted workflow before the delete has answered.
+    await vi.waitFor(() => expect(state().selectedWorkflowId).toBe('c'));
+    expect(state().detail?.workflow.id).toBe('c');
+
+    deletion.resolve({ deleted: 2, failed: [] });
+    await expect(deleting).resolves.toBe(true);
+    expect(state().selectedWorkflowId).toBe('c');
+  });
+
+  it('hands main the choice to delete the tasks that never started, and names the ones it could not', async () => {
+    const bridge = installBridge();
+    bridge.delete.mockResolvedValue({
+      deleted: 1,
+      failed: [{ projectId: 'p', taskId: 't-14', displayId: 14, reason: 'worktree removal timed out' }],
+    });
+    bridge.list.mockResolvedValue([]);
+    toastHarness.addToast.mockClear();
+
+    await expect(state().deleteWorkflow({ deleteNeverStarted: true })).resolves.toBe(true);
+
+    expect(bridge.delete).toHaveBeenCalledWith('p', 'a', { deleteNeverStarted: true });
+    expect(toastHarness.addToast).toHaveBeenCalledTimes(1);
+    // Main's own reason, after the task it names, and a card that opens that task.
+    expect(toastHarness.addToast).toHaveBeenCalledWith(expect.objectContaining({
+      message: '#14 stays in To Do. Worktree removal timed out.',
+      variant: 'error',
+      onOpen: expect.any(Function),
+    }));
   });
 });
 

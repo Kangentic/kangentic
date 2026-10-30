@@ -48,6 +48,11 @@ msgstr "{inProgressCount} en cours"
 msgid "{name}, {countText}"
 msgstr "{name}, {countText}"
 
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{neverStarted, plural, one {Also delete its # task that never started} other {Also delete its # tasks that never started}}"
+msgstr "{neverStarted, plural, one {Supprimer aussi sa # tâche jamais démarrée} many {Supprimer aussi ses # de tâches jamais démarrées} other {Supprimer aussi ses # tâches jamais démarrées}}"
+
 #: src/renderer/components/workflows/workflow-text.ts
 #, fuzzy
 msgid "{progress}."
@@ -97,6 +102,11 @@ msgstr "{taskCount, plural, one {Supprime sa # tâche planifiée et la conversat
 #, fuzzy
 msgid "{unfinished, plural, =0 {Its tasks are done and stay where they are. The agent conversation is deleted.} one {Its # unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
 msgstr "{unfinished, plural, =0 {Ses tâches sont terminées et restent à leur place. La conversation de l'agent est supprimée.} one {Sa # tâche non terminée reste à sa place, en tant que tâche ordinaire. La conversation de l'agent est supprimée.} many {Ses # de tâches non terminées restent à leur place, en tant que tâches ordinaires. La conversation de l'agent est supprimée.} other {Ses # tâches non terminées restent à leur place, en tant que tâches ordinaires. La conversation de l'agent est supprimée.}}"
+
+#: src/renderer/components/workflows/WorkflowDialogs.tsx
+#, fuzzy
+msgid "{unfinished, plural, =0 {The agent conversation is deleted.} one {Its # other unfinished task stays where it is, as an ordinary task. The agent conversation is deleted.} other {Its # other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.}}"
+msgstr "{unfinished, plural, =0 {La conversation de l'agent est supprimée.} one {Son autre tâche non terminée (#) reste à sa place, en tant que tâche ordinaire. La conversation de l'agent est supprimée.} many {Ses # de tâches non terminées restantes restent à leur place, en tant que tâches ordinaires. La conversation de l'agent est supprimée.} other {Ses # autres tâches non terminées restent à leur place, en tant que tâches ordinaires. La conversation de l'agent est supprimée.}}"
 
 #: src/renderer/components/workflows/WorkflowDialogs.tsx
 #, fuzzy

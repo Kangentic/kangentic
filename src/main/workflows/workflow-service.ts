@@ -60,6 +60,10 @@ import { endWorkflowAgent } from './workflow-agent';
 import { linkEndState, readWorkflowTasks, workflowTasks } from './workflow-tasks';
 import { isInWorkflow } from './workflow-home';
 import { safeLanes } from './workflow-lanes';
+import { isNeverStarted } from './workflow-never-started';
+import { deleteTaskWithCleanup } from '../ipc/helpers/task-delete';
+import { resolveProjectContext } from '../ipc/helpers/project-repos';
+import { announceTaskBoardChange } from '../ipc/helpers/task-write-announce';
 import { WorkflowRequestError, requireStarted, requireWorkflow } from './workflow-requests';
 import { setTaskPlanApproval } from './workflow-task-plan-approval';
 import {
@@ -102,7 +106,10 @@ export interface WorkflowTaskView {
    */
   board: string | null;
   title: string;
-  /** Where it is: a column name, or "To Do (not created yet)" for a planned task. */
+  /**
+   * Where it is: a column name, or for a planned task "To Do (created at Start)",
+   * or "To Do (#921, taken in at Start)" when it takes in a board task.
+   */
   column: string;
   place: 'planned' | 'todo' | 'working' | 'done';
   /** The columns it visits, in order. */
@@ -184,7 +191,7 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     if (projectId === homeProjectId) return null;
     let name = boardNames.get(projectId);
     if (name === undefined) {
-      name = context.projectRepo.getById(projectId)?.name ?? projectId;
+      name = boardNameOf(context, projectId);
       boardNames.set(projectId, name);
     }
     return name;
@@ -194,14 +201,19 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     const tasks = draft.tasks.map((planned): WorkflowTaskView => {
       const projectId = planned.project_id ?? homeProjectId;
       const lanes = safeLanes(projectId);
+      // A task taken in at Start is named, so the read shows the take-in held.
+      const takenIn = planned.existing_task_id ? boardTask(projectId, planned.existing_task_id) : null;
+      let column = 'To Do (created at Start)';
+      if (takenIn) column = `To Do (#${takenIn.display_id}, taken in at Start)`;
+      else if (planned.existing_task_id) column = 'To Do (taken in at Start)';
       return {
         key: planned.key,
         taskId: planned.existing_task_id,
-        displayId: null,
+        displayId: takenIn?.display_id ?? null,
         projectId,
         board: boardOf(projectId),
         title: planned.title,
-        column: 'To Do (created at Start)',
+        column,
         place: 'planned',
         route: routeColumns(lanes, routeOfDraft(planned)).map((lane) => lane.name),
         waitsFor: draft.links.filter((link) => link.blocked === planned.key).map((link) => link.blocker),
@@ -258,6 +270,21 @@ export function readWorkflow(context: IpcContext, homeProjectId: string, workflo
     };
   });
   return { workflow, homeProjectId, tasks };
+}
+
+/** How a task on another board names that board: its project's name, or its id when the project is gone. */
+function boardNameOf(context: IpcContext, projectId: string): string {
+  return context.projectRepo.getById(projectId)?.name ?? projectId;
+}
+
+/** A task on a board, or null when the board or the task is gone. The read never creates a database. */
+function boardTask(projectId: string, taskId: string): Task | null {
+  try {
+    const db = getExistingProjectDb(projectId);
+    return db ? new TaskRepository(db).getById(taskId) ?? null : null;
+  } catch {
+    return null;
+  }
 }
 
 /** The run settings of a planned task or a task row, and nothing else of it. */
@@ -1488,21 +1515,40 @@ export function removeFromWorkflow(
   return tasks.getById(resolved.task.id)!;
 }
 
+/** An unfinished task a started workflow's delete made an ordinary task again. */
+export interface ReleasedWorkflowTask {
+  projectId: string;
+  taskId: string;
+  displayId: number;
+  /** Its board's project name when that is not the workflow's own project, else null. */
+  board: string | null;
+  /** It never started (`isNeverStarted`), so `deleteNeverStartedTasks` may delete it. */
+  neverStarted: boolean;
+}
+
 /**
  * Delete a workflow. Not started: its plan goes, and nothing else changes. Started:
  * its unfinished tasks stay where they are as ordinary tasks, and its tasks in
- * Done stay in Done.
+ * Done stay in Done. Synchronous, since a project delete calls it in a loop
+ * that never waits; a caller asked to delete the tasks that never started
+ * passes `released` to `deleteNeverStartedTasks` after.
  */
-export function deleteWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): { workflow: Workflow; released: number } {
+export function deleteWorkflow(context: IpcContext, homeProjectId: string, workflowId: string): { workflow: Workflow; released: ReleasedWorkflowTask[] } {
   const workflow = requireWorkflow(homeProjectId, workflowId);
-  let released = 0;
+  const released: ReleasedWorkflowTask[] = [];
   if (workflow.state !== 'draft') {
     for (const { projectId, task } of workflowTasks(context, homeProjectId, workflowId)) {
       const lanes = safeLanes(projectId);
       const lane = lanes.find((candidate) => candidate.id === task.swimlane_id);
       if (task.archived_at || lane?.role === 'done') continue;
       new TaskRepository(getProjectDb(projectId)).setWorkflowMembership(task.id, null);
-      released += 1;
+      released.push({
+        projectId,
+        taskId: task.id,
+        displayId: task.display_id,
+        board: projectId === homeProjectId ? null : boardNameOf(context, projectId),
+        neverStarted: isNeverStarted(projectId, task, lanes),
+      });
       announceBoardChange(context, projectId);
     }
   }
@@ -1514,6 +1560,64 @@ export function deleteWorkflow(context: IpcContext, homeProjectId: string, workf
   });
   notifyWorkflowChanged(homeProjectId, workflowId);
   return { workflow, released };
+}
+
+/** What `deleteNeverStartedTasks` did with each task its workflow's delete released. */
+export interface NeverStartedDeletion {
+  deleted: ReleasedWorkflowTask[];
+  /** Tasks that stay: every one that started, and one that started after the delete was asked. */
+  kept: ReleasedWorkflowTask[];
+  /** Tasks whose delete threw. Each stays in To Do as an ordinary task. */
+  failed: Array<ReleasedWorkflowTask & { reason: string }>;
+}
+
+/**
+ * Delete the tasks a workflow's delete released that never started, one at a
+ * time, through the board's own task delete (`deleteTaskWithCleanup`), so their
+ * cleanup is what deleting each by hand does. Called after `deleteWorkflow`:
+ * the tasks are ordinary by then, so no engine pass starts one in between. Each
+ * is judged again inside its lock, since a drag or a spawn can start it after
+ * the delete was asked, and a task that started then stays. One whose delete
+ * fails stays in To Do as an ordinary task, as it would without the option.
+ */
+export async function deleteNeverStartedTasks(context: IpcContext, released: ReleasedWorkflowTask[]): Promise<NeverStartedDeletion> {
+  const result: NeverStartedDeletion = { deleted: [], kept: [], failed: [] };
+  // The ids each board's delete event names: every task whose delete ran, as
+  // TASK_DELETE announces it, a failed one included. A task the check inside
+  // its lock kept is left out, since nothing of it changed.
+  const attemptedByBoard = new Map<string, string[]>();
+  const noteAttempt = (entry: ReleasedWorkflowTask): void => {
+    const ids = attemptedByBoard.get(entry.projectId);
+    if (ids) ids.push(entry.taskId);
+    else attemptedByBoard.set(entry.projectId, [entry.taskId]);
+  };
+  for (const entry of released) {
+    if (!entry.neverStarted) {
+      result.kept.push(entry);
+      continue;
+    }
+    try {
+      const { projectId, projectPath } = resolveProjectContext(context, entry.projectId);
+      const deleted = await deleteTaskWithCleanup(
+        context, projectId, projectPath, entry.taskId,
+        // One another workflow took in meanwhile is that workflow's now.
+        (task) => !task.workflow_id && isNeverStarted(entry.projectId, task),
+      );
+      (deleted ? result.deleted : result.kept).push(entry);
+      if (deleted) noteAttempt(entry);
+    } catch (error) {
+      console.error(`[WORKFLOW] Could not delete task ${entry.taskId.slice(0, 8)}, which never started:`, error);
+      result.failed.push({ ...entry, reason: error instanceof Error ? error.message : String(error) });
+      // Its attachments may be gone even though the row stayed, as for a failed TASK_DELETE.
+      noteAttempt(entry);
+    }
+  }
+  for (const [projectId, ids] of attemptedByBoard) {
+    // The event every other delete sends, so a paired phone drops the cards.
+    announceTaskBoardChange(context, projectId, { change: 'task-deleted', ids });
+    announceBoardChange(context, projectId);
+  }
+  return result;
 }
 
 export function renameWorkflow(context: IpcContext, homeProjectId: string, workflowId: string, title: string): Workflow {

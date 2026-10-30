@@ -54,6 +54,17 @@ export class TaskMoveRepository {
   }
 
   /**
+   * Whether a move ever took the task into a column other than this one. A
+   * task moved back to To Do has had its sessions and worktree wiped by the
+   * reset, so this is what still says it once left.
+   */
+  hasEnteredOtherLane(taskId: string, swimlaneId: string): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM task_moves WHERE task_id = ? AND to_swimlane_id != ? LIMIT 1')
+      .get(taskId, swimlaneId) !== undefined;
+  }
+
+  /**
    * The column the task was in at `atIso`: where the last move recorded at or
    * before it took the task. Null when no move was recorded by then (a task
    * placed before moves were recorded), which tells the caller nothing.

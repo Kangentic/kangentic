@@ -5889,6 +5889,27 @@ export interface WorkflowResumeReport {
   failed: WorkflowAgentFailure[];
 }
 
+/** What a workflow's delete may also do: take its tasks that never started with it. */
+export interface WorkflowDeleteOptions {
+  /** Delete its tasks still in To Do that never had a session or a worktree. Off when absent. */
+  deleteNeverStarted?: boolean;
+}
+
+/** A task its workflow's delete could not delete. It stays in To Do as an ordinary task. */
+export interface WorkflowDeleteFailure {
+  projectId: string;
+  taskId: string;
+  displayId: number;
+  /** The delete's error message. */
+  reason: string;
+}
+
+/** What a workflow's delete did to its tasks that never started. Both empty when not asked. */
+export interface WorkflowDeleteReport {
+  deleted: number;
+  failed: WorkflowDeleteFailure[];
+}
+
 /**
  * One column between To Do and Done on a workflow task's board, as the
  * Workflows view's route rail draws it. Every such column has a step, on the
@@ -6040,6 +6061,11 @@ export interface WorkflowSummary {
   queuedCount: number;
   /** In To Do, waiting for a task that is not done. */
   blockedCount: number;
+  /**
+   * In To Do and never started: no session ever, no worktree, never in another
+   * column. The Delete confirm offers to delete these with the workflow. 0 before Start.
+   */
+  neverStartedCount: number;
   /**
    * Each created task as a board card shows it, by task id: what its footer
    * says it waits for, and where a person may drag it. Empty before Start.
@@ -8406,7 +8432,8 @@ export interface ElectronAPI {
     rename: (projectId: string, workflowId: string, title: string) => Promise<Workflow>;
     /** Who approves one task's plans, by its key; null follows its plan columns. */
     setTaskPlanApproval: (projectId: string, workflowId: string, key: string, planApproval: PlanApproval | null) => Promise<void>;
-    delete: (projectId: string, workflowId: string) => Promise<void>;
+    /** Delete a workflow, and with `deleteNeverStarted` its tasks that never started. */
+    delete: (projectId: string, workflowId: string, options?: WorkflowDeleteOptions) => Promise<WorkflowDeleteReport>;
     start: (projectId: string, workflowId: string) => Promise<void>;
     /** Pause every agent of the workflow, held tasks' included. */
     pause: (projectId: string, workflowId: string) => Promise<WorkflowPauseReport>;

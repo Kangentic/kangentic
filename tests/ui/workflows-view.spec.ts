@@ -577,6 +577,80 @@ test.describe('Workflows header', () => {
     }
   });
 
+  test('Delete on a running workflow offers its tasks that never started, off by default, and deletes only those when ticked', async () => {
+    // Five tasks in To Do, and #415 among them has a session: four never started.
+    const { browser, page } = await launch('running', { sessionTaskId: 't415' });
+    try {
+      await byTestId(page, 'workflow-delete').click();
+      const confirm = byTestId(page, 'workflow-delete-confirm');
+      const neverStarted = byTestId(page, 'workflow-delete-never-started');
+      await expect(confirm).toContainText('Also delete its 4 tasks that never started');
+      await expect(neverStarted).not.toBeChecked();
+      await expect(confirm).toContainText('Its 7 unfinished tasks stay where they are, as ordinary tasks.');
+
+      // Ticked, the first line counts only what stays.
+      await neverStarted.check();
+      await expect(confirm).toContainText('Its 3 other unfinished tasks stay where they are, as ordinary tasks. The agent conversation is deleted.');
+      await confirm.getByRole('button', { name: 'Delete' }).click();
+      await expect(byTestId(page, 'workflows-empty')).toBeVisible();
+
+      await byTestId(page, 'view-toggle-board').click();
+      const todo = page.locator('[data-swimlane-name="To Do"]');
+      await expect(todo).toBeVisible();
+      for (const gone of [419, 416, 417, 418]) await expect(page.locator(`[data-task-id="t${gone}"]`)).toHaveCount(0);
+      // The task that has run stays, as do the ones past To Do.
+      for (const stays of [415, 414, 413]) await expect(page.locator(`[data-task-id="t${stays}"]`).first()).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Delete on a running workflow that leaves the offered box unticked deletes no task', async () => {
+    // The same fixture: four tasks never started, so the box is offered.
+    const { browser, page } = await launch('running', { sessionTaskId: 't415' });
+    try {
+      await byTestId(page, 'workflow-delete').click();
+      const confirm = byTestId(page, 'workflow-delete-confirm');
+      const neverStarted = byTestId(page, 'workflow-delete-never-started');
+      await expect(confirm).toContainText('Also delete its 4 tasks that never started');
+      await expect(neverStarted).not.toBeChecked();
+
+      // Confirmed as offered, with the box left off: the workflow goes, no task does.
+      await confirm.getByRole('button', { name: 'Delete' }).click();
+      await expect(byTestId(page, 'workflows-empty')).toBeVisible();
+
+      await byTestId(page, 'view-toggle-board').click();
+      const todo = page.locator('[data-swimlane-name="To Do"]');
+      await expect(todo).toBeVisible();
+      // A wrongly deleted task leaves the board a beat AFTER the delete resolves
+      // (the board repaints from main on its own), so a "still visible" check made
+      // right here passes against the old frame and can never go red. Await a
+      // board reload first: the cards read below are then main's settled answer.
+      await page.evaluate(async () => {
+        const stores = (window as unknown as {
+          __zustandStores?: { board: { getState: () => { loadBoard: () => Promise<void> } } };
+        }).__zustandStores;
+        if (!stores) throw new Error('the dev stores handle is missing, so the board cannot be reloaded');
+        await stores.board.getState().loadBoard();
+      });
+      // The four that never started stay, as do the one that ran and the ones past To Do.
+      for (const stays of [419, 416, 417, 418, 415, 414, 413]) await expect(page.locator(`[data-task-id="t${stays}"]`).first()).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Delete on a workflow not started offers no task deletion of its own', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await byTestId(page, 'workflow-delete').click();
+      await expect(byTestId(page, 'workflow-delete-confirm')).toBeVisible();
+      await expect(byTestId(page, 'workflow-delete-never-started')).toHaveCount(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Delete on a workflow whose tasks are all done says they stay, and counts no unfinished tasks', async () => {
     const { browser, page } = await launch('all-done');
     try {
@@ -587,6 +661,8 @@ test.describe('Workflows header', () => {
       await expect(confirm).toContainText('Delete Usage budgets?');
       await expect(confirm).toContainText('Its tasks are done and stay where they are. The agent conversation is deleted.');
       await expect(confirm).not.toContainText('unfinished');
+      // Nothing is left that never started.
+      await expect(byTestId(page, 'workflow-delete-never-started')).toHaveCount(0);
     } finally {
       await browser.close();
     }

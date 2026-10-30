@@ -46,7 +46,9 @@ The project's workflows with their state (not started, running, paused) and prog
 One workflow: its state, its `revision`, and each task with its column, route and what it waits
 for. A workflow not started lists its planned tasks by key, each with any run setting that is not
 the default, in `kangentic_save_workflow`'s own names (`project "API", baseBranch "develop",
-useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A started task on
+useWorktree false, profile "Heavy"`), so a plan read and sent back keeps them. A planned task
+reads `In To Do (created at Start)`, or, when it takes in a board task with `existingTask`, names
+that task: `In To Do (#921, taken in at Start)`. A started task on
 another project's board says which (`#7 ... In Review on board "API"`), and so does a blocker
 there (`Waits for #7 on "API"`), since task numbers count per board. A blocker whose project's
 database will not open reads `a task on "API" that could not be read`, and still holds its task. A
@@ -281,7 +283,18 @@ Delete a workflow. One not started loses its plan and nothing else changes. A st
 unfinished tasks stay where they are as ordinary tasks, and its tasks in Done stay in Done. Those
 Done tasks stay in Done as ordinary tasks once it is deleted.
 
+With `deleteNeverStarted`, the unfinished tasks that never started go too: a task still in To Do
+that never had a session, has no worktree, and was never in another column. A move back to To Do
+wipes a task's sessions and worktree, so its moves are what keep a task that ran. The workflow is
+deleted first, then each such task through the board's own task delete, checked again inside the
+task's lock, so a task a drag started meanwhile stays. The reply names the tasks kept and deleted
+(`#12 stays where it is, as an ordinary task. Deleted #14 and "API" #3, which never started.`),
+and a task whose delete failed, which stays in To Do. A task on another board is named with its
+board before its number, so in a list the board names that one task. `data` carries `kept`,
+`deleted` and `failed`.
+
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
 | `workflow` | string | Yes | The workflow's id or exact title. |
+| `deleteNeverStarted` | boolean | No | Also delete its tasks that never started. Off by default. |
 | `project` | string | No | Project name or UUID. Omit for the active project. |
