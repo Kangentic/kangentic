@@ -12,6 +12,8 @@ import type { ChunkInput, CorpusDocumentRef } from '../../src/main/retrieval/typ
 
 import { openTestDatabase } from './helpers/test-database';
 import { ConversationIndexer } from '../../src/main/retrieval/conversation/conversation-indexer';
+import { chunkTranscript } from '../../src/main/retrieval/conversation/transcript-chunker';
+import type { TranscriptEntry } from '../../src/shared/types';
 
 /**
  * Most of this file drives the store through a hand-rolled `prepare()` that
@@ -720,6 +722,187 @@ describe('RetrievalStore.getChunks', () => {
       turnUuidEnd: 'u5',
       embeddedModel: null,
     });
+  });
+});
+
+describe('RetrievalStore.nonProseChunkIds (real database)', () => {
+  /** The one chunk the real chunker writes for `entries`, so the labels are the ones the indexer stores. */
+  function chunkTextOf(entries: TranscriptEntry[]): string {
+    const chunks = chunkTranscript(entries);
+    if (chunks.length !== 1) throw new Error(`expected one chunk, got ${chunks.length}`);
+    return chunks[0].text;
+  }
+  const LONG_TEXT = 'Can we change how the board orders its cards? '.repeat(12);
+
+  /** Chunk texts by what they hold. `prose` is what the task window's prior work counts. */
+  const TEXTS = {
+    prose: {
+      expectedProse: true,
+      text: chunkTextOf([
+        { kind: 'user', uuid: 'u1', ts: 1, text: 'Can we look at the widget again?' },
+        { kind: 'assistant', uuid: 'a1', ts: 2, blocks: [{ type: 'text', text: 'Yes, the widget needs a closer look.' }] },
+      ]),
+    },
+    proseWithShortToolTail: {
+      expectedProse: true,
+      text: chunkTextOf([
+        { kind: 'user', uuid: 'u2', ts: 1, text: LONG_TEXT },
+        { kind: 'assistant', uuid: 'a2', ts: 2, blocks: [{ type: 'text', text: LONG_TEXT }, { type: 'tool_use', id: 't2', name: 'Read', input: { file_path: 'a.ts' } }] },
+      ]),
+    },
+    toolCallAndResult: {
+      expectedProse: false,
+      text: chunkTextOf([
+        { kind: 'assistant', uuid: 'a3', ts: 1, blocks: [{ type: 'tool_use', id: 't3', name: 'Read', input: { file_path: 'src/widget.ts' } }] },
+        { kind: 'tool_result', uuid: 'r3', ts: 2, toolUseId: 't3', content: 'export const widget = 1;' },
+      ]),
+    },
+    toolErrorOnly: {
+      expectedProse: false,
+      text: chunkTextOf([
+        { kind: 'tool_result', uuid: 'r4', ts: 1, toolUseId: 't4', content: 'ENOENT: no such file', isError: true },
+      ]),
+    },
+    opensOnToolThenProse: {
+      expectedProse: false,
+      text: chunkTextOf([
+        { kind: 'assistant', uuid: 'a5', ts: 1, blocks: [{ type: 'tool_use', id: 't5', name: 'Read', input: { file_path: 'a.ts' } }] },
+        { kind: 'user', uuid: 'u5', ts: 2, text: LONG_TEXT },
+      ]),
+    },
+    opensOnProseButMostlyTool: {
+      expectedProse: false,
+      text: chunkTextOf([
+        { kind: 'user', uuid: 'u6', ts: 1, text: 'ok' },
+        { kind: 'tool_result', uuid: 'r6', ts: 2, toolUseId: 't6', content: 'export const widget = 1; '.repeat(16) },
+      ]),
+    },
+    systemLine: {
+      expectedProse: false,
+      text: chunkTextOf([{ kind: 'system', uuid: 's7', ts: 1, subtype: 'command', text: '/compact' }]),
+    },
+  };
+
+  /** A real database holding one single-chunk document per text, or `texts` chunks in one document. */
+  function storeWith(texts: string[]): { store: RetrievalStore; ids: number[] } {
+    const database = openTracked();
+    runProjectMigrations(database);
+    const store = new RetrievalStore(database);
+    const { insertedIds } = store.upsertDocument(ref, texts.map((text, seq) => ({ ...chunk(seq, `hash-${seq}`), text })));
+    return { store, ids: insertedIds };
+  }
+
+  it('returns exactly the chunks whose stored text is not mostly prose, from the labels the chunker writes', () => {
+    const kinds = Object.values(TEXTS);
+    const { store, ids } = storeWith(kinds.map((kind) => kind.text));
+
+    const nonProse = store.nonProseChunkIds(ids);
+
+    const expected = new Set(ids.filter((_id, index) => !kinds[index].expectedProse));
+    expect(expected.size).toBe(5);
+    expect(nonProse).toEqual(expected);
+  });
+
+  it('answers only for the ids it is asked about, and ignores ids with no chunk', () => {
+    const kinds = Object.values(TEXTS);
+    const { store, ids } = storeWith(kinds.map((kind) => kind.text));
+    const proseId = ids[0];
+    const toolId = ids[2];
+    const otherToolId = ids[3];
+
+    expect(store.nonProseChunkIds([proseId, toolId, 999_999])).toEqual(new Set([toolId]));
+    expect(store.nonProseChunkIds([proseId])).toEqual(new Set());
+    // Not asked about, so not returned, though it is not prose either.
+    expect(store.nonProseChunkIds([toolId]).has(otherToolId)).toBe(false);
+  });
+
+  it('returns an empty set for no ids', () => {
+    const { store } = storeWith([TEXTS.toolCallAndResult.text]);
+    const none = store.nonProseChunkIds([]);
+    expect(none).toBeInstanceOf(Set);
+    expect(none.size).toBe(0);
+  });
+
+  // Red-green: shorten the batch by one (`ids.slice(start, start + PLACEMENT_BATCH - 1)`)
+  // and the ids at positions 499 and 999 are never read; stop after the first
+  // batch and every id past 500 is missing.
+  it('reads every batch of 500 ids, including the first and last id of each', () => {
+    // 1,201 ids are three batches: positions 0 to 499, 500 to 999 and 1000 to 1200.
+    const total = 1201;
+    const edgePositions = new Set([0, 499, 500, 501, 999, 1000, 1199, 1200]);
+    const isNonProseAt = (position: number): boolean => position % 100 === 0 || edgePositions.has(position);
+    const texts = Array.from({ length: total }, (_unused, position) => (
+      isNonProseAt(position) ? TEXTS.toolCallAndResult.text : TEXTS.prose.text
+    ));
+    const { store, ids } = storeWith(texts);
+    expect(ids).toHaveLength(total);
+    const expected = new Set(ids.filter((_id, position) => isNonProseAt(position)));
+    expect(expected.size).toBeGreaterThan(edgePositions.size);
+
+    const nonProse = store.nonProseChunkIds(ids);
+
+    expect(nonProse.size).toBe(expected.size);
+    expect(nonProse).toEqual(expected);
+  });
+});
+
+describe('RetrievalStore.taskIdsCreatedBefore (real database)', () => {
+  const CUTOFF = Date.parse('2026-10-20T12:00:00.000Z');
+
+  /** A project database with the given tasks, each `created_at` written as the app writes it: `toISOString()`. */
+  function storeWithTasks(tasks: Array<{ id: string; createdAt: string; swimlaneId?: string }>): RetrievalStore {
+    const database = openTracked();
+    runProjectMigrations(database);
+    for (const [index, swimlaneId] of ['lane-1', 'lane-2'].entries()) {
+      database.prepare('INSERT INTO swimlanes (id, name, position, created_at) VALUES (?, ?, ?, ?)')
+        .run(swimlaneId, `Lane ${swimlaneId}`, index, '2026-01-01T00:00:00.000Z');
+    }
+    const insert = database.prepare(`INSERT INTO tasks (id, display_id, title, description, swimlane_id, position, created_at, updated_at)
+      VALUES (?, ?, ?, '', ?, 0, ?, ?)`);
+    tasks.forEach((task, index) => insert.run(task.id, index + 1, task.id, task.swimlaneId ?? 'lane-1', task.createdAt, task.createdAt));
+    return new RetrievalStore(database);
+  }
+
+  // Red-green: `<` as `<=` and the task created exactly at the cutoff is in; a
+  // `created_at` that does not parse compared with `!(parsed >= cutoff)` is in too.
+  it('keeps the tasks created strictly before the cutoff, and drops one created at it or after it', () => {
+    const store = storeWithTasks([
+      { id: 'a-ms-before', createdAt: new Date(CUTOFF - 1).toISOString() },
+      { id: 'at-cutoff', createdAt: new Date(CUTOFF).toISOString() },
+      { id: 'a-ms-after', createdAt: new Date(CUTOFF + 1).toISOString() },
+      { id: 'long-before', createdAt: '2026-01-02T03:04:05.678Z' },
+      { id: 'long-after', createdAt: '2027-01-02T03:04:05.678Z' },
+    ]);
+
+    expect(store.taskIdsCreatedBefore(CUTOFF)).toEqual(new Set(['a-ms-before', 'long-before']));
+  });
+
+  it('never counts a task whose created_at does not parse', () => {
+    const store = storeWithTasks([
+      { id: 'parses', createdAt: new Date(CUTOFF - 1000).toISOString() },
+      { id: 'garbage', createdAt: 'not a date' },
+      { id: 'empty', createdAt: '' },
+    ]);
+
+    expect(store.taskIdsCreatedBefore(CUTOFF)).toEqual(new Set(['parses']));
+  });
+
+  it('reaches nothing when the cutoff is not a number', () => {
+    const store = storeWithTasks([
+      { id: 'early', createdAt: '2026-01-02T03:04:05.678Z' },
+      { id: 'garbage', createdAt: 'not a date' },
+    ]);
+
+    expect(store.taskIdsCreatedBefore(Number.NaN)).toEqual(new Set());
+  });
+
+  it('reads the tasks of every swimlane, and is empty when there are none', () => {
+    const store = storeWithTasks([
+      { id: 'in-lane-1', createdAt: '2026-01-02T03:04:05.678Z', swimlaneId: 'lane-1' },
+      { id: 'in-lane-2', createdAt: '2026-01-03T03:04:05.678Z', swimlaneId: 'lane-2' },
+    ]);
+    expect(store.taskIdsCreatedBefore(CUTOFF)).toEqual(new Set(['in-lane-1', 'in-lane-2']));
+    expect(storeWithTasks([]).taskIdsCreatedBefore(CUTOFF)).toEqual(new Set());
   });
 });
 

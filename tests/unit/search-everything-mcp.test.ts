@@ -236,6 +236,7 @@ function rankedTask(index: number, overrides: Partial<RelatedWorkTask> = {}): Re
     displayId: 100 + index,
     title: `Task ${index}`,
     score: 1 - index / 100,
+    relevance: 1 - index / 100,
     strength: 1 - index / 100,
     matches: 2,
     firstMs: Date.UTC(2026, 7, 1),

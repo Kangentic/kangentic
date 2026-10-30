@@ -275,6 +275,7 @@ function relatedTask(overrides: Partial<RelatedWorkTask> = {}): RelatedWorkTask 
     displayId: 561,
     title: 'Sphere fit framing',
     score: 0.8,
+    relevance: 0.8,
     strength: 1,
     matches: 6,
     firstMs: 1_750_000_000_000,

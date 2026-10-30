@@ -13,6 +13,11 @@
 /** Handed tasks that carry their best passage into the prompt; the rest carry facts only. */
 export const PASSAGES_SHOWN = 12;
 
+/** Characters of a task's title and description its related work is ranked by,
+ *  in the task window's prior work and in `kangentic_search relatedToTask`.
+ *  Enough to carry the task's meaning; past this the embedding blurs. */
+export const TASK_TEXT_CHARS = 1_200;
+
 /** Where a task's best passage is kept in `ProjectRelatedWork.passages`. */
 export function passageKey(projectId: string, chunkId: number): string {
   return `${projectId}:${chunkId}`;
