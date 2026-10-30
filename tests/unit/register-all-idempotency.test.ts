@@ -357,7 +357,9 @@ describe('registerAllIpc idempotency', () => {
     //   exit:     the notifier, the recorder and the workflow agent, plus
     //             registerMonitorHandlers (1), plus the
     //             workflow engine (1: a session ending frees an agent slot,
-    //             so a waiting workflow task may start)                  = 5
+    //             so a waiting workflow task may start), plus the
+    //             held-messages flush (1: a session ending before its
+    //             first run releases the claim on a ride it carried)     = 6
     //
     // `registerMonitorHandlers` is deliberately NOT mocked below, so its real
     // `sessionManager.on('exit', schedulePush)` attaches here - that is how the
@@ -370,7 +372,7 @@ describe('registerAllIpc idempotency', () => {
     // than just bumping the number.
     expect(getOptionalIpcContext()?.desktopNotifier).toBeDefined();
     expect(getSessionManager().listenerCount('activity')).toBe(4);
-    expect(getSessionManager().listenerCount('exit')).toBe(5);
+    expect(getSessionManager().listenerCount('exit')).toBe(6);
   }, 30000);
 
   it('second call updates mainWindow without re-registering handlers', async () => {
@@ -452,9 +454,9 @@ describe('registerAllIpc idempotency', () => {
     // Counts as attributed in the first test: activity is the notifier, the
     // recorder, the workflow agent and the turn-end runner; exit is the
     // notifier, the recorder and the workflow agent plus
-    // registerMonitorHandlers and the workflow engine.
+    // registerMonitorHandlers, the workflow engine and the held-messages flush.
     expect(getSessionManager().listenerCount('activity')).toBe(4);
-    expect(getSessionManager().listenerCount('exit')).toBe(5);
+    expect(getSessionManager().listenerCount('exit')).toBe(6);
   }, 30000);
 
   it('second call preserves existing services', async () => {

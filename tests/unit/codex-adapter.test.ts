@@ -195,7 +195,9 @@ describe('Codex Adapter', () => {
         prompt: 'Address the review findings',
       }));
       expect(command).toContain('resume sess-abc-123');
-      expect(command.endsWith('"Address the review findings"')).toBe(true);
+      // The quote around the prompt is the host shell's (double on Windows,
+      // single on POSIX), so the pin is the order, not the quote character.
+      expect(command).toMatch(/resume sess-abc-123 .*Address the review findings['"]$/);
     });
 
     it('resume command adds --disable apps when the disableApps launch option is enabled', () => {
