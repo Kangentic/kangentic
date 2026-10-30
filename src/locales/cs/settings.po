@@ -3044,8 +3044,8 @@ msgstr "Když spuštění úkolu při přípravě čeká příliš dlouho ve fro
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Když agent dokončí svůj tah nebo potřebuje oprávnění"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Když agent dokončí svůj tah, má dotaz nebo potřebuje vaše schválení"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

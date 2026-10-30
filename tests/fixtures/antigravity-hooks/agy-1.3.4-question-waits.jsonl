@@ -1,0 +1,6 @@
+{"ts":1793327417201,"type":"prompt"}
+{"ts":1793327426641,"type":"tool_start","tool":"ask_question"}
+{"ts":1793327426641,"type":"idle","detail":"permission","tool":"ask_question","waitKind":"question"}
+{"ts":1793327446732,"type":"tool_end","tool":"ask_question"}
+{"ts":1793327446866,"type":"prompt"}
+{"ts":1793327449246,"type":"idle"}

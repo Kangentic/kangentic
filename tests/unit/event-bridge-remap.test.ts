@@ -804,23 +804,34 @@ describe('Gemini tool confirmation (Notification ToolPermission)', () => {
   // The Notification Gemini CLI 0.63.0 sends for a tool confirmation dialog
   // (`fireToolNotificationEvent`, `notification_type: "ToolPermission"`); the
   // plan prompt and a shell command both raised one in the same preview.
-  const notification = (notificationType: string, message: string) => JSON.stringify({
+  const notification = (notificationType: string, message: string, detailsType = 'exec') => JSON.stringify({
     session_id: '00000000-0000-0000-0000-000000000000',
     cwd: 'C:\\Users\\dev\\repo',
     hook_event_name: 'Notification',
     notification_type: notificationType,
     message,
-    details: { type: 'exec', title: 'Confirm Shell Command' },
+    details: { type: detailsType, title: 'Confirm Shell Command' },
   });
 
   // Gemini's real Notification entries: the logged notification, then the permission idle.
   const notificationEntries = () => buildGeminiHooks('/mock/event-bridge.js', '/mock/events.jsonl', {}).Notification
     .map((entry) => ({ eventType: entry.hooks[0].command.split(' ')[3], directives: directivesOf(entry.hooks[0].command) }));
 
-  it('turns a tool confirmation into the permission idle that shows the task needs you', () => {
+  // Captured live from Gemini CLI 0.66.0's own hook stdin in a /preview: the
+  // ask_user dialog, then a shell command's confirmation, in one session.
+  const capturedNotification = (name: string): string =>
+    fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'gemini-hooks', name), 'utf8');
+
+  it('turns a captured exec confirmation into the permission idle that shows the task needs you, an approval', () => {
     const permissionEntry = notificationEntries()[1];
-    runBridge(notification('ToolPermission', 'Tool Confirm Shell Command requires execution'), [outputFile, permissionEntry.eventType, ...permissionEntry.directives]);
-    expect(readEvent()).toMatchObject({ type: 'idle', detail: 'permission' });
+    runBridge(capturedNotification('gemini-0.66.0-notification-exec.json'), [outputFile, permissionEntry.eventType, ...permissionEntry.directives]);
+    expect(readEvent()).toMatchObject({ type: 'idle', detail: 'permission', waitKind: 'approval' });
+  });
+
+  it('tags the captured ask_user dialog as a question, by its details.type', () => {
+    const permissionEntry = notificationEntries()[1];
+    runBridge(capturedNotification('gemini-0.66.0-notification-ask-user.json'), [outputFile, permissionEntry.eventType, ...permissionEntry.directives]);
+    expect(readEvent()).toMatchObject({ type: 'idle', detail: 'permission', waitKind: 'question' });
   });
 
   it('writes nothing for any other notification', () => {

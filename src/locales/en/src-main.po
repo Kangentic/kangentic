@@ -32,6 +32,10 @@ msgid "{provider} would not complete this sign-in."
 msgstr "{provider} would not complete this sign-in."
 
 #: src/main/notifications/desktop-notifier.ts
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} workflow"
 
@@ -43,6 +47,22 @@ msgstr "A project"
 msgid "A task"
 msgstr "A task"
 
+#: src/main/notifications/desktop-notifier.ts
+msgid "Agent has a question"
+msgstr "Agent has a question"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Agent needs your approval"
+msgstr "Agent needs your approval"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Agent needs your input"
+msgstr "Agent needs your input"
+
+#: src/main/notifications/desktop-notifier.ts
+msgid "Agent went idle"
+msgstr "Agent went idle"
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "Available system memory at the time: {availableMb} MB."
@@ -52,8 +72,8 @@ msgid "Close"
 msgstr "Close"
 
 #: src/main/notifications/desktop-notifier.ts
-msgid "Command Terminal"
-msgstr "Command Terminal"
+msgid "Command Terminal - {projectName}"
+msgstr "Command Terminal - {projectName}"
 
 #: src/main/index.ts
 msgctxt "Action"
@@ -75,10 +95,6 @@ msgstr "Kangentic can't read its database"
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic's window stopped responding"
-
-#: src/main/notifications/desktop-notifier.ts
-msgid "Needs permission: {place}"
-msgstr "Needs permission: {place}"
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"

@@ -5,9 +5,11 @@ import { toForwardSlash } from '../../../../shared/paths';
 import { isKangenticHookCommand, safelyUpdateSettingsFile } from '../../shared/hook-utils';
 import { copyEventBridgeInto } from '../../shared/workspace-bridge-copy';
 import {
+  appendPermissionWaitForTool,
   captureHookContext,
   extractDetailPath,
   extractToolPath,
+  replyJson,
 } from '../../shared/directive-builders';
 
 /** A single hook handler in Antigravity's hooks.json. */
@@ -41,6 +43,16 @@ export type AntigravityHooksFile = Record<string, AntigravityNamedHook>;
 
 /** The single named hook Kangentic owns in a workspace's hooks.json. */
 export const KANGENTIC_HOOK_NAME = 'kangentic-events';
+
+/**
+ * agy's question tool, the one PreToolUse is wired for (#452). Its dialog
+ * always waits on the user, unlike a tool whose approval agy's own policy may
+ * skip, so its start is the wait. Measured on agy 1.3.4 with a probe hook that
+ * answered `allow`: the PreToolUse carried `toolCall.name: "ask_question"` and
+ * the question in `toolCall.args.questions`, the dialog still showed, and the
+ * answer fired the tool's PostToolUse and then a PreInvocation.
+ */
+export const AGY_QUESTION_TOOL = 'ask_question';
 
 /**
  * Filename of the event-bridge copy the command builder drops into the
@@ -188,10 +200,17 @@ export function filterOurHooks(root: AntigravityHooksFile): AntigravityHooksFile
  *   primary argument under `toolCall.args` (path-addressed directives).
  * - Stop -> `idle`. Fires when the execution loop terminates (payload carries
  *   `fullyIdle: true`), the authoritative turn-end.
- * - PreToolUse is NEVER hooked: agy treats a handler response without a
- *   `decision` field as a DENY (observed: `{}` put the model in a
- *   tool-denied retry loop), and answering `allow` would bypass the CLI's
- *   own permission system. PostInvocation is skipped as pure noise (fires
+ * - PreToolUse is hooked for `ask_question` ONLY, as the question wait
+ *   (`tool_start` plus an appended question `idle:permission`). agy treats a
+ *   handler response without a `decision` field as a DENY (observed: `{}`
+ *   put the model in a tool-denied retry loop), so the entry carries
+ *   `replyJson({ decision: 'allow' })`, which the bridge writes to stdout
+ *   first. `allow` "delegates to the next hook or default policy" (agy's hook
+ *   docs), and on 1.3.4 the question and command dialogs still showed under
+ *   it. No other tool is matched: agy's policy decides whether a tool asks,
+ *   so a PreToolUse cannot tell an approval from a tool that just runs, and
+ *   approvals stay on the envelope. Not wired for a WSL agy, whose hook
+ *   transport carries no reply. PostInvocation is skipped as pure noise (fires
  *   with PreInvocation's cadence, carries nothing Stop/Prompt do not).
  *
  * `eventCommand`, for an agy installed in a WSL distro, builds each command in
@@ -208,9 +227,33 @@ export function buildHooks(
     ? eventCommand(eventType, ...directives)
     : ['node', bridgeToken, eventsToken, eventType, ...directives].join(' '));
 
+  // The question wait needs the hook to answer `allow` on stdout, or agy denies
+  // the question. The WSL hook transport carries no reply, so a distro's agy
+  // keeps the envelope rather than lose its questions.
+  const questionWait: AntigravityHookGroup[] | undefined = eventCommand
+    ? undefined
+    : [
+      {
+        matcher: AGY_QUESTION_TOOL,
+        hooks: [
+          {
+            type: 'command',
+            command: bridge(
+              EventType.ToolStart,
+              extractToolPath(['toolCall', 'name']),
+              appendPermissionWaitForTool({ toolPath: ['toolCall', 'name'], tool: AGY_QUESTION_TOOL, waitKind: 'question' }),
+              replyJson({ decision: 'allow' }),
+            ),
+            timeout: 10,
+          },
+        ],
+      },
+    ];
+
   return {
     ...filterOurHooks(existingRoot),
     [KANGENTIC_HOOK_NAME]: {
+      ...(questionWait ? { PreToolUse: questionWait } : {}),
       PreInvocation: [
         {
           type: 'command',

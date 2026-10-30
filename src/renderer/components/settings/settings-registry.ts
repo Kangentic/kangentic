@@ -200,7 +200,7 @@ export const SETTINGS_REGISTRY: SettingDefinition[] = [
   { id: 'restoreWindowPosition', tabId: 'behavior', label: msg`Restore window position`, description: msg`Remember window size and position between launches`, scope: 'global', section: msg`Windows`, keywords: ['size', 'bounds', 'remember'] },
 
   // ── Notifications > Events ──
-  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: msg`Agent idle`, description: msg`When an agent finishes its turn or needs permission`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert'] },
+  { id: 'notifications.onAgentIdle', tabId: 'notifications', label: msg`Agent idle`, description: msg`When an agent finishes its turn, has a question, or needs your approval`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onAgentCrash', tabId: 'notifications', label: msg`Agent crash`, description: msg`When an agent session ends unexpectedly. Desktop alerts on error exits only; toasts cover clean exits too.`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert', 'crash', 'exit', 'failed', 'ended'] },
   { id: 'notifications.onPlanComplete', tabId: 'notifications', label: msg`Plan complete`, description: msg`When a plan finishes and the task auto-moves`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert'] },
   { id: 'notifications.onWorkflowComplete', tabId: 'notifications', label: msg`Workflow complete`, description: msg`When every task in a workflow reaches Done`, scope: 'global', section: msg`Events`, keywords: ['desktop', 'toast', 'alert', 'workflow', 'linked tasks'] },

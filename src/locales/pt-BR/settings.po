@@ -3044,8 +3044,8 @@ msgstr "Quando a criação de uma tarefa espera demais na fila do git durante a 
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Quando um agente termina a vez ou precisa de permissão"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Quando um agente termina a vez, tem uma pergunta ou precisa da sua aprovação"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

@@ -40,6 +40,7 @@ An Aider installed in a WSL distro runs there (`supportsWslCli`) when its CLI pa
 ## Limitations
 
 - No session resume (no `--resume` equivalent)
-- No structured status output; idle comes from the notifications command above or the prompt regex
+- No structured status output; idle comes from the prompt regex. The notifications command above writes its `idle` line to `events.jsonl`, but the adapter declares no `runtime.statusFile`, and `StatusFileReader` parses events only through that hook: it hands the raw lines on for session id capture alone, so the engine never reads the line
+- A confirm prompt (`(Y)es/(N)o ... [Yes]:`) is not told apart from a finished turn: the card shows the envelope for both (GitHub #452). Telling it apart needs an edge-triggered match on the prompt in a `streamOutput` parser, and an end on the first output after the answer. No capture shows the prompt's bytes yet, so nothing is wired
 - No hooks, settings merge, or trust mechanism
 - No TUI alternate screen - uses streaming text output

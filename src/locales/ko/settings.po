@@ -3044,8 +3044,8 @@ msgstr "작업 생성 준비 중 git 대기열에서 너무 오래 기다릴 때
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "에이전트가 차례를 마치거나 권한이 필요할 때"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "에이전트가 차례를 마치거나, 질문이 있거나, 승인이 필요할 때"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

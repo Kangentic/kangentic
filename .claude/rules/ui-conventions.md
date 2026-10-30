@@ -12,7 +12,7 @@ chrome unless these are stated.
 
 - **Icons:** use Lucide React icons. No inline SVGs. Exactly four files are exempt. Three
   consume a shipped `@kangentic/branding` asset that cannot be a lucide glyph:
-  `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the nine
+  `components/BrandMark.tsx` (the brandmark lockup), `components/ActivityMark.tsx` (the eleven
   activity marks, shared with the website and mobile app), and
   `components/command-bar/CommandTerminalIcon.tsx` (a wrapper over `ActivityMark`). The fourth,
   `components/workflows/NoWorkflowsIllustration.tsx`, is the Workflows empty state's drawing of

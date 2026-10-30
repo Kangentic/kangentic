@@ -42,6 +42,7 @@ import {
   spaceFreeAgentsToken,
   KANGENTIC_HOOK_NAME,
   AGY_BRIDGE_COPY_NAME,
+  AGY_QUESTION_TOOL,
   type AntigravityHooksFile,
 } from '../../src/main/agent/adapters/antigravity/hook-manager';
 import { migrateAntigravityProjectData } from '../../src/main/agent/adapters/antigravity/project-relocation';
@@ -90,16 +91,33 @@ afterEach(() => {
 // ---------------------------------------------------------------------------
 
 describe('buildHooks', () => {
-  it('wires PreInvocation, PostToolUse, and Stop but NEVER PreToolUse or PostInvocation', () => {
+  it('wires PreInvocation, PostToolUse, Stop and the question PreToolUse, but never PostInvocation', () => {
     const merged = buildHooks('../.kangentic/agy-event-bridge.cjs', '../.kangentic/sessions/s1/events.jsonl', {});
     const entry = merged[KANGENTIC_HOOK_NAME];
     expect(entry.PreInvocation).toHaveLength(1);
     expect(entry.PostToolUse).toHaveLength(1);
     expect(entry.Stop).toHaveLength(1);
-    // A `{}` response to PreToolUse is treated as a DENY by agy (observed:
-    // the model entered a tool-denied retry loop), so it must never appear.
-    expect(entry.PreToolUse).toBeUndefined();
+    expect(entry.PreToolUse).toHaveLength(1);
     expect(entry.PostInvocation).toBeUndefined();
+  });
+
+  it('hooks PreToolUse for ask_question alone, and always answers allow (#452)', () => {
+    // A reply with no `decision` is a DENY to agy (observed: `{}` put the model
+    // in a tool-denied retry loop), so the entry must carry the allow reply, and
+    // matching any other tool would put every call through it.
+    const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {})[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse!.map((group) => group.matcher)).toEqual([AGY_QUESTION_TOOL]);
+    const command = entry.PreToolUse![0].hooks[0].command;
+    expect(command).toContain(' tool_start ');
+    expect(command).toContain('appendPermissionWaitForTool:');
+    expect(command).toContain('replyJson:');
+  });
+
+  it('wires no question PreToolUse for a WSL agy, whose hook transport carries no reply', () => {
+    const eventCommand = (eventType: string, ...directives: string[]): string => ['sh', 'hook.sh', 'event', eventType, ...directives].join(' ');
+    const entry = buildHooks('../bridge.cjs', '../.kangentic/events.jsonl', {}, eventCommand)[KANGENTIC_HOOK_NAME];
+    expect(entry.PreToolUse).toBeUndefined();
+    expect(entry.Stop).toHaveLength(1);
   });
 
   it('emits unquoted, space-free command tokens (agy keeps quote chars literal)', () => {
@@ -107,6 +125,7 @@ describe('buildHooks', () => {
     const entry = merged[KANGENTIC_HOOK_NAME];
     const commands = [
       entry.PreInvocation![0].command,
+      entry.PreToolUse![0].hooks[0].command,
       entry.PostToolUse![0].hooks[0].command,
       entry.Stop![0].command,
     ];

@@ -16,6 +16,7 @@ import { useTerminalFileDrop } from '../../hooks/useTerminalFileDrop';
 import { mayTakeArrivalFocus, type ArrivalFocusSite } from '../../utils/terminal-arrival-focus';
 import { FileDropOverlay } from '../terminal/FileDropOverlay';
 import { ActivityMark } from '../ActivityMark';
+import { agentActivityMark } from '../board/agent-wait';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { PauseButtonIcon } from '../dialogs/task-detail/TaskDetailHeader';
@@ -148,6 +149,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
   }, [floating, dragWidth, storedWidth, updateConfig]);
   const session = useSessionStore((state) => selectAgentSession(state.sessions, workflowId));
   const activity = useSessionStore((state) => (session ? state.sessionActivity[session.id] : undefined));
+  const activityReason = useSessionStore((state) => (session ? state.sessionActivityReason[session.id] : undefined));
   const unavailable = useWorkflowStore((state) => state.agentUnavailable[workflowId] ?? null);
   // The conversation the workflow keeps, which outlives any one session of its agent.
   const conversationId = useWorkflowStore((state) => (
@@ -303,7 +305,7 @@ export function WorkflowAgentPane({ workflowId, floating = false }: { workflowId
           <Tooltip label={stripMarkLabel}>
             <span role="img" aria-label={stripMarkLabel}>
               <ActivityMark
-                mark={working ? 'agent-working' : 'agent-idle'}
+                mark={agentActivityMark(activity, activityReason)}
                 size={16}
                 className={working ? 'text-active' : 'text-attention'}
               />

@@ -5,6 +5,7 @@ import {
   MAX_PENDING_EXEMPT_SHELL_TOOL_IDS,
   MAX_STARTED_SUBAGENT_IDS,
   MAX_TRACKED_SUBAGENT_IDS,
+  type PendingTool,
   type SessionEngineState,
   type SubagentLifecycle,
 } from './shapes';
@@ -509,22 +510,43 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
  * Update `permissionPending` based on the event. Permission is set by
  * `Idle` events with detail=permission, and cleared by signals from
  * the main agent (Prompt, Interrupted, SubagentStart, non-permission
- * Idle, depth-0 ToolStart/ToolEnd) or by the awaited tool itself
+ * Idle, depth-0 ToolStart, depth-0 ToolEnd of anything but a sibling
+ * already running when the prompt opened) or by the awaited tool itself
  * starting/ending at ANY depth (`permissionAwaitedToolId` match - the
  * prompt was approved and the tool ran).
  */
 export function updatePermissionFlag(state: SessionEngineState, event: SessionEvent): void {
   // Set on Idle/permission. Record which tool the prompt was raised for:
   // permission prompts fire between PreToolUse and execution, so the
-  // awaiting tool is the top of the pending stack (left intact by the
-  // permission exemption in updateCounters). With parallel subagents the
-  // top can in principle belong to a racing tool_start, but the
+  // awaiting tool is on the pending stack (left intact by the permission
+  // exemption in updateCounters). The newest entry the event names wins,
+  // else the top: a parallel sibling can start after the awaited tool
+  // (Claude's ToolSearch beside AskUserQuestion), so the top alone
+  // misattributed it. With parallel subagents the top can still belong
+  // to a racing tool_start when the event names no tool, but the
   // PreToolUse-to-prompt window is sub-second and the failure mode (an
   // early clear) is bounded - unlike the stuck flag this prevents.
   if (event.type === EventType.Idle && event.detail === IdleReason.Permission) {
+    const awaited = awaitedPendingTool(state.pendingToolStack, event.tool);
     state.permissionPending = true;
-    state.permissionAwaitedToolId =
-      state.pendingToolStack[state.pendingToolStack.length - 1]?.id ?? null;
+    state.permissionAwaitedToolId = awaited?.id ?? null;
+    state.permissionSiblingToolIds.clear();
+    for (const pending of state.pendingToolStack) {
+      if (pending !== awaited && pending.id !== undefined) state.permissionSiblingToolIds.add(pending.id);
+    }
+    // The newest wait names the kind: a question raised while an approval is
+    // still open (a subagent's prompt beside its parent's) is what shows.
+    state.permissionWaitKind = event.waitKind ?? null;
+    return;
+  }
+  // A sibling already running when the prompt opened finished. That says
+  // nothing about the answer, so the prompt stays open.
+  if (
+    event.type === EventType.ToolEnd
+    && event.toolId !== undefined
+    && event.toolId !== state.permissionAwaitedToolId
+    && state.permissionSiblingToolIds.delete(event.toolId)
+  ) {
     return;
   }
   // The awaited tool itself started/ended: the prompt was approved and
@@ -550,5 +572,20 @@ export function updatePermissionFlag(state: SessionEngineState, event: SessionEv
   if (isPermissionClearingSignal) {
     state.permissionPending = false;
     state.permissionAwaitedToolId = null;
+    state.permissionWaitKind = null;
+    state.permissionSiblingToolIds.clear();
   }
+}
+
+/**
+ * The pending tool a permission prompt waits on: the newest entry named
+ * `toolName` when the event names one and it is on the stack, else the top.
+ */
+function awaitedPendingTool(stack: PendingTool[], toolName: string | undefined): PendingTool | undefined {
+  if (toolName) {
+    for (let index = stack.length - 1; index >= 0; index -= 1) {
+      if (stack[index].name === toolName) return stack[index];
+    }
+  }
+  return stack[stack.length - 1];
 }

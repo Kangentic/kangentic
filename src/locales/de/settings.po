@@ -3044,8 +3044,8 @@ msgstr "Wenn der Start einer Aufgabe bei der Vorbereitung zu lange auf die Git-W
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Wenn ein Agent seinen Zug beendet oder eine Berechtigung benötigt"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Wenn ein Agent seinen Zug beendet, eine Frage hat oder Ihre Genehmigung benötigt"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

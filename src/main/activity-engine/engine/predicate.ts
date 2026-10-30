@@ -66,7 +66,14 @@ export function deriveReasonForActivity(
   // "event arrived before initSession" phantom-state edge case (same gap
   // idleTimestamp already has in that path) - fall back to now() rather than
   // propagate null onto a field callers depend on being a real timestamp.
-  if (activity === 'permission') return { kind: 'permission', since: state.needsUserSince ?? Date.now() };
+  if (activity === 'permission') {
+    const since = state.needsUserSince ?? Date.now();
+    // An unknown kind stays absent rather than null, so the reason a consumer
+    // sees for an agent that does not report one is unchanged.
+    return state.permissionWaitKind
+      ? { kind: 'permission', since, waitKind: state.permissionWaitKind }
+      : { kind: 'permission', since };
+  }
   if (activity === 'idle') return { kind: 'idle', since: state.needsUserSince ?? Date.now() };
   // activity === 'thinking'
   if (state.pendingToolCount > 0) {
@@ -98,6 +105,21 @@ export function deriveReasonForActivity(
  */
 export function deriveReason(state: SessionEngineState): ActivityReason {
   return deriveReasonForActivity(state, state.activity);
+}
+
+/**
+ * Whether two reasons look the same to a consumer that draws them: the same
+ * kind, and for a permission wait the same `waitKind` too. The reason-refresh
+ * gate (`ActivityEngine.reportReasonIfChanged`) reports only when this is false,
+ * so the per-event counters (`pendingCount`, `currentTool`) never trigger a
+ * push, while a wait that turns from an approval into a question does.
+ */
+export function sameReasonShape(previous: ActivityReason, next: ActivityReason): boolean {
+  if (previous.kind !== next.kind) return false;
+  if (previous.kind === 'permission' && next.kind === 'permission') {
+    return previous.waitKind === next.waitKind;
+  }
+  return true;
 }
 
 /**

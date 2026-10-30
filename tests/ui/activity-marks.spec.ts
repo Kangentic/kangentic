@@ -38,7 +38,7 @@ const TRANSIENT_SESSION_ID = 'sess-mark-terminal';
  * `transientActivity` seeds a running Command Terminal PTY in that state, which is what makes the
  * title-bar toggle render a `terminal-*` mark. Omit it and the toggle sits at `terminal-idle`.
  */
-function preConfig(activity: string, transientActivity?: string): string {
+function preConfig(activity: string, transientActivity?: string, reasonJson?: string): string {
   const transientSession = transientActivity
     ? `
       state.sessions.push({
@@ -71,6 +71,7 @@ function preConfig(activity: string, transientActivity?: string): string {
         startedAt: ts, exitCode: null,
       });
       state.activityCache['${SESSION_ID}'] = '${activity}';
+      ${reasonJson ? `state.activityReasonCache['${SESSION_ID}'] = ${reasonJson};` : ''}
       ${transientSession}
       state.tasks.push({
         id: '${TASK_ID}', title: 'Mark Test Task', description: '',
@@ -88,13 +89,14 @@ async function launch(
   activity: string,
   reducedMotion?: 'reduce',
   transientActivity?: string,
+  reasonJson?: string,
 ): Promise<{ browser: Browser; page: Page }> {
   await waitForViteReady(VITE_URL);
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, reducedMotion });
   const page = await context.newPage();
   await page.addInitScript({ path: MOCK_SCRIPT });
-  await page.addInitScript(preConfig(activity, transientActivity));
+  await page.addInitScript(preConfig(activity, transientActivity, reasonJson));
   await gotoVite(page, VITE_URL);
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
@@ -334,6 +336,69 @@ test.describe('Activity marks', () => {
       await expect
         .poll(() => mark.evaluate((node) => getComputedStyle(node).width))
         .toBe('16px');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // #452: an agent waiting on you wears a mark that says why. The envelope is a finished turn,
+  // the speech bubble a question (or a wait whose agent did not report its kind), the crested
+  // shield an approval. All three are static, amber, and drawn at the card's 16px, the shield
+  // included although its ink is a unit taller.
+  const waits: Array<{ label: string; activity: string; reasonJson?: string; mark: string; name: RegExp }> = [
+    { label: 'a finished turn', activity: 'idle', reasonJson: "{ kind: 'idle', since: Date.now() - 180000 }", mark: 'agent-idle', name: /^Idle for / },
+    { label: 'a question', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 120000, waitKind: 'question' }", mark: 'agent-question', name: /^Asking you a question for / },
+    { label: 'an approval', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 60000, waitKind: 'approval' }", mark: 'agent-approval', name: /^Waiting for your approval for / },
+    { label: 'a wait of unknown kind', activity: 'permission', reasonJson: "{ kind: 'permission', since: Date.now() - 120000 }", mark: 'agent-question', name: /^Waiting on you for / },
+  ];
+  for (const wait of waits) {
+    test(`the card draws ${wait.mark} for ${wait.label}, static, amber, at 16px, named by its wait`, async () => {
+      const { browser, page } = await launch(wait.activity, undefined, undefined, wait.reasonJson);
+      try {
+        const mark = page.locator(`[data-task-id="${TASK_ID}"] svg[data-mark]`);
+        await expect(mark).toHaveAttribute('data-mark', wait.mark, { timeout: 15000 });
+        await expect(mark).toHaveAttribute('data-rest', 'static');
+        await expect(mark.locator('.kng-march, .kng-spin, .kng-blink')).toHaveCount(0);
+        await expect(mark).toHaveClass(/text-attention/);
+        await expect(mark).toHaveAccessibleName(wait.name);
+        await expect
+          .poll(() => mark.evaluate((node) => getComputedStyle(node).width))
+          .toBe('16px');
+      } finally {
+        await browser.close();
+      }
+    });
+  }
+
+  test('a wait that turns from a question into an approval swaps the mark in place', async () => {
+    const { browser, page } = await launch('permission', undefined, undefined, "{ kind: 'permission', since: Date.now(), waitKind: 'question' }");
+    try {
+      const mark = page.locator(`[data-task-id="${TASK_ID}"] svg[data-mark]`);
+      await expect(mark).toHaveAttribute('data-mark', 'agent-question', { timeout: 15000 });
+      await page.evaluate(({ sessionId, projectId, taskId }) => {
+        const fire = (window as unknown as {
+          __mockFireActivity?: (sessionId: string, state: string, reason: unknown, projectId: string, taskId: string) => void;
+        }).__mockFireActivity;
+        fire?.(sessionId, 'permission', { kind: 'permission', since: Date.now(), waitKind: 'approval' }, projectId, taskId);
+      }, { sessionId: SESSION_ID, projectId: PROJECT_ID, taskId: TASK_ID });
+      await expect(mark).toHaveAttribute('data-mark', 'agent-approval');
+      await expect(mark).toHaveAccessibleName(/^Waiting for your approval for /);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a waiting card keeps its elapsed time current while nothing else re-renders it', async () => {
+    // The text used to be read when the card rendered, and a card that sits waiting does
+    // not render again, so its name and tip stayed at "for 0s". The mark now re-reads the
+    // clock every second while the card waits. Its own budget: the mount wait and the
+    // seconds it watches the clock run back to back.
+    test.setTimeout(45_000);
+    const { browser, page } = await launch('permission', undefined, undefined, "{ kind: 'permission', since: Date.now(), waitKind: 'question' }");
+    try {
+      const mark = page.locator(`[data-task-id="${TASK_ID}"] svg[data-mark]`);
+      await expect(mark).toHaveAttribute('data-mark', 'agent-question', { timeout: 15000 });
+      await expect(mark).toHaveAccessibleName(/^Asking you a question for ([2-9]|\d{2,})s$/, { timeout: 15000 });
     } finally {
       await browser.close();
     }

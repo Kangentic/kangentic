@@ -32,6 +32,11 @@ msgid "{provider} would not complete this sign-in."
 msgstr "{provider} 無法完成此次登入。"
 
 #: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 工作流程"
 
@@ -43,6 +48,26 @@ msgstr "某個專案"
 msgid "A task"
 msgstr "某個任務"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "代理有問題要問"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "代理需要你核准"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "代理需要你輸入"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "代理已閒置"
+
 #: src/main/diagnostics/renderer-recovery.ts
 msgid "Available system memory at the time: {availableMb} MB."
 msgstr "當時可用的系統記憶體：{availableMb} MB。"
@@ -52,8 +77,8 @@ msgid "Close"
 msgstr "關閉"
 
 #: src/main/notifications/desktop-notifier.ts
-msgid "Command Terminal"
-msgstr "命令終端機"
+msgid "Command Terminal - {projectName}"
+msgstr "命令終端機 - {projectName}"
 
 #: src/main/index.ts
 msgctxt "Action"
@@ -75,10 +100,6 @@ msgstr "Kangentic 無法讀取其資料庫"
 #: src/main/index.ts
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 的視窗沒有回應"
-
-#: src/main/notifications/desktop-notifier.ts
-msgid "Needs permission: {place}"
-msgstr "需要權限：{place}"
 
 #: src/main/window-open-policy.ts
 msgid "Not secure - {host}"

@@ -3044,8 +3044,8 @@ msgstr "Когда запуск задачи слишком долго ждёт 
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "Когда агент завершает ход или запрашивает разрешение"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "Когда агент завершает ход, задаёт вопрос или запрашивает подтверждение"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

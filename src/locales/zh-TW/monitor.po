@@ -57,13 +57,14 @@ msgstr "正在等候你回應的代理，涵蓋檢視範圍內的所有專案"
 msgid "All projects"
 msgstr "所有專案"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "正在向您提問 {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "Automations"
 msgstr "自動化"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-msgid "Awaiting permission {when}"
-msgstr "等待權限 {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 msgid "Cards"
@@ -291,6 +292,16 @@ msgstr "任務"
 #: src/renderer/components/monitor/MonitorTable.tsx
 msgid "The workflow the task belongs to"
 msgstr "任務所屬的工作流程"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "等待您核准 {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "等待您回應 {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 msgid "Waiting to start"

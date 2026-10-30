@@ -1,0 +1,10 @@
+{
+  "session_id": "00000000-0000-0000-0000-000000000000",
+  "transcript_path": "C:\\Users\\dev\\.gemini\\tmp\\repo\\chats\\session-2026-10-30T03-11-00000000.jsonl",
+  "cwd": "C:\\Users\\dev\\repo",
+  "hook_event_name": "Notification",
+  "timestamp": "2026-10-30T03:13:51.534Z",
+  "notification_type": "ToolPermission",
+  "message": "Tool requires confirmation",
+  "details": { "type": "ask_user", "title": "Ask User" }
+}

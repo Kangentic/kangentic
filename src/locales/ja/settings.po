@@ -3044,8 +3044,8 @@ msgstr "タスクの起動が準備中に Git キューで長時間待機した�
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
-msgid "When an agent finishes its turn or needs permission"
-msgstr "エージェントがターンを終えたか、許可を必要としたとき"
+msgid "When an agent finishes its turn, has a question, or needs your approval"
+msgstr "エージェントがターンを終えたか、質問があるか、承認を必要としたとき"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy

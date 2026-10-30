@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractDetail, extractPlanMode, extractSubagentId, setDetail, setToolWhen, setTypeWhen, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives, nestedBackgroundShellHintEntries } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
@@ -42,6 +42,12 @@ export type QwenHookEvent = (typeof QwenHookEvent)[keyof typeof QwenHookEvent];
 
 /** Qwen Code's plan exit tool, the one that raises its plan approval dialog. */
 const QWEN_PLAN_EXIT_TOOL = 'exit_plan_mode';
+
+/**
+ * Qwen Code's pick-an-option question tool. It raises a PermissionRequest like
+ * any tool, so its wait is the one that is a question rather than an approval.
+ */
+export const QWEN_QUESTION_TOOL = 'ask_user_question';
 
 /**
  * Reports Qwen's plan exit as Kangentic's (`AgentTool.ExitPlanMode`) only for
@@ -263,10 +269,14 @@ export function buildHooks(
     // The TUI fires it from its error handler once retries are over, so it is
     // always a final failure: no turn_retrying remap.
     [QwenHookEvent.StopFailure]: withBridge(QwenHookEvent.StopFailure, EventType.TurnFailed, extractDetail(['error', 'error_details'])),
-    // The tool rides along so the permission idle names what is waiting.
+    // The tool rides along so the permission idle names what is waiting. The
+    // wait's kind: ask_user_question is a question, every other tool (the plan
+    // exit included) an approval.
     [QwenHookEvent.PermissionRequest]: withBridge(QwenHookEvent.PermissionRequest, EventType.Idle,
       setDetail(IdleReason.Permission),
-      extractTool('tool_name')),
+      extractTool('tool_name'),
+      setWaitKind('approval'),
+      setWaitKindWhen({ path: ['tool_name'], equals: QWEN_QUESTION_TOOL, to: 'question' })),
     // A background subagent keeps working after the main agent's Stop, which
     // is a turn end only once its SubagentStop brings the depth back to zero.
     // Without these, that Stop ran the column's turn-end automations while the

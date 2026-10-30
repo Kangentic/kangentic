@@ -69,15 +69,15 @@ msgstr "Agenti čekající na vaši odpověď, napříč všemi zobrazenými pro
 msgid "All projects"
 msgstr "Všechny projekty"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "Ptá se vás na otázku {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "Automatizace"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "Čeká na oprávnění {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "Úkol"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "Pracovní postup, do kterého úloha patří"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "Čeká na vaše schválení {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "Čeká na vás {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

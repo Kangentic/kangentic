@@ -79,9 +79,9 @@ const SHELL_ID_PATTERN = new RegExp(SHELL_ID_PATTERN_SOURCE);
  *
  *   Request            Activity      SessionEvent emitted
  *   ─────────────────  ────────────  ───────────────────────────
- *   ApprovalRequest    (released)    Idle (detail = IdleReason.Permission)
+ *   ApprovalRequest    (released)    Idle (detail = IdleReason.Permission, waitKind = approval)
  *   ToolCallRequest    (preserve)    ToolStart (detail = name)
- *   QuestionRequest    (released)    Idle (detail = IdleReason.Permission)
+ *   QuestionRequest    (released)    Idle (detail = IdleReason.Permission, waitKind = question)
  *   HookRequest        (preserve)    Notification (detail = "<event>:<target>[: <summary>]")
  *
  * "Released" (task #859): the event alone moves the engine, and the chunk
@@ -404,18 +404,20 @@ export function parseWireJsonl(
           ts: timestamp,
           type: EventType.Idle,
           detail: IdleReason.Permission,
+          waitKind: 'approval',
         });
         break;
       }
       case 'QuestionRequest': {
-        // Closest semantic match in our IdleReason enum. The agent is
-        // blocked waiting for a user response; treat it identically to
-        // a permission request for activity purposes.
+        // The agent is blocked waiting for the user's answer: the same
+        // permission wait as an approval for activity purposes, told apart by
+        // its kind so the card draws a question.
         activity = null;
         events.push({
           ts: timestamp,
           type: EventType.Idle,
           detail: IdleReason.Permission,
+          waitKind: 'question',
         });
         break;
       }

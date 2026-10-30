@@ -77,6 +77,23 @@
  *                                 stop names. Both read the BackgroundCallMatch shape
  *                                 (src/shared/background-command-spec.ts), and both
  *                                 take only an id matching SHELL_ID_PATTERN.
+ *   setWaitKind                { kind }             -> event.waitKind = kind, when kind is
+ *                                 'question' or 'approval' (`PermissionWaitKind`).
+ *   setWaitKindWhen            { path[], equals, to } -> event.waitKind = to when
+ *                                 String(value at path) === equals. List it after a
+ *                                 setWaitKind so it overrides that default.
+ *   appendPermissionWaitForTool { toolPath[], tool, waitKind }
+ *                              -> when the value at toolPath is `tool`, ALSO write an
+ *                                 idle:permission carrying waitKind AFTER the hook's own
+ *                                 event. One process writes both, in order, so a CLI that
+ *                                 runs hooks concurrently cannot land the wait before the
+ *                                 tool's own tool_start (which would clear it).
+ *   replyJson                  { reply }            -> the hook's answer on stdout: the
+ *                                 process writes JSON(reply) before it touches the events
+ *                                 file, and it is the only stdout the bridge ever writes.
+ *                                 For a CLI that reads a decision from the hook (agy's
+ *                                 PreToolUse treats a reply with no `decision` as a deny).
+ *                                 Own kind, so a stale copy writes nothing and logs it.
  *
  * Stdin: Agent CLIs pipe hook context as JSON. Directives control which
  * fields are extracted for each event type.
@@ -226,9 +243,21 @@ function commandCarries(root, commandPath, flag) {
 // END background-call-match
 
 /**
+ * The kinds a permission wait may report: `PermissionWaitKind` in
+ * src/shared/types.ts. Anything else in a directive is a logged no-op, so a
+ * wait is never tagged with a kind the engine and the UI do not know.
+ */
+const WAIT_KINDS = ['question', 'approval'];
+
+function isWaitKind(value) {
+  return typeof value === 'string' && WAIT_KINDS.includes(value);
+}
+
+/**
  * The events.jsonl lines one hook call reports, in the order they are written:
  * any appended background events, then the hook's own event unless a gate
- * suppressed it. Pure apart from `logError`, which receives each diagnostic.
+ * suppressed it, then any trailing permission wait. Pure apart from
+ * `logError`, which receives each diagnostic.
  *
  * @param {{ eventType: string, directives: string[], input: string, now: number,
  *   logError: (message: string) => void }} options
@@ -256,6 +285,9 @@ function transformHookEvent(options) {
   // before it. They do not depend on the main event: a suppressed main event
   // still lets them land.
   const appended = [];
+  // Events written AFTER the hook's own event (appendPermissionWaitForTool).
+  // A wait must follow its tool's tool_start, which clears any pending wait.
+  const trailing = [];
 
   // Process directives in list order (setTypeWhenDetailContains relies on a
   // prior extractDetail directive having run).
@@ -453,6 +485,40 @@ function transformHookEvent(options) {
         if (stop) appended.push({ ts: event.ts, type: 'background_shell_end', tool: stop.tool.slice(0, FIELD_CAP), detail: stop.id });
         break;
       }
+      case 'setWaitKind': {
+        if (isWaitKind(payload.kind)) event.waitKind = payload.kind;
+        else logBridgeError(`invalid setWaitKind kind: ${payload.kind}`);
+        break;
+      }
+      case 'setWaitKindWhen': {
+        if (!isWaitKind(payload.to)) {
+          logBridgeError(`invalid setWaitKindWhen kind: ${payload.to}`);
+          break;
+        }
+        const value = valueAtPath(ctx, payload.path);
+        if (value != null && typeof value !== 'object' && String(value) === payload.equals) {
+          event.waitKind = payload.to;
+        }
+        break;
+      }
+      case 'appendPermissionWaitForTool': {
+        if (!isWaitKind(payload.waitKind) || typeof payload.tool !== 'string') {
+          logBridgeError(`invalid appendPermissionWaitForTool payload: ${JSON.stringify(payload)}`);
+          break;
+        }
+        if (valueAtPath(ctx, payload.toolPath) !== payload.tool) break;
+        trailing.push({
+          ts: event.ts,
+          type: 'idle',
+          detail: 'permission',
+          tool: payload.tool.slice(0, FIELD_CAP),
+          waitKind: payload.waitKind,
+        });
+        break;
+      }
+      case 'replyJson':
+        // The process writes the reply (`hookReplyFrom`); it adds nothing to the event.
+        break;
       default:
         logBridgeError(`unknown directive kind: ${kind}`);
     }
@@ -471,17 +537,34 @@ function transformHookEvent(options) {
     }
     lines.push(JSON.stringify(event));
   }
+  for (const entry of trailing) lines.push(JSON.stringify(entry));
   return lines;
 }
 
-module.exports = { transformHookEvent };
+/**
+ * The reply a `replyJson` directive asks the hook to print, as one JSON
+ * string, or null when the command carries none (or only a malformed one).
+ */
+function hookReplyFrom(directives) {
+  for (const directive of directives) {
+    const { kind, payload } = decodeDirective(directive);
+    if (kind !== 'replyJson') continue;
+    if (!payload || typeof payload !== 'object' || !payload.reply || typeof payload.reply !== 'object') return null;
+    return JSON.stringify(payload.reply);
+  }
+  return null;
+}
+
+module.exports = { transformHookEvent, hookReplyFrom };
 
 if (require.main === module) {
   // Stdout guard: Gemini CLI rejects any stdout output from hook scripts as
   // malformed JSON (docs: "Strict JSON" rule). Codex/Claude tolerate noise on
   // stdout but it still gets logged as hook output. We explicitly suppress
   // stdout so a stray console.log added during debugging can never silently
-  // break hook parsing. All diagnostics must go to stderr.
+  // break hook parsing. All diagnostics must go to stderr. The one exception
+  // is a `replyJson` directive's reply, written through the saved writer.
+  const writeHookReply = process.stdout.write.bind(process.stdout);
   process.stdout.write = () => true;
 
   // The events path argument is either a literal path or the sentinel
@@ -519,6 +602,10 @@ if (require.main === module) {
   process.stdin.setEncoding('utf8');
   process.stdin.on('data', (chunk) => { input += chunk; });
   process.stdin.on('end', () => {
+    // The reply first, before any file work and whatever the events path: a CLI
+    // that waits on the answer must get it even when the append below fails.
+    const reply = hookReplyFrom(directives);
+    if (reply !== null) writeHookReply(reply);
     if (!outputPath) return;
     const lines = transformHookEvent({ eventType, directives, input, now: Date.now(), logError: logBridgeError });
     if (lines.length === 0) return;

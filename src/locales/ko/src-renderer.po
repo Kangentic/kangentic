@@ -79,8 +79,8 @@ msgstr "\"{taskTitle}\"이(가) 보관되었습니다."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "\"{taskTitle}\"에서 도구 실행을 요청하고 있습니다."
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "\"{taskTitle}\"에서 질문하고 있습니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -97,6 +97,11 @@ msgstr "\"{taskTitle}\" 작업이 보드로 돌아왔습니다."
 #, fuzzy
 msgid "\"{taskTitle}\" is running."
 msgstr "\"{taskTitle}\" 작업이 실행 중입니다."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "\"{taskTitle}\"에서 승인을 기다리고 있습니다."
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -325,8 +330,13 @@ msgstr "{sessionIdShort}이(가) 코드 {exitCode}(으)로 종료되었습니다
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort}에서 도구 실행을 요청하고 있습니다."
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort}에서 질문하고 있습니다."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort}에서 승인을 기다리고 있습니다."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
@@ -407,6 +417,21 @@ msgstr "에이전트가 시작되지 않음"
 #, fuzzy
 msgid "Agent finished"
 msgstr "에이전트 완료"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "에이전트 질문"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "에이전트 승인 필요"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "에이전트 입력 필요"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1181,11 +1206,6 @@ msgstr "\"{taskTitle}\"을(를) 다음 열로 이동했습니다."
 #, fuzzy
 msgid "Moving project folder..."
 msgstr "프로젝트 폴더 이동 중..."
-
-#: src/renderer/utils/idle-toast.ts
-#, fuzzy
-msgid "Needs permission"
-msgstr "권한 필요"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy

@@ -798,6 +798,7 @@ export function App() {
               taskTitle: toastTask?.title,
               sessionIdShort: sessionId.slice(0, 8),
               endsOwnCall,
+              reason,
             });
             if (idleToast) {
               const openProjectId = toastSession.projectId;

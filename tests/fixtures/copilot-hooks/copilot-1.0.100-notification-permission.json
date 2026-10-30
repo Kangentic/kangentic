@@ -1,0 +1,9 @@
+{
+  "sessionId": "00000000-0000-0000-0000-000000000000",
+  "timestamp": 1793325826630,
+  "cwd": "C:\\Users\\dev\\repo",
+  "message": "Run command: New-Item -ItemType File -Path kangentic-probe.txt",
+  "title": "Permission needed",
+  "hook_event_name": "Notification",
+  "notification_type": "permission_prompt"
+}

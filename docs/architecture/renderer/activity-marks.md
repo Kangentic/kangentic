@@ -1,17 +1,18 @@
 ---
 type: Design
 title: Activity marks
-description: Why the nine activity glyphs live upstream in @kangentic/branding, why motion must be composited, the cascade and swallowed-click incidents, why the OS reduced-motion preference never stops motion, mark sizing, color, and what stays lucide.
+description: Why the eleven activity glyphs live upstream in @kangentic/branding, how a question, an approval and a finished turn each get their own mark, why motion must be composited, the cascade and swallowed-click incidents, why the OS reduced-motion preference never stops motion, mark sizing, color, and what stays lucide.
 tags: [activity-marks, branding, motion, design]
 sources:
   - resource: src/renderer/components/ActivityMark.tsx
+  - resource: src/renderer/components/board/agent-wait.ts
   - resource: src/renderer/components/IconSlot.tsx
   - resource: src/renderer/utils/icon-registry.ts
   - resource: src/renderer/utils/icon-catalog.ts
 ---
 # Activity marks
 
-The nine glyphs that express agent and terminal activity. This document records why they look
+The eleven glyphs that express agent and terminal activity. This document records why they look
 and move the way they do, and the measurements behind each choice. The prescriptive version,
 which is what you need when editing a mark consumer, is
 [`.claude/rules/activity-marks.md`](../../../.claude/rules/activity-marks.md).
@@ -27,6 +28,36 @@ React-authored root.
 The root has to be React-authored rather than `BrandMark`'s wrapper-`<span>` form because it is
 the element a caller's Tooltip wraps: `TaskCard` shows the activity reason that way, so the root
 `<svg>` takes the tip's handlers itself. It used to carry a native `<title>` child for the same job.
+
+## Three waits, three marks
+
+An agent waiting on the user used to wear one amber envelope whether it finished its turn, asked
+a question or wanted a tool approved. Since branding 2.12.0 the shape says which (GitHub #452):
+
+| The agent | Mark | Tooltip |
+|-----------|------|---------|
+| Finished its turn | `agent-idle`, the envelope | "Idle for 3m" |
+| Asked a question | `agent-question`, a speech bubble | "Asking you a question for 2m" |
+| Wants a tool or a plan approved | `agent-approval`, a crested shield | "Waiting for your approval for 1m" |
+| Waits, kind not reported | `agent-question` | "Waiting on you for 2m" |
+
+All three stay amber. The kind comes from the engine's permission reason (`waitKind`, see
+[the activity engine](../activity/activity-engine.md)), and one function picks the mark for every
+surface that draws an agent's: `agentActivityMark` in `components/board/agent-wait.ts`, read by
+`TaskCard`, the Workflows inspector and agent pane, and `monitorActivityMark` (the Agent Monitor's
+cards and list). The state decides a wait is open and the reason only what it is for, because the
+reason can lag the state: the web demo seeds states with no reason, and a wait of unknown kind takes
+the bubble, the general "waiting on your answer", as its notification falls back to "Agent needs
+your input".
+
+The sidebar's count and the Monitor's Idle tile do not split. They keep one envelope count for all
+three waits; opening the project shows which is which on the cards. A Command Terminal keeps its
+terminal chip, since the terminal family has no wait marks.
+
+The shield's ink is 18 wide by 20 tall, a unit taller than its siblings on purpose: its pointed
+base is a silhouette no other mark has at the sidebar's 12px. It renders at the same `size` as every
+other indicator. On a card the swap is a mark flip inside one `ActivityMark`, so it needs no
+`IconSlot`; a reason's tooltip leads with the same mark at 12px, where the lucide `Lock` used to be.
 
 ## Motion has to be composited
 
@@ -194,8 +225,9 @@ Upstream geometry has moved three times:
 | 2.6.0 | Reversed both, to 18 x 14.4 |
 | 2.7.1 | Moved the envelope to 18 x 16 so its y edges sit on the integer lattice at 4 and 20 |
 
-`tests/unit/activity-mark.test.ts` pins the r=10 control ring, the r=9 agent ring, and the
-18 x 16 envelope as the guard against a silent upstream reshape.
+`tests/unit/activity-mark.test.ts` pins the r=10 control ring, the r=9 agent ring, the
+18 x 16 envelope, and the bubble's and the shield's outlines as the guard against a silent
+upstream reshape.
 
 The envelope's height is load-bearing beyond legibility. A card swaps idle for working in place,
 so what the eye judges is apparent size. At 18 x 18 the envelope enclosed 26% more than the ring

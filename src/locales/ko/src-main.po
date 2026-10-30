@@ -39,6 +39,11 @@ msgstr "{provider}에서 이 로그인을 완료하지 않았습니다."
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} 워크플로"
 
@@ -52,6 +57,26 @@ msgstr "프로젝트"
 msgid "A task"
 msgstr "작업"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "에이전트 질문"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "에이전트 승인 필요"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "에이전트 입력 필요"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "에이전트가 유휴 상태가 됨"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "닫기"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "명령 터미널"
+msgid "Command Terminal - {projectName}"
+msgstr "명령 터미널 - {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "Kangentic에서 데이터베이스를 읽을 수 없습니다"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Kangentic 창이 응답하지 않습니다"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "권한 필요: {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

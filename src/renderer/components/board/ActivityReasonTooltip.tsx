@@ -1,7 +1,8 @@
 import type { ReactNode } from 'react';
-import { Wrench, Users, Terminal, Lock } from 'lucide-react';
+import { Wrench, Users, Terminal } from 'lucide-react';
 import { ActivityMark } from '../ActivityMark';
 import { formatActivityReasonText } from './activity-reason-text';
+import { waitMarkForReason } from './agent-wait';
 import type { ActivityReason } from '../../../shared/types';
 
 /**
@@ -11,7 +12,7 @@ import type { ActivityReason } from '../../../shared/types';
 export function activityReasonIcon(reason: ActivityReason): ReactNode {
   switch (reason.kind) {
     case 'idle': return <ActivityMark mark="agent-idle" size={12} />;
-    case 'permission': return <Lock size={12} />;
+    case 'permission': return <ActivityMark mark={waitMarkForReason(reason)} size={12} />;
     case 'tool': return <Wrench size={12} />;
     case 'subagent': return <Users size={12} />;
     case 'background-shell': return <Terminal size={12} />;
@@ -32,11 +33,12 @@ export function activityReasonIcon(reason: ActivityReason): ReactNode {
  * the shared branding set (so they match the TaskCard indicator exactly); the rest name a
  * specific cause and have no counterpart there, so they stay lucide:
  *   idle             - ActivityMark 'agent-idle'    (matches the TaskCard idle indicator)
+ *   permission       - ActivityMark 'agent-question' or 'agent-approval', by the wait's kind
+ *                      (matches the TaskCard waiting indicator; an unknown kind is a question)
  *   turn-active      - ActivityMark 'agent-working' (matches the TaskCard thinking indicator)
  *   tool             - Wrench
  *   subagent         - Users
  *   background-shell - Terminal
- *   permission       - Lock
  */
 export function ActivityReasonTooltip({ reason, now }: {
   reason: ActivityReason;
@@ -61,7 +63,7 @@ export function ActivityReasonTooltip({ reason, now }: {
     case 'permission':
       return (
         <span className="inline-flex items-center gap-1.5 text-xs text-fg-faint">
-          <Lock size={12} className="text-attention" />
+          <ActivityMark mark={waitMarkForReason(reason)} size={12} className="text-attention" />
           <span>{label}</span>
         </span>
       );

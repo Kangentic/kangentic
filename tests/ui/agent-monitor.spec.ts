@@ -396,22 +396,23 @@ test.describe('agent monitor', () => {
       await openMonitor(page);
       await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
         row.sessionId === 'sess-working'
-          ? Object.assign({}, row, { activity: 'permission', activityReason: { kind: 'permission', since: Date.now() - 60000 } })
+          ? Object.assign({}, row, { activity: 'permission', activityReason: { kind: 'permission', since: Date.now() - 60000, waitKind: 'approval' } })
           : row
       ))));
 
+      // An approval wears the board card's crested shield (#452), not the envelope.
       const mark = page.locator('[data-session-id="sess-working"] svg[data-mark]');
-      await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
+      await expect(mark).toHaveAttribute('data-mark', 'agent-approval');
       // The slot, not the mark: the mark inside an IconSlot takes no pointer.
       const slot = mark.locator('xpath=..');
       await expect(slot).toHaveCSS('pointer-events', 'auto');
       await expect(mark).toHaveCSS('pointer-events', 'none');
       // The mark names itself with the reason, so the tip adds no description
       // that would read the same words twice.
-      await expect(mark).toHaveAccessibleName(/^Awaiting permission for /);
+      await expect(mark).toHaveAccessibleName(/^Waiting for your approval for /);
       await expect(slot).toHaveAccessibleDescription('');
       await slot.hover();
-      await expect(page.getByRole('tooltip').filter({ hasText: 'Awaiting permission for' })).toBeVisible();
+      await expect(page.getByRole('tooltip').filter({ hasText: 'Waiting for your approval for' })).toBeVisible();
     } finally {
       await browser.close();
     }

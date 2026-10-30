@@ -147,15 +147,15 @@ msgstr "적용"
 msgid "Archive"
 msgstr "보관"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "{duration} 동안 질문 대기 중"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
 msgid "Automations paused"
 msgstr "자동화 일시 중지됨"
-
-#: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
-msgid "Awaiting permission for {duration}"
-msgstr "{duration} 동안 권한 대기 중"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -547,6 +547,16 @@ msgstr "모두 보기"
 #, fuzzy
 msgid "View conversation"
 msgstr "대화 보기"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "{duration} 동안 승인 대기 중"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "{duration} 동안 사용자 대기 중"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy

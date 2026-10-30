@@ -68,9 +68,9 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
  *   continues, so the adapter types a resume's message in instead
  *   (`resumePromptDelivery: 'typed'`).
  *
- * - There is no `--dangerously-skip-permissions` flag in TUI mode.
- *   That flag is only documented for `opencode run` (non-interactive).
- *   OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
+ * - OpenCode 1.18.31's TUI has an auto-approve flag, `--auto`, which
+ *   Kangentic does not pass: auto-approval stays the user's choice in
+ *   OpenCode. OpenCode's autonomy model is "agents" (Build, Plan, custom) cycled
  *   at runtime via Tab. We map Kangentic's permission-mode dropdown to
  *   the `--agent <name>` flag for the initial spawn only - resume
  *   preserves the user's runtime Tab selection rather than overriding

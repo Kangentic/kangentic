@@ -119,13 +119,13 @@ msgstr "Apply"
 msgid "Archive"
 msgstr "Archive"
 
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Asking you a question for {duration}"
+msgstr "Asking you a question for {duration}"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 msgid "Automations paused"
 msgstr "Automations paused"
-
-#: src/renderer/components/board/activity-reason-text.ts
-msgid "Awaiting permission for {duration}"
-msgstr "Awaiting permission for {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "Backlog"
@@ -442,6 +442,14 @@ msgstr "View all"
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "View conversation"
 msgstr "View conversation"
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Waiting for your approval for {duration}"
+msgstr "Waiting for your approval for {duration}"
+
+#: src/renderer/components/board/activity-reason-text.ts
+msgid "Waiting on you for {duration}"
+msgstr "Waiting on you for {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "Workflows"

@@ -39,6 +39,11 @@ msgstr "{provider} n'a pas pu finaliser cette connexion."
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "Workflow {workflowTitle}"
 
@@ -52,6 +57,26 @@ msgstr "Un projet"
 msgid "A task"
 msgstr "Une tâche"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "L'agent a une question"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "L'agent attend votre approbation"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "L'agent attend votre réponse"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "Agent devenu inactif"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "Fermer"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "Terminal de commandes"
+msgid "Command Terminal - {projectName}"
+msgstr "Terminal de commandes - {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "Kangentic ne peut pas lire sa base de données"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "La fenêtre de Kangentic ne répond plus"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "Autorisation requise : {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

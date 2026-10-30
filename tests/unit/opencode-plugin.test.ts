@@ -6,7 +6,10 @@ import {
   extractToolDetail,
   extractToolStartEvent,
   extractToolEndEvent,
+  extractWaitEvent,
 } from '../../src/main/agent/adapters/opencode/plugin/kangentic-activity.mjs';
+import { ActivityEngine } from '../../src/main/activity-engine/engine';
+import type { SessionEvent } from '../../src/shared/types';
 
 const fixturePath = path.join(__dirname, '..', 'fixtures', 'opencode-plugin-events.json');
 const fixtures = JSON.parse(fs.readFileSync(fixturePath, 'utf-8'));
@@ -65,6 +68,58 @@ describe('opencode-plugin', () => {
       const result = extractSessionEvent(event, FIXED_TIMESTAMP);
 
       expect(result?.hookContext).toBe(JSON.stringify({ sessionID: 'ses_fallback123' }));
+    });
+  });
+
+  describe('extractWaitEvent', () => {
+    it('maps question.asked to a question wait', () => {
+      expect(extractWaitEvent(fixtures.event_question_asked, FIXED_TIMESTAMP))
+        .toEqual({ ts: FIXED_TIMESTAMP, type: 'idle', detail: 'permission', waitKind: 'question' });
+    });
+
+    it('maps permission.asked to an approval wait', () => {
+      expect(extractWaitEvent(fixtures.event_permission_asked, FIXED_TIMESTAMP))
+        .toEqual({ ts: FIXED_TIMESTAMP, type: 'idle', detail: 'permission', waitKind: 'approval' });
+    });
+
+    it('logs each answer as a notification, never as an idle a turn end would read', () => {
+      for (const fixture of [fixtures.event_question_replied, fixtures.event_question_rejected, fixtures.event_permission_replied]) {
+        expect(extractWaitEvent(fixture, FIXED_TIMESTAMP)).toEqual({ ts: FIXED_TIMESTAMP, type: 'notification', detail: fixture.type });
+      }
+    });
+
+    it('returns null for every other event, and for a non-object', () => {
+      expect(extractWaitEvent(fixtures.event_session_idle, FIXED_TIMESTAMP)).toBeNull();
+      expect(extractWaitEvent(null, FIXED_TIMESTAMP)).toBeNull();
+      expect(extractWaitEvent('question.asked', FIXED_TIMESTAMP)).toBeNull();
+    });
+
+    it('a session event is never read as a wait, so the event hook writes one line at most', () => {
+      for (const fixture of [fixtures.event_session_created, fixtures.event_session_idle, fixtures.event_session_error]) {
+        expect(extractWaitEvent(fixture, FIXED_TIMESTAMP)).toBeNull();
+      }
+    });
+
+    it('in OpenCode\'s order (tool start, wait, tool end) the wait shows and its tool\'s end clears it', () => {
+      // OpenCode 1.18.31 triggers tool.execute.before, then runs the tool, whose `ask`
+      // publishes the request, then triggers tool.execute.after (also after a throw).
+      const engine = new ActivityEngine({ onActivityChange() { /* unused */ } }, { idleStabilityWindowMs: 0 });
+      const sessionId = 'opencode-session';
+      engine.initSession(sessionId);
+      const feed = (event: SessionEvent | null): void => { if (event) engine.processEvent(sessionId, event); };
+
+      feed(extractToolStartEvent({ tool: 'question' }, { args: {} }, FIXED_TIMESTAMP) as SessionEvent);
+      feed(extractWaitEvent(fixtures.event_question_asked, FIXED_TIMESTAMP + 1) as SessionEvent);
+      expect(engine.getState(sessionId)?.activity).toBe('permission');
+      expect(engine.getState(sessionId)?.permissionWaitKind).toBe('question');
+
+      feed(extractWaitEvent(fixtures.event_question_replied, FIXED_TIMESTAMP + 2) as SessionEvent);
+      expect(engine.getState(sessionId)?.activity).toBe('permission');
+
+      feed(extractToolEndEvent({ tool: 'question' }, FIXED_TIMESTAMP + 3) as SessionEvent);
+      expect(engine.getState(sessionId)?.activity).toBe('thinking');
+      expect(engine.getState(sessionId)?.permissionWaitKind).toBeNull();
+      engine.dispose();
     });
   });
 

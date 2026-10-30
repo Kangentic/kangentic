@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractDetail, setToolWhen, emitOnlyWhenDetailMatches, setDetail } from '../../shared/directive-builders';
+import { extractTool, extractDetail, setToolWhen, emitOnlyWhenDetailMatches, setDetail, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { backgroundLaunchDirective, nestedBackgroundShellHintEntries } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
@@ -35,6 +35,14 @@ const GEMINI_PLAN_EXIT_TOOL = 'exit_plan_mode';
 
 /** The `notification_type` of the Notification Gemini sends for a tool confirmation dialog. */
 const GEMINI_TOOL_PERMISSION_NOTIFICATION = 'ToolPermission';
+
+/**
+ * The `details.type` of that Notification when the dialog is the `ask_user`
+ * tool's question rather than a confirmation (`exec`, `edit`, `mcp`, `info`,
+ * the plan prompt). Gemini's confirmation details carry the dialog's type, so
+ * this one value tells a question from every approval.
+ */
+const GEMINI_QUESTION_DETAILS_TYPE = 'ask_user';
 
 /**
  * Reports Gemini's plan exit as Kangentic's (`AgentTool.ExitPlanMode`) only for
@@ -201,11 +209,14 @@ export function buildHooks(
       // wait, so the card shows the session needs you. Gemini 0.63.0 has no
       // permission hook: it reports each dialog as a Notification whose
       // `notification_type` is "ToolPermission" (`fireToolNotificationEvent`),
-      // and the AfterTool that follows the answer clears it.
+      // and the AfterTool that follows the answer clears it. The dialog's own
+      // type is `details.type`: `ask_user` is a question, the rest approvals.
       bridgeEntry(eventBridge, eventsPath, options.eventCommand, E.Idle,
         extractDetail(['notification_type']),
         emitOnlyWhenDetailMatches(`^${GEMINI_TOOL_PERMISSION_NOTIFICATION}$`),
-        setDetail(IdleReason.Permission)),
+        setDetail(IdleReason.Permission),
+        setWaitKind('approval'),
+        setWaitKindWhen({ path: ['details', 'type'], equals: GEMINI_QUESTION_DETAILS_TYPE, to: 'question' })),
     ],
     [H.PreCompress]: [
       ...filterOurHooks(existingHooks[H.PreCompress]),

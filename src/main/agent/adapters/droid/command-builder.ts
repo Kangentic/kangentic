@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { quoteArg, isUnixLikeShell } from '../../../../shared/paths';
+import { quoteArg, isUnixLikeShell, toForwardSlash } from '../../../../shared/paths';
 import { interpolateTemplate } from '../../shared/template-utils';
 import { ensureLocalGitExcludes } from '../../shared/git-exclude';
 import { cliPathForTarget, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer } from '../../shared/kangentic-mcp-server';
+import { resolveBridgeScript } from '../../shared/bridge-utils';
+import { buildDroidHookSettings } from './hook-manager';
 import type { PermissionMode } from '../../../../shared/types';
 
 /**
@@ -14,18 +16,21 @@ import type { PermissionMode } from '../../../../shared/types';
  *   New session:    droid --cwd <cwd> "<prompt>"
  *   Resume session: droid --cwd <cwd> --resume <uuid> "<prompt>"
  *
- * Design note (2026-04-26): this adapter intentionally does not write
- * a per-spawn `--settings <path>` file. Droid's interactive TUI
- * already exposes everything Kangentic users need:
+ * Design note (2026-04-26): this adapter does not shadow Droid's own
+ * controls with per-spawn settings. Droid's interactive TUI already
+ * exposes everything Kangentic users need:
  *   - Model selection: `/model` picker, with Ctrl+D to pin a default
  *     (persists in `~/.factory/settings.json`)
- *   - Autonomy mode: shift+tab cycles low/medium/high
+ *   - Autonomy mode: shift+tab cycles low/medium/high (and `--auto
+ *     <level>` exists on 0.218.0, which Kangentic does not pass)
  *   - BYOK: configured once via `customModels[]` in
  *     `~/.factory/settings.json`
  *
  * Trying to shadow these with Kangentic-managed overrides was rejected
- * by user feedback as unnecessary custom layering. The bare command
- * with cwd + resume + prompt is the production path.
+ * by user feedback as unnecessary custom layering. The one `--settings`
+ * file Kangentic passes holds only its activity hooks (`hook-manager.ts`),
+ * which the TUI has no other way to report; Droid merges it with the
+ * user's own settings for that process only.
  *
  * MCP used to be manual here, on the grounds that Droid exposes no
  * `--mcp-config` flag and the alternatives were all stateful. That is no
@@ -62,9 +67,12 @@ export interface DroidCommandOptions {
   resume?: boolean;
   /** Accepted for parity; the adapter spawns the interactive TUI. */
   nonInteractive?: boolean;
-  /** Accepted for parity; no statusFile pipeline today. */
+  /** Accepted for parity; Droid writes no status file. */
   statusOutputPath?: string;
-  /** Accepted for parity; no events.jsonl pipeline today. */
+  /**
+   * The session's events.jsonl. Its folder holds the per-session settings
+   * file the hooks ride in (`writeHookSettings`), and the hooks append here.
+   */
   eventsOutputPath?: string;
   shell?: string;
   /**
@@ -85,6 +93,9 @@ export interface DroidCommandOptions {
 
 /** Env var Droid expands inside the mcp.json header value at connect time. */
 export const KANGENTIC_MCP_TOKEN_ENV = 'KANGENTIC_MCP_TOKEN';
+
+/** The per-session settings file, in the session's own folder beside events.jsonl. */
+export const DROID_HOOK_SETTINGS_FILE = 'droid-settings.json';
 
 /** Shared gate for the config write and `buildEnv`, so they cannot drift. */
 export function droidMcpWiringEnabled(
@@ -150,6 +161,9 @@ export class DroidCommandBuilder {
 
     parts.push('--cwd', quoteArg(cliPathForTarget(options.cwd, place), shell));
 
+    const settingsPath = this.writeHookSettings(options);
+    if (settingsPath) parts.push('--settings', quoteArg(settingsPath, shell));
+
     if (options.resume && options.sessionId) {
       // `--resume <uuid>` accepts the agent's own session UUID. The
       // captured ID lives in ~/.factory/sessions/<cwd-slug>/<uuid>.jsonl.
@@ -167,6 +181,32 @@ export class DroidCommandBuilder {
     }
 
     return parts.join(' ');
+  }
+
+  /**
+   * Write the per-session settings file holding Kangentic's activity hooks
+   * (`buildDroidHookSettings`) beside the session's events file, and return
+   * its path for `--settings`. Null, and the session runs on the PTY tracker
+   * alone as before, when there is no events path, when Droid runs in a WSL
+   * distro (whose hooks would need the WSL hook transport, not wired here),
+   * or when the write fails: the hooks only add detail, so a failed write
+   * never blocks the spawn.
+   */
+  writeHookSettings(options: DroidCommandOptions): string | null {
+    if (!options.eventsOutputPath || options.cliTarget) return null;
+    const settingsPath = path.join(path.dirname(options.eventsOutputPath), DROID_HOOK_SETTINGS_FILE);
+    try {
+      const settings = buildDroidHookSettings(
+        toForwardSlash(resolveBridgeScript('event-bridge')),
+        toForwardSlash(options.eventsOutputPath),
+      );
+      fs.mkdirSync(path.dirname(settingsPath), { recursive: true });
+      fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
+      return settingsPath;
+    } catch (error) {
+      console.warn(`[droid] Could not write the hook settings file; the session runs without hooks: ${settingsPath}`, error);
+      return null;
+    }
   }
 
   /**

@@ -4,6 +4,7 @@ import { captureSessionIdFromFilesystem, locateSessionFile } from './session-id-
 import { droidTranscriptFilePath, parseDroidTranscript, readDroidTranscriptPage } from './transcript-parser';
 import { migrateDroidProjectData } from './project-relocation';
 import { discoverDroidCapabilities } from './capability-discovery';
+import { parseDroidHookEvent } from './hook-manager';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
@@ -46,11 +47,11 @@ import { ActivityDetection } from '../../../../shared/types';
  *   - Cursor-hide first-output marker (`\x1b[?25l`)
  *   - Session UUID capture via `~/.factory/sessions/<cwd-slug>/<uuid>.jsonl`
  *
- * Hooks via `--settings <path>` did NOT fire empirically (Droid 0.109
- * appears to ignore hook entries injected through `--settings`). This
- * adapter therefore uses PTY-only activity detection (silence timer +
- * cursor-hide first-output) -- same approach as Aider/Cursor/Warp.
- * Hook integration is a v2 enhancement once a path is verified.
+ * Hooks via `--settings <path>` did NOT fire on Droid 0.109, and do on
+ * 0.218.0 (measured in `droid exec`). Activity stays PTY-driven (silence
+ * timer + cursor-hide first-output, as for Aider/Cursor/Warp); the hooks
+ * Kangentic passes (`hook-manager.ts`) only add the tool calls and the waits
+ * on the user, so a Droid that ignores them runs exactly as before.
  */
 export class DroidAdapter implements AgentAdapter {
   readonly name = 'droid';
@@ -126,15 +127,23 @@ export class DroidAdapter implements AgentAdapter {
    * transitions (Droid's TUI goes quiet when waiting on input);
    * cursor-hide marks the first usable output.
    *
-   * Hook integration is intentionally absent in v1 -- empirically
-   * Droid 0.109's hook system did not fire for hooks injected via
-   * `--settings <path>`, and we deliberately do not mutate the user's
-   * `~/.factory/settings.json` to inject project-level hooks.
+   * The hooks passed in a per-session `--settings` file (never the user's
+   * `~/.factory/settings.json`) report tool calls and the waits on the
+   * user through `statusFile.parseEvent`. The activity kind stays `pty`:
+   * hook events never suppress a `pty` agent's tracker, so its silence
+   * fallback keeps ending turns, and a wait (`permission`) is left alone by
+   * the silence timer, which fires only while the session is thinking.
    */
   readonly runtime: AdapterRuntimeStrategy = {
-    // Only terminal silence says a turn ended.
+    // Only terminal silence says a turn ended: no Stop hook is wired.
     reportsTurnEnd: false,
     activity: ActivityDetection.pty(),
+    statusFile: {
+      // Droid writes no status line; the events file is the hooks'.
+      parseStatus: () => null,
+      parseEvent: parseDroidHookEvent,
+      isFullRewrite: false,
+    },
     sessionId: {
       // The TUI does not print the session UUID in stdout, so the
       // only reliable capture path is the JSONL file Droid writes
@@ -181,9 +190,9 @@ export class DroidAdapter implements AgentAdapter {
   }
 
   getSubmissionVerifier(_contextType: SubmissionContextType): SubmissionVerifier | null {
-    // Droid 0.109 ignores hooks injected via --settings, so there is no
-    // prompt-submit event channel. Callers fall back to time-based settle (paste)
-    // or time-settle (command-injection).
+    // UserPromptSubmit did not fire in `droid exec` 0.218.0, so there is no
+    // proven prompt-submit event channel. Callers fall back to time-based
+    // settle (paste) or time-settle (command-injection).
     return null;
   }
 

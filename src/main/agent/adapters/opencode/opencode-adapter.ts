@@ -108,12 +108,10 @@ const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
  *    plugin is a separate file, copied into the project-shared
  *    `.opencode/plugins/` directory at spawn (held per session via
  *    `hookHolds` since concurrent sessions share the file).
- *  - No trust dialog and no per-mode permission flags. The
- *    `--dangerously-skip-permissions` flag exists only for the
- *    non-interactive `opencode run` subcommand. In TUI mode, users
- *    must enable auto-approval via `opencode.json` config. The
- *    `permissions` list below is therefore informational - all modes
- *    produce the same CLI invocation today.
+ *  - No trust dialog and no per-mode permission flags. OpenCode 1.18.31's
+ *    TUI has `--auto` (auto-approve what is not explicitly denied), which
+ *    Kangentic does not pass; auto-approval is the user's choice, by that
+ *    flag or `opencode.json`. Modes map only to `--agent` on a fresh spawn.
  *  - Remote execution: declares `remoteExecution` so a project can attach
  *    to a user-run `opencode serve` instead of spawning locally
  *    (`opencode attach <url> --dir <serverPath>`). See command-builder.ts

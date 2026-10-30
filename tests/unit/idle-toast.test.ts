@@ -19,6 +19,7 @@ function input(overrides: Partial<IdleToastInput> = {}): IdleToastInput {
     taskTitle: 'Fix the drag ghost',
     sessionIdShort: 'a1b2c3d4',
     endsOwnCall: false,
+    reason: undefined,
     ...overrides,
   };
 }
@@ -80,13 +81,41 @@ describe('resolveIdleToast', () => {
       });
     });
 
-    it('names the block for permission, and raises the variant', () => {
-      expect(resolveIdleToast(input({ state: 'permission' }))).toEqual({
-        title: 'Needs permission',
-        message: '"Fix the drag ghost" is asking to run a tool.',
+    it('names a question for a question wait, and raises the variant', () => {
+      expect(resolveIdleToast(input({ state: 'permission', reason: { kind: 'permission', since: 1, waitKind: 'question' } }))).toEqual({
+        title: 'Agent has a question',
+        message: '"Fix the drag ghost" is asking you a question.',
         variant: 'warning',
         hasTask: true,
       });
+    });
+
+    it('names an approval for an approval wait (a tool or a plan)', () => {
+      expect(resolveIdleToast(input({ state: 'permission', reason: { kind: 'permission', since: 1, waitKind: 'approval' } }))).toEqual({
+        title: 'Agent needs your approval',
+        message: '"Fix the drag ghost" is waiting for your approval.',
+        variant: 'warning',
+        hasTask: true,
+      });
+    });
+
+    it('falls back to needing input when the agent did not report the kind', () => {
+      const expected = {
+        title: 'Agent needs your input',
+        message: '"Fix the drag ghost" is waiting on you.',
+        variant: 'warning',
+        hasTask: true,
+      };
+      expect(resolveIdleToast(input({ state: 'permission', reason: { kind: 'permission', since: 1 } }))).toEqual(expected);
+      // A wait whose reason has not arrived yet reads the same: the state decides it is a wait.
+      expect(resolveIdleToast(input({ state: 'permission', reason: undefined }))).toEqual(expected);
+    });
+
+    it('labels a session with no task row by its short id in every wait', () => {
+      expect(resolveIdleToast(input({ state: 'permission', taskTitle: undefined, reason: { kind: 'permission', since: 1, waitKind: 'question' } }))?.message)
+        .toBe('a1b2c3d4 is asking you a question.');
+      expect(resolveIdleToast(input({ state: 'permission', taskTitle: undefined, reason: { kind: 'permission', since: 1, waitKind: 'approval' } }))?.message)
+        .toBe('a1b2c3d4 is waiting for your approval.');
     });
   });
 

@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Oz CLI (Warp)
-description: Warp's Oz CLI, a one-shot oz agent run cloud runner with an end-of-options guard, detection through dump-debug-info because oz has no --version, running from a WSL distro, permission modes that are labels only since Warp profiles hold the real permissions, and no resume, hooks or history.
+description: Warp's Oz CLI, a one-shot oz agent run that runs locally, with an end-of-options guard, detection through dump-debug-info because oz has no --version, running from a WSL distro, permission modes that are labels only since Warp profiles hold the real permissions, and no resume, hooks or history.
 tags: [agents, adapter, warp]
 sources:
   - resource: src/main/agent/adapters/warp/warp-adapter.ts
@@ -23,7 +23,7 @@ sources:
 oz agent run -C <cwd> --name <taskId> -- --prompt "prompt text"
 ```
 
-- `oz agent run` is a one-shot cloud agent runner - it streams output then exits
+- `oz agent run` runs the agent locally, in the current working directory (Warp's Oz CLI quickstart and CLI reference); `oz agent run-cloud` is the remote form, which Kangentic does not use. It streams output then exits. Warp's docs now call the Oz CLI a supported legacy interface, deprecated in favor of the Warp Agent CLI (`warp`)
 - `-C <cwd>` sets the working directory
 - `--name <taskId>` provides traceability/grouping
 - `--` end-of-options guard prevents prompt content starting with `-` from being parsed as a flag

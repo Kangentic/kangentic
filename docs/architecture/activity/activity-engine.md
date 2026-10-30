@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Activity engine
-description: "How Kangentic decides a session is thinking, idle or in permission: the hook-to-ActivityEngine pipeline, ActivityState and ActivityReason, strategy variants per adapter, the 400ms stability window, heartbeat recovery and idle provenance, Ctrl+C synthesis, the debug overlay and trace labels."
+description: "How Kangentic decides a session is thinking, idle or in permission: the hook-to-ActivityEngine pipeline, ActivityState and ActivityReason, the kind of a wait (question or approval), strategy variants per adapter, the 400ms stability window, heartbeat recovery and idle provenance, Ctrl+C synthesis, the debug overlay and trace labels."
 tags: [activity, engine, state-machine, hooks]
 sources:
   - resource: src/main/activity-engine/engine/
@@ -15,8 +15,9 @@ sources:
   - resource: src/shared/activity-state.ts
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx
   - resource: src/renderer/components/board/activity-reason-text.ts
+  - resource: src/renderer/components/board/agent-wait.ts
   - resource: src/shared/types.ts
-    title: ActivityState, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode
+    title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind
 ---
 # Activity engine
 
@@ -126,7 +127,7 @@ Three top-level states:
   project but is not already looking at that session's terminal. It is edge-triggered off the
   previous state, because `session:activity` also carries reason-only refreshes that must not
   retrigger it.
-- **`permission`** - agent paused awaiting user approval. Distinct from `idle` so the UI can render a different affordance (lock icon vs idle dot). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs.
+- **`permission`** - agent paused waiting on the user: a question it asked or an approval it wants. Distinct from `idle` so the UI can render a different affordance (the speech bubble or the crested shield against the envelope). Both notification channels bucket it WITH `idle` through `requiresUserInteraction`; only the alert text differs. What the wait is for rides on its reason, not on a fourth state (see [The kind of a wait](#the-kind-of-a-wait)).
 
 ## ActivityReason (discriminated union)
 
@@ -135,7 +136,7 @@ Every transition emits both an `ActivityState` AND an `ActivityReason` describin
 ```ts
 type ActivityReason =
   | { kind: 'idle'; since: number; inOwnCall?: true }
-  | { kind: 'permission'; since: number }
+  | { kind: 'permission'; since: number; waitKind?: PermissionWaitKind }
   | { kind: 'tool';            pendingCount: number; currentTool: string | null }
   | { kind: 'subagent';        depth: number }
   | { kind: 'background-shell'; count: number; ids: readonly string[] }
@@ -148,9 +149,11 @@ a transition-only push leaves the reason frozen at whatever it was when the turn
 recorded 9-way `/code-review` fan-out (`tests/fixtures/replay/session-029-*.jsonl`) that was 3
 deliveries across 711 events while the derived kind changed 176 times. `ActivityEngine` therefore
 tracks `lastPushedReason` and calls a second callback, `onReasonChange`, whenever `reason.kind`
-differs from the last one delivered. The gate is the KIND alone: tool churn moves `currentTool`
-and `pendingCount` on nearly every event, and reporting on those would push about four times a
-second per session. `SessionManager` emits it as `activity-reason`, NOT as `activity`, because the
+differs from the last one delivered (`sameReasonShape` in `engine/predicate.ts`). The gate is the
+KIND, plus a permission wait's `waitKind`: tool churn moves `currentTool` and `pendingCount` on
+nearly every event, and reporting on those would push about four times a second per session, but a
+question raised while an approval is open stays `permission` throughout and its card must still
+swap its mark. `SessionManager` emits it as `activity-reason`, NOT as `activity`, because the
 notifiers, turn-completion auto-move, the terminal submit scheduler, and the interval recorder all
 read an `activity` emit as a real transition.
 
@@ -171,11 +174,52 @@ so the renderer raises no "Agent finished" toast and moves no bottom panel focus
 permission prompt in that turn still notifies both ways.
 
 The renderer uses `reason.kind` to pick an icon and inline label for the TaskCard hover tooltip. The
-two kinds that describe agent activity itself render the shared `@kangentic/branding` activity marks
+kinds that describe agent activity itself render the shared `@kangentic/branding` activity marks
 via `ActivityMark`, so they match the TaskCard indicator exactly (`idle` -> `agent-idle`,
-`turn-active` -> `agent-working`); the kinds that name a specific cause have no counterpart in that
-set and stay Lucide (`tool` -> Wrench, `subagent` -> Users, `background-shell` -> Terminal,
-`permission` -> Lock).
+`permission` -> `agent-question` or `agent-approval` by its `waitKind`, `turn-active` ->
+`agent-working`); the kinds that name a specific cause have no counterpart in that set and stay
+Lucide (`tool` -> Wrench, `subagent` -> Users, `background-shell` -> Terminal).
+
+### The kind of a wait
+
+A `permission` wait is a question the agent asked or an approval it wants
+(`PermissionWaitKind = 'question' | 'approval'`, GitHub #452). Each adapter says which at the
+source, on the `idle:permission` event's own field, `SessionEvent.waitKind`. Never in `detail`:
+about ten sites test `detail === IdleReason.Permission`. A hook adapter tags its entry with an
+event-bridge directive (`setWaitKind`, `setWaitKindWhen`, `appendPermissionWaitForTool`, see
+[bridge scripts](../../integrations/agents/bridge-scripts.md)); a parser sets the field itself. Which
+agents report it, and from what signal, is each agent's doc.
+
+The engine keeps it as `permissionWaitKind` beside `permissionPending`, set by the wait that raised
+the flag (the newest wait wins) and cleared at every site that clears the flag: the depth-0 tool
+clear, Prompt, Interrupted, TurnFailed, SubagentStart, a non-permission Idle, `forceThinking`,
+`forceIdle`, a rejection read from the transcript and a terminal TurnRetrying. The permission
+reason carries it as `waitKind`, absent rather than null when the agent did not say, and the debug
+overlay shows it as Wait kind. The phone's wire does not carry it: `toActivityReasonWire` builds the
+permission reason field by field, so `ActivityReasonWire` is unchanged.
+
+Every new wait an adapter reports needs an end the engine already clears on, and the end must not
+fake a turn end: a plain non-permission Idle from a parser is read as the agent's own Stop
+(`turnEndSource === 'stop'`) and runs the column's turn-end automations. A wait must also land
+AFTER its own tool's `tool_start`, since a depth-0 tool start clears it. The PTY tracker leaves a
+wait alone (its silence timer fires only while `thinking`, and PTY output forces thinking only from
+`idle`), but a `detectIdle` prompt match does end it.
+
+A parallel sibling that finishes does not end a wait. A live `/preview` run showed why: Claude ran
+a ToolSearch beside AskUserQuestion, the question opened, and the search ended 30 ms later. The
+engine took the stack top (the search, which started second) as the awaited tool, and a depth-0
+ToolEnd cleared the wait anyway, so the card showed thinking under an open question. The envelope
+had the same gap before the kind existed. Two rules in `updatePermissionFlag` close it:
+
+- The awaited tool (`permissionAwaitedToolId`) is the newest pending entry the event's `tool`
+  names, and the stack top only when the event names none or names no pending call. Claude, Qwen
+  and the appended Codex and Antigravity waits carry `tool`. The usage accumulator credits the waited call by the
+  same rule.
+- The other pending ids at that moment are the wait's siblings (`permissionSiblingToolIds`,
+  engine-internal). A depth-0 ToolEnd of a sibling leaves the wait open and drops that id. A
+  depth-0 ToolStart still clears it: a new call after the wait opened is the agent moving on.
+
+`activity-engine-wait-kind.test.ts` replays the captured four events.
 
 ### Durable activity-interval history
 
@@ -282,7 +326,7 @@ The resume path now adopts nothing. Any surviving shell-like descendants are ins
 
 ### TaskCard hover tooltip
 
-The activity mark on each task card is wrapped in the app's Tooltip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell (bdrb9enzm)", "Awaiting permission", etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
+The activity mark on each task card is wrapped in the app's Tooltip. Its label is `formatActivityReasonText` and it leads with `activityReasonIcon`, one glyph per reason kind: "Running Bash", "2 subagents active", "1 background shell (bdrb9enzm)", "Asking you a question for 2m", "Waiting for your approval for 1m", "Waiting on you for 2m" (a wait of unknown kind), etc. The mark's `aria-label` is the same text, so a screen reader hears the reason once, without hovering.
 
 ### Activity Engine Debug Overlay (Developer settings tab)
 

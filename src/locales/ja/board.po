@@ -147,15 +147,15 @@ msgstr "適用"
 msgid "Archive"
 msgstr "アーカイブ"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "質問への回答待ち ({duration})"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
 msgid "Automations paused"
 msgstr "自動化を一時停止中"
-
-#: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
-msgid "Awaiting permission for {duration}"
-msgstr "権限の承認待ち ({duration})"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -547,6 +547,16 @@ msgstr "すべて表示"
 #, fuzzy
 msgid "View conversation"
 msgstr "会話を表示"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "承認待ち ({duration})"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "ユーザーの対応待ち ({duration})"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy

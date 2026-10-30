@@ -1,11 +1,12 @@
 ---
 type: Reference
 title: Goose CLI
-description: Block's Goose CLI with goose run -t -s, goose session and -n/-r resume, approval mode set through the GOOSE_MODE env var (acceptEdits resolves down to smart_approve, plan to chat with no tools), a version parser that rejects the pressly/goose migration tool, and PTY-only activity.
+description: Block's Goose CLI with goose run -t -s, goose session and -n/-r resume, approval mode set through the GOOSE_MODE env var (acceptEdits resolves down to smart_approve, plan to chat with no tools), a version parser that rejects the pressly/goose migration tool, PTY-only activity, and questions and approvals read from its OSC 7501 program status.
 tags: [agents, adapter, goose]
 sources:
   - resource: src/main/agent/adapters/goose/goose-adapter.ts
   - resource: src/main/agent/adapters/goose/detector.ts
+  - resource: src/main/agent/adapters/goose/program-status-parser.ts
 ---
 # Goose CLI
 
@@ -66,6 +67,22 @@ A Goose installed in a WSL distro runs there (`supportsWslCli`) when its CLI pat
 ## Activity Detection
 
 Runtime activity is PTY-only. The silence timer drives the idle transition; `detectFirstOutput` returns true on any non-empty data (no alternate screen buffer). There is no hook or status pipeline.
+
+### Questions and approvals
+
+From 1.56, Goose's CLI writes a program status escape to the terminal at each change of state, the one place it says it waits on you (GitHub #452). Read from Goose's own source (`crates/goose-cli/src/session/program_status.rs`):
+
+```
+ESC ] 7501 ; state=<state>[:kind=permission|question]:app=goose[:msg=<base64>] ESC \
+```
+
+`state` is `idle`, `working`, `done`, `error`, `blocked` or `clear`, and `kind` rides only on `blocked`. Goose writes it only when stdout is a terminal and `GOOSE_CLI_PROGRAM_STATUS` is not turned off. `runtime.streamOutput` runs `GooseProgramStatusParser` (`program-status-parser.ts`) over the PTY output, holding a sequence split across chunks, and reports the waits only:
+
+- `blocked` is the permission wait, `kind=question` a question and `kind=permission` an approval. A `blocked` with no kind is left unknown.
+- `working` after a wait writes the PTY tracker's own resume event (`prompt`, `PromptReason.PtyActivity`), which clears it.
+- `idle`, `done`, `error` or `clear` after a wait writes `interrupted`: it clears the wait and settles idle at once, read downstream as work ended by the user's hand. Never a plain `idle`, which the engine reads as the agent's own turn end and which would run the column's On agent turn end automations for an agent that reports none.
+
+Every other status writes nothing, so the silence timer still ends turns: a `pty` agent's stream events never suppress its tracker, and the silence timer leaves a wait alone because it fires only while the session is thinking. The question text in `msg` is not read. Built from Goose's source; no live Goose session has shown the sequence yet. On Windows, ConPTY passes an OSC 7501 sequence through to node-pty unchanged with either terminator (measured with node-pty 1.2.0-beta.15), though it can move it ahead of printable text written in the same frame.
 
 ## Limitations
 

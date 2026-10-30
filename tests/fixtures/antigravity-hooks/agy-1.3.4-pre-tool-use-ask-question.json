@@ -1,0 +1,16 @@
+{
+  "artifactDirectoryPath": "C:/Users/dev/.gemini/antigravity-cli/brain/00000000-0000-0000-0000-000000000000",
+  "conversationId": "00000000-0000-0000-0000-000000000000",
+  "modelName": "gemini-3.8-flash-high",
+  "stepIdx": 2,
+  "toolCall": {
+    "args": {
+      "questions": [
+        { "is_multi_select": false, "options": ["Red", "Blue"], "question": "Which color?" }
+      ]
+    },
+    "name": "ask_question"
+  },
+  "transcriptPath": "C:/Users/dev/.gemini/antigravity-cli/brain/00000000-0000-0000-0000-000000000000/.system_generated/logs/transcript_full.jsonl",
+  "workspacePaths": ["C:/Users/dev/repo"]
+}

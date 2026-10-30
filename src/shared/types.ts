@@ -1871,6 +1871,18 @@ export interface TaskReport {
 export type ActivityState = 'thinking' | 'idle' | 'permission';
 
 /**
+ * What a `'permission'` wait is waiting for, as the agent reported it:
+ * `'question'` when it asked the user something (a pick-an-option prompt from
+ * its question tool), `'approval'` when it wants a tool allowed or a plan
+ * approved. A wait whose agent does not say carries no kind; the UI draws
+ * that unknown wait as a question.
+ *
+ * Each adapter decides the kind at the source (its hook entry or parser), so
+ * no tool or notification name leaves `src/main/agent/adapters/`.
+ */
+export type PermissionWaitKind = 'question' | 'approval';
+
+/**
  * Why the activity engine reports its current state. Discriminated
  * union exposed alongside `ActivityState` so the UI can render
  * context-aware affordances - different icons per `kind`, live counts,
@@ -1903,7 +1915,17 @@ export type ActivityReason =
        */
       inOwnCall?: true;
     }
-  | { kind: 'permission'; since: number }
+  | {
+      kind: 'permission';
+      since: number;
+      /**
+       * What the wait is for, when the agent reported it. Absent means the
+       * agent did not say: the UI draws that as a question and the desktop
+       * notification falls back to "Agent needs your input". Main-side only:
+       * `toActivityReasonWire` strips it, so the phone wire is unchanged.
+       */
+      waitKind?: PermissionWaitKind;
+    }
   | {
       kind: 'tool';
       pendingCount: number;
@@ -1950,6 +1972,8 @@ export interface ActivityStatsSnapshot {
   permissionPending: boolean;
   /** The tool_use_id awaiting a permission decision when `permissionPending` is true, else null. */
   permissionAwaitedToolId: string | null;
+  /** What the pending wait is for when the agent reported it, else null (no wait, or an unknown kind). */
+  permissionWaitKind: PermissionWaitKind | null;
   msSinceLastSignal: number | null;
   /** Wall-clock ms of the most recent thinking-signal. Lets the
    *  debug-overlay timeline render the active watchdog deadline as
@@ -2317,6 +2341,18 @@ export interface SessionEvent {
    * launch rides cannot carry the flag.
    */
   noActivityHold?: boolean;
+  /**
+   * On an `idle` with `detail: IdleReason.Permission`, what the wait is for:
+   * a question the agent asked or an approval it wants. Undefined means the
+   * adapter did not report it, which the UI draws as a question.
+   *
+   * A field of its own rather than a `detail` value, because the engine, the
+   * plan approval gate and the usage accumulator all test
+   * `detail === IdleReason.Permission`. Set by the adapter that knows its own
+   * prompt vocabulary: an event-bridge directive (`setWaitKind`,
+   * `setWaitKindWhen`, `appendPermissionWaitForTool`) or a parser.
+   */
+  waitKind?: PermissionWaitKind;
   /**
    * Polymorphic context for the event:
    * - For `tool_start`/`tool_end`: tool-specific info (file path, command)

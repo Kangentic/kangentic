@@ -147,15 +147,15 @@ msgstr "Aplicar"
 msgid "Archive"
 msgstr "Arquivar"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "Fazendo uma pergunta a você há {duration}"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
 msgid "Automations paused"
 msgstr "Automações pausadas"
-
-#: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
-msgid "Awaiting permission for {duration}"
-msgstr "Aguardando permissão há {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -547,6 +547,16 @@ msgstr "Ver tudo"
 #, fuzzy
 msgid "View conversation"
 msgstr "Ver conversa"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "Aguardando sua aprovação há {duration}"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "Aguardando você há {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy

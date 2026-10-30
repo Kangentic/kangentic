@@ -1288,24 +1288,19 @@ test.describe('Task Activity Indicators', () => {
   // 'thinking' without an idle detour lasting 65-83s.
   //
   // Renderer-side invariant: both 'idle' and 'permission' map to isIdle=true
-  // in TaskCard.tsx, so the Mail icon appears for both. There is no separate
-  // lock icon - the design groups them as "agent needs attention".
-  //
-  // Source confirmation:
-  //   src/renderer/components/board/TaskCard.tsx line 244-245:
-  //     const isIdle = displayState.kind === 'running'
-  //       && (displayState.activity === 'idle' || displayState.activity === 'permission');
-  //   src/renderer/utils/task-progress.ts line 92-94:
-  //     activity: activity ?? 'idle'  (defaults to idle when cache is empty)
+  // in task-card-view.tsx (the amber "needs you" bucket). The mark inside that
+  // bucket says WHY (#452): the envelope for a finished turn, the speech bubble
+  // for a question, the shield for an approval. These cases seed no reason, so
+  // the wait's kind is unknown and draws as the bubble (agent-wait.ts).
   //
   // Three assertions here:
-  //   1. 'permission' shows Mail icon (not spinner) - same affordance as idle
+  //   1. 'permission' shows the wait's mark (not spinner)
   //   2. 'permission' does NOT show spinner (thinking is absent)
   //   3. After cache update permission -> thinking, spinner appears with NO
   //      intermediate idle/mail flash (the renderer-side invariant the fix
   //      preserves: transitions go direct without passing through idle first)
   test.describe('permission activity state', () => {
-    test('permission state shows mail icon (not spinner) on task card', async () => {
+    test('permission state shows the wait mark (not spinner) on task card', async () => {
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'permission', withUsage: true }),
       );
@@ -1315,8 +1310,10 @@ test.describe('Task Activity Indicators', () => {
 
         const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
 
-        // permission maps to isIdle=true: Mail icon appears (amber, "needs attention")
-        await expect(titleRow.locator('[data-mark="agent-idle"]')).toBeVisible({ timeout: 10000 });
+        // permission maps to isIdle=true: the wait's mark appears (amber, "needs attention"),
+        // the bubble for a wait whose kind no reason has reported
+        await expect(titleRow.locator('[data-mark="agent-question"]')).toBeVisible({ timeout: 10000 });
+        await expect(titleRow.locator('[data-mark="agent-idle"]')).toHaveCount(0);
 
         // Spinner must NOT appear - permission is not a thinking state
         await expect(titleRow.locator('[data-mark="agent-working"]')).not.toBeVisible();
@@ -1367,8 +1364,8 @@ test.describe('Task Activity Indicators', () => {
 
         const titleRow = page.locator('text=Test Initializing Task').first().locator('..');
 
-        // Confirm we start in permission (mail icon visible)
-        await expect(titleRow.locator('[data-mark="agent-idle"]')).toBeVisible({ timeout: 10000 });
+        // Confirm we start in permission (the wait's mark visible)
+        await expect(titleRow.locator('[data-mark="agent-question"]')).toBeVisible({ timeout: 10000 });
 
         // Push activity update: permission -> thinking (simulates engine re-arming turnActive)
         await page.evaluate((sessionId) => {

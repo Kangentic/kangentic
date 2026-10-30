@@ -147,15 +147,15 @@ msgstr "Použít"
 msgid "Archive"
 msgstr "Archivovat"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "Klade vám otázku po dobu {duration}"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 #, fuzzy
 msgid "Automations paused"
 msgstr "Automatizace pozastaveny"
-
-#: src/renderer/components/board/activity-reason-text.ts
-#, fuzzy
-msgid "Awaiting permission for {duration}"
-msgstr "Čeká na oprávnění po dobu {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
@@ -547,6 +547,16 @@ msgstr "Zobrazit vše"
 #, fuzzy
 msgid "View conversation"
 msgstr "Zobrazit konverzaci"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "Čeká na vaše schválení po dobu {duration}"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "Čeká na vás po dobu {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy

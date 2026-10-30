@@ -1,10 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { toForwardSlash } from '../../../../shared/paths';
-import { AgentTool, EventType } from '../../../../shared/types';
+import { AgentTool, EventType, IdleReason } from '../../../../shared/types';
 import { resolveBridgeScript } from '../../shared/bridge-utils';
 import { buildBridgeCommand, isKangenticHookCommand, quoteBridgePath, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractDetail, setToolWhen } from '../../shared/directive-builders';
+import {
+  emitOnlyWhenDetailMatches, extractTool, extractDetail, setDetail, setToolWhen, setWaitKind, setWaitKindWhen,
+} from '../../shared/directive-builders';
 import { backgroundLaunchDirective, backgroundStopDirectives, backgroundToolMatcher } from '../../shared/background-command-hooks';
 import { BACKGROUND_SHELL_HINT_TEXT } from '../../shared/background-shell-hint-hook';
 import type { BackgroundCommandSpec } from '../../../../shared/background-command-spec';
@@ -100,6 +102,22 @@ const APPROVED_PLAN_EXIT = setToolWhen({
 });
 
 /**
+ * The `notification` types that are a wait on the user (#452), from GitHub's
+ * hooks reference: `elicitation_dialog` ("the agent requests additional
+ * information from the user", the ask_user question) and `permission_prompt`
+ * (a tool to allow). Every other type (`shell_completed`, `agent_idle`, ...)
+ * is dropped. Measured live on 1.0.100 (tests/fixtures/copilot-hooks/
+ * copilot-1.0.100-waits.jsonl): the payload names the type in snake_case
+ * `notification_type` even under the camelCase `notification` key, it lands
+ * after the waiting tool's preToolUse (45 ms after it for ask_user, by
+ * Copilot's own timestamps), and the tool's postToolUse ends it. The hook is
+ * fire-and-forget, so an answer given before its process writes could land
+ * the tool's end first; the next tool start or agentStop then clears it.
+ */
+const COPILOT_QUESTION_NOTIFICATION = 'elicitation_dialog';
+const COPILOT_APPROVAL_NOTIFICATION = 'permission_prompt';
+
+/**
  * Copilot hook events mapped to event-bridge event types with extraction
  * directives. Directives tell event-bridge how to extract fields from
  * Copilot's hook stdin JSON.
@@ -149,6 +167,17 @@ export const COPILOT_HOOK_EVENTS: Array<{
   {
     event: 'preCompact',
     bridgeEventType: EventType.Compact,
+  },
+  {
+    event: 'notification',
+    bridgeEventType: EventType.Idle,
+    directives: [
+      extractDetail(['notification_type']),
+      emitOnlyWhenDetailMatches(`^(${COPILOT_QUESTION_NOTIFICATION}|${COPILOT_APPROVAL_NOTIFICATION})$`),
+      setDetail(IdleReason.Permission),
+      setWaitKind('approval'),
+      setWaitKindWhen({ path: ['notification_type'], equals: COPILOT_QUESTION_NOTIFICATION, to: 'question' }),
+    ],
   },
 ];
 

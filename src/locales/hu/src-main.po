@@ -39,6 +39,11 @@ msgstr "{provider} nem fejezte be ezt a bejelentkezést."
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} - {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "{workflowTitle} munkafolyamat"
 
@@ -52,6 +57,26 @@ msgstr "Egy projekt"
 msgid "A task"
 msgstr "Egy feladat"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Az ügynöknek kérdése van"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Az ügynök jóváhagyásra vár"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Az ügynök beavatkozásra vár"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "Az ügynök tétlen lett"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "Bezárás"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "Parancsterminál"
+msgid "Command Terminal - {projectName}"
+msgstr "Parancsterminál - {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "A Kangentic nem tudja olvasni az adatbázisát"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "A Kangentic ablaka nem válaszol"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "Engedély szükséges: {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

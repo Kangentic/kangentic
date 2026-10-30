@@ -99,7 +99,7 @@ conversation and sends the task once more.
 - **Context bar** below the terminal shows session metadata (shell, model, cost, tokens, context usage). Each element is configurable.
 - **Task card status** - each card shows a contextual status bar at the bottom:
   - A spinning indicator and model name with context percentage when the agent is actively working
-  - An idle icon (amber) when the agent is waiting for input
+  - An amber mark when the agent is waiting on you, shaped by why: an envelope when it finished its turn, a speech bubble when it asked you a question (or did not say what it waits for), and a crested shield when it wants a tool or a plan approved. Hover it for how long ("Asking you a question for 2m"). The sidebar keeps one amber count for all three
   - "Starting agent..." or "Resuming agent..." during session startup
   - An agent whose CLI streams no live telemetry shows its adapter's own label in place of that spinner (for example "Telemetry: TUI only"; see `liveTelemetryUnsupported` in [Optional adapter properties](../integrations/agents/optional-properties.md))
   - "Queued..." when waiting for a concurrency slot

@@ -139,9 +139,12 @@ export function reasonsEqual(a: ActivityReason, b: ActivityReason): boolean {
       }
       return true;
     }
+    case 'permission': {
+      const other = b as Extract<ActivityReason, { kind: 'permission' }>;
+      return a.waitKind === other.waitKind;
+    }
     case 'turn-active':
     case 'idle':
-    case 'permission':
       return true;
   }
 }
@@ -172,6 +175,7 @@ export function snapshotsContentEqual(a: ActivityStatsSnapshot, b: ActivityStats
   if (a.anonymousBackgroundShellCount !== b.anonymousBackgroundShellCount) return false;
   if (a.turnActive !== b.turnActive) return false;
   if (a.permissionPending !== b.permissionPending) return false;
+  if (a.permissionWaitKind !== b.permissionWaitKind) return false;
   if (a.pendingIdleArmed !== b.pendingIdleArmed) return false;
   if (a.backgroundShellIds.length !== b.backgroundShellIds.length) return false;
   for (let index = 0; index < a.backgroundShellIds.length; index++) {
@@ -869,6 +873,12 @@ const SnapshotRow = memo(function SnapshotRow({ snapshot, label, pollNow }: { sn
           value={snapshot.permissionPending}
           tooltip="Agent is waiting for the user to approve a tool use"
         />
+        <div className="flex items-center justify-between gap-2" title="What the pending wait is for, as the agent reported it: question, approval, or unknown when it did not say">
+          <span className="text-fg-faint truncate cursor-help">Wait kind</span>
+          <span className={`font-mono tabular-nums shrink-0 ${snapshot.permissionPending ? 'text-attention font-medium' : 'text-fg-disabled'}`}>
+            {snapshot.permissionPending ? (snapshot.permissionWaitKind ?? 'unknown') : '-'}
+          </span>
+        </div>
       </div>
 
       {/* Recent transitions: timeline of state changes. Each line is one

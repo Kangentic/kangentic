@@ -39,6 +39,11 @@ msgstr "{provider} toto přihlášení nedokončil."
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
+msgid "{taskTitle} - {place}"
+msgstr "{taskTitle} – {place}"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
 msgid "{workflowTitle} workflow"
 msgstr "Pracovní postup {workflowTitle}"
 
@@ -52,6 +57,26 @@ msgstr "Projekt"
 msgid "A task"
 msgstr "Úloha"
 
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Agent má dotaz"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Agent potřebuje vaše schválení"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Agent potřebuje váš vstup"
+
+#: src/main/notifications/desktop-notifier.ts
+#, fuzzy
+msgid "Agent went idle"
+msgstr "Agent je nečinný"
+
 #: src/main/diagnostics/renderer-recovery.ts
 #, fuzzy
 msgid "Available system memory at the time: {availableMb} MB."
@@ -64,8 +89,8 @@ msgstr "Zavřít"
 
 #: src/main/notifications/desktop-notifier.ts
 #, fuzzy
-msgid "Command Terminal"
-msgstr "Příkazový terminál"
+msgid "Command Terminal - {projectName}"
+msgstr "Příkazový terminál – {projectName}"
 
 #: src/main/index.ts
 #, fuzzy
@@ -92,11 +117,6 @@ msgstr "Kangentic nemůže načíst svou databázi"
 #, fuzzy
 msgid "Kangentic's window stopped responding"
 msgstr "Okno aplikace Kangentic přestalo reagovat"
-
-#: src/main/notifications/desktop-notifier.ts
-#, fuzzy
-msgid "Needs permission: {place}"
-msgstr "Vyžaduje oprávnění: {place}"
 
 #: src/main/window-open-policy.ts
 #, fuzzy

@@ -119,13 +119,14 @@ msgstr "应用"
 msgid "Archive"
 msgstr "归档"
 
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Asking you a question for {duration}"
+msgstr "已向你提问 {duration}"
+
 #: src/renderer/components/board/AutomationsDisabledStrip.tsx
 msgid "Automations paused"
 msgstr "自动化已暂停"
-
-#: src/renderer/components/board/activity-reason-text.ts
-msgid "Awaiting permission for {duration}"
-msgstr "等待权限 {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "Backlog"
@@ -442,6 +443,16 @@ msgstr "查看全部"
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "View conversation"
 msgstr "查看对话"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting for your approval for {duration}"
+msgstr "已等待你的批准 {duration}"
+
+#: src/renderer/components/board/activity-reason-text.ts
+#, fuzzy
+msgid "Waiting on you for {duration}"
+msgstr "已等待你 {duration}"
 
 #: src/renderer/components/board/ViewToggle.tsx
 msgid "Workflows"

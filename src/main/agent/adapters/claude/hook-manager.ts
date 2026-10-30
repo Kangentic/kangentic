@@ -1,7 +1,7 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
@@ -101,6 +101,12 @@ export const CLAUDE_BRIDGE_SHELL: HookShell = 'sh-or-powershell';
 
 /** Claude's plan exit tool, the only non-MCP prompt the plan approval hook answers. */
 const CLAUDE_PLAN_EXIT_TOOL = 'ExitPlanMode';
+
+/**
+ * Claude's pick-an-option question tool. Its PermissionRequest is the one
+ * wait that is a question rather than an approval.
+ */
+export const CLAUDE_QUESTION_TOOL = 'AskUserQuestion';
 
 /**
  * Claude's plan approval reply (code.claude.com/docs/en/hooks, PermissionRequest):
@@ -389,10 +395,14 @@ export function buildHooks(
     [H.PermissionRequest]: [
       ...(existingHooks[H.PermissionRequest] || []),
       // The tool name rides along so the plan approval gate can tell the plan
-      // prompt's idle from every other one (plan-approval-gate.ts).
+      // prompt's idle from every other one (plan-approval-gate.ts). The wait's
+      // kind: AskUserQuestion is a question; a tool, a plan (ExitPlanMode) and
+      // anything else Claude asks to run is an approval.
       { matcher: '', hooks: [{ type: 'command', command: bridge(E.Idle,
         setDetail('permission'),
-        extractTool('tool_name')) }] },
+        extractTool('tool_name'),
+        setWaitKind('approval'),
+        setWaitKindWhen({ path: ['tool_name'], equals: CLAUDE_QUESTION_TOOL, to: 'question' })) }] },
       ...(options.planApprovalCommand
         ? [{ matcher: CLAUDE_PLAN_EXIT_TOOL, hooks: [{ type: 'command', command: options.planApprovalCommand }] }]
         : []),

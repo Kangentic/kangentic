@@ -80,7 +80,8 @@ describe('Droid Adapter', () => {
       expect(command).toContain('fix the bug');
       expect(command).not.toContain('--resume');
       // Adapter intentionally does not shadow Droid's native TUI controls:
-      // no exec-only flags, no per-task --settings file, no model pin.
+      // no exec-only flags, no model pin, and with no events path no
+      // --settings file either (the hooks file needs one, see below).
       expect(command).not.toContain('--auto');
       expect(command).not.toContain('-m ');
       expect(command).not.toContain('--model');
@@ -96,6 +97,60 @@ describe('Droid Adapter', () => {
       }));
       const settingsFile = path.join(tempDir, '.kangentic', 'sessions', 'task-xyz', 'droid-settings.json');
       expect(fs.existsSync(settingsFile)).toBe(false);
+    });
+  });
+
+  describe('buildCommand - the hook settings file (#452)', () => {
+    // The one per-session settings file Kangentic passes holds its activity hooks and nothing
+    // else: no model pin, no autonomy level. It lives beside the session's events file.
+    function spawnWithEvents(overrides: Partial<SpawnCommandOptions> = {}): { command: string; settingsPath: string } {
+      const sessionDirectory = path.join(tempDir, '.kangentic', 'sessions', 'session-1');
+      const eventsOutputPath = path.join(sessionDirectory, 'events.jsonl');
+      const command = adapter.buildCommand(makeOptions({ cwd: tempDir, projectRoot: tempDir, eventsOutputPath, prompt: 'go', ...overrides }));
+      return { command, settingsPath: path.join(sessionDirectory, 'droid-settings.json') };
+    }
+
+    it('passes --settings with a file that holds only hooks', () => {
+      const { command, settingsPath } = spawnWithEvents();
+      expect(command).toContain('--settings');
+      expect(command).toContain('droid-settings.json');
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      expect(Object.keys(settings)).toEqual(['hooks']);
+      expect(Object.keys(settings.hooks).sort()).toEqual(['Notification', 'PostToolUse', 'PreToolUse', 'UserPromptSubmit']);
+      // No Stop: Droid's turn ends stay with the PTY silence timer.
+      expect(settings.hooks.Stop).toBeUndefined();
+      expect(command).not.toContain('--auto');
+      expect(command).not.toContain('--model');
+    });
+
+    it('writes its hooks through the event bridge, to the session\'s own events file', () => {
+      const { settingsPath } = spawnWithEvents();
+      const settings = JSON.parse(fs.readFileSync(settingsPath, 'utf-8'));
+      const preToolUse = settings.hooks.PreToolUse[0];
+      expect(preToolUse.matcher).toBe('*');
+      expect(preToolUse.hooks[0].command).toMatch(/^node "[^"]*event-bridge\.js" "[^"]*events\.jsonl" tool_start /);
+    });
+
+    it('runs a Droid in a WSL distro without hooks, as before', () => {
+      const { command, settingsPath } = spawnWithEvents({
+        shell: 'wsl -d Ubuntu',
+        cliTarget: {
+          kind: 'wsl', distro: 'Ubuntu', linuxCliPath: '/home/dev/.local/bin/droid',
+          facts: { distro: 'Ubuntu', homeLinux: '/home/dev', homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev', uncRoot: '\\\\wsl.localhost\\Ubuntu', interactivePath: '/usr/bin', env: {}, networkingMode: 'mirrored' },
+        },
+      });
+      expect(command).not.toContain('--settings');
+      expect(fs.existsSync(settingsPath)).toBe(false);
+    });
+
+    it('declares the events file the hooks write, while activity stays on the PTY tracker', () => {
+      expect(adapter.runtime.activity.kind).toBe('pty');
+      expect(adapter.runtime.reportsTurnEnd).toBe(false);
+      expect(adapter.runtime.statusFile?.parseStatus('{}')).toBeNull();
+      expect(adapter.runtime.statusFile?.parseEvent('{"ts":1,"type":"tool_start","tool":"Execute"}'))
+        .toEqual({ ts: 1, type: 'tool_start', tool: 'Execute' });
+      expect(adapter.runtime.statusFile?.parseEvent('')).toBeNull();
+      expect(adapter.runtime.statusFile?.parseEvent('not json')).toBeNull();
     });
   });
 
@@ -185,8 +240,9 @@ describe('Droid Adapter', () => {
       expect(adapter.runtime.sessionId!.fromHook).toBeUndefined();
     });
 
-    it('omits statusFile (no events.jsonl pipeline today)', () => {
-      expect(adapter.runtime.statusFile).toBeUndefined();
+    it('reads the hooks\' events.jsonl through statusFile, with no status line to parse', () => {
+      expect(adapter.runtime.statusFile?.isFullRewrite).toBe(false);
+      expect(adapter.runtime.statusFile?.parseStatus('{"model":"x"}')).toBeNull();
     });
   });
 

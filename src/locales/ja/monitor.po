@@ -69,15 +69,15 @@ msgstr "表示中の全プロジェクトで応答を待っているエージェ
 msgid "All projects"
 msgstr "すべてのプロジェクト"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "{when}から質問中"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "自動化"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "{when}から権限待ち"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "タスク"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "タスクが属するワークフロー"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "{when}から承認待ち"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "{when}から応答待ち"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

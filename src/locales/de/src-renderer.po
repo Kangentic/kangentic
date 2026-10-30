@@ -79,8 +79,8 @@ msgstr "„{taskTitle}“ wurde archiviert."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "\"{taskTitle}\" is asking to run a tool."
-msgstr "„{taskTitle}“ möchte ein Tool ausführen."
+msgid "\"{taskTitle}\" is asking you a question."
+msgstr "„{taskTitle}“ hat eine Frage an Sie."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #, fuzzy
@@ -97,6 +97,11 @@ msgstr "„{taskTitle}“ ist wieder auf dem Board."
 #, fuzzy
 msgid "\"{taskTitle}\" is running."
 msgstr "„{taskTitle}“ läuft."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "\"{taskTitle}\" is waiting for your approval."
+msgstr "„{taskTitle}“ wartet auf Ihre Genehmigung."
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -325,8 +330,13 @@ msgstr "{sessionIdShort} wurde mit Code {exitCode} beendet."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
-msgid "{sessionIdShort} is asking to run a tool."
-msgstr "{sessionIdShort} möchte ein Tool ausführen."
+msgid "{sessionIdShort} is asking you a question."
+msgstr "{sessionIdShort} hat eine Frage an Sie."
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "{sessionIdShort} is waiting for your approval."
+msgstr "{sessionIdShort} wartet auf Ihre Genehmigung."
 
 #: src/renderer/utils/idle-toast.ts
 #, fuzzy
@@ -407,6 +417,21 @@ msgstr "Agent nicht gestartet"
 #, fuzzy
 msgid "Agent finished"
 msgstr "Agent fertig"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent has a question"
+msgstr "Agent hat eine Frage"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your approval"
+msgstr "Agent benötigt Ihre Genehmigung"
+
+#: src/renderer/utils/idle-toast.ts
+#, fuzzy
+msgid "Agent needs your input"
+msgstr "Agent benötigt Ihre Eingabe"
 
 #: src/renderer/App.tsx
 #, fuzzy
@@ -1181,11 +1206,6 @@ msgstr "„{taskTitle}“ in die nächste Spalte verschoben."
 #, fuzzy
 msgid "Moving project folder..."
 msgstr "Projektordner wird verschoben..."
-
-#: src/renderer/utils/idle-toast.ts
-#, fuzzy
-msgid "Needs permission"
-msgstr "Berechtigung erforderlich"
 
 #: src/renderer/lib/conversation-expired-toast.ts
 #, fuzzy

@@ -21,6 +21,7 @@ import { OverlayPopover } from '../OverlayPopover';
 import { ToggleSwitch } from '../settings/shared';
 import { SegmentedControl, type SegmentedControlOption } from '../SegmentedControl';
 import { useTaskCardViewModel } from '../board/task-card-view';
+import { formatActivityReasonText } from '../board/activity-reason-text';
 import {
   addBlockerRefusal,
   blockerCandidates,
@@ -77,10 +78,14 @@ function TaskActivityMark({ task, size }: { task: Task; size: number }) {
     );
   }
   if (view.isIdle) {
-    const idleLabel = t({ message: 'Idle', context: 'task activity' });
+    // A wait names what it waits for, as the board card's tip does ("Asking
+    // you a question for 2m"); a finished turn, or a wait whose reason has not
+    // arrived, keeps the plain label.
+    const waitReason = view.activityMark !== 'agent-idle' && view.activityReason ? view.activityReason : null;
+    const idleLabel = waitReason ? formatActivityReasonText(waitReason) : t({ message: 'Idle', context: 'task activity' });
     return (
       <Tooltip label={idleLabel}>
-        <span className="inline-flex shrink-0 text-attention" role="img" aria-label={idleLabel}><ActivityMark mark="agent-idle" size={size} /></span>
+        <span className="inline-flex shrink-0 text-attention" role="img" aria-label={idleLabel}><ActivityMark mark={view.activityMark} size={size} /></span>
       </Tooltip>
     );
   }
@@ -464,7 +469,7 @@ function RunOrderRowMark({ task }: { task: Task }) {
   const waitingLabel = t`Waiting for you`;
   return (
     <Tooltip label={waitingLabel}>
-      <span className="inline-flex shrink-0 text-attention" role="img" aria-label={waitingLabel}><ActivityMark mark="agent-idle" size={14} /></span>
+      <span className="inline-flex shrink-0 text-attention" role="img" aria-label={waitingLabel}><ActivityMark mark={view.activityMark} size={14} /></span>
     </Tooltip>
   );
 }

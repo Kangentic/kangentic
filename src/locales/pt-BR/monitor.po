@@ -69,15 +69,15 @@ msgstr "Agentes aguardando sua resposta, em todos os projetos visíveis"
 msgid "All projects"
 msgstr "Todos os projetos"
 
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Asking you a question {when}"
+msgstr "Fazendo uma pergunta a você {when}"
+
 #: src/renderer/components/monitor/MonitorTable.tsx
 #, fuzzy
 msgid "Automations"
 msgstr "Automações"
-
-#: src/renderer/components/monitor/monitor-view-model.ts
-#, fuzzy
-msgid "Awaiting permission {when}"
-msgstr "Aguardando permissão {when}"
 
 #: src/renderer/components/monitor/MonitorToolbar.tsx
 #, fuzzy
@@ -358,6 +358,16 @@ msgstr "Tarefa"
 #, fuzzy
 msgid "The workflow the task belongs to"
 msgstr "O fluxo de trabalho ao qual a tarefa pertence"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting for your approval {when}"
+msgstr "Aguardando sua aprovação {when}"
+
+#: src/renderer/components/monitor/monitor-view-model.ts
+#, fuzzy
+msgid "Waiting on you {when}"
+msgstr "Aguardando você {when}"
 
 #: src/renderer/components/monitor/MonitorCard.tsx
 #, fuzzy

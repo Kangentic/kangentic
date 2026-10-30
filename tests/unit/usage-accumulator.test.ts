@@ -931,6 +931,43 @@ describe('UsageAccumulator - per-tool aggregation', () => {
       expect(byName.Agent.totalDurationMs).toBe(40_000);
     });
 
+    it('credits the prompt to the call its Idle names over a sibling started after it, as the engine does', () => {
+      // Claude's ToolSearch run beside AskUserQuestion: the search starts
+      // second, so "newest pending" alone would mark it waited.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'AskUserQuestion', 0, { toolId: 'q1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'ToolSearch', 30, { toolId: 't1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 150, { detail: IdleReason.Permission, tool: 'AskUserQuestion' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'ToolSearch', 180, { toolId: 't1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'AskUserQuestion', 60_000, { toolId: 'q1' }));
+      const byName = Object.fromEntries(usage.getToolBreakdown('s1').map((row) => [row.toolName, row]));
+      expect(byName.AskUserQuestion).toMatchObject({ waitedCount: 1, totalDurationMs: 0 });
+      expect(byName.ToolSearch.waitedCount).toBeUndefined();
+      expect(byName.ToolSearch.totalDurationMs).toBe(150);
+    });
+
+    it('falls back to the newest pending call when the Idle names a tool with no pending entry, as the engine does', () => {
+      // The named tool (Bash) never started, so the name matches nothing and the
+      // prompt belongs to the newest pending call (Read), not to no call at all.
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 0, { toolId: 'r1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 150, { detail: IdleReason.Permission, tool: 'Bash' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 60_000, { toolId: 'r1' }));
+      const byName = Object.fromEntries(usage.getToolBreakdown('s1').map((row) => [row.toolName, row]));
+      expect(byName.Read).toMatchObject({ callCount: 1, waitedCount: 1, totalDurationMs: 0 });
+      expect(byName.Bash).toBeUndefined();
+    });
+
+    it('the fallback takes the newest pending call, not the oldest, when several are pending', () => {
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Read', 0, { toolId: 'r1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'Grep', 30, { toolId: 'g1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 150, { detail: IdleReason.Permission, tool: 'Bash' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Grep', 40_000, { toolId: 'g1' }));
+      usage.recordToolEvent('s1', toolEvent(EventType.ToolEnd, 'Read', 60_000, { toolId: 'r1' }));
+      const byName = Object.fromEntries(usage.getToolBreakdown('s1').map((row) => [row.toolName, row]));
+      expect(byName.Grep).toMatchObject({ waitedCount: 1, totalDurationMs: 0 });
+      expect(byName.Read.waitedCount).toBeUndefined();
+      expect(byName.Read.totalDurationMs).toBe(60_000);
+    });
+
     it('a call where every run waited (AskUserQuestion) has no run time', () => {
       usage.recordToolEvent('s1', toolEvent(EventType.ToolStart, 'AskUserQuestion', 0, { toolId: 'q1' }));
       usage.recordToolEvent('s1', toolEvent(EventType.Idle, undefined, 10, { detail: IdleReason.Permission }));
