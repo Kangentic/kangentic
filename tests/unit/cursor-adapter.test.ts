@@ -1017,7 +1017,7 @@ describe('CursorAdapter', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });
 
-    it('locateSessionHistoryFile returns null', async () => {
+    it('locateSessionHistoryFile returns null when the transcript file is not on disk', async () => {
       const result = await adapter.locateSessionHistoryFile('session-1', '/some/dir');
       expect(result).toBeNull();
     });

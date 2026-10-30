@@ -1,13 +1,15 @@
 ---
 type: Reference
 title: Cursor CLI
-description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, confirm-changes, --force skip-approval sessions, and -p --trust stream-json commands, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids before an interactive session opens.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, confirm-changes, --force skip-approval sessions, and -p --trust stream-json commands, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, create-chat session ids before an interactive session opens, and structured transcripts read from agent-transcripts jsonl with the user_query wrapper removed and no clock.
 tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
   - resource: src/main/agent/adapters/cursor/project-mcp-config.ts
   - resource: src/main/agent/adapters/cursor/answer-workspace.ts
   - resource: src/main/agent/adapters/cursor/stream-parser.ts
+  - resource: src/main/agent/adapters/cursor/session-paths.ts
+  - resource: src/main/agent/adapters/cursor/transcript-parser.ts
   - resource: src/main/agent/adapters/cursor/capability-discovery.ts
 ---
 # Cursor CLI
@@ -98,9 +100,13 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
   A workflow's agent creates one on every fresh start, print included. Whether `--resume` of a chat
   made this way keeps the interactive session across a Pause has not been run live yet.
 - No `transcript-cleanup.ts` (uses streaming text output, not a TUI alternate screen)
-- `locateSessionHistoryFile` returns null. The location is no longer unknown - Cursor writes
-  `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` plus a per-session
-  `store.db` - but two things block wiring it in: the records carry NO timestamp, and the stored
-  text is WRAPPED (`<user_query>...</user_query>`) rather than the raw submitted text. See
-  [Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified). Cursor was
-  also measured as turn-end flushed, so it gets no `command-injection` verifier either.
+- `locateSessionHistoryFile` returns
+  `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` when that file
+  exists. The slug is Cursor's own: non-alphanumeric characters become `-`, runs of dashes
+  collapse, and case stays as the working directory was given. View conversation reads that
+  JSONL. A user line's `<timestamp>` tag is dropped and not shown as a clock (`ts: 0`,
+  `transcriptHasTimestamps` false), and the `<user_query>` wrapper is removed. A line whose
+  whole body is one `<task>` element is unwrapped once more. There is still no
+  `command-injection` verifier: the records have no timestamp field, so a confirm cannot bound
+  itself to "written after send", and the stored text is not the raw submitted text. See
+  [Cursor](../../architecture/automations/command-injection-support-matrix.md#cursor-located-not-yet-verified).

@@ -9,7 +9,7 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import { discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
@@ -25,7 +25,9 @@ import {
   type CursorKangenticMcpEntry,
 } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
+import { cursorTranscriptFilePath, locateCursorTranscriptFile } from './session-paths';
+import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -192,6 +194,11 @@ export class CursorAdapter implements AgentAdapter {
   readonly kangenticMcp = 'per-session' as const;
   /** A Cursor installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /**
+   * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
+   * so the viewer shows no clock and orders the conversation by file order.
+   */
+  readonly transcriptHasTimestamps = false;
   /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */
   private readonly mcpHolds = new SharedFolderHolds();
   /** Each live session's CLI, by its PTY session id, until the session ends. */
@@ -527,15 +534,36 @@ export class CursorAdapter implements AgentAdapter {
     return data.length > 0;
   }
 
-  async locateSessionHistoryFile(_agentSessionId: string, _cwd: string): Promise<string | null> {
-    // The location IS known: Cursor writes
-    // `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl`
-    // plus a per-session `store.db`. It stays unwired because the records carry
-    // NO timestamp and the stored text is WRAPPED (`<user_query>...</user_query>`)
-    // rather than the raw submitted text, so neither a staleness bound nor an
-    // exact match is possible yet. See docs/architecture/automations/command-injection-support-matrix.md,
-    // "Cursor: located, not yet verified".
-    return null;
+  async locateSessionHistoryFile(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<string | null> {
+    return locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
+  }
+
+  async parseTranscript(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedTranscript> {
+    const located = await locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
+    const filePath = located ?? cursorTranscriptFilePath(cwd, agentSessionId, place ?? null);
+    return parseCursorTranscript(agentSessionId, filePath);
+  }
+
+  async readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<TranscriptPageReadResult> {
+    const located = await locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
+    const filePath = located ?? cursorTranscriptFilePath(cwd, agentSessionId, place ?? null);
+    return readCursorTranscriptPage(agentSessionId, filePath, request);
   }
 
   async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
