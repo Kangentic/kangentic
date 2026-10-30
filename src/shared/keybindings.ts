@@ -39,7 +39,7 @@ export type KeyScope =
   | 'panel' // a maximizable dialog/overlay panel (command terminal or task detail)
   | 'browser-pane' // BrowserPane visible inside a task dialog
   | 'terminal' // xterm-owned combos; display-only
-  | 'dialog' // generic dialog-local keys (Escape dismissal, Board Manager save)
+  | 'dialog' // generic dialog-local keys (Escape dismissal, the save key)
   | 'conversation'; // a focused Conversation viewer window (capture phase, deliberately does NOT overlap 'global' - see conversation.find)
 
 /** Display grouping in the settings panel. Cosmetic, independent of scope. */
@@ -234,6 +234,21 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     defaultCombo: 'Mod+N',
     rebindable: true,
   },
+  // One save key for every form: the task window's edit form binds it itself,
+  // and any BaseDialog that passes `save` (New Task, New Backlog Task, the Board
+  // Manager and the dialogs it opens, ...) gets it from BaseDialog, where only
+  // the topmost overlay acts. The id predates that and is kept, because user
+  // overrides key on it. Not Mod+Enter, which is terminal.sendNewline, and a
+  // rebindable default on a terminal-consumed combo is a terminal-warn.
+  {
+    id: 'taskDetail.save',
+    label: msg`Save edits`,
+    description: msg`Save the open form, the same as its Save, Create or Done button.`,
+    group: 'General',
+    scope: 'dialog',
+    defaultCombo: 'Mod+S',
+    rebindable: true,
+  },
   {
     id: 'dialog.dismiss',
     label: msg`Dismiss dialog`,
@@ -243,16 +258,6 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'General',
     scope: 'dialog',
     defaultCombo: 'Escape',
-    rebindable: false,
-    hidden: true,
-  },
-  {
-    id: 'boardManager.save',
-    label: msg`Save board configuration`,
-    // Saves changes in the Board Manager dialog. Fixed; has its own Save button.
-    group: 'General',
-    scope: 'dialog',
-    defaultCombo: 'Mod+S',
     rebindable: false,
     hidden: true,
   },
@@ -353,20 +358,6 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'Task Detail',
     scope: 'panel',
     defaultCombo: 'Mouse:Middle',
-    rebindable: true,
-  },
-  // Shares Mod+S with boardManager.save, which is not rebindable and so is never
-  // a conflict target. The task window's shortcutsSuppressed gate hands the key
-  // to the Board Manager when it opens over the edit form. Not Mod+Enter, which
-  // is terminal.sendNewline, and a rebindable default on a terminal-consumed
-  // combo is a terminal-warn.
-  {
-    id: 'taskDetail.save',
-    label: msg`Save edits`,
-    description: msg`Save the task edit form, the same as its Save button.`,
-    group: 'Task Detail',
-    scope: 'task-dialog',
-    defaultCombo: 'Mod+S',
     rebindable: true,
   },
   {
@@ -756,6 +747,10 @@ export function scopesOverlap(a: KeyScope, b: KeyScope): boolean {
   const overlapping: ReadonlyArray<readonly [KeyScope, KeyScope]> = [
     ['global', 'board'],
     ['task-dialog', 'browser-pane'],
+    // The save key is live in New Task and the task window's edit form, beside
+    // panel.maximize / panel.close and the task window's own keys.
+    ['dialog', 'panel'],
+    ['dialog', 'task-dialog'],
   ];
   return overlapping.some(([first, second]) => (a === first && b === second) || (a === second && b === first));
 }

@@ -1722,13 +1722,6 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     });
   }, [handleSave, t]);
 
-  // Cmd/Ctrl+S to save, via the central keybinding registry. Document-level,
-  // bubble phase, preventDefault only - matching the original listener.
-  useKeybinding('boardManager.save', requestSave, {
-    target: 'document',
-    stopPropagation: false,
-  });
-
   // Reorder handler for the rail: local-only until Save. Flags the store-sync
   // effect to preserve this order (see hasLocalReorderRef above).
   const handleRailReorder = useCallback((nextOrder: string[]) => {
@@ -1966,6 +1959,10 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       onHeaderDoubleClick={handleToggleMaximized}
       preventBackdropClose
       onBackdropClick={requestCancel}
+      // Ctrl+S is the footer's Save. The dialogs this one opens (Edit
+      // automation, the profile name prompt, the confirms) are BaseDialogs on
+      // top of it, so the key goes to them while they are open.
+      save={{ onSave: requestSave, disabled: saving || !hasDirty }}
       header={
         <div className="flex items-center gap-3 px-4 py-2">
           <Layers size={14} className="text-fg-muted flex-shrink-0" />

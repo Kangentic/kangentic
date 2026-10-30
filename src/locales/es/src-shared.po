@@ -1014,18 +1014,13 @@ msgstr "Ruso"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save board configuration"
-msgstr "Guardar configuración del tablero"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save edits"
 msgstr "Guardar cambios"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save the task edit form, the same as its Save button."
-msgstr "Guardar el formulario de edición de la tarea, igual que su botón Guardar."
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "Guardar el formulario abierto, igual que su botón Guardar, Crear o Listo."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

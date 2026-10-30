@@ -57,7 +57,12 @@ export function ProfileNameDialog({
   const canConfirm = trimmed.length > 0 && !isDuplicateName;
 
   return (
-    <BaseDialog title={titles[mode]} onClose={onCancel}>
+    <BaseDialog
+      title={titles[mode]}
+      onClose={onCancel}
+      // Ctrl+S is Create / Rename. It sits over the Board Manager, which leaves the key to it.
+      save={{ onSave: () => onConfirm(trimmed), disabled: !canConfirm }}
+    >
       <div className="space-y-3">
         {/* The name field leads: naming the profile is the task, and the
             explanation below is support for it. Leading with prose made the

@@ -113,6 +113,11 @@ describe('scopesOverlap', () => {
     expect(scopesOverlap('task-dialog', 'browser-pane')).toBe(true);
   });
 
+  it('overlaps the save key\'s dialog scope with the panel and task window keys live beside it', () => {
+    expect(scopesOverlap('dialog', 'panel')).toBe(true);
+    expect(scopesOverlap('dialog', 'task-dialog')).toBe(true);
+  });
+
   it('does NOT overlap intentional-shadow scope pairs', () => {
     expect(scopesOverlap('board', 'task-dialog')).toBe(false);
     expect(scopesOverlap('task-dialog', 'command-bar')).toBe(false);
@@ -132,6 +137,13 @@ describe('detectConflicts', () => {
     const real = conflicts.filter((entry) => entry.severity === 'conflict');
     expect(real).toHaveLength(1);
     expect(new Set(real[0].ids)).toEqual(new Set(['view.toggleSidebar', 'commandBar.toggle']));
+  });
+
+  it('flags the save key rebound onto a panel key, since New Task binds both', () => {
+    const onMaximize = detectConflicts({ 'taskDetail.save': 'Mod+Shift+M' }).filter((entry) => entry.severity === 'conflict');
+    expect(onMaximize.some((entry) => entry.ids.includes('taskDetail.save') && entry.ids.includes('panel.maximize'))).toBe(true);
+    const onClose = detectConflicts({ 'taskDetail.save': 'Mod+Shift+W' }).filter((entry) => entry.severity === 'conflict');
+    expect(onClose.some((entry) => entry.ids.includes('taskDetail.save') && entry.ids.includes('panel.close'))).toBe(true);
   });
 
   it('does not flag the intentional cross-scope shadow on Mod+Shift+B', () => {
@@ -199,5 +211,23 @@ describe('mouse combos', () => {
     const definition = getKeybinding('panel.closeViaHeaderClick');
     expect(definition?.defaultCombo).toBe('Mouse:Middle');
     expect(normalizeCombo(definition?.defaultCombo ?? '')).toBe('Mouse:Middle');
+  });
+});
+
+describe('the shared save key', () => {
+  // One action serves every dialog that opts in through BaseDialog's `save`
+  // prop, so a user rebinds it once. Its id is also stored in user overrides, so
+  // it is never renamed.
+  it('is one rebindable Mod+S action in the dialog scope, listed under General', () => {
+    const definition = getKeybinding('taskDetail.save');
+    expect(definition).toBeDefined();
+    expect(definition?.scope).toBe('dialog');
+    expect(definition?.group).toBe('General');
+    expect(definition?.defaultCombo).toBe('Mod+S');
+    expect(definition?.rebindable).toBe(true);
+  });
+
+  it('has no entry of its own for the Column Manager, which shares the one action', () => {
+    expect(getKeybinding('boardManager.save')).toBeUndefined();
   });
 });

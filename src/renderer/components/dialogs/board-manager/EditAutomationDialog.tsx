@@ -341,6 +341,10 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
     setLocal((current) => ({ ...current, max_runs: on ? maxRunsDraft : null }));
   };
 
+  // Saved with one Condition kind, and no Text match off a turn end: the line
+  // kept for a Trigger switched back goes no further than Done.
+  const handleDone = (): void => props.onDone({ ...local, ...draftConditionKinds(local) });
+
   const exitBudgetSeconds = Math.round(EXIT_GROUP_BUDGET_MS / 1000);
   const pairColumn = entry.fields.find((field) => field.kind === 'column' && !field.hidden) ?? null;
   const otherFields = entry.fields.filter((field) => !field.hidden && field !== pairColumn);
@@ -360,15 +364,16 @@ export function EditAutomationDialog(props: EditAutomationDialogProps) {
       // none of them.
       className="w-[640px] max-h-[calc(100vh-2rem)]"
       bodyClassName="flex-1 min-h-0 overflow-y-auto"
+      // Ctrl+S is Done. This dialog sits over the Board Manager, so the key
+      // applies the row here and leaves the board unsaved.
+      save={{ onSave: handleDone, disabled: blocked }}
       // The standard footer slot, not a `<footer>` among the children. As a
       // child it sat INSIDE the body's own padding, so it carried the body
       // inset plus its own and sat lower than every other dialog's footer.
       footer={
         <DialogFooterActions
           onCancel={props.onCancel}
-          // Saved with one Condition kind, and no Text match off a turn end:
-          // the line kept for a Trigger switched back goes no further than Done.
-          onConfirm={() => props.onDone({ ...local, ...draftConditionKinds(local) })}
+          onConfirm={handleDone}
           confirmLabel={t({ message: 'Done', context: 'button' })}
           confirmDisabled={blocked}
           cancelTestId="edit-automation-cancel"

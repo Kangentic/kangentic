@@ -1,6 +1,8 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useLayoutEffect, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { X } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
+import { useKeybinding } from '../../hooks/useKeybinding';
 import { useOverlayPhase } from '../../hooks/useOverlayPhase';
 import { useRegisterOpenOverlay } from '../../utils/overlay-gate';
 import { Tooltip } from '../Tooltip';
@@ -14,6 +16,14 @@ const FOCUSABLE_SELECTOR = [
   'textarea:not([disabled])',
   '[tabindex]:not([tabindex="-1"])',
 ].join(', ');
+
+/** What the save key (`taskDetail.save`, Ctrl+S) does in a dialog that opts in. */
+export interface DialogSaveAction {
+  /** The dialog's primary action: the same handler its Save, Create or Done button runs. */
+  onSave: () => void;
+  /** The primary button is disabled or its action is in flight. The key is still consumed. */
+  disabled?: boolean;
+}
 
 /** Visible, tabbable descendants of a container, in DOM order. */
 function getFocusable(container: HTMLElement): HTMLElement[] {
@@ -105,6 +115,11 @@ interface BaseDialogProps {
   // plays the exit animation (and honors onCloseRequest) like the standard
   // header X, Escape, and backdrop click already do.
   closeRef?: React.MutableRefObject<(() => void) | null>;
+  // Opt in to the save key (`taskDetail.save`, Ctrl+S by default). Pass the
+  // handler and disabled state the dialog's primary button already uses. Only
+  // the topmost overlay acts (overlay-gate), so a dialog opened over this one
+  // takes the key, and a yes/no confirm on top leaves it alone.
+  save?: DialogSaveAction;
   // Double-clicking the header (standard or custom) toggles this, mirroring the
   // desktop title-bar convention. Maximizable dialogs pass their maximize
   // toggle; others omit it and the header double-click does nothing. Double-
@@ -138,6 +153,7 @@ export function BaseDialog({
   contentRadiusClass = 'rounded-lg',
   testId,
   closeRef,
+  save,
   onHeaderDoubleClick,
 }: BaseDialogProps) {
   const { t } = useLingui();
@@ -146,13 +162,57 @@ export function BaseDialog({
   // open/close animation and unmounts via onClose when the exit animation ends.
   const {
     requestClose,
+    isExiting,
     backdropClassName: backdropAnimClass,
     contentClassName: contentAnimClass,
     onAnimationEnd,
   } = useOverlayPhase(onClose, { variant: 'dialog' });
   // While any dialog is open no toast takes a click: the toast stack sits over
-  // a centred dialog's footer (ToastContainer).
-  useRegisterOpenOverlay();
+  // a centred dialog's footer (ToastContainer). The registration also orders
+  // the dialog among the open overlays, which the save key reads.
+  const isTopmostOverlay = useRegisterOpenOverlay();
+
+  // The save key, read through a ref refreshed on commit: the press blurs and
+  // flushes the focused field first, and the save must see what that commit
+  // wrote, not the props from before it.
+  const saveRef = useRef(save);
+  useLayoutEffect(() => {
+    saveRef.current = save;
+  });
+  // Capture phase on `document`, so a focused field whose own key handler stops
+  // propagation cannot swallow the key. Every dialog that opts in has a listener
+  // on this target and consumes the key, so it never reaches the browser while a
+  // confirm or the settings panel sits on top. Only the topmost dialog acts.
+  useKeybinding('taskDetail.save', (event) => {
+    // Underneath: useKeybinding already prevented the default. Return before
+    // stopImmediatePropagation, which would keep the topmost dialog's listener,
+    // later on this target, from running.
+    if (!isTopmostOverlay()) return;
+    // Not stopPropagation alone: that leaves this target's other listeners to
+    // run, and on real input React commits between them. Done unmounting Edit
+    // automation would make the Board Manager's listener, if it ran later, see
+    // itself on top and save the board on the same press.
+    event.stopImmediatePropagation();
+    // A held key repeats. Ignoring repeats also keeps one held press from
+    // working down the stack as each dialog closes.
+    if ('repeat' in event && event.repeat) return;
+    // A dialog playing its exit (after Cancel or Escape) is already dismissed.
+    if (isExiting) return;
+    const current = saveRef.current;
+    // Disabled or in flight: the key is still consumed (useKeybinding prevented
+    // its default), or the web build opens the browser's Save Page dialog.
+    if (!current || current.disabled) return;
+    // A click on the button blurs the focused field before it saves; a key press
+    // does not, and LabelInput commits a typed label only on blur. Blur and flush
+    // so that commit lands before the save reads the form.
+    const focused = document.activeElement;
+    if (focused instanceof HTMLElement) flushSync(() => focused.blur());
+    saveRef.current?.onSave();
+  }, {
+    capture: true,
+    target: 'document',
+    enabled: save !== undefined,
+  });
 
   const contentRef = useRef<HTMLDivElement>(null);
 

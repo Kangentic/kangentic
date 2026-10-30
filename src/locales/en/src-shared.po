@@ -819,16 +819,12 @@ msgid "Russian"
 msgstr "Russian"
 
 #: src/shared/keybindings.ts
-msgid "Save board configuration"
-msgstr "Save board configuration"
-
-#: src/shared/keybindings.ts
 msgid "Save edits"
 msgstr "Save edits"
 
 #: src/shared/keybindings.ts
-msgid "Save the task edit form, the same as its Save button."
-msgstr "Save the task edit form, the same as its Save button."
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "Save the open form, the same as its Save, Create or Done button."
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

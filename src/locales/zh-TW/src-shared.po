@@ -819,16 +819,13 @@ msgid "Russian"
 msgstr "俄文"
 
 #: src/shared/keybindings.ts
-msgid "Save board configuration"
-msgstr "儲存看板設定"
-
-#: src/shared/keybindings.ts
 msgid "Save edits"
 msgstr "儲存編輯"
 
 #: src/shared/keybindings.ts
-msgid "Save the task edit form, the same as its Save button."
-msgstr "儲存任務編輯表單，功能與表單的「儲存」按鈕相同。"
+#, fuzzy
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "儲存開啟中的表單，功能與表單的「儲存」、「建立」或「完成」按鈕相同。"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

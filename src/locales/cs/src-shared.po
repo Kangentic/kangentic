@@ -1014,18 +1014,13 @@ msgstr "Ruština"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save board configuration"
-msgstr "Uložit konfiguraci nástěnky"
-
-#: src/shared/keybindings.ts
-#, fuzzy
 msgid "Save edits"
 msgstr "Uložit úpravy"
 
 #: src/shared/keybindings.ts
 #, fuzzy
-msgid "Save the task edit form, the same as its Save button."
-msgstr "Uložit formulář úprav úlohy, stejně jako tlačítko Uložit."
+msgid "Save the open form, the same as its Save, Create or Done button."
+msgstr "Uložit otevřený formulář, stejně jako jeho tlačítko Uložit, Vytvořit nebo Hotovo."
 
 #: src/shared/automation-manifest.ts
 #, fuzzy
