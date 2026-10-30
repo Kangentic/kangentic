@@ -2034,6 +2034,58 @@ export function runProjectMigrations(db: Database.Database): void {
       db.exec(`ALTER TABLE ${table} ADD COLUMN cli_target TEXT DEFAULT NULL`);
     }
   }
+
+  // Migration: held messages (GitHub #452). A message for a task whose agent is
+  // not running is held against the TASK and goes to its next agent, so the
+  // sent-messages log keys on the task: `task_id`, and a `session_id` that is
+  // NULL while the message waits (the task may have no session at all, and a
+  // To Do move deletes its sessions). The held row is the hold itself; its
+  // status moves from `held` to `delivered_from_hold`, `cleared` or `failed`.
+  // `task_id` cascades, so a deleted or demoted task takes its log with it.
+  //
+  // SQLite cannot drop a NOT NULL with ALTER, so the table is rebuilt, its rows
+  // copied in rowid order (the log's tie-break for rows in one millisecond)
+  // with `task_id` taken from each row's session.
+  const hasSentMessageTaskId = (db.pragma('table_info(session_messages_sent)') as Array<{ name: string }>)
+    .some((column) => column.name === 'task_id');
+  if (!hasSentMessageTaskId) {
+    writeTransaction(db, () => {
+      const countRows = (): number => (db.prepare('SELECT COUNT(*) AS count FROM session_messages_sent').get() as { count: number }).count;
+      const rowsBefore = countRows();
+      db.exec(`
+        CREATE TABLE session_messages_sent_new (
+          id TEXT PRIMARY KEY,
+          session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+          task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+          caller_session_id TEXT,
+          caller_task_id TEXT,
+          caller_project_id TEXT,
+          message TEXT NOT NULL,
+          status TEXT NOT NULL,
+          error TEXT,
+          created_at TEXT NOT NULL
+        );
+        INSERT INTO session_messages_sent_new
+          (id, session_id, task_id, caller_session_id, caller_task_id, caller_project_id, message, status, error, created_at)
+        SELECT messages.id, messages.session_id, sessions.task_id, messages.caller_session_id, messages.caller_task_id,
+          messages.caller_project_id, messages.message, messages.status, messages.error, messages.created_at
+        FROM session_messages_sent messages
+        JOIN sessions ON sessions.id = messages.session_id
+        JOIN tasks ON tasks.id = sessions.task_id
+        ORDER BY messages.rowid;
+        DROP TABLE session_messages_sent;
+        ALTER TABLE session_messages_sent_new RENAME TO session_messages_sent;
+      `);
+      // A row whose session or task is gone has no task to key on, so the copy
+      // leaves it behind. Foreign keys make that rare; say so when it happens.
+      const rowsDropped = rowsBefore - countRows();
+      if (rowsDropped > 0) {
+        console.warn(`[migrations] session_messages_sent rebuild left out ${rowsDropped} row(s) whose session or task no longer exists`);
+      }
+    })();
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_session_messages_sent_session_id ON session_messages_sent(session_id)');
+  db.exec('CREATE INDEX IF NOT EXISTS idx_session_messages_sent_task_status ON session_messages_sent(task_id, status)');
 }
 
 /**

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createSessionSendCoordinator,
   type SessionSendOutcome,
@@ -48,6 +48,21 @@ function isFailure(outcome: SessionSendOutcome): outcome is { error: string } {
 }
 
 describe('session-send coordinator', () => {
+  it('rations holds per task in its own sliding window', () => {
+    // A loop sending to a paused task would otherwise fill the log with held rows.
+    const coordinator = createSessionSendCoordinator(
+      { sessionManager: createFakeSessionManager(), terminalSubmit: { submitContent: vi.fn() } },
+      { maxSendsPerWindow: 2 },
+    );
+
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(false);
+    // Another task has its own window.
+    expect(coordinator.reserveHoldSlot('task-b')).toBe(true);
+    coordinator.dispose();
+  });
+
   it('delivers the message VERBATIM through the bracketed-paste submit path', async () => {
     const sessionManager = createFakeSessionManager({ writable: ['target'], activity: { target: 'idle' } });
     const submitContent = vi.fn(() => Promise.resolve());
@@ -568,5 +583,76 @@ describe('session-send coordinator', () => {
       windows: 0,
       refusalNotices: 0,
     });
+  });
+});
+
+describe('session-send coordinator: task hold windows roll off', () => {
+  // A task has no session exit to drop its window the way a session does, so
+  // without a sweep every task ever held for would stay in the map for the life
+  // of the process. Fake time moves the clock the window is measured on.
+  const HOLD_WINDOW_MS = 10_000;
+  const START = new Date('2026-01-01T00:00:00.000Z');
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(START);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function advanceTo(millisecondsAfterStart: number): void {
+    vi.setSystemTime(new Date(START.getTime() + millisecondsAfterStart));
+  }
+
+  function makeHoldCoordinator(maxSendsPerWindow = 30) {
+    return createSessionSendCoordinator(
+      { sessionManager: createFakeSessionManager(), terminalSubmit: { submitContent: vi.fn() } },
+      { windowMs: HOLD_WINDOW_MS, maxSendsPerWindow },
+    );
+  }
+
+  it('sweeps the window of a task whose holds have all rolled off, when another task reserves', () => {
+    const coordinator = makeHoldCoordinator();
+
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+    expect(coordinator._stateSizesForTesting().windows).toBe(1);
+
+    advanceTo(HOLD_WINDOW_MS + 1);
+    expect(coordinator.reserveHoldSlot('task-b')).toBe(true);
+
+    // Only task-b's fresh window is left. Two would mean task-a's lingers.
+    expect(coordinator._stateSizesForTesting().windows).toBe(1);
+    coordinator.dispose();
+  });
+
+  it('keeps, and still rations, the window of a task whose hold is inside the window', () => {
+    const coordinator = makeHoldCoordinator(1);
+
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+
+    advanceTo(HOLD_WINDOW_MS - 1);
+    expect(coordinator.reserveHoldSlot('task-b')).toBe(true);
+
+    expect(coordinator._stateSizesForTesting().windows).toBe(2);
+    // Sweeping a window that has not rolled off would lift the ceiling early.
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(false);
+    coordinator.dispose();
+  });
+
+  it('keeps a task window that still has a recent hold among rolled-off ones', () => {
+    const coordinator = makeHoldCoordinator(2);
+
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+    advanceTo(6_000);
+    expect(coordinator.reserveHoldSlot('task-a')).toBe(true);
+
+    // The first hold (at 0) is now past the window; the second (at 6000) is not.
+    advanceTo(HOLD_WINDOW_MS + 2_000);
+    expect(coordinator.reserveHoldSlot('task-b')).toBe(true);
+
+    expect(coordinator._stateSizesForTesting().windows).toBe(2);
+    coordinator.dispose();
   });
 });

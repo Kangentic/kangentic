@@ -21,12 +21,18 @@
  * the agent, such as the `/code-review` message. An entry out of Done (a drag
  * back or an unarchive) is a recovery move: it ran none of the rows, and the
  * Resume sends the agent nothing (`suppressAutoCommand`), so they stay unrun.
+ *
+ * Messages held for the task while it was paused (src/main/held-messages) do
+ * go out: in the resume's opening message, after any prompt the Resume
+ * carries.
  */
 import type Database from 'better-sqlite3';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, ensureTaskWorktree, createTransitionEngine, resolveSpawnOverrides, spawnAgent } from '../helpers';
+import { resolveInjectionVerifier } from '../helpers/agent-spawn';
+import { claimHeldMessages, composeOpeningMessage, deliverOpeningRemainder } from '../../held-messages/held-messages';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { doneColumn } from '../../../shared/workflow-route';
 import { resolveProjectContext } from '../helpers/project-repos';
@@ -330,7 +336,33 @@ export function resumeTaskSession(
                 // 'always_spawn_new' column forces a fresh one on ENTRY only;
                 // forwarding that here retired the paused conversation.
                 const overrides = { ...resolveSpawnOverrides(current, currentLane, project), forceFresh: false };
-                await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, options.resumePrompt, signal, undefined, undefined, overrides);
+                // Messages held for the task go out with this resume, after the
+                // prompt it carries (a command from the task's Commands menu),
+                // or as the whole opening message of a plain Resume.
+                const held = claimHeldMessages(context, resolvedProjectId, taskId);
+                const opening = composeOpeningMessage(options.resumePrompt, held?.text);
+                let heldHandedOff = false;
+                try {
+                  const outcome = await engine.resumeSuspendedSession(current, currentLane?.permission_mode, undefined, opening.prompt, signal, undefined, undefined, overrides);
+                  const resumedSessionId = tasks.getById(taskId)?.session_id;
+                  // A recap-only start withholds them, as it withholds a column's message.
+                  if (resumedSessionId && !outcome?.recapOnly) {
+                    // What did not ride the resume's command line is typed in.
+                    // This used to be dropped: the outcome was not read here.
+                    deliverOpeningRemainder(context, {
+                      taskId,
+                      sessionId: resumedSessionId,
+                      unsentPrompt: outcome?.unsentPrompt ?? null,
+                      held,
+                      heldInPrompt: held !== null && !opening.heldAfterTurn,
+                      heldAfterTurn: opening.heldAfterTurn,
+                      verifier: resolveInjectionVerifier(tasks.getById(taskId)?.agent ?? null, sessionRepo, taskId),
+                    });
+                    heldHandedOff = true;
+                  }
+                } finally {
+                  if (held && !heldHandedOff) held.release();
+                }
               }
 
               const updated = tasks.getById(taskId);

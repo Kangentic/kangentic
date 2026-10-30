@@ -340,10 +340,12 @@ export class CodexCommandBuilder {
     parts.push(...buildStartupUpdatePromptArgs(options));
     parts.push(...buildHookArgs(options));
 
-    // Prompt as positional argument. Deliberately skipped when resuming: the
-    // resumed conversation already contains it, and re-sending would re-ask
-    // the task prompt on every resume.
-    if (!isResume && options.prompt) {
+    // Prompt as positional argument, on a resume too: `codex resume <id>
+    // [PROMPT]` takes one ("Optional user prompt to start the session",
+    // `codex resume --help` on 0.141.0), and a resume's prompt is only ever the
+    // message the spawn chose to carry (a column's message, held messages),
+    // never the task prompt again (resolveSpawnIntent).
+    if (options.prompt) {
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)
         : process.platform === 'win32';

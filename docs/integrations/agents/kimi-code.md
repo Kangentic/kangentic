@@ -37,7 +37,7 @@ Flag mapping (verified empirically with kimi v1.37.0):
 - `-w <cwd>` always passed; the path is forward-slashed so PowerShell and bash both parse it correctly.
 - `--session <uuid>` is used for both *create* (caller-owned UUID) and *resume*. Kimi's `Session.create(work_dir, session_id="...")` SDK API maps to the same flag, so we set `supportsCallerSessionId = true` and own the ID end-to-end.
 - `--continue` is emitted when the builder's `useContinueFallback` option is set and no `sessionId` is supplied. It tells Kimi to resume the most recent session for `cwd`, covering three cases: recovering after a lost DB record, attaching to a session started by a manual `kimi` invocation in the same `work_dir`, or driving a "Resume last session" UI affordance from the command-terminal overlay. Precedence: when both `sessionId` and `useContinueFallback` are provided, the explicit `--session <uuid>` always wins.
-- `--prompt <text>` is the canonical non-interactive prompt entry. Quoting follows the same shell-safe rules as the other adapters.
+- `--prompt <text>` carries the prompt on a new session and on a resume (`--session <uuid> --prompt "..."`, `resumePromptDelivery: 'command-line'`). `kimi --help` calls it "User prompt to the agent", and only `--print` is non-interactive, so the session stays interactive. Quoting follows the same shell-safe rules as the other adapters.
 - `--mcp-config-file <sessionDir>/mcp.json` is passed when `mcpServerEnabled` is true; the file is a minimal fastmcp-compatible config naming Kangentic's HTTP MCP server with the `X-Kangentic-Token` header. With no token the wiring is skipped (the server refuses every request without it), as Codex does.
 
 ## Session ID Capture

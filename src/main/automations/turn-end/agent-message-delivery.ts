@@ -53,9 +53,18 @@ export function needsPaste(message: string): boolean {
  */
 const SLASH_COMMAND_HEAD = /^\/[A-Za-z][\w:.-]*(?:\s|$)/;
 
+/**
+ * Whether a message runs as a slash command. Text added after one becomes its
+ * arguments in some CLIs, and text put before one stops it being a command at
+ * all, so a message that rides with one goes on its own instead.
+ */
+export function isSlashCommand(message: string): boolean {
+  return SLASH_COMMAND_HEAD.test(message.trimStart());
+}
+
 /** The one decision every delivery path asks. See the module comment. */
 export function shouldPaste(message: string): boolean {
-  return needsPaste(message) && !SLASH_COMMAND_HEAD.test(message.trimStart());
+  return needsPaste(message) && !isSlashCommand(message);
 }
 
 interface AgentMessage {
@@ -242,6 +251,8 @@ async function runBackgroundPaste(
   },
   signal: AbortSignal,
 ): Promise<void> {
+  // Until `submitContent` starts, nothing of the message has reached the agent.
+  let pasteStarted = false;
   const report = (outcome: 'unconfirmed' | 'failed' | 'cancelled', reason?: string): void => {
     try {
       input.onOutcome({
@@ -254,6 +265,7 @@ async function runBackgroundPaste(
         interruptedTurn: false,
         escalated: false,
         ...(reason ? { reason } : {}),
+        ...(pasteStarted ? {} : { textReachedAgent: false as const }),
       });
     } catch (error) {
       console.error(`[agent-message] Outcome handler threw for task ${input.taskId.slice(0, 8)}:`, error);
@@ -291,6 +303,7 @@ async function runBackgroundPaste(
       }
       if (!context.terminalSubmitScheduler.hasPending(input.taskId)) break;
     }
+    pasteStarted = true;
     await context.terminalSubmit.submitContent(input.sessionId, input.message, {
       source: `automation:${input.taskId.slice(0, 8)}`,
       signal,

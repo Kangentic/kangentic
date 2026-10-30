@@ -235,6 +235,7 @@ describe('a workflow\'s own agent: spend and conversation', () => {
       kangenticMcp: 'per-session',
       supportsReadOnlyLaunch: true,
       supportsCallerSessionId: true,
+      resumePromptDelivery: 'command-line',
       supportsReadableDirectories: true,
       detect: vi.fn(async () => ({ found: true, path: '/mock/bin/claude' })),
       ensureTrust: vi.fn(async () => undefined),

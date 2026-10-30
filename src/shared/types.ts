@@ -1556,8 +1556,16 @@ export interface HandoffRecord {
  * one definition, with the dependency running shared -> main (never the
  * reverse). `delivered` and `queued` produced a turn; `refused` and `failed`
  * record an attempt only.
+ *
+ * A message held for a task with no running agent (src/main/held-messages)
+ * is one row whose status moves on: `held` while it waits, then
+ * `delivered_from_hold` once the task's next agent got it, `cleared` when the
+ * task moved to Done or To Do (or was unarchived into To Do) first, or `failed` when its delivery
+ * began and did not finish.
  */
-export type SentSessionMessageStatus = 'delivered' | 'queued' | 'refused' | 'failed';
+export type SentSessionMessageStatus =
+  | 'delivered' | 'queued' | 'refused' | 'failed'
+  | 'held' | 'delivered_from_hold' | 'cleared';
 
 /**
  * What main answers a `sessions.resize`. `refused` is set only when main
@@ -1592,8 +1600,14 @@ export interface SessionResizeResult {
  */
 export interface SentSessionMessage {
   id: string;
-  /** The session that RECEIVED the message. */
-  session_id: string;
+  /**
+   * The session that RECEIVED the message. Null while a held message waits for
+   * the task's next agent, which has no session yet, and for one that was
+   * cleared before an agent started.
+   */
+  session_id: string | null;
+  /** The task the message was for: the receiving session's, or the one it was held against. */
+  task_id: string;
   caller_session_id: string | null;
   caller_task_id: string | null;
   caller_project_id: string | null;
@@ -1603,9 +1617,11 @@ export interface SentSessionMessage {
    * `delivered` (sent straight through), `queued` (held for the next idle
    * transition), `refused` (a guard rejected it - no turn produced), or
    * `failed` (delivery threw; whether a turn was produced is unknown).
+   * A held message reads `held`, then `delivered_from_hold` or `cleared`.
    *
    * Reconstructing "which turns arrived this way" means filtering to
-   * `delivered` / `queued`. The other two record an attempt, not a turn.
+   * `delivered` / `queued` / `delivered_from_hold`. The others record an
+   * attempt or a wait, not a turn.
    */
   status: SentSessionMessageStatus;
   /** Refusal or failure detail. Null for a successful delivery. */

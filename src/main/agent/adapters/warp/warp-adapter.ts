@@ -24,6 +24,8 @@ export class WarpAdapter implements AgentAdapter {
   readonly displayName = 'Oz CLI';
   readonly sessionType = 'warp_agent';
   readonly supportsCallerSessionId = false;
+  /** Warp's oz keeps no session id Kangentic can resume, so every start is fresh. */
+  readonly resumePromptDelivery = 'no-resume' as const;
   // Warp manages permissions via agent profiles (--profile <ID>), not
   // individual CLI flags. These labels are informational only - no
   // permission-mode-to-flag mapping exists in buildCommand().

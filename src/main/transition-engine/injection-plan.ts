@@ -352,7 +352,11 @@ export function prepareInjectionPlan(input: InjectionPlanInput): InjectionPlan |
       text: trimmedAutoCommand,
       verify: slashUnverifiable ? 'none' : 'submitted',
     };
-    if (adapter?.canEscalateOnVerificationFailure?.() === false) {
+    // Escalation restarts the session with the command as its resume prompt.
+    // Where the resume carries no prompt, the restart would only type the
+    // command again, which is the delivery that just failed.
+    if (adapter?.canEscalateOnVerificationFailure?.() === false
+        || (adapter !== undefined && adapter.resumePromptDelivery !== 'command-line')) {
       command.escalatable = false;
     }
     sequence.push(command);

@@ -3,6 +3,8 @@ import { resolveOwnSessionRecord } from '../../db/repositories/session-own-recor
 import { UsageHistoryRepository } from '../../db/repositories/usage-history-repository';
 import { getProjectDb } from '../../db/database';
 import { getProjectRepos, createTransitionEngine, resolveSpawnOverrides } from '../helpers';
+import { resolveInjectionVerifier } from '../helpers/agent-spawn';
+import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
 import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
@@ -165,7 +167,7 @@ export async function restartSessionForSettingsChange(
       );
 
       try {
-        await engine.resumeSuspendedSession(
+        const outcome = await engine.resumeSuspendedSession(
           updatedTask,
           updatedLane?.permission_mode,
           true, // skipPromptTemplate - resume idle, do not re-send the original prompt
@@ -190,6 +192,26 @@ export async function restartSessionForSettingsChange(
         const resumedSessionId = tasks.getById(taskId)?.session_id;
         if (resumedSessionId && !options.resumePrompt) {
           context.sessionManager.markIdleAuthoritative(resumedSessionId);
+        }
+        // A prompt the resume could not carry on its command line (a launch
+        // that would flatten it, one over the cap) is typed in instead. The
+        // engine already asserted idle for it. Escalation never brings a
+        // command here for an adapter whose resume takes no prompt at all.
+        const unsentPrompt = outcome?.unsentPrompt ?? null;
+        if (resumedSessionId && unsentPrompt) {
+          deliverAgentMessageInBackground(context, {
+            taskId,
+            sessionId: resumedSessionId,
+            message: unsentPrompt,
+            mode: 'immediate',
+            verifier: resolveInjectionVerifier(tasks.getById(taskId)?.agent ?? null, sessionRepo, taskId),
+            freshlySpawned: true,
+            onOutcome: (report) => {
+              if (report.outcome !== 'confirmed' && report.outcome !== 'unconfirmed') {
+                console.warn(`[restart] The resume prompt for task ${taskId.slice(0, 8)} was not typed in: ${report.reason ?? report.outcome}`);
+              }
+            },
+          });
         }
         return { ok: true };
       } catch (respawnError) {

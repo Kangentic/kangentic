@@ -60,11 +60,12 @@ claude --settings <mergedSettingsPath> --session-id <uuid> -- "prompt text"
 ### Resumed Session
 
 ```
-claude --settings <mergedSettingsPath> --resume <uuid>
+claude --settings <mergedSettingsPath> --resume <uuid> [-- "prompt text"]
 ```
 
 - `--resume <uuid>` continues an existing conversation
-- No prompt is injected - Claude resumes from its saved context
+- A resume that carries a message (a column's message, a plan continuation, held messages) passes it after `--`, and Claude runs it as the next turn of the resumed conversation (`resumePromptDelivery: 'command-line'`). A plain resume passes no prompt and Claude comes back idle on its saved context
+- A message with lines that a `.cmd` shim launch would flatten, or one over 6,000 characters, is typed in once Claude is ready instead (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives))
 
 ## WSL
 

@@ -66,6 +66,15 @@ export function isRecapTurn(sessionId: string, turnStartedAt: number | null): bo
   return entry.firstIdleAt !== null && turnStartedAt < entry.firstIdleAt;
 }
 
+/**
+ * Whether a session opened on the recap and its recap turn has not been
+ * forgotten yet. Held messages (src/main/held-messages) wait out such a start,
+ * as the column's messages do.
+ */
+export function isRecapSession(sessionId: string): boolean {
+  return recapSessions.has(sessionId);
+}
+
 /** Forget a session that left the registry, or whose recap turn has ended. */
 export function forgetRecapSession(sessionId: string): void {
   recapSessions.delete(sessionId);

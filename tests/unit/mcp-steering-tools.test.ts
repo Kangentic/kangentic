@@ -46,7 +46,18 @@ vi.mock('../../src/main/db/repositories/sent-session-message-repository', () => 
   },
 }));
 
-const { registerSteeringTools } = await import('../../src/main/agent/mcp-http/steering-tools');
+/** Session records by id, as `SessionRepository.findByAnyId` reads them: a paused or exited session's task. */
+const sessionRecordsById = new Map<string, { id: string; task_id: string }>();
+
+vi.mock('../../src/main/db/repositories/session-repository', () => ({
+  SessionRepository: class {
+    findByAnyId(sessionId: string) {
+      return sessionRecordsById.get(sessionId);
+    }
+  },
+}));
+
+const { registerSteeringTools, heldMessageReply } = await import('../../src/main/agent/mcp-http/steering-tools');
 type ToolHandler = (args: Record<string, unknown>) => Promise<{ content: Array<{ text: string }>; isError?: boolean }>;
 
 function makeProject(dbHandle: string, rows: Array<{ id: string; display_id: number; title: string; session_id?: string | null }>) {
@@ -84,6 +95,7 @@ function captureTool(dependencies: Parameters<typeof registerSteeringTools>[2], 
 
 beforeEach(() => {
   tasksByProjectDb.clear();
+  sessionRecordsById.clear();
   insertedSentMessages.length = 0;
   storedSentMessages = [];
 });
@@ -111,7 +123,13 @@ describe('kangentic_send_session_message registration', () => {
    */
   const TARGET_PROJECT_SESSIONS = new Set(['target-session', 'explicit']);
 
-  function makeSessions(overrides: Partial<{ live: string | undefined; taskId: string | undefined; projectId: string | undefined }> = {}) {
+  function makeSessions(overrides: Partial<{
+    live: string | undefined;
+    taskId: string | undefined;
+    projectId: string | undefined;
+    /** Which sessions have a PTY to deliver into. Every one, unless a test says otherwise. */
+    writable: (sessionId: string) => boolean;
+  }> = {}) {
     return {
       findLiveSessionByTaskId: vi.fn(() => ('live' in overrides ? (overrides.live ? { id: overrides.live } : undefined) : { id: 'target-session' })),
       getSessionTaskId: vi.fn(() => ('taskId' in overrides ? overrides.taskId : 'task-uuid-caller')),
@@ -120,7 +138,26 @@ describe('kangentic_send_session_message registration', () => {
           ? 'target-project'
           : ('projectId' in overrides ? overrides.projectId : 'caller-project')
       )),
+      isWritable: vi.fn(overrides.writable ?? (() => true)),
     };
+  }
+
+  /** A coordinator whose hold window has room unless a test says otherwise. */
+  function makeCoordinator(send: ReturnType<typeof vi.fn> = vi.fn(), holdSlotFree = true) {
+    return { send, reserveHoldSlot: vi.fn(() => holdSlotFree), dispose: vi.fn(), _stateSizesForTesting: vi.fn() };
+  }
+
+  /**
+   * The hold function main binds: every message held, for display id 42. It
+   * runs the caller's `admit` as `holdTaskMessage` does, after its own checks:
+   * a refusal outcome given here returns before `admit`, as main's Done refusal does.
+   */
+  function makeHolder(outcome: { status: 'held'; displayId: number; rowId: string } | { status: 'refused'; error: string } = { status: 'held', displayId: 42, rowId: 'held-1' }) {
+    return vi.fn((input: { admit?: () => string | null }) => {
+      if (outcome.status === 'refused') return outcome;
+      const admitRefusal = input.admit?.() ?? null;
+      return admitRefusal === null ? outcome : { status: 'refused' as const, error: admitRefusal };
+    });
   }
 
   it('declares mutating annotations so plan mode cannot auto-approve a live PTY write', () => {
@@ -233,19 +270,152 @@ describe('kangentic_send_session_message registration', () => {
     });
   });
 
-  it('reports a task with no session instead of sending nowhere', async () => {
+  it('holds the message for a task with no running agent, with the reply the docs quote', async () => {
     const { resolver } = makeResolver();
     const send = vi.fn();
+    const holdTaskMessage = makeHolder();
     const { handler } = captureTool(
-      { coordinator: { send, dispose: vi.fn(), _stateSizesForTesting: vi.fn() }, sessions: makeSessions({ live: undefined }) },
+      { coordinator: makeCoordinator(send), sessions: makeSessions({ live: undefined }), holdTaskMessage, callerSessionId: 'caller-session' },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'Lower the cap to 3 and rethrow the last error.' });
+
+    // Red before held messages: refused with "has no session to send to".
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(heldMessageReply(42));
+    expect(result.content[0].text).toBe(
+      'Held for task #42: no agent is running on it. It goes out when an agent starts or resumes there, and is cleared if the task moves to Done, To Do or Backlog, or is archived or deleted.',
+    );
+    expect(holdTaskMessage).toHaveBeenCalledWith({
+      projectId: 'target-project',
+      taskId: 'task-uuid-target',
+      message: 'Lower the cap to 3 and rethrow the last error.',
+      callerSessionId: 'caller-session',
+      callerTaskId: 'task-uuid-caller',
+      callerProjectId: 'caller-project',
+      admit: expect.any(Function),
+    });
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('holds the message when the task\'s live session is still queued, with no PTY yet', async () => {
+    const { resolver } = makeResolver();
+    const send = vi.fn();
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      {
+        coordinator: makeCoordinator(send),
+        sessions: makeSessions({ live: 'queued-session', writable: (sessionId) => sessionId !== 'queued-session' }),
+        holdTaskMessage,
+      },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'hello' });
+
+    expect(result.content[0].text).toBe(heldMessageReply(42));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('surfaces a hold the task refuses (a task in Done) as an error', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder({ status: 'refused', error: 'Task #42 is in Done, where no agent runs, so nothing is held for it. Move it out of Done first.' });
+    const { handler } = captureTool(
+      { coordinator: makeCoordinator(), sessions: makeSessions({ live: undefined }), holdTaskMessage },
       resolver,
     );
 
     const result = await handler({ taskId: '42', message: 'hello' });
 
     expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/has no session to send to/);
-    expect(send).not.toHaveBeenCalled();
+    expect(result.content[0].text).toMatch(/is in Done/);
+  });
+
+  it('refuses to hold a message for the caller\'s own task', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      {
+        coordinator: makeCoordinator(),
+        sessions: makeSessions({ live: undefined, taskId: 'task-uuid-target' }),
+        holdTaskMessage,
+        callerSessionId: 'caller-session',
+      },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'hello' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/its own task/);
+    expect(holdTaskMessage).not.toHaveBeenCalled();
+  });
+
+  it('refuses a hold past the task\'s window, so a loop cannot fill the log', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder();
+    const coordinator = makeCoordinator(vi.fn(), false);
+    const { handler } = captureTool(
+      { coordinator, sessions: makeSessions({ live: undefined }), holdTaskMessage },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'hello' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Rate limit/);
+    expect(coordinator.reserveHoldSlot).toHaveBeenCalledWith('task-uuid-target');
+  });
+
+  it('spends no slot of the task\'s window on a hold the task refuses', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder({ status: 'refused', error: 'Task #42 is in Done, where no agent runs, so nothing is held for it. Move it out of Done first.' });
+    const coordinator = makeCoordinator();
+    const { handler } = captureTool(
+      { coordinator, sessions: makeSessions({ live: undefined }), holdTaskMessage },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'hello' });
+
+    expect(result.content[0].text).toMatch(/is in Done/);
+    expect(coordinator.reserveHoldSlot).not.toHaveBeenCalled();
+  });
+
+  it('holds for the task a paused session belonged to, given that session id alone', async () => {
+    const { resolver } = makeResolver();
+    sessionRecordsById.set('paused-session', { id: 'paused-session', task_id: 'task-uuid-target' });
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      {
+        coordinator: makeCoordinator(),
+        // Gone from the registry, so its task comes from the record.
+        sessions: makeSessions({ live: undefined, taskId: undefined, writable: () => false }),
+        holdTaskMessage,
+      },
+      resolver,
+    );
+
+    const result = await handler({ sessionId: 'paused-session', message: 'hello' });
+
+    expect(result.content[0].text).toBe(heldMessageReply(42));
+    expect(holdTaskMessage).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-uuid-target' }));
+  });
+
+  it('refuses a dead session id no task here owns, with nothing to hold for', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      { coordinator: makeCoordinator(), sessions: makeSessions({ taskId: undefined, writable: () => false }), holdTaskMessage },
+      resolver,
+    );
+
+    const result = await handler({ sessionId: 'never-existed', message: 'hello' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/nothing to hold the message for/);
+    expect(holdTaskMessage).not.toHaveBeenCalled();
   });
 
   it('rejects an unknown task id', async () => {
@@ -263,23 +433,132 @@ describe('kangentic_send_session_message registration', () => {
     expect(send).not.toHaveBeenCalled();
   });
 
-  it('requires exactly one of taskId or sessionId', async () => {
+  it('requires a taskId or a sessionId', async () => {
     const { resolver } = makeResolver();
     const send = vi.fn();
     const { handler } = captureTool(
-      { coordinator: { send, dispose: vi.fn(), _stateSizesForTesting: vi.fn() }, sessions: makeSessions() },
+      { coordinator: makeCoordinator(send), sessions: makeSessions(), holdTaskMessage: makeHolder() },
       resolver,
     );
 
     const neither = await handler({ message: 'hello' });
     expect(neither.isError).toBe(true);
-    expect(neither.content[0].text).toMatch(/either taskId or sessionId/);
-
-    const both = await handler({ taskId: '42', sessionId: 'target-session', message: 'hello' });
-    expect(both.isError).toBe(true);
-    expect(both.content[0].text).toMatch(/not both/);
-
+    expect(neither.content[0].text).toMatch(/Provide taskId/);
     expect(send).not.toHaveBeenCalled();
+  });
+
+  it('takes a taskId with that task\'s own sessionId, and sends to it', async () => {
+    const { resolver } = makeResolver();
+    const send = vi.fn(() => Promise.resolve({ status: 'delivered', sessionId: 'target-session', targetActivity: 'idle', hopDepth: 1 }));
+    const { handler } = captureTool(
+      { coordinator: makeCoordinator(send), sessions: makeSessions({ taskId: 'task-uuid-target' }), holdTaskMessage: makeHolder() },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', sessionId: 'target-session', message: 'hello' });
+
+    expect(result.isError).toBeUndefined();
+    expect(send).toHaveBeenCalledWith(expect.objectContaining({ targetSessionId: 'target-session' }));
+  });
+
+  it('holds for a task, given that task\'s own paused session id the registry still names', async () => {
+    // Paused: no PTY to deliver into and the task has no live session. The id
+    // is the task's own, so it is neither a stranger's nor an unknown id, and
+    // the message waits for the task's next agent instead of being refused.
+    const { resolver } = makeResolver();
+    const send = vi.fn();
+    const holdTaskMessage = makeHolder();
+    const coordinator = makeCoordinator(send);
+    const { handler } = captureTool(
+      {
+        coordinator,
+        sessions: makeSessions({ live: undefined, taskId: 'task-uuid-target', writable: () => false }),
+        holdTaskMessage,
+      },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', sessionId: 'paused-session', message: 'hello' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(heldMessageReply(42));
+    expect(holdTaskMessage).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-uuid-target', message: 'hello' }));
+    expect(coordinator.reserveHoldSlot).toHaveBeenCalledWith('task-uuid-target');
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('holds for a task, given that task\'s own paused session id only its session record names', async () => {
+    // The common paused case: the session has left the live registry, so the
+    // owner comes from the sessions table. Not finding it in the registry is
+    // not the same as the id naming no session at all.
+    const { resolver } = makeResolver();
+    sessionRecordsById.set('paused-session', { id: 'paused-session', task_id: 'task-uuid-target' });
+    const send = vi.fn();
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      {
+        coordinator: makeCoordinator(send),
+        sessions: makeSessions({ live: undefined, taskId: undefined, writable: () => false }),
+        holdTaskMessage,
+      },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', sessionId: 'paused-session', message: 'hello' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content[0].text).toBe(heldMessageReply(42));
+    expect(holdTaskMessage).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-uuid-target' }));
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('refuses a sessionId that no registry and no sessions table here knows, telling the caller to pass taskId alone', async () => {
+    // Going on by taskId alone would report success ("Held for task #42") for a
+    // session the caller never had, so the mistake would go uncorrected.
+    const { resolver } = makeResolver();
+    const send = vi.fn();
+    const holdTaskMessage = makeHolder();
+    const coordinator = makeCoordinator(send);
+    const { handler } = captureTool(
+      {
+        coordinator,
+        sessions: makeSessions({ live: undefined, taskId: undefined, writable: () => false }),
+        holdTaskMessage,
+      },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', sessionId: 'never-existed', message: 'hello' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/Session never-existed is not a session of task #42/);
+    expect(result.content[0].text).toMatch(/Pass taskId alone/);
+    expect(holdTaskMessage).not.toHaveBeenCalled();
+    expect(coordinator.reserveHoldSlot).not.toHaveBeenCalled();
+    expect(send).not.toHaveBeenCalled();
+    expect(insertedSentMessages).toEqual([]);
+  });
+
+  it('refuses a sessionId that belongs to another task than the taskId, naming its task', async () => {
+    const { resolver } = makeResolver({
+      both: makeProject('both-db', [
+        { id: 'task-uuid-target', display_id: 42, title: 'Fix the switch' },
+        { id: 'task-uuid-other', display_id: 7, title: 'Another task' },
+      ]),
+    });
+    const send = vi.fn();
+    const holdTaskMessage = makeHolder();
+    const { handler } = captureTool(
+      { coordinator: makeCoordinator(send), sessions: makeSessions({ taskId: 'task-uuid-other' }), holdTaskMessage },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', sessionId: 'other-session', message: 'hello', project: 'both' });
+
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toMatch(/belongs to task #7, not task #42/);
+    expect(send).not.toHaveBeenCalled();
+    expect(holdTaskMessage).not.toHaveBeenCalled();
   });
 
   it('passes an explicit sessionId straight through without a task lookup', async () => {
@@ -319,30 +598,34 @@ describe('kangentic_send_session_message registration', () => {
     expect(insertedSentMessages).toEqual([]);
   });
 
-  it('refuses the drift-prone task.session_id fallback when it now belongs to another task', async () => {
+  it('refuses the drift-prone task.session_id fallback when it now belongs to another task, and holds instead', async () => {
     // findLiveSessionByTaskId misses, so the stale column is the only candidate
     // - and the registry says that session is another task's. Liveness is not
-    // ownership; delivering would steer a stranger's agent.
+    // ownership; delivering would steer a stranger's agent. The task has no
+    // agent of its own running, so the message waits for its next one.
     const { resolver } = makeResolver({
       drift: makeProject('drift-db', [
         { id: 'task-uuid-target', display_id: 42, title: 'Fix the switch', session_id: 'someone-elses-session' },
       ]),
     });
     const send = vi.fn();
+    const holdTaskMessage = makeHolder();
     const { handler } = captureTool(
       {
-        coordinator: { send, dispose: vi.fn(), _stateSizesForTesting: vi.fn() },
+        coordinator: makeCoordinator(send),
         // No live session for the task; the stale id maps to a different task.
         sessions: { ...makeSessions({ live: undefined }), getSessionTaskId: vi.fn(() => 'a-completely-different-task') },
+        holdTaskMessage,
       },
       resolver,
     );
 
     const result = await handler({ taskId: '42', message: 'hello', project: 'drift' });
 
-    expect(result.isError).toBe(true);
-    expect(result.content[0].text).toMatch(/has no session to send to/);
     expect(send).not.toHaveBeenCalled();
+    expect(holdTaskMessage).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'drift', taskId: 'task-uuid-target' }));
+    // A named project's reply carries withProject's project line first.
+    expect(result.content[0].text).toContain(heldMessageReply(42));
   });
 
   it('accepts the task.session_id fallback when the registry cannot contradict it', async () => {

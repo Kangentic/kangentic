@@ -25,9 +25,14 @@ import type { Task, Swimlane } from '../../src/shared/types';
 // Hoisted mocks
 // ---------------------------------------------------------------------------
 
-const { mockCleanupTaskResources, mockCancelVerdictRepollsForTask } = vi.hoisted(() => ({
+const { mockCleanupTaskResources, mockCancelVerdictRepollsForTask, mockClearHeldMessages } = vi.hoisted(() => ({
   mockCleanupTaskResources: vi.fn(),
   mockCancelVerdictRepollsForTask: vi.fn(),
+  mockClearHeldMessages: vi.fn(),
+}));
+
+vi.mock('../../src/main/held-messages/held-messages', () => ({
+  clearHeldMessages: (...args: unknown[]) => mockClearHeldMessages(...args),
 }));
 
 vi.mock('electron', () => ({
@@ -662,6 +667,21 @@ describe('handleTaskMove to To Do: the PR link', () => {
     expect(mockCleanupTaskResources).not.toHaveBeenCalled();
     expect(prLinkChangedPushes(context)).toEqual([]);
     expect(mockCancelVerdictRepollsForTask).not.toHaveBeenCalled();
+  });
+
+  it('clears the messages held for the task\'s next agent, in the tick that commits the To Do lane', async () => {
+    // A To Do move is a reset. Cleared before the cleanup, so a quit inside it
+    // cannot leave a message waiting for an agent of the task's old run.
+    await moveToTodo(makeTask({ worktree_path: '/mock/todo-pr-reset-project/.kangentic/worktrees/7' }));
+
+    expect(mockClearHeldMessages).toHaveBeenCalledWith(PROJECT_ID, TASK_ID);
+    expect(mockClearHeldMessages.mock.invocationCallOrder[0]).toBeLessThan(mockCleanupTaskResources.mock.invocationCallOrder[0]);
+  });
+
+  it('keeps held messages when a task is only reordered within To Do', async () => {
+    await moveToTodo(makeTask({ swimlane_id: TODO_LANE_ID }));
+
+    expect(mockClearHeldMessages).not.toHaveBeenCalled();
   });
 
   it('tells the card with the project the move named, not the ambient current project', async () => {

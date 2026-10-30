@@ -38,6 +38,7 @@ src/
     db/           # SQLite database, migrations, repositories
     transition-engine/  # Transition engine (action execution)
     git/          # Worktree manager
+    held-messages/  # Messages held for a task with no running agent, sent in its next agent's opening message
     ipc/          # IPC handler registration
     mobile-bridge/  # Mobile companion app bridge: identity, signed roster, QR pairing,
                     #   capability router, relay transport client (consumes @kangentic/protocol)

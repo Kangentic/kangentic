@@ -47,6 +47,8 @@ agent --resume="<chat-id>"
 
 The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
 
+A resume carries no prompt. Nothing Cursor documents says a prompt rides `--resume=<id>`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic types a resume's message (a column's message, held messages) in once Cursor is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
+
 ## WSL
 
 A Cursor installed in a WSL distro runs there (`supportsWslCli`) when its CLI path names it (`\\wsl.localhost\<distro>\...`). The session starts Cursor's Linux path in a `wsl -d <distro>` shell. `create-chat`, `about`, `--help`, `--list-models`, a title summary and a Knowledge Graph answer all run through `wsl.exe`. `about` asks the CLI the session was started with, not the Cursor on PATH, which on a machine with both installed reported the Windows Cursor's model for a distro session.

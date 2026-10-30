@@ -92,6 +92,8 @@ export class AiderAdapter implements AgentAdapter {
   readonly displayName = 'Aider';
   readonly sessionType = 'aider_agent';
   readonly supportsCallerSessionId = false;
+  /** Aider keeps no session id Kangentic can resume, so every start is fresh. */
+  readonly resumePromptDelivery = 'no-resume' as const;
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'plan', label: 'Ask (Read-Only Questions)' },
     { mode: 'default', label: 'Code (Confirm Changes)' },

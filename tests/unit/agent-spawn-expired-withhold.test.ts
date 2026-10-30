@@ -33,7 +33,7 @@
  * agent differs from the target column's, and watch the mocked delivery.
  *
  * The opposite miss is a spawn that ran fresh with the task template as its
- * prompt (`SpawnOutcome.resumePromptUnsent`): an isolated column whose own
+ * prompt (`SpawnOutcome.unsentPrompt`): an isolated column whose own
  * conversation expired, a conversation that never started, or a column that
  * always spawns new. A Send message row took the resume's prompt slot, but the
  * template won it, so the message is in no prompt. `startAgent` hands the row's
@@ -58,12 +58,18 @@
  * command could not take the prompt slot, so `spawnAgent` delivers it once the
  * group ends.
  *
+ * The last three describes pin the held messages (src/main/held-messages) on the
+ * paths the enter-group tests do not reach: the handoff branch's one typed message
+ * (pointer, column message, held text) and its slash-command paste, a move
+ * superseded before `deliverHeldRemainder` runs, and a slash command typed at a
+ * fresh spawn with no prompt slot. Each test names its own red-green line.
+ *
  * Red-green: delete the `if (outcome?.recapOnly) return { withholdMessages: ... }`
  * line in `startAgent` and the first test fails; key it on `outcome?.startOver`
  * and the third fails. Change `if (handoffRecapOnly && effectiveAutoCommand?.trim())`
  * to `if (false && ...)` in the handoff branch and the two withheld handoff
  * tests fail; key `handoffRecapOnly` on `startOver` and the not-recap-only
- * handoff test fails. Drop the `|| outcome?.resumePromptUnsent` half of the
+ * handoff test fails. Drop the `|| outcome?.unsentPrompt` half of the
  * restore's condition and every "delivers ... after the spawn" test fails, while the paired
  * "resume carried it" tests keep passing (that pair is the pre-change
  * behavior). Drop only its `pendingTaskOverride = overrideBeforeTake` line and
@@ -88,6 +94,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { AgentStartReport } from '../../src/main/automations/automation-runner';
+import type { InjectionReport } from '../../src/main/transition-engine/terminal-submit-scheduler';
 import type { SpawnOutcome } from '../../src/main/transition-engine/transition-engine';
 import type { AutoCommandMode, AutomationConfig, AutomationRunStatus, ColumnAutomation, Swimlane, Task } from '../../src/shared/types';
 import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
@@ -103,6 +110,7 @@ const mockExecuteTransition = vi.hoisted(() => vi.fn());
 const mockRunLegacySpawnAgent = vi.hoisted(() => vi.fn<(...callArguments: unknown[]) => Promise<unknown>>(async () => undefined));
 const mockResumeSuspendedSession = vi.hoisted(() => vi.fn());
 const mockDeliverAgentMessageInBackground = vi.hoisted(() => vi.fn());
+const mockPasteAgentMessageInBackground = vi.hoisted(() => vi.fn());
 const mockListForColumn = vi.fn();
 
 // Same avoidance strategy as auto-spawn-for-task-explicit-start-forward.test.ts:
@@ -128,9 +136,31 @@ vi.mock('../../src/main/db/repositories/handoff-repository', () => ({
   },
 }));
 // Delivery is observed, never run: the real one schedules keystrokes and timers.
-vi.mock('../../src/main/automations/turn-end/agent-message-delivery', () => ({
-  deliverAgentMessageInBackground: mockDeliverAgentMessageInBackground,
-}));
+vi.mock('../../src/main/automations/turn-end/agent-message-delivery', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/automations/turn-end/agent-message-delivery')>();
+  return {
+    isSlashCommand: original.isSlashCommand,
+    deliverAgentMessageInBackground: mockDeliverAgentMessageInBackground,
+    pasteAgentMessageInBackground: mockPasteAgentMessageInBackground,
+  };
+});
+// Held messages: no task has any unless a test claims some (the held-messages
+// describe at the end). Composing is the real module's, so the opening message
+// this file asserts is the one the app builds.
+const mockClaimHeldMessages = vi.hoisted(() => vi.fn<(...callArguments: unknown[]) => unknown>(() => null));
+const mockCommitWhenSessionRuns = vi.hoisted(() => vi.fn());
+const mockPasteHeldAfterTurn = vi.hoisted(() => vi.fn());
+const mockSettleClaimFromReport = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/held-messages/held-messages', async (importOriginal) => {
+  const original = await importOriginal<typeof import('../../src/main/held-messages/held-messages')>();
+  return {
+    composeOpeningMessage: original.composeOpeningMessage,
+    claimHeldMessages: mockClaimHeldMessages,
+    commitWhenSessionRuns: mockCommitWhenSessionRuns,
+    pasteHeldAfterTurn: mockPasteHeldAfterTurn,
+    settleClaimFromReport: mockSettleClaimFromReport,
+  };
+});
 // Resolving the template variables for a delivered message reads a dev-port lease, which needs a database.
 vi.mock('../../src/main/dev-ports/dev-port-allocator', () => ({
   getDevPortForTask: vi.fn(() => null),
@@ -300,6 +330,8 @@ beforeEach(() => {
   mockListForColumn.mockReset();
   mockListForColumn.mockReturnValue([]);
   mockDeliverAgentMessageInBackground.mockReset();
+  mockClaimHeldMessages.mockReset();
+  mockClaimHeldMessages.mockReturnValue(null);
   // clearAllMocks keeps implementations, so a resolved value set by one test would leak into the next.
   mockRunLegacySpawnAgent.mockReset();
   mockRunLegacySpawnAgent.mockResolvedValue(undefined);
@@ -307,7 +339,7 @@ beforeEach(() => {
 
 describe('spawnAgent: an expired conversation withholds the column\'s messages', () => {
   it('reports the messages withheld, with the run-log reason, when the outcome is recap-only', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: true, unsentPrompt: null });
 
     // The reason is what the run log shows beside each skipped message row, so
     // it is pinned by its opening words rather than the whole sentence.
@@ -317,19 +349,19 @@ describe('spawnAgent: an expired conversation withholds the column\'s messages',
   });
 
   it('reports nothing for an ordinary resume, so the column\'s messages go out', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: null, recapOnly: false, unsentPrompt: null });
 
     expect(report).toBeUndefined();
   });
 
   it('reports nothing for an expired start-over that is not recap-only (an isolated column\'s own fresh pass)', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
 
     expect(report).toBeUndefined();
   });
 
   it('reports nothing for a conversation that never started, which is a fresh spawn and not a recap', async () => {
-    const report = await startAgentThroughSpawnAgent({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: false });
+    const report = await startAgentThroughSpawnAgent({ startOver: 'never-started', recapOnly: false, unsentPrompt: null });
 
     expect(report).toBeUndefined();
   });
@@ -422,7 +454,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   }
 
   it('delivers nothing and logs once when the outcome is recap-only and the column has a message', async () => {
-    await runHandoff({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
+    await runHandoff({ startOver: 'expired', recapOnly: true, unsentPrompt: null });
 
     expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
     expect(withheldLogLines()).toHaveLength(1);
@@ -430,7 +462,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('withholds the task\'s own auto_command the same way', async () => {
     await runHandoff(
-      { startOver: 'expired', recapOnly: true, resumePromptUnsent: false },
+      { startOver: 'expired', recapOnly: true, unsentPrompt: null },
       { columnMessage: false, taskAutoCommand: 'Run the checks' },
     );
 
@@ -440,7 +472,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('logs nothing when the outcome is recap-only but there is no message to withhold', async () => {
     await runHandoff(
-      { startOver: 'expired', recapOnly: true, resumePromptUnsent: false },
+      { startOver: 'expired', recapOnly: true, unsentPrompt: null },
       { columnMessage: false },
     );
 
@@ -449,7 +481,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   });
 
   it('delivers the column\'s message once for an ordinary handoff', async () => {
-    await runHandoff({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+    await runHandoff({ startOver: null, recapOnly: false, unsentPrompt: null });
 
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
@@ -467,7 +499,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
 
   it('delivers the task\'s own auto_command once for an ordinary handoff', async () => {
     await runHandoff(
-      { startOver: null, recapOnly: false, resumePromptUnsent: false },
+      { startOver: null, recapOnly: false, unsentPrompt: null },
       { columnMessage: false, taskAutoCommand: 'Run the checks' },
     );
 
@@ -479,7 +511,7 @@ describe('spawnAgent: a handoff onto an expired conversation withholds the colum
   });
 
   it('still delivers when the start-over expired but is not recap-only (an isolated column\'s own fresh pass)', async () => {
-    await runHandoff({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+    await runHandoff({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
 
     expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledTimes(1);
     expect(withheldLogLines()).toHaveLength(0);
@@ -495,7 +527,7 @@ const TASK_COMMAND = 'Run the checks';
 
 /** A spawn outcome that changed nothing; a test names only the fields it cares about. */
 function outcomeOf(fields: Partial<SpawnOutcome> = {}): SpawnOutcome {
-  return { startOver: null, recapOnly: false, resumePromptUnsent: false, ...fields };
+  return { startOver: null, recapOnly: false, unsentPrompt: null, ...fields };
 }
 
 function enterRow(fields: Pick<ColumnAutomation, 'name' | 'type' | 'config' | 'position'>): ColumnAutomation {
@@ -585,6 +617,8 @@ interface EnterGroupScenario {
   signal?: AbortSignal;
   /** Adapters registered next to the Send message and Start agent ones, for a row that is not either. */
   extraAdapters?: AutomationAdapter[];
+  /** A plan-exit continuation, the resume-only fallback prompt (`AgentSpawnOptions.continuationPrompt`). */
+  continuationPrompt?: string;
 }
 
 /** No suspended conversation at the destination: the spawn is fresh from the start. */
@@ -667,6 +701,7 @@ async function runEnterGroup(scenario: EnterGroupScenario): Promise<{ rows: RunL
     projectId: PROJECT_ID,
     projectPath: '/mock/project',
     signal: scenario.signal,
+    continuationPrompt: scenario.continuationPrompt,
   });
 
   return { rows: runLog.rows };
@@ -702,7 +737,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       const { rows } = await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT)],
         lane,
-        resumeOutcome: outcomeOf({ startOver, resumePromptUnsent: true }),
+        resumeOutcome: outcomeOf({ startOver, unsentPrompt: COLUMN_TEXT }),
       });
 
       // The message took the prompt slot, so nothing but the engine's report
@@ -721,7 +756,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       const { rows } = await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT)],
         lane,
-        resumeOutcome: outcomeOf({ startOver, resumePromptUnsent: false }),
+        resumeOutcome: outcomeOf({ startOver, unsentPrompt: null }),
       });
 
       expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(COLUMN_TEXT);
@@ -735,7 +770,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+        resumeOutcome: outcomeOf({ startOver: 'never-started', unsentPrompt: TASK_COMMAND }),
       });
 
       // The task's command outranks the column's message and is what took the slot.
@@ -747,7 +782,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ resumePromptUnsent: false }),
+        resumeOutcome: outcomeOf({ unsentPrompt: null }),
       });
 
       expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(TASK_COMMAND);
@@ -758,7 +793,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT, 0), messageRow('Then summarize', 1)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+        resumeOutcome: outcomeOf({ startOver: 'never-started', unsentPrompt: TASK_COMMAND }),
       });
 
       expect(deliveredMessages()).toEqual([TASK_COMMAND, 'Then summarize']);
@@ -768,7 +803,7 @@ describe('spawnAgent: a message that took the resume\'s prompt slot, after a spa
       await runEnterGroup({
         rows: [messageRow(COLUMN_TEXT, 0), messageRow('Then summarize', 1)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ resumePromptUnsent: false }),
+        resumeOutcome: outcomeOf({ unsentPrompt: null }),
       });
 
       expect(deliveredMessages()).toEqual(['Then summarize']);
@@ -823,7 +858,7 @@ describe('spawnAgent: the task\'s own auto_command in a column with no row that 
     await runEnterGroup({
       rows: [],
       taskFields: { auto_command: TASK_COMMAND },
-      resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+      resumeOutcome: outcomeOf({ startOver: 'never-started', unsentPrompt: TASK_COMMAND }),
     });
 
     // The enter group ran and started nothing, so the engine call below is the
@@ -871,7 +906,7 @@ describe('spawnAgent: the task\'s own auto_command in a column with no row that 
     expect(deliveredMessages()).toEqual([]);
   });
 
-  // The engine never reports both (`resumePromptUnsent` is false whenever
+  // The engine never reports both (`unsentPrompt` is false whenever
   // `recapOnly` is true), so this is not a state a spawn reaches. It pins the
   // order inside `startAgent`: the recap-only return comes before the restore
   // of the command, so the restore cannot be what lets a command through.
@@ -879,7 +914,7 @@ describe('spawnAgent: the task\'s own auto_command in a column with no row that 
     await runEnterGroup({
       rows: [],
       taskFields: { auto_command: TASK_COMMAND },
-      resumeOutcome: outcomeOf({ startOver: 'expired', recapOnly: true, resumePromptUnsent: true }),
+      resumeOutcome: outcomeOf({ startOver: 'expired', recapOnly: true, unsentPrompt: TASK_COMMAND }),
     });
 
     expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
@@ -890,7 +925,7 @@ describe('spawnAgent: the task\'s own auto_command in a column with no row that 
     await runEnterGroup({
       rows: [],
       taskFields: { auto_command: TASK_COMMAND },
-      resumeOutcome: outcomeOf({ startOver: null, resumePromptUnsent: false }),
+      resumeOutcome: outcomeOf({ startOver: null, unsentPrompt: null }),
     });
 
     expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
@@ -1197,7 +1232,7 @@ describe('spawnAgent: the task\'s own auto_command after a Send message row with
       const { rows } = await runEnterGroup({
         rows: [messageRow(message)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ startOver: 'never-started', resumePromptUnsent: true }),
+        resumeOutcome: outcomeOf({ startOver: 'never-started', unsentPrompt: TASK_COMMAND }),
       });
 
       expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
@@ -1210,7 +1245,7 @@ describe('spawnAgent: the task\'s own auto_command after a Send message row with
       const { rows } = await runEnterGroup({
         rows: [messageRow(message)],
         taskFields: { auto_command: TASK_COMMAND },
-        resumeOutcome: outcomeOf({ resumePromptUnsent: false }),
+        resumeOutcome: outcomeOf({ unsentPrompt: null }),
       });
 
       expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
@@ -1229,5 +1264,609 @@ describe('spawnAgent: the task\'s own auto_command after a Send message row with
       expect(rows.map((row) => [row.name, row.status, row.detail])).toEqual([['Message 0', 'succeeded', 'No message to send.']]);
       expect(deliveredMessages()).toEqual([]);
     });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Held messages and a continuation the resume could not carry
+// ---------------------------------------------------------------------------
+
+const HELD_TEXT = '1. Two findings need a decision.\n\n2. Lower the cap to 3 and rethrow the last error.';
+
+/** A claim on the task's held messages, as `claimHeldMessages` hands one out. */
+function fakeHeldClaim() {
+  let settled = false;
+  const settle = vi.fn(() => { settled = true; });
+  return {
+    projectId: PROJECT_ID,
+    taskId: TASK_ID,
+    ids: ['held-1', 'held-2'],
+    text: HELD_TEXT,
+    commit: settle,
+    fail: settle,
+    release: vi.fn(() => { settled = true; }),
+    isSettled: () => settled,
+  };
+}
+
+describe('spawnAgent: held messages go into the starting agent\'s opening message', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  it('rides the resume command line after the column\'s message, and counts as delivered once the session runs', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [messageRow(COLUMN_TEXT)], resumeOutcome: outcomeOf({ unsentPrompt: null }) });
+
+    expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(`${COLUMN_TEXT}\n\n${HELD_TEXT}`);
+    expect(mockCommitWhenSessionRuns).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
+    expect(deliveredMessages()).toEqual([]);
+    expect(claim.release).not.toHaveBeenCalled();
+  });
+
+  it('is the whole opening message when the column sends none', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [], resumeOutcome: outcomeOf({ unsentPrompt: null }) });
+
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(HELD_TEXT);
+    expect(mockCommitWhenSessionRuns).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
+  });
+
+  it('waits out a slash command\'s turn instead of becoming its arguments', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [messageRow('/code-review main')], resumeOutcome: outcomeOf({ unsentPrompt: null }) });
+
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe('/code-review main');
+    expect(mockPasteHeldAfterTurn).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
+    expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+  });
+
+  it('joins the typed column message on a fresh spawn whose prompt is the task', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [messageRow(COLUMN_TEXT)], noResumableDestination: true });
+
+    // The template took the prompt slot, so nothing held rode it.
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
+    expect(deliveredMessages()).toEqual([`${COLUMN_TEXT}\n\n${HELD_TEXT}`]);
+    const onOutcome = (mockDeliverAgentMessageInBackground.mock.calls[0][1] as { onOutcome: (report: unknown) => void }).onOutcome;
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    onOutcome({
+      taskId: TASK_ID, sessionId: 'session-new', commands: [`${COLUMN_TEXT}\n\n${HELD_TEXT}`], outcome: 'unconfirmed',
+      unconfirmedCommands: [], discardedDraft: null, interruptedTurn: false, escalated: false,
+    });
+    consoleErrorSpy.mockRestore();
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, expect.objectContaining({ outcome: 'unconfirmed' }), { flushOnRelease: true });
+  });
+
+  it('is typed with the column\'s message when the resume could not carry them', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({
+      rows: [messageRow(COLUMN_TEXT)],
+      resumeOutcome: outcomeOf({ unsentPrompt: `${COLUMN_TEXT}\n\n${HELD_TEXT}` }),
+    });
+
+    expect(deliveredMessages()).toEqual([`${COLUMN_TEXT}\n\n${HELD_TEXT}`]);
+    expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+  });
+
+  it('goes out alone, typed, after the group when the column sends nothing and the resume could not carry them', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [], resumeOutcome: outcomeOf({ unsentPrompt: HELD_TEXT }) });
+
+    expect(deliveredMessages()).toEqual([HELD_TEXT]);
+  });
+
+  it('stays held, delivered by nothing, when the start opened on an expired conversation\'s recap', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [messageRow(COLUMN_TEXT)], resumeOutcome: outcomeOf({ startOver: 'expired', recapOnly: true }) });
+
+    expect(claim.release).toHaveBeenCalledWith();
+    expect(deliveredMessages()).toEqual([]);
+    expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+  });
+
+  it('goes back on hold when the spawn fails', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    mockResumeSuspendedSession.mockRejectedValue(new Error('pty host down'));
+    mockTaskGetById.mockImplementation(() => makeTask());
+    mockExecuteTransition.mockImplementation(async () => ({ outcomes: [], failures: [], startedAgent: false }));
+
+    await spawnAgent({
+      context: makeContext(),
+      engine: { executeTransition: mockExecuteTransition, runLegacySpawnAgent: mockRunLegacySpawnAgent, resumeSuspendedSession: mockResumeSuspendedSession } as never,
+      tasks: { getById: (...args: unknown[]) => mockTaskGetById(...args), update: vi.fn() } as never,
+      sessionRepo: resumableDestinationRepo,
+      task: makeTask(),
+      fromSwimlaneId: '*',
+      toLane: makeLane(),
+      projectId: PROJECT_ID,
+      projectPath: '/mock/project',
+    });
+
+    expect(claim.release).toHaveBeenCalledWith({ flush: true });
+    consoleErrorSpy.mockRestore();
+  });
+});
+
+describe('spawnAgent: a plan continuation the resume could not carry is typed in', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+  });
+
+  it('types the continuation once the agent is ready', async () => {
+    // Red before the fix: a CLI that takes no prompt on resume dropped the
+    // continuation, and nothing typed it in.
+    await runEnterGroup({
+      rows: [],
+      continuationPrompt: 'Proceed with the approved plan.',
+      resumeOutcome: outcomeOf({ unsentPrompt: 'Proceed with the approved plan.' }),
+    });
+
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe('Proceed with the approved plan.');
+    expect(deliveredMessages()).toEqual(['Proceed with the approved plan.']);
+  });
+
+  it('types nothing more when the resume carried it', async () => {
+    await runEnterGroup({
+      rows: [],
+      continuationPrompt: 'Proceed with the approved plan.',
+      resumeOutcome: outcomeOf({ unsentPrompt: null }),
+    });
+
+    expect(deliveredMessages()).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Held messages on the paths the describe above does not reach
+// ---------------------------------------------------------------------------
+//
+// The cross-agent handoff composes its own opening message (it runs no enter
+// group), the normal path's `deliverHeldRemainder` is what a superseded move
+// must not run, and `deliverToAgent` is where a slash command typed at a fresh
+// spawn sends the held text to wait for its turn. Expected values come from
+// `composeOpeningMessage`'s contract (lead, a blank line, the held text; a slash
+// lead is typed alone and the held text waits) and the claim contract (settles
+// from the report of the delivery that carried it, goes back on hold otherwise).
+
+/** A pointer to the previous agent's history. It does not begin with a slash, as a real one would not. */
+const HANDOFF_POINTER = 'Read the previous agent history at /mock/history.jsonl';
+const SLASH_COLUMN_TEXT = '/code-review';
+
+/** The report a delivery hands its `onOutcome` when it ends. */
+function injectionReport(commands: string[], outcome: InjectionReport['outcome'] = 'confirmed'): InjectionReport {
+  return {
+    taskId: TASK_ID,
+    sessionId: 'session-new',
+    commands,
+    outcome,
+    unconfirmedCommands: [],
+    discardedDraft: null,
+    interruptedTurn: false,
+    escalated: false,
+  };
+}
+
+/** Run the `onOutcome` that the Nth delivery or paste was given, as the scheduler does when that delivery ends. */
+function reportOutcomeOf(deliveryMock: { mock: { calls: unknown[][] } }, report: InjectionReport, callIndex = 0): void {
+  const { onOutcome } = deliveryMock.mock.calls[callIndex][1] as { onOutcome: (report: InjectionReport) => void };
+  onOutcome(report);
+}
+
+/** The message of each background paste, in order. */
+function pastedMessages(): string[] {
+  return mockPasteAgentMessageInBackground.mock.calls.map((call) => (call[1] as { message: string }).message);
+}
+
+/**
+ * Drive a cross-agent handoff (the task last ran codex, the column runs claude)
+ * whose column message is `columnMessage` (null for a column with no message
+ * row) and whose engine resume reports `outcome`. A held claim, when a test wants
+ * one, is what `mockClaimHeldMessages` returns.
+ */
+async function runHeldHandoff(scenario: { columnMessage?: string | null; outcome?: SpawnOutcome } = {}): Promise<void> {
+  const { columnMessage = COLUMN_TEXT, outcome = outcomeOf() } = scenario;
+  mockResumeSuspendedSession.mockResolvedValue(outcome);
+  mockListForColumn.mockReturnValue(
+    columnMessage === null ? [] : [{ ...COLUMN_MESSAGE_ROW, config: { message: columnMessage, mode: 'immediate' } }],
+  );
+  mockTaskGetById.mockImplementation(() => makeTask({ agent: 'codex', session_id: 'session-new' }));
+
+  await spawnAgent({
+    context: makeContext(),
+    engine: {
+      executeTransition: mockExecuteTransition,
+      runLegacySpawnAgent: mockRunLegacySpawnAgent,
+      resumeSuspendedSession: mockResumeSuspendedSession,
+    } as never,
+    // The column message's outcome is recorded on the task row when its delivery reports.
+    tasks: { getById: (...args: unknown[]) => mockTaskGetById(...args), update: vi.fn(), recordAutoCommandOutcome: vi.fn() } as never,
+    sessionRepo: handoffSessionRepo,
+    task: makeTask({ agent: 'codex' }),
+    fromSwimlaneId: 'lane-previous',
+    toLane: makeLane({ agent_override: 'claude', handoff_context: true }),
+    projectId: PROJECT_ID,
+    projectPath: '/mock/project',
+  });
+
+  // The handoff branch ran and not the normal one, so a result below is the
+  // branch's own decision and not a path that never got there.
+  expect(mockExecuteTransition).not.toHaveBeenCalled();
+  expect(mockResumeSuspendedSession).toHaveBeenCalledTimes(1);
+  expect(mockResumeSuspendedSession.mock.calls[0][5]).toBe('claude');
+}
+
+describe('spawnAgent: held messages on a cross-agent handoff', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleWarnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleWarnSpy.mockRestore();
+  });
+
+  /** The console lines saying the pasted history pointer did not land. */
+  function pointerWarnings(): string[] {
+    return consoleWarnSpy.mock.calls.map((call) => String(call[0])).filter((line) => /history pointer was not pasted/.test(line));
+  }
+
+  // Red-green: drop `heldText` from `composeOpeningMessage(columnText, heldText)`
+  // and this test fails with the column's message typed alone. Delete the
+  // `if (carried) settleClaimFromReport(...)` line in the delivery's `onOutcome`
+  // and the settle assertion fails. Delete `if (carried) heldHandedOff = true;`
+  // and the claim is released by the `finally` around `spawnAgent`, which the
+  // `release` assertion catches.
+  it('types the column\'s message and the held text as ONE delivery, which settles the claim from its report', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff();
+
+    expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+    expect(mockClaimHeldMessages).toHaveBeenCalledWith(expect.anything(), PROJECT_ID, TASK_ID);
+    expect(deliveredMessages()).toEqual([`${COLUMN_TEXT}\n\n${HELD_TEXT}`]);
+    expect(mockDeliverAgentMessageInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new', mode: 'immediate', freshlySpawned: true }),
+    );
+    // Nothing else carries the claim: no second message, no command-line ride.
+    expect(mockPasteAgentMessageInBackground).not.toHaveBeenCalled();
+    expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
+    expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+    // The delivery owns the claim, so the spawn's `finally` must not put it back on hold.
+    expect(claim.release).not.toHaveBeenCalled();
+    // It settles from the delivery's report and not before.
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
+    const report = injectionReport([`${COLUMN_TEXT}\n\n${HELD_TEXT}`]);
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, report);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledTimes(1);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, report, { flushOnRelease: true });
+  });
+
+  // Red-green: the same `composeOpeningMessage` and settle lines; with no
+  // column message `typedMessage` is the held text only because the compose
+  // step returns it when there is no lead.
+  it('types the held text alone, settling the claim from that delivery, when the column has no message', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff({ columnMessage: null });
+
+    expect(deliveredMessages()).toEqual([HELD_TEXT]);
+    expect(claim.release).not.toHaveBeenCalled();
+    const report = injectionReport([HELD_TEXT]);
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, report);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, report, { flushOnRelease: true });
+  });
+
+  // Red-green: delete the `typedMessage = ... ${handoffUnsentPrompt}\n\n${typedMessage}`
+  // line (or the whole `if (handoffUnsentPrompt !== null && !pointerAfterTurn)`
+  // block) and this test fails with the pointer missing from the message.
+  it('puts the history pointer the resume could not carry ahead of the column\'s message and the held text, in the same message', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff({ outcome: outcomeOf({ unsentPrompt: HANDOFF_POINTER }) });
+
+    const expectedMessage = `${HANDOFF_POINTER}\n\n${COLUMN_TEXT}\n\n${HELD_TEXT}`;
+    expect(deliveredMessages()).toEqual([expectedMessage]);
+    // One message carries all three; the pointer is not a second delivery or a paste.
+    expect(mockPasteAgentMessageInBackground).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+    const report = injectionReport([expectedMessage]);
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, report);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledTimes(1);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, report, { flushOnRelease: true });
+  });
+
+  it('puts the history pointer ahead of the held text when the column has no message', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff({ columnMessage: null, outcome: outcomeOf({ unsentPrompt: HANDOFF_POINTER }) });
+
+    expect(deliveredMessages()).toEqual([`${HANDOFF_POINTER}\n\n${HELD_TEXT}`]);
+    expect(mockPasteAgentMessageInBackground).not.toHaveBeenCalled();
+  });
+
+  // Red-green: drop `opening.heldAfterTurn` from `carried`'s condition and the
+  // slash command's own delivery carries the claim, so its report settles it and
+  // the "settles nothing" assertion fails. Reverse the `afterTurn` array so the
+  // held text comes first and the paste-message assertion fails. Delete
+  // `if (heldAfterLead) heldHandedOff = true;` and the `finally` releases the
+  // claim the paste still owns.
+  it('types a slash command alone and pastes the pointer and the held text as ONE message after its turn, which settles the claim', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff({ columnMessage: SLASH_COLUMN_TEXT, outcome: outcomeOf({ unsentPrompt: HANDOFF_POINTER }) });
+
+    expect(deliveredMessages()).toEqual([SLASH_COLUMN_TEXT]);
+    // Two pastes waiting on the same turn could land in either order, so it is one.
+    expect(pastedMessages()).toEqual([`${HANDOFF_POINTER}\n\n${HELD_TEXT}`]);
+    expect(mockPasteAgentMessageInBackground).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ taskId: TASK_ID, sessionId: 'session-new' }),
+    );
+    // The normal path's helper pastes the held text alone; the handoff must not use it as well.
+    expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+
+    // The typed slash command carries nothing of the claim, so its report settles nothing.
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, injectionReport([SLASH_COLUMN_TEXT]));
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
+    // The paste's report is the one that does.
+    const pasteReport = injectionReport([`${HANDOFF_POINTER}\n\n${HELD_TEXT}`]);
+    reportOutcomeOf(mockPasteAgentMessageInBackground, pasteReport);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledTimes(1);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, pasteReport, { flushOnRelease: true });
+  });
+
+  // Red-green: drop `pointerAfterTurn ? handoffUnsentPrompt : null` from the
+  // `afterTurn` array and this test fails with nothing pasted; type the pointer
+  // ahead of the slash command (drop `!pointerAfterTurn`) and the typed message
+  // is no longer the command alone.
+  it('pastes the pointer alone after a slash command\'s turn when nothing is held', async () => {
+    await runHeldHandoff({ columnMessage: SLASH_COLUMN_TEXT, outcome: outcomeOf({ unsentPrompt: HANDOFF_POINTER }) });
+
+    expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+    expect(deliveredMessages()).toEqual([SLASH_COLUMN_TEXT]);
+    expect(pastedMessages()).toEqual([HANDOFF_POINTER]);
+
+    // A pointer nobody owes a claim for settles nothing, and a landed paste is silent.
+    reportOutcomeOf(mockPasteAgentMessageInBackground, injectionReport([HANDOFF_POINTER]));
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
+    expect(pointerWarnings()).toHaveLength(0);
+  });
+
+  it('warns once when that pointer paste fails to land', async () => {
+    await runHeldHandoff({ columnMessage: SLASH_COLUMN_TEXT, outcome: outcomeOf({ unsentPrompt: HANDOFF_POINTER }) });
+
+    reportOutcomeOf(mockPasteAgentMessageInBackground, injectionReport([HANDOFF_POINTER], 'failed'));
+
+    expect(pointerWarnings()).toHaveLength(1);
+    expect(pointerWarnings()[0]).toContain('(failed)');
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
+  });
+
+  // Red-green: drop `heldAfterLead?.text ?? null` from the `afterTurn` array,
+  // or the `opening.heldAfterTurn` half of `heldAfterLead`'s condition, and the
+  // held text is never pasted.
+  it('pastes the held text alone after a slash command\'s turn when there is no pointer, settling the claim from that paste', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runHeldHandoff({ columnMessage: SLASH_COLUMN_TEXT });
+
+    expect(deliveredMessages()).toEqual([SLASH_COLUMN_TEXT]);
+    expect(pastedMessages()).toEqual([HELD_TEXT]);
+    expect(claim.release).not.toHaveBeenCalled();
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, injectionReport([SLASH_COLUMN_TEXT]));
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
+    const pasteReport = injectionReport([HELD_TEXT]);
+    reportOutcomeOf(mockPasteAgentMessageInBackground, pasteReport);
+    expect(mockSettleClaimFromReport).toHaveBeenCalledWith(claim, pasteReport, { flushOnRelease: true });
+  });
+
+  // Red-green: with the target agent's older conversation expired the recap is
+  // the session's whole prompt. Drop `handoffRecapOnly ? undefined :` from
+  // `heldText` and the held text is typed over the recap (both variants fail);
+  // delete `if (handoffRecapOnly) heldClaim?.release();` and the claim's FIRST
+  // release becomes the `finally`'s `{ flush: true }`, which would hand the
+  // held text to the agent on top of the recap. A real claim ignores the second
+  // release, so the first one decides.
+  describe.each([
+    { name: 'the column has a message', columnMessage: COLUMN_TEXT },
+    { name: 'the column has no message', columnMessage: null },
+  ])('a recap-only handoff when $name', ({ columnMessage }) => {
+    it('delivers and pastes nothing, and puts the held messages back on hold without flushing them to the recap', async () => {
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+
+      await runHeldHandoff({ columnMessage, outcome: outcomeOf({ startOver: 'expired', recapOnly: true }) });
+
+      expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+      expect(mockDeliverAgentMessageInBackground).not.toHaveBeenCalled();
+      expect(mockPasteAgentMessageInBackground).not.toHaveBeenCalled();
+      expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
+      expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+      expect(claim.release).toHaveBeenCalled();
+      expect(claim.release.mock.calls[0]).toEqual([]);
+    });
+  });
+});
+
+describe('spawnAgent: held messages when the move is superseded after the agent started', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // The runner rethrows a row's own error when the move was aborted while it ran, and spawnAgent logs it.
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Both variants end the group with the agent started by a Send message row
+  // and the held text still owed: a later Run script row either runs on or
+  // fails with the move aborted. The first variant's message is a slash command
+  // that rode the resume's prompt slot, so the held text waits for its turn. The
+  // second row sends nothing (an empty message), so the held text, which the
+  // spawn could not carry, waits to join the next message typed at the agent.
+  const OWED_HELD_VARIANTS = [
+    {
+      name: 'waiting out a slash command\'s turn',
+      rows: [messageRow('/code-review main', 0), scriptRow(1)],
+      noResumableDestination: false,
+      expectedResumePrompt: '/code-review main',
+      expectSent: (claim: ReturnType<typeof fakeHeldClaim>) => {
+        expect(mockPasteHeldAfterTurn).toHaveBeenCalledTimes(1);
+        expect(mockPasteHeldAfterTurn).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
+        expect(deliveredMessages()).toEqual([]);
+      },
+    },
+    {
+      name: 'joining the next message typed at the agent',
+      rows: [messageRow('', 0), scriptRow(1)],
+      noResumableDestination: true,
+      expectedResumePrompt: undefined,
+      expectSent: () => {
+        expect(deliveredMessages()).toEqual([HELD_TEXT]);
+        expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
+      },
+    },
+  ];
+
+  describe.each(OWED_HELD_VARIANTS)('held text $name', ({ rows: groupRows, noResumableDestination, expectedResumePrompt, expectSent }) => {
+    // The control: the same rows and the same failing script row, the move left
+    // alone. It shows the scenario owes the agent the held text, so the aborted
+    // test below cannot pass because nothing was ever going to be sent.
+    it('is sent after the group when the move was not superseded (the control)', async () => {
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+
+      const { rows } = await runEnterGroup({
+        rows: groupRows,
+        noResumableDestination,
+        extraAdapters: [failingScriptAdapter()],
+      });
+
+      expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+      expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(expectedResumePrompt);
+      expect(rows.map((row) => row.status)).toEqual(['succeeded', 'failed']);
+      expectSent(claim);
+      expect(claim.release).not.toHaveBeenCalled();
+    });
+
+    // Red-green: delete `if (signal?.aborted) return;` from `deliverHeldRemainder`
+    // and the first variant pastes the held text and the second types it, each
+    // for a move that was superseded. Both also hand the claim off, so the
+    // `finally`'s `release({ flush: true })` stops running.
+    it('is neither sent nor pasted when the move was superseded, and goes back on hold with a flush', async () => {
+      const claim = fakeHeldClaim();
+      mockClaimHeldMessages.mockReturnValue(claim);
+      const supersededMove = new AbortController();
+
+      const { rows } = await runEnterGroup({
+        rows: groupRows,
+        noResumableDestination,
+        signal: supersededMove.signal,
+        extraAdapters: [failingScriptAdapter(() => supersededMove.abort())],
+      });
+
+      // The agent started and claimed the held text, and the script row was
+      // interrupted by the abort: the path the early return exists for.
+      expect(mockClaimHeldMessages).toHaveBeenCalledTimes(1);
+      expect(mockResumeSuspendedSession.mock.calls[0][3]).toBe(expectedResumePrompt);
+      expect(rows.map((row) => row.status)).toEqual(['succeeded', 'interrupted']);
+      expect(supersededMove.signal.aborted).toBe(true);
+
+      expect(deliveredMessages()).toEqual([]);
+      expect(mockPasteHeldAfterTurn).not.toHaveBeenCalled();
+      expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+      expect(claim.release).toHaveBeenCalledTimes(1);
+      expect(claim.release).toHaveBeenCalledWith({ flush: true });
+    });
+  });
+});
+
+describe('spawnAgent: a slash command typed at a fresh spawn with no prompt slot', () => {
+  let consoleLogSpy: ReturnType<typeof vi.spyOn>;
+  let consoleErrorSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    // A delivery's report records its outcome on the task row, which this harness's task repository has no method for.
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+  });
+
+  afterEach(() => {
+    consoleLogSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  // Red-green: in `deliverToAgent`, drop the `if (opening.heldAfterTurn) {
+  // heldAfterLeadTurn = true; } else {` branch so the held text always joins.
+  // The claim is then handed to the slash command's delivery
+  // (`heldHandedOff = true`), `pasteHeldAfterTurn` never runs, and that
+  // delivery's report settles the claim, which the last assertion catches.
+  it('types the command alone and pastes the held text after its turn', async () => {
+    const claim = fakeHeldClaim();
+    mockClaimHeldMessages.mockReturnValue(claim);
+
+    await runEnterGroup({ rows: [messageRow('/code-review main')], noResumableDestination: true });
+
+    // The task template took the prompt slot, so the command was typed and nothing held rode the resume.
+    expect(mockResumeSuspendedSession.mock.calls[0][3]).toBeUndefined();
+    expect(deliveredMessages()).toEqual(['/code-review main']);
+    expect(mockPasteHeldAfterTurn).toHaveBeenCalledTimes(1);
+    expect(mockPasteHeldAfterTurn).toHaveBeenCalledWith(expect.anything(), claim, 'session-new');
+    // After the command, never before it.
+    expect(mockDeliverAgentMessageInBackground.mock.invocationCallOrder[0])
+      .toBeLessThan(mockPasteHeldAfterTurn.mock.invocationCallOrder[0]);
+    expect(mockCommitWhenSessionRuns).not.toHaveBeenCalled();
+    expect(claim.release).not.toHaveBeenCalled();
+
+    // The typed command carries nothing of the claim, so its report settles nothing.
+    reportOutcomeOf(mockDeliverAgentMessageInBackground, injectionReport(['/code-review main']));
+    expect(mockSettleClaimFromReport).not.toHaveBeenCalled();
   });
 });

@@ -15,6 +15,7 @@ sources:
   - resource: src/main/automations/turn-end/agent-message-delivery.ts
   - resource: src/main/agent/adapters/claude/slash-command-verifier.ts
   - resource: src/main/agent/shared/submitted-text-verifier.ts
+  - resource: src/main/transition-engine/resume-prompt-delivery.ts
 ---
 # Command injection
 
@@ -28,7 +29,9 @@ a **target** for model and effort. It returns `restartReason`: `'model'` when th
 concrete and differs, else `'effort'` when the target effort is concrete and differs, else `null`.
 A column move with a reason suspends the session and resumes it with `--model` / `--effort` as
 launch flags (phase label `switching-model` or `applying-settings`), carrying the column message or
-plan-exit continuation as the resume prompt. A restart from a ContextBar pick or a column or Board
+plan-exit continuation as the resume prompt. Where the resume cannot carry it (an adapter whose
+resume takes no prompt, a launch that would flatten its lines, a prompt over 6,000 characters), it
+is typed in once the agent is ready (see [How the resume prompt arrives](../sessions/resume.md#how-the-resume-prompt-arrives)). A restart from a ContextBar pick or a column or Board
 Profile edit resumes idle instead. A null target is the "Default" column and never
 restarts: `--resume` keeps whatever the session runs at.
 
@@ -189,15 +192,16 @@ A column's message reaches the agent by more than one mechanism, and they do not
 
 | Rung | Mechanism | When | Guarantee |
 |---|---|---|---|
-| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model or effort change) | Guaranteed by the spawn |
+| 1 | **argv prompt** | The session is being spawned or resumed anyway (fresh spawn; a move that already needs a restart for a model or effort change) | Guaranteed by the spawn. A resume whose prompt cannot ride its command line hands it back (`unsentPrompt`), and it is typed in once the agent is ready, with no rung 3 behind it |
 | 2 | **keystrokes** | A live warm session | Verified in the transcript, or falls to rung 3 |
-| 3 | **restart + argv prompt** | Rung 2 exhausted its retries on a *verifiable* command | Guaranteed by the spawn |
+| 3 | **restart + argv prompt** | Rung 2 exhausted its retries on a *verifiable* command, on an adapter whose resume carries a prompt (`resumePromptDelivery: 'command-line'`) | Guaranteed by the spawn |
 | 4 | **recorded failure + notice** | Rung 3 unavailable or itself failed | Observable |
 
 Rung 1 is the most reliable path and must not be regressed into keystrokes (see `agent-spawn.ts`: a promptless isolated spawn never emits `'thinking'`, so the keystroke scheduler would burn its full 30s fallback and read as "the auto_command never ran").
 
-Rung 3 is what makes the guarantee falsifiable rather than aspirational. It routes through `restartSessionForSettingsChange`, which is already allowlisted as a non-first-spawn direct engine call, so escalation adds no new spawn entry point. Three constraints hold:
+Rung 3 is what makes the guarantee falsifiable rather than aspirational. It routes through `restartSessionForSettingsChange`, which is already allowlisted as a non-first-spawn direct engine call, so escalation adds no new spawn entry point. These constraints hold:
 
+- It needs an adapter whose resume carries a prompt (`resumePromptDelivery: 'command-line'`). For any other, the restart would type the command again, which is the delivery that just failed, so `prepareInjectionPlan` marks the command `escalatable: false` and it ends `failed`. Today the only adapters that escalate at all, Claude and Codex, are both `command-line`, so this gate changes no adapter's behavior yet; it stops a future graduation of a `typed` one. A `command-line` restart can still type its command, when it has lines a `.cmd` shim launch would flatten or is over the cap: the engine hands it back in `unsentPrompt` and `restartSessionForSettingsChange` types it in.
 - It is gated on the same turn-completion predicate deferred mode uses, never a bare `idle` check. A bare idle would fire during an API retry backoff or a `Monitor` wait and kill live work.
 - While that gate waits, the verifier is re-polled every second against each command's original first-Enter watermark (its `CommandDelivery.firstSentAt` on the burst result), and once more when the turn completes. A confirmation anywhere in that wait cancels the restart and the outcome becomes `confirmed`. A restart re-runs the command, and it did: every observed live injection of a skill command (`/merge-pull-request`, four of four moves) was reported `failed` by the burst and then run a second time by the restart (#682). The poll runs during the wait rather than only after it because the verifier reads a bounded tail; a long turn can push the entry out of reach of a single check at the end. Turn completion on its own is never taken as delivery evidence: the turn that completes may be the one that was already running when the command was typed. A verifier that throws is a miss on both looks (logged, then the restart proceeds), never a reason to abandon the restart: the gate is the one path that re-sends a swallowed command.
 - It is attempted at most once. If the restart's argv prompt still does not confirm, the outcome is `failed`.

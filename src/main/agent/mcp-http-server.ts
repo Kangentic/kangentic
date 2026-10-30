@@ -61,7 +61,12 @@ import {
   type AutomationConfigReader,
   type BrowserToolDependencies,
 } from './mcp-http/browser-tools';
-import { registerSteeringTools, type SteeringToolDependencies, type SteeringSessionLookup } from './mcp-http/steering-tools';
+import {
+  registerSteeringTools,
+  type HeldMessageHolder,
+  type SteeringToolDependencies,
+  type SteeringSessionLookup,
+} from './mcp-http/steering-tools';
 import {
   registerBackgroundShellTools,
   type BackgroundShellServiceMarker,
@@ -131,6 +136,8 @@ export interface McpHttpServerHandle {
 export interface McpSteeringContext {
   sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker;
   terminalSubmit: SessionSendTerminalSubmit;
+  /** Hold a message for a task with no running agent (src/main/held-messages). */
+  holdTaskMessage: HeldMessageHolder;
 }
 
 export type SteeringContextReader = () => McpSteeringContext | null;
@@ -162,7 +169,12 @@ export async function startMcpHttpServer(
         terminalSubmit: steeringContext.terminalSubmit,
       });
     }
-    return { coordinator: sessionSendCoordinator, sessions: steeringContext.sessionManager, callerSessionId };
+    return {
+      coordinator: sessionSendCoordinator,
+      sessions: steeringContext.sessionManager,
+      holdTaskMessage: steeringContext.holdTaskMessage,
+      callerSessionId,
+    };
   };
 
   // Caller scope for the browser family. Mirrors resolveSteering: both read the

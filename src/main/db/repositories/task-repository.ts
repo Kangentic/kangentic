@@ -950,6 +950,11 @@ export class TaskRepository {
     if (!task) return;
 
     const tx = writeTransaction(this.db, () => {
+      // The task's sent-messages log, the messages still held for its next
+      // agent included, goes with it. `task_id` cascades too; this does not
+      // rely on the pragma, as the other child rows here do not. A Backlog
+      // demote, a move to another project and every delete come through here.
+      this.db.prepare('DELETE FROM session_messages_sent WHERE task_id = ?').run(id);
       this.db.prepare('DELETE FROM tasks WHERE id = ?').run(id);
       // Shift down tasks above the deleted one
       this.db.prepare('UPDATE tasks SET position = position - 1 WHERE swimlane_id = ? AND position > ?')

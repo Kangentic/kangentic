@@ -44,6 +44,12 @@ export class CopilotAdapter implements AgentAdapter {
    * an existing UUID resumes it. Same semantics as Claude's --session-id.
    */
   readonly supportsCallerSessionId = true;
+  /**
+   * Typed. `-i <prompt>` starts an interactive session with a prompt, but
+   * neither `copilot --help` nor its docs say it runs on a session resumed by
+   * `--session-id`, so a message is typed in once the resume is ready.
+   */
+  readonly resumePromptDelivery = 'typed' as const;
   // `--additional-mcp-config` pointing at a file in the session's own directory.
   readonly kangenticMcp = 'per-session' as const;
   // An async or still-running `powershell`/`bash` call reports its shellId in

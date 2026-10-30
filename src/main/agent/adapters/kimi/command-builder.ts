@@ -185,10 +185,11 @@ export class KimiCommandBuilder {
       }
     }
 
-    // Prompt delivery. Empirically `--prompt <TEXT>` is the canonical
-    // non-interactive entry point (alias of `-p`, `-c`, `--command`).
-    // Aider/Codex append a positional arg, but Kimi's grammar is a
-    // typed --prompt option, so we use the explicit flag form.
+    // Prompt delivery: `--prompt <TEXT>` (alias of `-p`, `-c`, `--command`),
+    // "User prompt to the agent". It keeps the session interactive; only
+    // `--print` above makes it non-interactive (`kimi --help`). It rides a
+    // resume too (`--session <id>`). Aider/Codex append a positional arg, but
+    // Kimi's grammar is a typed --prompt option, so we use the flag form.
     if (options.prompt) {
       const needsDoubleQuoteReplacement = shell
         ? !isUnixLikeShell(shell)

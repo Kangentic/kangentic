@@ -15,6 +15,7 @@ sources:
   - resource: src/main/ipc/handlers/session-reconcile.ts
   - resource: src/main/transition-engine/spawn-progress.ts
   - resource: src/main/automations/turn-end/recap-turns.ts
+  - resource: src/main/transition-engine/resume-prompt-delivery.ts
 ---
 # Resume
 
@@ -115,8 +116,9 @@ status line only runs once the TUI is up, so a CLI killed in its first second le
 - **`never-started`** needs no turns anywhere in the lineage, the agent's own report (status or
   hook, never the row alone) saying so, and the path it names failing with ENOENT. The spawn is
   re-resolved `forceFresh` exactly as before: the task's own prompt, no recap, no notice. A column
-  message the resume carried goes out after the spawn, as on any fresh spawn
-  (`SpawnOutcome.resumePromptUnsent`), since the task template took its place in the prompt.
+  message the resume carried goes out after the spawn, as on any fresh spawn, since the task
+  template took its place in the prompt. The spawn hands that message back in
+  `SpawnOutcome.unsentPrompt` for the caller to type in.
 - **`expired`** needs turns and the adapter's proof that the file is gone
   (`AgentAdapter.proveConversationGone`). Claude's (`adapters/claude/conversation-gone.ts`) wants an
   absolute reported path named `<id>.jsonl`; that path and the one every reader would open both
@@ -261,7 +263,10 @@ known gap, not fixed here, and a label still in flight when one of those fires s
 
 When a suspended task moves to an active column:
 
-- Command: `claude --settings <path> --resume <agentSessionId>` (no prompt)
+- Command: `claude --settings <path> --resume <agentSessionId>`, plus `-- "<message>"` when the
+  move carries one (the column's message, a plan continuation, held messages). On an agent whose
+  resume takes no prompt, the message is typed in once the agent is ready instead (see
+  [How the resume prompt arrives](#how-the-resume-prompt-arrives))
 - The resumed id tracks mid-session forks. Running `/clear` inside a Claude session forks the
   conversation to a brand-new session id; the statusline re-reports it and the change-sensitive
   status-file capture (`SessionTelemetry.processStatusUpdate` -> `recoverStaleSessionId`)
@@ -289,7 +294,9 @@ When a suspended task moves to an active column:
   delivered as the resumed session's first message only when neither the
   destination column's message (its first enabled `send_message` enter
   automation) nor the task's own `auto_command` is set. Either one takes the
-  prompt slot instead. It names the restart because the suspend lands right after approval and Claude
+  prompt slot instead. On an agent whose resume takes no prompt, the
+  continuation is typed in once the agent is ready; it used to be lost there.
+  It names the restart because the suspend lands right after approval and Claude
   Code records it as `[Request interrupted by user]`. Without the reason, the
   resumed turn reads as the user stopping the agent and typing a new
   instruction. A plan exit that switches session track (into an isolated
@@ -303,6 +310,11 @@ When a suspended task moves to an active column:
   session's keystroke injection cannot be confirmed in the agent's transcript,
   `restartSessionForSettingsChange` suspends and resumes with the command as the
   prompt argument, which is guaranteed by the spawn rather than by TUI timing.
+  Only an adapter whose resume carries a prompt
+  (`resumePromptDelivery: 'command-line'`) escalates. For any other, the restart
+  would type the command again, which is the delivery that just failed, so
+  `prepareInjectionPlan` marks it `escalatable: false` and an unconfirmed command
+  ends `failed`.
   That restart is gated on the turn-completion predicate (activity idle AND a
   quiet PTY) so it can never kill live work, is attempted at most once, and
   carries only the user's `auto_command` - never an adapter-emitted settings
@@ -313,7 +325,10 @@ When a suspended task moves to an active column:
   queued behind a running turn) must not be run a second time, which is what
   happened on every observed Tests-to-Ship-It move before #682. Unlike the
   ordinary settings-change restart it does NOT assert idle-authoritative
-  afterwards, because a resume with a prompt starts a real turn. See
+  afterwards, because a resume with a prompt starts a real turn. The exception
+  is a command that cannot ride the command line (lines a `.cmd` shim launch
+  would flatten, or over the cap): the engine keeps it off, asserts idle itself,
+  and the restart types `unsentPrompt` in once the agent is ready. See
   [Command Injection](../automations/command-injection.md) for the full delivery ladder.
 - The **first move OUT of Done** (the recovery / restore move, whatever the
   destination column) resumes the session WITHOUT delivering the destination
@@ -336,3 +351,59 @@ When a suspended task moves to an active column:
   allowed to run against a `deliverToAgent` that silently does nothing and then
   report a success for a message nobody received. See
   [The column's message on a move](../automations/transition-engine.md#the-columns-message-on-a-move).
+
+## How the resume prompt arrives
+
+A resume can carry a message: a column's message, a plan continuation, a handoff pointer to the
+source agent's history, or [held messages](held-messages.md). Not every CLI takes a prompt with a
+resume, so each adapter declares `AgentAdapter.resumePromptDelivery`:
+
+- `command-line`: the resume command carries the prompt (`claude --resume <id> -- "..."`,
+  `codex resume <id> "..."`) and nothing is typed. Claude, Codex, Gemini, Qwen Code, Antigravity,
+  Kimi, Droid and Goose.
+- `typed`: the CLI takes no prompt with a resume, or does not document that it does. Copilot,
+  Grok, OpenCode and Cursor each take a prompt on a new session, but nothing they document says it
+  runs on a resumed one.
+- `no-resume`: the adapter has no session id to resume by, so every start is fresh. Aider, Ollama
+  and Warp's oz.
+
+`tests/unit/resume-prompt-delivery-parity.test.ts` builds each real adapter's resume command with
+a marked prompt and holds the declaration to what the builder does.
+
+The engine decides per spawn with `resumePromptRidesCommandLine`
+(`src/main/transition-engine/resume-prompt-delivery.ts`). The prompt rides only when all four hold:
+
+- the adapter is `command-line`;
+- a multi-line prompt keeps its lines. A `.cmd` shim under PowerShell or Git Bash flattens one
+  (`resolveShimLaunch` strategy `flattened-prompt`), and so does quoting for a cmd.exe shell or for
+  no known shell (`quoteArgKeepsNewlines`). Flattened, a numbered list of held messages runs
+  together;
+- it does not open with `-`. Codex takes its resume prompt as a bare positional, so such a prompt
+  would read as an option and the resume would not start;
+- it fits under `RESUME_PROMPT_COMMAND_LINE_CAP`, 6,000 characters by `commandLineLength`, which
+  counts each `%` as the `"^%"` cmd.exe gets. cmd.exe cuts a whole command line at 8,191, and the
+  rest of a resume command takes up to about 1,500 of them.
+
+Otherwise the builder gets no prompt and the resume opens idle. The engine hands the whole prompt
+back in `SpawnOutcome.unsentPrompt`, the handoff pointer included, and calls
+`markIdleAuthoritative` on the new session. Claude's resume reloads its context with no hook, which
+the status heartbeat reads as 30 s of thinking, and that would hold the typed delivery back.
+`unsentPrompt` is also set when a fresh spawn's task template took the prompt slot (a resume that
+started over, a forced-fresh spawn). It replaced `resumePromptUnsent`, a boolean that covered only
+that case.
+
+Every caller types what comes back once the agent is ready:
+
+- `spawnAgent` (`helpers/agent-spawn.ts`): the column's message or the task's own command, a plan
+  continuation, and a handoff pointer, with any held messages in the same delivery.
+- `resumeTaskSession` (`handlers/session-resume.ts`): the Resume button, the Commands menu's
+  command, and the phone's resume of a paused task.
+- `restartSessionForSettingsChange` (`handlers/session-reconcile.ts`): an escalation command that
+  could not ride.
+
+The engine used to report a resume prompt unsent only for a fresh spawn. Codex, Copilot, Grok,
+OpenCode and Cursor built their resume commands without the prompt while `spawnAgent` believed it
+rode and skipped its typed fallback, so the column's message never arrived. The Resume path and
+the escalation restart discarded the spawn's outcome entirely, and a plan continuation or handoff pointer that did not ride
+was lost. Escalation, rung 3 of the [delivery ladder](../automations/command-injection.md#the-delivery-ladder),
+now runs only for a `command-line` adapter.

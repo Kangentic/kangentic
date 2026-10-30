@@ -54,6 +54,12 @@ vi.mock('../../src/main/db/database', () => ({
     return db;
   },
 }));
+// A restart message a resume could not carry is pasted in; observed, never run.
+const mockPasteAgentMessage = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/automations/turn-end/agent-message-delivery', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/automations/turn-end/agent-message-delivery')>()),
+  pasteAgentMessageInBackground: mockPasteAgentMessage,
+}));
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({ handleTaskMove: vi.fn() }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: vi.fn() }));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
@@ -278,6 +284,7 @@ describe('the workflow agent\'s reads across projects', () => {
         kangenticMcp: 'per-session',
         supportsReadOnlyLaunch: true,
         supportsCallerSessionId: true,
+        resumePromptDelivery: 'command-line',
         supportsReadableDirectories: true,
         detect: async () => ({ found: true, path: '/mock/bin/claude' }),
         ensureTrust: async () => undefined,
@@ -1021,6 +1028,29 @@ describe('the workflow agent\'s reads across projects', () => {
         expect(buildCommand.mock.calls[0][0].readableDirectories).toEqual([paths.mobile]);
         expect(builtPrompts()[0]).toContain(`kangentic-mobile at ${paths.mobile}`);
         expect(builtPrompts()[0]).toContain('Kangentic restarted you');
+        expect(mockPasteAgentMessage).not.toHaveBeenCalled();
+      });
+
+      it('types the restart\'s reason in for an agent whose resume carries no prompt', async () => {
+        // A CLI that takes no prompt with a resume (`resumePromptDelivery: 'typed'`)
+        // dropped this message: the builder was handed it and left it out.
+        const carryingAdapter = agentRegistry.get('claude') as unknown as Record<string, unknown>;
+        spies.push(vi.spyOn(agentRegistry, 'get').mockReturnValue({ ...carryingAdapter, resumePromptDelivery: 'typed' } as unknown as AgentAdapter));
+        mockPasteAgentMessage.mockClear();
+        const workflowId = midTurnAgentOwedMobile();
+
+        activity['session-mid-turn'] = 'idle';
+        manager.emit('activity', 'session-mid-turn', 'idle');
+        await vi.waitFor(() => expect(spawn).toHaveBeenCalledTimes(1));
+        await nextTurn();
+
+        expect(buildCommand.mock.calls[0][0]).toMatchObject({ resume: true, prompt: undefined });
+        expect(markIdleAuthoritative).toHaveBeenCalledWith('session-restarted');
+        expect(mockPasteAgentMessage).toHaveBeenCalledWith(context, expect.objectContaining({
+          taskId: workflowId,
+          sessionId: 'session-restarted',
+          message: expect.stringContaining('Kangentic restarted you'),
+        }));
       });
     });
 

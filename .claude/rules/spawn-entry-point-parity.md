@@ -2,6 +2,7 @@
 paths:
   - "src/main/ipc/**"
   - "src/main/transition-engine/**"
+  - "src/main/held-messages/**"
 ---
 
 # Rule: every agent-spawn entry point runs the shared spawn preamble
@@ -109,6 +110,12 @@ contract was kept in sync across three files by prose comments alone.
   for the rest of the run. A caller never releases after it calls `spawn()`: from there
   `SessionManager` releases a spawn that never ran, and a spawn that failed after its PTY started
   keeps the hold for that PTY's exit, so the file is never stripped under a running agent.
+- **Held messages are claimed only where an opening message is built.** A message held for a task
+  with no running agent (`src/main/held-messages/`) goes into the next agent's opening message,
+  after the column's own. `spawnAgent` and `resumeTaskSession` call `claimHeldMessages` and fold
+  the text in. Every other start (`prepareAgentSpawn`, the legacy Start agent row, a queued
+  session's promotion) gets them from `registerHeldMessageFlush`, pasted once the first turn
+  settles. A new start never claims on its own; it would race those two for the same rows.
 - Adding a new spawn entry point means routing it through one of the two chokepoints, or adding
   a reasoned allowlist entry in the enforcement test AND updating this rule.
 
@@ -127,7 +134,9 @@ contract was kept in sync across three files by prose comments alone.
   the scan cannot pass vacuously, (h) the same for `resumesEntry`, allowed only in
   `helpers/agent-spawn.ts` and `handlers/session-resume.ts`, and (i) any
   `<receiver>.buildCommand(` call site with no `ptySessionId` property between it and the file's
-  previous call site, or in a file that never calls `releaseCommandHold(`. That
+  previous call site, or in a file that never calls `releaseCommandHold(`, and (j) any
+  `claimHeldMessages(` call outside `agent-spawn.ts`, `session-resume.ts` and the held-messages
+  module, with a companion assertion that both builders still claim. That
   scan proves line order, not control flow; the runtime ordering
   on the Command Terminal path is pinned separately by
   `tests/unit/transient-session-spawn-ensure-trust.test.ts`, which drives the handler and fails

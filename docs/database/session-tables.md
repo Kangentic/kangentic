@@ -7,6 +7,8 @@ sources:
   - resource: src/main/db/migrations/project-schema.ts
     title: session, usage and ledger tables
   - resource: src/main/db/repositories/sent-session-message-repository.ts
+  - resource: src/main/held-messages/held-messages.ts
+    title: held messages, the log's held rows
   - resource: src/main/retrieval/conversation/conversation-usage-store.ts
   - resource: src/main/activity-engine/activity-interval-store.ts
   - resource: src/main/pty/buffer/transcript-writer.ts
@@ -177,12 +179,13 @@ TypeScript type: `HandoffRecord` in `src/shared/types.ts`. Repository: `HandoffR
 
 ## session_messages_sent table
 
-Provenance for messages sent into a session via `kangentic_send_session_message` (see [Session tools](../integrations/mcp-server/session-tools.md#kangentic_send_session_message)) - by another agent, or by a human steering that session directly. The delivered message carries no in-band marker, so these rows are the only record that a turn arrived through the tool rather than being typed at the keyboard.
+Provenance for messages sent into a session via `kangentic_send_session_message` (see [Session tools](../integrations/mcp-server/session-tools.md#kangentic_send_session_message)) - by another agent, or by a human steering that session directly. The delivered message carries no in-band marker, so these rows are the only record that a turn arrived through the tool rather than being typed at the keyboard. It also holds the messages held for a task whose agent is not running ([Held messages](../architecture/sessions/held-messages.md)): the row is the hold itself.
 
 | Column | Type | Constraints | Default |
 |--------|------|-------------|---------|
 | id | TEXT | PRIMARY KEY | |
-| session_id | TEXT | NOT NULL, FK->sessions ON DELETE CASCADE | |
+| session_id | TEXT | FK->sessions ON DELETE CASCADE | |
+| task_id | TEXT | NOT NULL, FK->tasks ON DELETE CASCADE | |
 | caller_session_id | TEXT | | NULL |
 | caller_task_id | TEXT | | NULL |
 | caller_project_id | TEXT | | NULL |
@@ -191,13 +194,15 @@ Provenance for messages sent into a session via `kangentic_send_session_message`
 | error | TEXT | | NULL |
 | created_at | TEXT | NOT NULL | |
 
-Index: `idx_session_messages_sent_session_id` on (session_id).
+Indexes: `idx_session_messages_sent_session_id` on (session_id), `idx_session_messages_sent_task_status` on (task_id, status).
 
-`session_id` is the session that RECEIVED the message. `status` is one of `delivered`, `queued` (both produced a turn), `refused` (a guard rejected it), or `failed` (delivery threw; whether a turn landed is unknown) - so a row exists for every attempt, not just the successes. `error` carries the refusal or failure detail and is NULL on success.
+`session_id` is the session that RECEIVED the message, and `task_id` is the task it was for. `status` is one of `delivered`, `queued` (both produced a turn), `refused` (a guard rejected it), `failed` (delivery threw; whether a turn landed is unknown), or, for a message held for a task with no running agent, `held`, `delivered_from_hold` (a turn, with the session that got it) and `cleared` - so a row exists for every attempt, not just the successes. `error` carries the refusal or failure detail and is NULL on success.
+
+A held message is one row whose status moves on once. It reads `held` with a NULL `session_id` while it waits: the task may have no session at all, and a To Do move deletes the task's sessions, which would cascade a session-keyed row away. It then becomes `delivered_from_hold` with the session that got it, `cleared` when the task moved to Done or To Do first, or `failed` when its delivery began and did not finish. Every one of those writes is a compare-and-swap on `status = 'held'`, so a clear that ran first is never undone by a delivery that settles later. A deleted task, a Backlog demote and a move to another project take every row of the task with them (`TaskRepository.delete` deletes them, and `task_id` cascades).
 
 The three `caller_*` columns are deliberately NOT foreign keys: a cross-project steer originates in a different project's database, so those ids are unresolvable locally. They are NULL for a human-driven caller with no Kangentic session.
 
-`message` is stored as the caller supplied it, which is how a consumer correlates it to the transcript turn it produced. The delivered text is byte-identical for ordinary prose; the paste path additionally collapses CR/CRLF to LF and strips C0 control characters, so a message carrying those differs from the stored row by exactly that normalization. Reconstructing "which turns arrived this way" means filtering to `delivered` / `queued`.
+`message` is stored as the caller supplied it, which is how a consumer correlates it to the transcript turn it produced. The delivered text is byte-identical for ordinary prose; the paste path additionally collapses CR/CRLF to LF and strips C0 control characters, so a message carrying those differs from the stored row by exactly that normalization. Reconstructing "which turns arrived this way" means filtering to `delivered` / `queued` / `delivered_from_hold`. A held message reaches its agent inside an opening message, after the column's own and numbered when there are several, so its turn holds more than the stored text.
 
 TypeScript type: `SentSessionMessage` in `src/shared/types.ts`. Repository: `SentSessionMessageRepository` in `src/main/db/repositories/sent-session-message-repository.ts`.
 

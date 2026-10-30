@@ -326,6 +326,32 @@ describe('handleMoveTask across columns', () => {
     expect(response.message).toContain('Its agent there gets your message once it is ready.');
   });
 
+  it('says the message is held when the column it moves to runs no agent', () => {
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE, { ...REVIEW_LANE, auto_spawn: false }]);
+    const response = handleMoveTask({ taskId: 'uuid-a', column: 'Review', message: 'Back from review' }, context);
+
+    expect(response.message).toContain('No agent runs in Review, so your message is held for the task\'s next agent.');
+  });
+
+  it('says Done delivers nothing and holds nothing, even when Done also starts no agent', () => {
+    // A Done column normally has auto_spawn off, which is exactly the case
+    // that would read as "held for the next agent" if the auto_spawn branch
+    // were checked first. A task in Done holds no messages, so the Done
+    // sentence has to win.
+    const doneLane = { id: 'lane-done', name: 'Done', role: 'done', is_archived: false, position: 2, auto_spawn: false };
+    mockSwimlaneRepoList.mockReturnValue([TODO_LANE, REVIEW_LANE, doneLane]);
+
+    const response = handleMoveTask({ taskId: 'uuid-a', column: 'Done', message: 'Shipped, nothing left to do' }, context);
+
+    expect(response.success).toBe(true);
+    expect(context.onTaskMove).toHaveBeenCalledWith(
+      expect.objectContaining({ targetSwimlaneId: doneLane.id }),
+      { message: 'Shipped, nothing left to do' },
+    );
+    expect(response.message).toContain('Done runs no agent and holds no messages, so your message is not delivered.');
+    expect(response.message).not.toContain('held for the task');
+  });
+
   it('refuses a message on a move that stays in the column, since no agent arrives', () => {
     const response = handleMoveTask({ taskId: 'uuid-c', column: 'To Do', message: 'hello' }, context);
 

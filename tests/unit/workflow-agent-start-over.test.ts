@@ -255,6 +255,7 @@ describe('a workflow\'s own agent starting over', () => {
       kangenticMcp: 'per-session',
       supportsReadOnlyLaunch: true,
       supportsCallerSessionId: true,
+      resumePromptDelivery: 'command-line',
       supportsReadableDirectories: false,
       detect: vi.fn(async () => ({ found: true, path: '/mock/bin/claude' })),
       ensureTrust: vi.fn(async () => undefined),

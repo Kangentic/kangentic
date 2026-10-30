@@ -211,7 +211,7 @@ const handoffSessionRepo = {
 } as never;
 
 /** An ordinary resume: the conversation did not expire, so the handoff delivers as it always did. */
-const ORDINARY_OUTCOME: SpawnOutcome = { startOver: null, recapOnly: false, resumePromptUnsent: false };
+const ORDINARY_OUTCOME: SpawnOutcome = { startOver: null, recapOnly: false, unsentPrompt: null };
 
 beforeEach(() => {
   vi.clearAllMocks();

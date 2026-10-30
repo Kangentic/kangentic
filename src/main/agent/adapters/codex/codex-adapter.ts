@@ -38,6 +38,8 @@ export class CodexAdapter implements AgentAdapter {
   readonly displayName = 'Codex CLI';
   readonly sessionType = 'codex_agent';
   readonly supportsCallerSessionId = false;
+  /** `codex resume <id> [PROMPT]`: "Optional user prompt to start the session" (`codex resume --help`). */
+  readonly resumePromptDelivery = 'command-line' as const;
   // A Codex installed in a WSL distro, configured by its \\wsl.localhost path:
   // run in the distro's shell, its hooks through the WSL transport's script,
   // its trust and rollouts in the distro's CODEX_HOME (cli-target.ts).

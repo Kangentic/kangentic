@@ -326,6 +326,8 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly displayName = 'Claude Code';
   readonly sessionType = 'claude_agent';
   readonly supportsCallerSessionId = true;
+  /** `claude --resume <id> -- "<prompt>"`: the resumed session runs the prompt as its next turn. */
+  readonly resumePromptDelivery = 'command-line' as const;
   // A Claude installed in a WSL distro, configured by its \\wsl.localhost path:
   // run in the distro's shell, its hooks through the WSL transport, its trust,
   // settings and transcripts in the distro's home (cli-target.ts).

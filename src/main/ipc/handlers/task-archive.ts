@@ -17,6 +17,7 @@ import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
+import { clearHeldMessages } from '../../held-messages/held-messages';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import type { SwimlaneRole, Task, TaskUnarchiveInput } from '../../../shared/types';
 import { restoredLaneOrder } from '../../../shared/restore-lane-order';
@@ -67,6 +68,9 @@ async function resetSessionForTodoRestore(
   projectPath: string | null,
 ): Promise<void> {
   if (laneRole !== 'todo') return;
+  // A restore into To Do is a To Do move, which clears held messages. Done
+  // holds none, so this only matters for rows from before that rule.
+  if (projectId) clearHeldMessages(projectId, task.id);
   try {
     await cleanupTaskSession(context, task, tasks, projectId, projectPath);
   } catch (cleanupError) {

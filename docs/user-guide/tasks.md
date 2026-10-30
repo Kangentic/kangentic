@@ -109,13 +109,15 @@ conversation and sends the task once more.
 
 ## Move Between Active Columns
 
-Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (the destination changes the model or effort); in that case the message rides along as the resume prompt instead. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
+Dragging between active columns (e.g., Executing to Code Review) keeps the session alive. If the target column has a **Send message to agent** automation (e.g., `/code-review`), it is typed straight into the running agent as keystrokes - no suspend, no restart. A suspend and respawn happens only when the move needs one for its own reasons (the destination changes the model or effort); in that case the message rides along as the resume prompt instead. An agent whose resume takes no prompt gets it typed in once it is back. The source column's exit automations run first, while its session is still attached, and the destination's remaining enter automations run after the move lands.
 
 While you drag a card into another column, the cards there part at the slot it would take, and a dimmed copy of the card holds that slot. Releasing the card places it at that slot. A card dragged out of Done onto a column is restored to the same slot.
 
 The agent keeps its conversation across these moves; the message is the only new input it sees. A new project has no messages configured, so by default these moves simply carry the session along.
 
 Each column chooses WHEN its message arrives via **Message timing**: `immediate` sends it on arrival (the agent queues it if mid-turn), while `deferred` holds it until the current turn genuinely finishes.
+
+A message for a column that runs no agent is held until the task's next agent starts, and it is dropped if the task moves to Done. A move to To Do clears what is held.
 
 **From the keyboard.** Tab to a card, press Space to pick it up, move it with the arrow keys, and press Space again to drop it; Escape puts it back. The pickup only arms from a Tab-placed focus: a card you clicked or dragged with the mouse stays put on Space and Enter, and a picked-up card is released the moment you click anywhere or focus lands in a terminal. The same keys reorder columns (from the grip in the column header), backlog rows, Column Manager rows, priorities, and shortcuts.
 

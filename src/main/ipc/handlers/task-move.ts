@@ -54,6 +54,7 @@ import { canTaskRunAutomations } from '../../../shared/automation-manifest';
 import { loadTaskProfile } from '../helpers/task-profile';
 import { reportAutoCommandOutcome } from '../helpers/auto-command-outcome';
 import { supersedeMessageDeliveries, supersedeTurnEndWork } from '../../automations/turn-end/turn-end-passes';
+import { clearHeldMessages } from '../../held-messages/held-messages';
 import {
   deliverAgentMessageAndWait,
   deliverAgentMessageInBackground,
@@ -584,6 +585,14 @@ export async function handleTaskMove(
         } catch (forgetError) {
           console.error(`[TASK_MOVE] Forgetting the PR link failed for task ${input.taskId.slice(0, 8)}:`, forgetError);
         }
+      }
+
+      // Messages held for the task's next agent are cleared by a move to Done
+      // (the work ended) or To Do (a reset), in this same tick for the archive's
+      // reason, and ahead of `supersedeMessageDeliveries` below, so a held
+      // message mid-delivery finds its row already cleared and leaves it so.
+      if (isCrossColumnToDone || isCrossColumnToTodo) {
+        clearHeldMessages(resolvedProjectId, input.taskId);
       }
 
       // The board row has changed on disk from here on, so it must be announced

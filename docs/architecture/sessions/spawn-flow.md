@@ -68,7 +68,7 @@ sessions bypass all of this (not task agents).
      [Global Config Writes](../../integrations/agents/claude-code.md#global-config-writes-claudejson)). Every path
      that builds an agent command calls this first, including the Command Terminal.
    - Check for previous suspended session (can resume?)
-   - If resuming: reconcile the stored `agent_session_id` against the record's own `status.json` (see [Resume](resume.md#resume)), then use it with `--resume`, no prompt
+   - If resuming: reconcile the stored `agent_session_id` against the record's own `status.json` (see [Resume](resume.md#resume)), then use it with `--resume`. The opening message (the column's message, held messages) rides the resume command when the adapter's `resumePromptDelivery` is `command-line`, and is typed in once the agent is ready otherwise ([How the resume prompt arrives](resume.md#how-the-resume-prompt-arrives))
    - If fresh: generate new UUID for `agent_session_id`, use `--session-id`, include prompt
    - Create session directory at `.kangentic/sessions/<agentSessionId>/`
    - Build agent CLI command via `CommandBuilder`

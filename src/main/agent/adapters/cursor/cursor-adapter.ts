@@ -167,6 +167,11 @@ export class CursorAdapter implements AgentAdapter {
   readonly displayName = 'Cursor CLI';
   readonly sessionType = 'cursor_agent';
   readonly supportsCallerSessionId = false;
+  /**
+   * Typed. Nothing documents a prompt riding `--resume=<id>`, so a message is
+   * typed in once the resume is ready.
+   */
+  readonly resumePromptDelivery = 'typed' as const;
   // A static `.cursor/mcp.json` entry whose url and token are `${env:...}`
   // references, filled per session by `buildEnv` (project-mcp-config.ts).
   readonly kangenticMcp = 'per-session' as const;
@@ -256,7 +261,8 @@ export class CursorAdapter implements AgentAdapter {
       // quote boundary (--resume='id' on unix, --resume="id" on Windows), the
       // standard --flag=value convention.
       parts.push(`--resume=${quoteArg(options.sessionId, shell)}`);
-      // A resume sends nothing: the conversation already holds its messages.
+      // A resume carries no prompt. A message for it (a column's, a held one)
+      // is typed in once it is ready (`resumePromptDelivery: 'typed'`).
       if (options.resume) return parts.join(' ');
       // A fresh start with an id opens the empty chat `createSessionId` made,
       // and goes on below to send the first message into it. Only a start that

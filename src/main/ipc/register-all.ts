@@ -42,6 +42,7 @@ import { registerTaskBranchHandlers } from './handlers/task-branch';
 import { registerTaskRuntimeOverrideHandlers } from './handlers/task-runtime-override';
 import { registerSessionHandlers } from './handlers/sessions';
 import { registerTurnEndAutomations } from '../automations/turn-end/turn-end-runner';
+import { registerHeldMessageFlush } from '../held-messages/held-messages';
 import { registerWorkflowEngine } from '../workflows/workflow-engine-host';
 import { startWorkflowHangCheck } from '../workflows/workflow-hang-check';
 import { isRunningWorkflowStepTask, workflowOfTask } from '../workflows/workflow-home';
@@ -400,6 +401,9 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerTaskRuntimeOverrideHandlers(context);
   registerSessionHandlers(context);
   registerTurnEndAutomations(context);
+  // Held messages for an agent that starts outside spawnAgent and the Resume
+  // (startup recovery, a queued session's promotion) or after one began.
+  registerHeldMessageFlush(context);
   startWorkflowHangCheck(context);
   registerWorkflowEngine(context);
   registerWorkflowHandlers(context);

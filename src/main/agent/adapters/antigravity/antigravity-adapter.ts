@@ -72,6 +72,8 @@ export class AntigravityAdapter implements AgentAdapter {
   // No flag pre-assigns a NEW conversation id; agy allocates one lazily at
   // the first turn and Kangentic captures it (hooks / PTY scrape).
   readonly supportsCallerSessionId = false;
+  /** `--conversation <id>` with `-i` (or `-p` when non-interactive) carries the prompt. */
+  readonly resumePromptDelivery = 'command-line' as const;
   // Its hook at the first turn and the shutdown summary (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // The literal URL and token go into the folder's

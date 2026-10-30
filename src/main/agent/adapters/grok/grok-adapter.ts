@@ -81,6 +81,12 @@ export class GrokAdapter implements AgentAdapter {
   readonly displayName = 'Grok Build';
   readonly sessionType = 'grok_agent';
   readonly supportsCallerSessionId = true;
+  /**
+   * Typed. `grok [PROMPT]` is "Initial prompt for the interactive session",
+   * but neither `grok --help` nor its docs say it runs on a `--resume`, so a
+   * message is typed in once the resume is ready.
+   */
+  readonly resumePromptDelivery = 'typed' as const;
   // A fixed `.grok/config.toml` block whose URL and token are env references,
   // filled per session by `buildEnv`. Grok reads it only in a folder the user
   // trusted (see trust-manager.ts).

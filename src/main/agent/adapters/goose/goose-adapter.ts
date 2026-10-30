@@ -88,6 +88,8 @@ export class GooseAdapter implements AgentAdapter {
   // with `-r -n <id>`. The engine stores the id it generates and passes it back
   // on resume (transition-engine.ts).
   readonly supportsCallerSessionId = true;
+  /** `goose run -r -n <id> -t "<prompt>" -s` carries the prompt into the resumed session. */
+  readonly resumePromptDelivery = 'command-line' as const;
   // A Goose installed in a WSL distro runs there. Goose wires no hooks, reads
   // no transcript and is handed no MCP server, so the CLI's own path, its
   // `GOOSE_MODE` (which crosses into the distro with the adapter's other

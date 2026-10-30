@@ -113,10 +113,17 @@ vi.mock('../../src/main/ipc/helpers/index', () => ({
   createTransitionEngine: (...args: unknown[]) => mockCreateTransitionEngine(...args),
   cleanupTaskResources: vi.fn(async () => {}),
   deleteTaskWorktree: vi.fn(async () => true),
+  reapTaskLeftovers: vi.fn(async () => {}),
+  scheduleDoneWorktreeRemovalRetry: vi.fn(),
+  reportAutomationFailures: vi.fn(),
   autoSpawnForTask: vi.fn(async () => {}),
 }));
 vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: vi.fn(),
+}));
+const mockClearHeldMessages = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/held-messages/held-messages', () => ({
+  clearHeldMessages: (...args: unknown[]) => mockClearHeldMessages(...args),
 }));
 
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
@@ -180,6 +187,7 @@ function makeTaskRepo(task: Task) {
     list: vi.fn(() => [{ ...task }]),
     archive: vi.fn(),
     clearArchived: vi.fn(),
+    setWorktreeSkipReason: vi.fn(),
   };
 }
 
@@ -289,5 +297,41 @@ describe('handleTaskMove clears archived_at on a move out of Done', () => {
 
     expect(taskRepo.clearArchived).toHaveBeenCalledTimes(1);
     expect(taskRepo.clearArchived).toHaveBeenCalledWith(task.id);
+  });
+});
+
+describe('handleTaskMove clears the messages held for the task\'s next agent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('on a move into Done, in the tick it archives the task', async () => {
+    const workLane = makeSwimlane(CUSTOM_LANE_ID, { role: null, auto_spawn: false });
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done', auto_spawn: false });
+    const task = makeTask({ swimlane_id: CUSTOM_LANE_ID });
+
+    const { taskRepo } = await move(task, DONE_LANE_ID, [workLane, doneLane]);
+
+    expect(taskRepo.archive).toHaveBeenCalledWith(task.id);
+    expect(mockClearHeldMessages).toHaveBeenCalledWith('proj-test', task.id);
+  });
+
+  it('not on a move into a column that starts no agent, where they wait for the next start', async () => {
+    const workLane = makeSwimlane(CUSTOM_LANE_ID, { role: null, auto_spawn: true });
+    const noSpawnLane = makeSwimlane(AUTO_SPAWN_OFF_LANE_ID, { role: null, auto_spawn: false });
+    const task = makeTask({ swimlane_id: CUSTOM_LANE_ID });
+
+    await move(task, AUTO_SPAWN_OFF_LANE_ID, [workLane, noSpawnLane]);
+
+    expect(mockClearHeldMessages).not.toHaveBeenCalled();
+  });
+
+  it('not on a reorder within Done', async () => {
+    const doneLane = makeSwimlane(DONE_LANE_ID, { role: 'done' });
+    const task = makeTask({ swimlane_id: DONE_LANE_ID, archived_at: '2025-06-01T00:00:00.000Z' });
+
+    await move(task, DONE_LANE_ID, [doneLane]);
+
+    expect(mockClearHeldMessages).not.toHaveBeenCalled();
   });
 });

@@ -63,7 +63,7 @@ Operates on a per-project DB.
 | `listArchivedPreview(limit)` | The newest `limit` archived tasks plus the total archived count; cheap hydration for the Done column (full list loads lazily via `listArchived`) |
 | `countAll()` | Bare `COUNT(*)` over every task, active and archived. For a caller that needs only the number: `list()` materializes every row plus the attachment-count join just to take `.length` |
 | `countArchived()` | Bare `COUNT(*)` over archived tasks, the `listArchived()` counterpart of `countAll()`. `kangentic_list_columns` and `kangentic_get_column_detail` call it to report the done column's completed count (`kangentic_board_summary` prints the same number from the `listArchived()` it already loads for its label tally). A project-wide count stands in for one lane's because `archive()` has a single caller, the move-to-Done branch in `ipc/handlers/task-move.ts`, which runs only once the task's `swimlane_id` is the `role = 'done'` lane |
-| `delete(id)` | Hard delete with position shift in the owning swimlane |
+| `delete(id)` | Hard delete with position shift in the owning swimlane. Deletes the task's `session_messages_sent` rows first, held ones included, in the same transaction, without relying on the cascade |
 
 ## SwimlaneRepository
 
@@ -277,6 +277,21 @@ Operates on a per-project DB. Tracks cross-agent context handoffs.
 | `getLatestForTask(taskId)` | Get the most recent handoff record for a task |
 | `getByFromSession(sessionId)` | Forward lookup: where did this session's context go? |
 | `getByToSession(sessionId)` | Backward lookup: where did this session's context come from? |
+
+## SentSessionMessageRepository
+
+Operates on a per-project DB. The log of every message sent to a task's agent, and the store for messages held for a task with no running agent. Every status change on a held row is a compare-and-swap on `status = 'held'`, so a clear that ran first is never undone.
+
+| Method | Description |
+|--------|-------------|
+| `insert(record)` | Record one send attempt against a session; `task_id` comes from the session row. Returns null and writes nothing when the session does not exist |
+| `insertHeld(input)` | Hold a message for a task's next agent: a `held` row with a NULL `session_id` |
+| `listHeldForTask(taskId)` | A task's `held` rows, oldest first, the order they go out in |
+| `markDeliveredFromHold(ids, sessionId)` | Mark held rows `delivered_from_hold` and record the session that got them |
+| `markHeldFailed(ids, error)` | Mark held rows `failed` when delivery began and did not finish |
+| `markClearedForTask(taskId)` | Mark every row still `held` for the task `cleared` |
+| `listForSession(sessionId)` | Every send attempt against a session, oldest first |
+| `listForTask(taskId)` | Every send attempt across all of a task's sessions, held rows included |
 
 ## BacklogAttachmentRepository
 

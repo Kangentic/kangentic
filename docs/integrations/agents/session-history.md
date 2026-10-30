@@ -344,23 +344,23 @@ behavior below is the resume contract.
 
 ### Per-adapter resume map
 
-| Agent | Resume invocation | Where `--resume` reads | Keyed by | cwd-bound resume? | Same path as `locateSessionHistoryFile`? |
-|---|---|---|---|---|---|
-| Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) |
-| Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes |
-| Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes |
-| Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes |
-| Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes |
-| Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes |
-| OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) |
-| Copilot | `copilot --resume <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) |
-| Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (locator returns null) |
-| Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) |
-| Warp | (no resume) | none | n/a | n/a | n/a |
-| Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes |
-| Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a |
-| Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) |
-| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) |
+| Agent | Resume invocation | Where `--resume` reads | Keyed by | cwd-bound resume? | Same path as `locateSessionHistoryFile`? | Prompt on resume |
+|---|---|---|---|---|---|---|
+| Claude | `claude --resume <id>` | `~/.claude/projects/<slug>/<id>.jsonl`, the slug of the folder the conversation started in | start folder's slug + id | no from a worktree of the folder it started in (measured on 2.1.312); other folders unmeasured | yes (found by id when it is not under the cwd's slug) | on the command line, after `--` |
+| Codex | `codex resume <id> -C <cwd>` | `~/.codex/sessions/<YYYY>/<MM>/<DD>/rollout-<ts>-<id>.jsonl` | session id (filename scan) | no | yes | on the command line, positional `[PROMPT]` |
+| Gemini | `gemini --resume <id>` | `~/.gemini/tmp/<basename(cwd)>/chats/session-<id>.json` | cwd basename + id | yes | yes | on the command line, positional (`-p` non-interactive) |
+| Qwen | `qwen --resume <id>` / `--session-id <id>` | `~/.qwen/projects/<slug(cwd)>/chats/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, `-i` (`-p` non-interactive) |
+| Kimi | `kimi --session <id>` | `~/.kimi/sessions/<md5(cwd)>/<id>/` (wire JSONL) | md5(cwd) + id | yes | yes | on the command line, `--prompt` (stays interactive) |
+| Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
+| OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
+| Copilot | `copilot --session-id <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) | typed once the TUI is ready |
+| Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (locator returns null) | typed once the CLI is ready |
+| Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) | n/a: no id to resume by, so the engine never resumes it |
+| Warp | (no resume) | none | n/a | n/a | n/a | n/a |
+| Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes | typed once the TUI is ready |
+| Ollama | (no resume - `ollama run` has no CLI-level session ids) | none | n/a | n/a | n/a | n/a |
+| Antigravity | `agy --conversation <id>` | `~/.gemini/antigravity-cli/conversations/<id>.db` (SQLite; the parseable transcript sits beside it under `brain/<id>/`) | conversation id (global store) | no | **no** (the locator returns the brain-dir `transcript.jsonl`, which resume itself does not read) | on the command line, `-i` (`-p` non-interactive) |
+| Goose | `goose run -r -n <name>` / `goose session -r -n <name>` | Goose's own session store, resolved by name | caller-owned name (global store) | no | **no** (locator returns null; resume needs no transcript file) | on the command line, `-t` |
 
 Reading the table by class:
 
@@ -391,6 +391,13 @@ Reading the table by class:
   downgrade.
 - **no resume at all:** Warp and Ollama. The `oz` one-shot runner streams and exits, and
   `ollama run` has no CLI-level session ids.
+
+The last column is each adapter's `resumePromptDelivery`. "On the command line" is `command-line`:
+a resume that carries a message (a column's message, a plan continuation, held messages) passes it
+on the resume command. "Typed" is `typed`: the CLI takes a prompt on a new session, but nothing it
+documents says the prompt runs on a resumed one, so Kangentic types the message in once the agent
+is ready. Even a `command-line` resume types its message when the launch would flatten its lines or
+it is over the 6,000-character cap. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
 ### Why there is no `canResumeSession` transcript-presence guard
 
