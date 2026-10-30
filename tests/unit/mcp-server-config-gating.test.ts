@@ -119,6 +119,7 @@ function fakeSteeringDependencies(): SteeringToolDependencies {
   return {
     coordinator: {
       send: async () => ({ error: 'unused in this test' }),
+      reserveHoldSlot: () => true,
       dispose: () => {},
       _stateSizesForTesting: () => ({ queues: 0, pending: 0, hops: 0, windows: 0, refusalNotices: 0 }),
     },
@@ -126,7 +127,9 @@ function fakeSteeringDependencies(): SteeringToolDependencies {
       findLiveSessionByTaskId: () => undefined,
       getSessionTaskId: () => undefined,
       getSessionProjectId: () => undefined,
+      isWritable: () => false,
     },
+    holdTaskMessage: () => ({ status: 'refused', error: 'unused in this test' }),
   };
 }
 

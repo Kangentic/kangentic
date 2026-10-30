@@ -39,6 +39,10 @@
  *       task whose worktree_path AND branch_name are both still set (the
  *       failed-Done-cleanup state) and asserts branch_name survives on the
  *       restored row. A non-todo lane runs neither cleanup path.
+ *     - held messages: a restore into a role='todo' lane clears the task's held
+ *       messages (clearHeldMessages, against the restore's own project id, even
+ *       when the teardown after it throws); a non-todo lane that starts no agent
+ *       and an auto-spawn lane do not
  *
  *   TASK_BULK_UNARCHIVE
  *     - auto_spawn=false lane skips spawn for every task in the batch
@@ -163,6 +167,15 @@ vi.mock('../../src/main/agent/shared', () => ({
 
 vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(async () => {}),
+}));
+
+// A restore into To Do clears the messages held for the task's next agent.
+// Mocked so the tests observe the call itself: the real function swallows every
+// error behind a try/catch, so against the stubbed project DB it would "pass"
+// whether or not task-archive.ts ever called it.
+const mockClearHeldMessages = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/held-messages/held-messages', () => ({
+  clearHeldMessages: (...args: unknown[]) => mockClearHeldMessages(...args),
 }));
 
 // ---------------------------------------------------------------------------
@@ -909,6 +922,115 @@ describe('task-archive handlers', () => {
     });
 
     // -----------------------------------------------------------------------
+    // Held messages: a restore into To Do is a To Do move, and a To Do move
+    // clears the messages held for the task's next agent (task-move.ts does
+    // the same). Done holds none, so this only matters for rows from before
+    // that rule. The clear lives in resetSessionForTodoRestore, behind its
+    // `laneRole !== 'todo'` guard.
+    // -----------------------------------------------------------------------
+
+    describe('held messages on a restore', () => {
+      function registerLane(lane: MockSwimlane, task: MockTask): void {
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, lane]);
+        taskRepo = createMockTaskRepo([task]);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+      }
+
+      it('clears the task\'s held messages when it is restored into a role=todo lane', async () => {
+        // Red: deleting `if (projectId) clearHeldMessages(projectId, task.id)`
+        // from resetSessionForTodoRestore in task-archive.ts leaves the spy
+        // uncalled.
+        registerLane(
+          createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false }),
+          createMockTask('task-held-todo'),
+        );
+
+        await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held-todo', targetSwimlaneId: 'lane-todo' });
+
+        expect(mockClearHeldMessages).toHaveBeenCalledTimes(1);
+        expect(mockClearHeldMessages).toHaveBeenCalledWith('proj-123', 'task-held-todo');
+      });
+
+      it('does not clear them when the task is restored into a non-todo lane that starts no agent', async () => {
+        // This lane reaches resetSessionForTodoRestore (auto_spawn is off) and
+        // leaves at its role guard. Red: hoisting the clear above
+        // `if (laneRole !== 'todo') return;` calls the spy here.
+        registerLane(
+          createMockSwimlane('lane-parked', { role: null, auto_spawn: false }),
+          createMockTask('task-held-parked'),
+        );
+
+        await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held-parked', targetSwimlaneId: 'lane-parked' });
+
+        expect(mockCleanupTaskSession).not.toHaveBeenCalled();
+        expect(mockClearHeldMessages).not.toHaveBeenCalled();
+      });
+
+      it('leaves them for the agent a restore into an auto-spawn lane starts', async () => {
+        // The restored agent claims them in its opening message (spawnAgent),
+        // so a clear here would throw away what it is about to be sent.
+        registerLane(
+          createMockSwimlane('lane-working', { role: null, auto_spawn: true }),
+          createMockTask('task-held-working'),
+        );
+
+        await callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held-working', targetSwimlaneId: 'lane-working' });
+
+        expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+        expect(mockClearHeldMessages).not.toHaveBeenCalled();
+      });
+
+      it('clears against the project the restore was issued for, not the ambient current project', async () => {
+        // Renderer-driven mutations carry an explicit interaction-time
+        // projectId (.claude/rules/project-scoped-ipc.md). Red: passing
+        // context.currentProjectId to clearHeldMessages in task-archive.ts
+        // fails this with 'proj-123'.
+        registerLane(
+          createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false }),
+          createMockTask('task-held-other-project'),
+        );
+
+        await callHandler(
+          IPC.TASK_UNARCHIVE,
+          { id: 'task-held-other-project', targetSwimlaneId: 'lane-todo' },
+          'proj-other',
+        );
+
+        expect(mockClearHeldMessages).toHaveBeenCalledTimes(1);
+        expect(mockClearHeldMessages).toHaveBeenCalledWith('proj-other', 'task-held-other-project');
+      });
+
+      it('still clears them when the session teardown that follows throws', async () => {
+        // The clear sits before the best-effort teardown's try/catch, so a
+        // failed cleanup cannot leave the task holding messages for an agent
+        // it will never get. Red: moving the clear after `await
+        // cleanupTaskSession(...)` inside the try skips it on the rejection.
+        registerLane(
+          createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false }),
+          createMockTask('task-held-teardown-fails'),
+        );
+        mockCleanupTaskSession.mockRejectedValueOnce(new Error('pty host unreachable'));
+        const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+        try {
+          await expect(
+            callHandler(IPC.TASK_UNARCHIVE, { id: 'task-held-teardown-fails', targetSwimlaneId: 'lane-todo' }),
+          ).resolves.toMatchObject({ id: 'task-held-teardown-fails' });
+        } finally {
+          consoleError.mockRestore();
+        }
+
+        expect(mockCleanupTaskSession).toHaveBeenCalledTimes(1);
+        expect(mockClearHeldMessages).toHaveBeenCalledWith('proj-123', 'task-held-teardown-fails');
+      });
+    });
+
+    // -----------------------------------------------------------------------
     // Lock serialization: concurrent TASK_UNARCHIVE calls for the same task id
     // must complete in submission order; different ids run independently.
     // -----------------------------------------------------------------------
@@ -1414,6 +1536,34 @@ describe('task-archive handlers', () => {
 
         expect(mockCleanupTaskSession).not.toHaveBeenCalled();
         expect(mockCleanupTaskResources).not.toHaveBeenCalled();
+      });
+
+      it('clears the held messages of every task restored into a role=todo lane, and of none restored elsewhere', async () => {
+        // The same resetSessionForTodoRestore call serves the bulk handler, so
+        // one deleted clear fails both this and the single-restore test above.
+        const todoLane = createMockSwimlane('lane-todo', { role: 'todo', auto_spawn: false });
+        const parkedLane = createMockSwimlane('lane-parked', { role: null, auto_spawn: false });
+        swimlaneRepo = createMockSwimlaneRepo([doneLane, todoLane, parkedLane]);
+        const tasks = [
+          createMockTask('task-bulk-held-a'),
+          createMockTask('task-bulk-held-b'),
+        ];
+        taskRepo = createMockTaskRepo(tasks);
+        mockGetProjectRepos.mockReturnValue({
+          tasks: taskRepo,
+          swimlanes: swimlaneRepo,
+          actions: { getTransitionsFor: vi.fn(() => []) },
+          attachments: { deleteByTaskId: vi.fn() },
+        });
+
+        await callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-bulk-held-a', 'task-bulk-held-b'], 'lane-parked');
+        expect(mockClearHeldMessages).not.toHaveBeenCalled();
+
+        await callHandler(IPC.TASK_BULK_UNARCHIVE, ['task-bulk-held-a', 'task-bulk-held-b'], 'lane-todo');
+        expect(mockClearHeldMessages.mock.calls).toEqual([
+          ['proj-123', 'task-bulk-held-a'],
+          ['proj-123', 'task-bulk-held-b'],
+        ]);
       });
     });
   });
