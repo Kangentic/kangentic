@@ -82,8 +82,9 @@ export interface TerminalResizeState {
  * live stores. Runs the same two derivations the panel itself renders from, so a
  * claim can never name a session the panel is not going to show. `panelShowsTerminal`
  * is deliberately left at its default: the caller is in the act of showing it.
+ * The cycle keys (`useCycleShortcuts`) read it too, for the tab an expanded panel shows.
  */
-function panelArrivalSessionId(): string | null {
+export function panelArrivalSessionId(): string | null {
   const sessionState = useSessionStore.getState();
   const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
   const { owned } = derivePanelSessions({
