@@ -569,12 +569,19 @@ export function updatePermissionFlag(state: SessionEngineState, event: SessionEv
     || (event.type === EventType.Idle && event.detail !== IdleReason.Permission)
     || ((event.type === EventType.ToolStart || event.type === EventType.ToolEnd)
         && state.subagentDepth === 0);
-  if (isPermissionClearingSignal) {
-    state.permissionPending = false;
-    state.permissionAwaitedToolId = null;
-    state.permissionWaitKind = null;
-    state.permissionSiblingToolIds.clear();
-  }
+  if (isPermissionClearingSignal) clearPermissionWait(state);
+}
+
+/**
+ * End the pending permission wait. The flag, the tool it awaits, its kind and
+ * the siblings it ignores are cleared together, so no clear site can leave a
+ * stale kind or sibling set behind.
+ */
+export function clearPermissionWait(state: SessionEngineState): void {
+  state.permissionPending = false;
+  state.permissionAwaitedToolId = null;
+  state.permissionWaitKind = null;
+  state.permissionSiblingToolIds.clear();
 }
 
 /**

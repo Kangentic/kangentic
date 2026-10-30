@@ -133,8 +133,8 @@ describe('DesktopNotifier', () => {
     expect(showNotification).toHaveBeenCalledTimes(1);
   });
 
-  // The title says what happened, the body which task and where (#452's
-  // signed-off notifications board): one title per wait.
+  // The title says what happened and the body which task and where: one title
+  // per wait, and a fallback title for a wait whose kind is unknown.
   describe('the title names the wait', () => {
     const cases: Array<[string, string, Record<string, unknown>, string]> = [
       ['a finished turn', 'idle', { kind: 'idle', since: 1 }, 'Agent went idle'],

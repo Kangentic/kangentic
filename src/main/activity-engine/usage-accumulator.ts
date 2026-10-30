@@ -580,18 +580,14 @@ export class UsageAccumulator {
   }
 
   /**
-   * The most recently started call still waiting for its end, among calls
-   * started this turn: the last id start (Map order is insertion order) or the
-   * last id-less one, whichever began later. This is the call a permission
-   * prompt belongs to, since the prompt fires between a call's PreToolUse and
-   * its execution. Undefined when nothing started this turn is pending, which
-   * is when the engine's own stack is empty too.
-   */
-  /**
-   * The newest call pending since the turn began, of `toolName` when the
-   * permission Idle names one and such a call is pending, else of any tool:
-   * the engine's `awaitedPendingTool` rule, so a parallel sibling that
-   * started after the awaited call is not marked waited in its place.
+   * The call a permission prompt belongs to, since the prompt fires between a
+   * call's PreToolUse and its execution: the newest call still waiting for its
+   * end among calls started this turn, of `toolName` when the permission Idle
+   * names one and such a call is pending, else of any tool. That is the
+   * engine's `awaitedPendingTool` rule, so a parallel sibling that started
+   * after the awaited call is not marked waited in its place. Undefined when
+   * nothing started this turn is pending, which is when the engine's own stack
+   * is empty too.
    */
   private newestPendingStart(state: SessionToolState, toolName?: string): PendingToolStart | undefined {
     if (toolName) {
@@ -601,6 +597,10 @@ export class UsageAccumulator {
     return this.newestPendingStartOf(state, () => true);
   }
 
+  /**
+   * The newest pending call `matches` accepts: the last id start (Map order is
+   * insertion order) or the last id-less one, whichever began later.
+   */
   private newestPendingStartOf(
     state: SessionToolState,
     matches: (pending: PendingToolStart) => boolean,

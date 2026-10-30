@@ -44,11 +44,15 @@ const OSC_PROGRAM_STATUS_PREFIX = '\x1b]7501;';
  */
 const MAX_CARRY = 4096;
 
-/** The kind Goose's `kind` field names, as Kangentic's wait kind. */
-const WAIT_KIND_BY_GOOSE_KIND: Record<string, PermissionWaitKind> = {
-  question: 'question',
-  permission: 'approval',
-};
+/**
+ * The kind Goose's `kind` field names, as Kangentic's wait kind. A Map, not an
+ * object literal: the field is text from the terminal, and `kind=constructor`
+ * would read a function off `Object.prototype` as the wait kind.
+ */
+const WAIT_KIND_BY_GOOSE_KIND = new Map<string, PermissionWaitKind>([
+  ['question', 'question'],
+  ['permission', 'approval'],
+]);
 
 /** States that end a wait without Goose saying it went back to work. */
 const SETTLED_STATES = new Set(['idle', 'done', 'error', 'clear']);
@@ -108,7 +112,7 @@ export class GooseProgramStatusParser implements StreamOutputParser {
     const state = fields.get('state');
     if (state === 'blocked') {
       this.waiting = true;
-      const waitKind = WAIT_KIND_BY_GOOSE_KIND[fields.get('kind') ?? ''];
+      const waitKind = WAIT_KIND_BY_GOOSE_KIND.get(fields.get('kind') ?? '');
       return { ts: now, type: EventType.Idle, detail: IdleReason.Permission, ...(waitKind ? { waitKind } : {}) };
     }
     if (!this.waiting) return null;
