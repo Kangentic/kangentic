@@ -97,6 +97,9 @@ vi.mock('../../../src/main/ipc/helpers/project-repos', () => ({
 }));
 vi.mock('../../../src/main/ipc/helpers/agent-spawn', () => ({
   autoSpawnForTask: (...args: unknown[]) => mockAutoSpawnForTask(...(args as [])),
+  // resumeTaskSession reads it when handing a resumed session its opening
+  // message; these tests resume nothing that carries one.
+  resolveInjectionVerifier: () => null,
 }));
 vi.mock('../../../src/main/ipc/handlers/session-reconcile', () => ({
   // Overridable per test: startTaskSession calls it for its own decision and
