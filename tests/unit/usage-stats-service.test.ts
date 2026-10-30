@@ -466,8 +466,19 @@ describe('usage-stats service: the Tokens view by-model series', () => {
   });
 });
 
+/**
+ * A minute before `nowMs`, but never before that day's local midnight, where
+ * the 'today' window starts. A run in the first minute after midnight put the
+ * plain minute-ago seed in yesterday, outside the window, and the window read 0.
+ */
+function aMinuteAgoToday(nowMs: number = Date.now()): number {
+  const midnight = new Date(nowMs);
+  midnight.setHours(0, 0, 0, 0);
+  return Math.max(midnight.getTime(), nowMs - 60_000);
+}
+
 const backgroundGroup = (overrides: Partial<BackgroundCallGroupRow> = {}): BackgroundCallGroupRow => ({
-  bucketStartMs: Date.now() - 60_000,
+  bucketStartMs: aMinuteAgoToday(),
   job: 'condition_check',
   agent: 'claude',
   modelId: 'claude-haiku-5-5',
@@ -1183,15 +1194,15 @@ describe('usage-stats service: app-wide rollup', () => {
   });
 
   it('keeps subagent tokens OUT of the main-thread KPI fields and series', async () => {
-    const nowMs = Date.now();
+    const seedMs = aMinuteAgoToday();
     const { service } = makeService([{
       id: 'p1',
       name: 'One',
       rows: [makeRow()],
-      groups: [{ bucketStartMs: nowMs - 60_000, modelId: 'model-x', inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
+      groups: [{ bucketStartMs: seedMs, modelId: 'model-x', inputTokens: 200, outputTokens: 100, cacheCreationTokens: 10, cacheReadTokens: 1000, turnCount: 2, sessionRecordId: 'session-1' }],
       // A realistic fan-out: an order of magnitude more than the driver.
       subagents: [
-        { tsMs: nowMs - 60_000, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
+        { tsMs: seedMs, agentType: 'review-finder', inputTokens: 9000, outputTokens: 3000, cacheCreationTokens: 500, cacheReadTokens: 2_400_000, turnCount: 96, subagentCount: 4, nestedTurnCount: 0, nestedSubagentCount: 0, maxSpawnDepth: 1 },
       ],
     }]);
 
