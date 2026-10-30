@@ -8,6 +8,7 @@ import { getProjectDb } from '../../db/database';
 import { waitForTurnCompletion } from '../../transition-engine/turn-completion';
 import { trackTurnEndFollowUp } from './turn-end-passes';
 import { deliverAgentMessageAndWait } from './agent-message-delivery';
+import { holdTaskMessage } from '../../held-messages/held-messages';
 
 /**
  * Deliver an automation's message to a running session and WAIT for it to
@@ -54,8 +55,11 @@ const FOLLOW_UP_SETTLE_MS = 3_000;
  * It waits for that agent's turn to end, so it lands AFTER the destination
  * column's own On task enter rows (a message they sent starts a turn first),
  * and so a long first turn there never holds up the move that triggered it. A
- * move made meanwhile cancels it (`supersedeTurnEndWork`), and a column with
- * no agent has nobody to hand it to, which is logged and dropped.
+ * move made meanwhile cancels it (`supersedeTurnEndWork`). Where no agent runs
+ * on the task (a column that starts none, a paused agent, a spawn that
+ * failed), or the agent exits before its turn ends, the message is held for
+ * the task's next agent (src/main/held-messages). A move into Done holds
+ * nothing, so there it is logged and dropped.
  */
 export async function deliverMessageAfterMove(
   context: IpcContext,
@@ -71,15 +75,22 @@ export async function deliverMessageAfterMove(
     if (controller.signal.aborted) return;
     const repos = getProjectRepos(context, projectId);
     const task = repos.tasks.getById(taskId);
-    if (!task?.session_id) {
-      console.log(`[move-message] No agent in ${columnName} to receive the moved task's message (task ${taskId.slice(0, 8)}).`);
+    if (!task) return;
+    // Liveness, not `task.session_id`: a paused agent's id can outlive its PTY.
+    const liveSession = context.sessionManager.findLiveSessionByTaskId(taskId);
+    const sessionId = liveSession && context.sessionManager.isWritable(liveSession.id) ? liveSession.id : null;
+    if (!sessionId) {
+      holdMovedMessage(context, projectId, taskId, columnName, message);
       return;
     }
-    const sessionId = task.session_id;
     const settled = await waitForTurnCompletion(context.sessionManager, sessionId, {
       signal: controller.signal,
       timeoutMs: FOLLOW_UP_WAIT_MS,
     });
+    if (settled === 'exited' && !controller.signal.aborted) {
+      holdMovedMessage(context, projectId, taskId, columnName, message);
+      return;
+    }
     if (settled !== 'completed') return;
     const sessionRepo = new SessionRepository(getProjectDb(projectId));
     await deliverMessageToSession(context, {
@@ -94,5 +105,15 @@ export async function deliverMessageAfterMove(
     console.error(`[move-message] The message for ${columnName} was not delivered (task ${taskId.slice(0, 8)}):`, error);
   } finally {
     release();
+  }
+}
+
+/** Hold a moved task's message for its next agent, or log why it cannot be. */
+function holdMovedMessage(context: IpcContext, projectId: string, taskId: string, columnName: string, message: string): void {
+  const outcome = holdTaskMessage(context, { projectId, taskId, message });
+  if (outcome.status === 'held') {
+    console.log(`[move-message] No agent is running in ${columnName}; the moved task's message is held for its next agent (task ${taskId.slice(0, 8)}).`);
+  } else {
+    console.log(`[move-message] No agent in ${columnName} to receive the moved task's message, and it is not held (task ${taskId.slice(0, 8)}): ${outcome.error}`);
   }
 }

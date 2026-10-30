@@ -42,6 +42,7 @@ import { retireRecord } from './session-lifecycle';
 import { resolveEffectivePermissionMode } from './spawn-preamble';
 import { resolveSpawnIntent } from './spawn-intent';
 import { migrateResumeCwdIfRenamed } from './resume-cwd-migration';
+import { resumePromptRidesCommandLine } from './resume-prompt-delivery';
 import { reconcileResumeAgentSessionId } from './resume-id-reconcile';
 import { assessResumeConversation, resolveResumeLineage, type StartOverReason } from './resume-conversation-guard';
 import { commandLineLength } from '../agent/shared/prompt-budget';
@@ -143,11 +144,19 @@ export interface SpawnOutcome {
    */
   recapOnly: boolean;
   /**
-   * True when the spawn ran fresh with the task template as its prompt, so the
-   * message the resume carried is not in it. The caller delivers that message
-   * after the spawn, as it does on any fresh spawn.
+   * The text the caller handed this spawn that is not in its command, for the
+   * caller to type in once the agent is ready. Null when nothing was left out.
+   *
+   * Set in two cases. A fresh spawn takes the task template over the resume's
+   * prompt (a resume that started over, a forced-fresh spawn), so the carried
+   * message is left out. And a resume whose prompt cannot ride its command
+   * line (`resumePromptRidesCommandLine`: an adapter whose CLI takes no prompt
+   * on resume, a launch that would flatten its lines, a prompt over the cap)
+   * keeps the whole prompt off it, the handoff pointer included. Several CLIs
+   * once dropped a resume prompt while the spawn reported it sent, so the
+   * caller skipped its typed fallback and the column's message never arrived.
    */
-  resumePromptUnsent: boolean;
+  unsentPrompt: string | null;
 }
 
 /** Options shared by every way into an automation group. */
@@ -787,7 +796,13 @@ export class TransitionEngine {
     // ensureTrust and before buildCommand (spawn-entry-point-parity). The
     // session row below persists the ORIGINAL prompt: flattening is a
     // delivery detail, not what the user wrote.
-    const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
+    let launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
+    // A resume's prompt rides its command line only where it arrives whole
+    // (resume-prompt-delivery.ts). Otherwise it is kept off the command line
+    // and handed back in `unsentPrompt`, and the caller types it in.
+    const resumePromptKeptOff = canResume && prompt !== undefined && prompt.trim() !== ''
+      && !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt, launchStrategy: launch.strategy, shell });
+    if (resumePromptKeptOff) launch = { ...launch, prompt: undefined };
     const executionTarget = resolveExecutionTarget(agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
     const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
     const commandOptions = {
@@ -914,12 +929,21 @@ export class TransitionEngine {
     // first turn is a summary for the user, so it runs no turn-end rows.
     if (recapOnly) markRecapSession(session.id);
     if (expiredNotice) this.services.onConversationExpired?.(expiredNotice);
+    // A resume whose prompt was kept off its command line opens idle, and the
+    // caller types the prompt in once the agent is ready. Claude's resume
+    // reloads its context with no hook, which the status heartbeat would read as
+    // thinking for 30 s, holding that delivery back; the restart path asserts
+    // idle for the same reason. Any real turn hook clears it.
+    if (resumePromptKeptOff) this.sessionManager.markIdleAuthoritative(session.id);
     // A fresh spawn takes the template over `resumePrompt` (resolveSpawnIntent),
     // so a resume that started over, or a forced-fresh spawn, left the carried
     // message out. A recap-only start withholds it on purpose instead.
-    const resumePromptUnsent = !canResume && !recapOnly
+    const templateTookSlot = !canResume && !recapOnly
       && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
-    return { startOver, recapOnly, resumePromptUnsent };
+    const unsentPrompt = resumePromptKeptOff
+      ? prompt ?? null
+      : (templateTookSlot ? resumePrompt ?? null : null);
+    return { startOver, recapOnly, unsentPrompt };
   }
 
 }

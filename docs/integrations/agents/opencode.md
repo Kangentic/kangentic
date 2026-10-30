@@ -30,7 +30,7 @@ opencode [--session <id>] [--prompt <text>]
 Important shape constraints (verified against /anomalyco/opencode docs):
 
 - The TUI's positional argument is a **project directory**, not a prompt. Initial prompts must go through `--prompt <text>` or OpenCode tries to chdir into the prompt text. The PTY layer already sets the shell cwd, so Kangentic never emits a positional or `--dir` value.
-- Resume uses `--session <id>` (alias `-s`) on the TUI command - not the `run` subcommand. The prompt is omitted on resume so the user continues the prior conversation (mirrors Claude's `--resume` convention).
+- Resume uses `--session <id>` (alias `-s`) on the TUI command - not the `run` subcommand. A resume passes no `--prompt`. The TUI lists `--session` and `--prompt` side by side, but neither `opencode --help` nor the docs say the prompt runs on a session it continues, so the adapter declares `resumePromptDelivery: 'typed'` and Kangentic types a resume's message in once the TUI is ready (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)).
 - Windows shells get embedded `"` characters in the prompt rewritten to `'` to keep the cmd.exe / PowerShell quoting parser happy.
 
 ## Permission Modes

@@ -102,6 +102,7 @@ const mockAdapter = {
   runtime: undefined as { statusFile?: { parseStatus: (raw: string) => unknown } } | undefined,
   locateSessionHistoryFile: vi.fn(async (): Promise<string | null> => null),
   proveConversationGone: undefined as AgentAdapter['proveConversationGone'],
+  resumePromptDelivery: 'command-line' as AgentAdapter['resumePromptDelivery'],
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -340,7 +341,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, false, '/code-review', undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
       expect(capturedOptions?.resume).toBe(true);
       expect(isRecapTurn(spawnedSessionId(sessionManager), aTurnStartedBeforeNow())).toBe(false);
     });
@@ -504,13 +505,13 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       expect(prompt.length).toBe(NO_ROOM_PROMPT.length);
       expect(prompt === NO_ROOM_PROMPT).toBe(true);
       expect(capturedOptions?.resume).toBe(false);
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
       // The notice still tells the user their conversation was replaced.
       expect(notices).toHaveLength(1);
     });
   });
 
-  describe('whether the message the resume carried reached the fresh session (resumePromptUnsent)', () => {
+  describe('whether the message the resume carried reached the fresh session (unsentPrompt)', () => {
     // A fresh spawn takes the task template over the carried message
     // (resolveSpawnIntent), so a resume that started over with a template left
     // the message out and the caller must deliver it after the spawn. Every case
@@ -533,7 +534,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, unsentPrompt: CARRIED_MESSAGE });
       const prompt = capturedOptions?.prompt ?? '';
       expect(capturedOptions?.resume).toBe(false);
       // The template's task block is the prompt after the recap, and the message is nowhere in it.
@@ -551,7 +552,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
       expect(capturedOptions?.prompt?.endsWith(`\n\n${CARRIED_MESSAGE}`)).toBe(true);
     });
 
@@ -566,7 +567,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { isolatedSwimlaneId: ISOLATED_LANE_ID },
       );
 
-      expect(outcome).toMatchObject({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toMatchObject({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
     });
 
     it('is false for the main session: its recap withholds the message on purpose, and says so', async () => {
@@ -578,7 +579,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, false, CARRIED_MESSAGE, undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, unsentPrompt: null });
       expect(capturedOptions?.prompt).not.toContain('/code-review');
     });
 
@@ -594,7 +595,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { forceFresh: true },
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: CARRIED_MESSAGE });
       expect(capturedOptions?.resume).toBe(false);
       const prompt = capturedOptions?.prompt ?? '';
       expect(prompt).toContain('Fix login flow');
@@ -609,7 +610,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         undefined, { forceFresh: true },
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
       expect(capturedOptions?.resume).toBe(false);
       expect(capturedOptions?.prompt).toBe(CARRIED_MESSAGE);
     });
@@ -628,7 +629,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
       );
 
       // A legacy row carries no resume message, so none is dropped.
-      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, unsentPrompt: null });
       expect(capturedOptions?.resume).toBe(false);
     });
 
@@ -640,7 +641,7 @@ describe('TransitionEngine - the recap of an expired conversation (executeSpawnA
         makeTask() as unknown as SpawnTask, null, undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
     });
   });
 

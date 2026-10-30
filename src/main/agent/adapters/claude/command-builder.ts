@@ -377,7 +377,8 @@ export class CommandBuilder {
       parts.push('--print');
     }
 
-    // The prompt as positional argument (omitted for resumed sessions)
+    // The prompt as positional argument, on a fresh start and on a resume, where
+    // it is the next turn of the resumed conversation.
     if (options.prompt) {
       // For double-quoted shells (PowerShell, cmd), replace double quotes
       // with single quotes. quoteArg does the same for every value it quotes

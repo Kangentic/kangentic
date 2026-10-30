@@ -448,6 +448,27 @@ export interface AgentAdapter {
    */
   readonly supportsCallerSessionId: boolean;
 
+  /**
+   * How a message reaches this agent when it RESUMES a conversation: the
+   * column's message, a plan continuation, a handoff pointer, held messages.
+   *
+   * - `'command-line'`: the resume command carries a prompt, so the message
+   *   rides it (`claude --resume <id> "..."`) and nothing is typed. The builder
+   *   must pass `options.prompt` on a resume.
+   * - `'typed'`: the CLI takes no prompt with a resume, or does not say it does.
+   *   The engine keeps the message off the command line and reports it unsent
+   *   (`SpawnOutcome.unsentPrompt`), and the caller types it in once the agent
+   *   is ready.
+   * - `'no-resume'`: the adapter never resumes. Every start is fresh, with the
+   *   message as its prompt or typed after it.
+   *
+   * Required, so a new adapter decides. A builder once dropped the prompt on a
+   * resume while the spawn reported it sent, and the column's message was lost
+   * for five agents. `tests/unit/resume-prompt-delivery-parity.test.ts` builds
+   * each adapter's real resume command and holds this value to what it does.
+   */
+  readonly resumePromptDelivery: 'command-line' | 'typed' | 'no-resume';
+
   /** Supported permission modes with agent-specific labels. */
   readonly permissions: AgentPermissionEntry[];
 

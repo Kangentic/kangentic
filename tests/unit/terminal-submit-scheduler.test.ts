@@ -1068,6 +1068,261 @@ describe('TerminalSubmitScheduler', () => {
 
       expect(terminalSubmit.calls).toHaveLength(0);
     });
+
+    it('reports a waiting burst it drops as cancelled, with nothing typed', async () => {
+      // A held message riding this burst settles from its report. Dropped in
+      // silence, the burst left the message claimed with nothing to deliver it.
+      sessionManager.registry.set('s1', { status: 'running' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('Review the diff')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+      scheduler.cancel('task-1');
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({ outcome: 'cancelled', commands: ['Review the diff'], textReachedAgent: false });
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('reports each queued follow-up it drops as cancelled', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      const followUpReports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')]);
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], { onOutcome: (report) => followUpReports.push(report) });
+      await tick();
+      scheduler.cancel('task-1');
+      terminalSubmit.finishLatest();
+      await tick();
+
+      expect(followUpReports).toEqual([expect.objectContaining({ outcome: 'cancelled', commands: ['/second'], textReachedAgent: false })]);
+    });
+
+    it('reports a burst whose session exits while it waits once, as failed with nothing typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+      sessionManager.emitExit('s1');
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({ outcome: 'failed', textReachedAgent: false });
+    });
+  });
+
+  /**
+   * `InjectionReport.textReachedAgent: false` is how a held message learns that
+   * nothing of it reached the agent, so it goes back on hold instead of being
+   * marked failed. Every report site that ends before the first keystroke must
+   * set it, each burst must be reported exactly once, and a burst whose typing
+   * began must carry no `textReachedAgent` key at all (absent means "typing
+   * began, or the reporter cannot tell"; `false` would be a false claim there).
+   * Each burst gets its own `reports` array so "exactly once" is attributable.
+   */
+  describe('textReachedAgent: reports for bursts that end before anything is typed', () => {
+    it('reports a schedule against a session that is gone once, with nothing typed', () => {
+      // No registry row at all. An `exited` row would take the immediate path
+      // and start a burst, because the scheduler only checks for a missing row.
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('Review the diff')], {
+        onOutcome: (report) => reports.push(report),
+      });
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['Review the diff'],
+        reason: 'The session was no longer running.',
+        textReachedAgent: false,
+      });
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it('reports a deferred burst whose session exits during the turn wait once, with nothing typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      // Thinking, so the quiet window can never complete the wait on its own.
+      sessionManager.activity.s1 = 'thinking';
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/code-review')], {
+        mode: 'deferred',
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+      expect(reports).toHaveLength(0);
+
+      sessionManager.emitExit('s1');
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/code-review'],
+        reason: 'The session exited before its turn finished, so the command was not sent.',
+        textReachedAgent: false,
+      });
+
+      // Run the clock past the 120s turn-wait timeout: an exit that fell through
+      // to the timeout branch would deliver, or report a second time.
+      vi.advanceTimersByTime(130_000);
+      await tick();
+      expect(reports).toHaveLength(1);
+      expect(terminalSubmit.calls).toHaveLength(0);
+      expect(scheduler.hasPending('task-1')).toBe(false);
+    });
+
+    it('reports a deferred burst a newer deferred burst supersedes once, as cancelled with nothing typed', async () => {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.activity.s1 = 'thinking';
+      const supersededReports: InjectionReport[] = [];
+      const replacementReports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], {
+        mode: 'deferred',
+        onOutcome: (report) => supersededReports.push(report),
+      });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], {
+        mode: 'deferred',
+        onOutcome: (report) => replacementReports.push(report),
+      });
+
+      // Reported synchronously, the moment the newer burst takes the slot.
+      expect(supersededReports).toHaveLength(1);
+      expect(supersededReports[0]).toMatchObject({
+        outcome: 'cancelled',
+        commands: ['/first'],
+        reason: 'A newer command for this task replaced it before it was sent.',
+        textReachedAgent: false,
+      });
+      expect(replacementReports).toHaveLength(0);
+
+      // Let the replacement's turn complete and deliver. The superseded wait was
+      // aborted, and its stale continuation must stay silent.
+      await tick();
+      sessionManager.emitActivity('s1', 'idle');
+      await tick();
+      vi.advanceTimersByTime(1600);
+      await tick();
+      terminalSubmit.finishLatest({ outcome: 'confirmed' });
+      await tick();
+
+      expect(supersededReports).toHaveLength(1);
+      expect(replacementReports).toHaveLength(1);
+      expect(replacementReports[0].outcome).toBe('confirmed');
+    });
+
+    it('reports a waiting fresh-spawn burst a newer fresh-spawn burst replaces once, as cancelled with nothing typed', async () => {
+      // The second schedule must be freshlySpawned too. An immediate-mode second
+      // schedule on a running session does not take this branch at all.
+      sessionManager.registry.set('s1', { status: 'running' });
+      const replacedReports: InjectionReport[] = [];
+      const currentReports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/first')], {
+        freshlySpawned: true,
+        onOutcome: (report) => replacedReports.push(report),
+      });
+      await tick();
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/second')], {
+        freshlySpawned: true,
+        onOutcome: (report) => currentReports.push(report),
+      });
+      await tick();
+
+      expect(replacedReports).toHaveLength(1);
+      expect(replacedReports[0]).toMatchObject({
+        outcome: 'cancelled',
+        commands: ['/first'],
+        reason: 'A newer command for this task replaced it before it was sent.',
+        textReachedAgent: false,
+      });
+      expect(currentReports).toHaveLength(0);
+
+      sessionManager.emitActivity('s1', 'thinking');
+      await tick();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(MockTerminalSubmit.texts(terminalSubmit.calls[0])).toEqual(['/second']);
+      terminalSubmit.finishLatest({ outcome: 'confirmed' });
+      await tick();
+
+      expect(replacedReports).toHaveLength(1);
+      expect(currentReports).toHaveLength(1);
+      expect(currentReports[0].outcome).toBe('confirmed');
+    });
+
+    it.each([
+      { label: 'a freshly spawned session that shows no activity', status: 'running' },
+      { label: 'a queued session that never starts', status: 'queued' },
+    ])('reports the hard timeout while waiting on $label once, as failed with nothing typed', async ({ status }) => {
+      // Red for a double report: the hard-timer callback drops its own wait
+      // before it calls `cancel`. Without that, `cancel` finds the pending wait
+      // and reports it `cancelled` too, ahead of the `failed` report below.
+      sessionManager.registry.set('s1', { status });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        freshlySpawned: true,
+        timeoutMs: 1000,
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+
+      vi.advanceTimersByTime(1500);
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/test'],
+        reason: 'The agent never became ready, so the command was not sent.',
+        textReachedAgent: false,
+      });
+
+      // Past the 30s fallback, then every late signal the dropped wait could
+      // still have reacted to: none may report again or deliver.
+      vi.advanceTimersByTime(60_000);
+      sessionManager.emitSessionChanged('s1', { status: 'running' });
+      sessionManager.emitActivity('s1', 'thinking');
+      sessionManager.emitExit('s1');
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(terminalSubmit.calls).toHaveLength(0);
+    });
+
+    it.each<{ label: string; result: Partial<SubmitKeystrokesResult> }>([
+      { label: 'confirmed', result: { outcome: 'confirmed' } },
+      { label: 'unconfirmed', result: { outcome: 'unconfirmed', unconfirmedCommands: ['/test'] } },
+      { label: 'failed with no escalation handler', result: { outcome: 'failed', unconfirmedCommands: ['/test'] } },
+    ])('leaves textReachedAgent off the report of a $label delivery, since typing began', async ({ result }) => {
+      // Absent, not `false` and not `undefined`: the key must not exist, so a
+      // held message does not mistake a typed command for one that never went.
+      sessionManager.registry.set('s1', { status: 'running' });
+      const reports: InjectionReport[] = [];
+
+      scheduler.scheduleKeystrokes('task-1', 's1', [plain('/test')], {
+        onOutcome: (report) => reports.push(report),
+      });
+      await tick();
+      terminalSubmit.finishLatest(result);
+      await tick();
+
+      expect(reports).toHaveLength(1);
+      expect(reports[0].outcome).toBe(result.outcome);
+      expect('textReachedAgent' in reports[0]).toBe(false);
+    });
   });
 
   describe('cancelAll', () => {

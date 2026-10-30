@@ -37,6 +37,8 @@ export class GeminiAdapter implements AgentAdapter {
   readonly displayName = 'Gemini CLI';
   readonly sessionType = 'gemini_agent';
   readonly supportsCallerSessionId = false;
+  /** The resume command carries the prompt (positional, or `-p` when non-interactive). */
+  readonly resumePromptDelivery = 'command-line' as const;
   // Session files, its hook, and the shutdown banner (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // The folder's `.gemini/settings.json` names the URL and token as env

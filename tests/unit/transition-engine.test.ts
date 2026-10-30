@@ -25,6 +25,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { TransitionEngine } from '../../src/main/transition-engine/transition-engine';
+import { RESUME_PROMPT_COMMAND_LINE_CAP } from '../../src/main/transition-engine/resume-prompt-delivery';
 import { buildTaskXml } from '../../src/main/agent/shared/prompt-xml';
 import { sanitizeForPty } from '../../src/shared/paths';
 import { migrateResumeCwdIfRenamed } from '../../src/main/transition-engine/resume-cwd-migration';
@@ -149,6 +150,7 @@ function makeSessionManager() {
       return { id: 'pty-session-1', status: 'running' };
     }),
     getShell: vi.fn(async () => 'bash'),
+    markIdleAuthoritative: vi.fn(),
     spawnedSessions,
   };
 }
@@ -203,6 +205,9 @@ const mockAdapter = {
   // Undefined by default, so no resume is ever proven expired; the
   // expired-conversation describe below sets Claude's real proof and resets it.
   proveConversationGone: undefined as AgentAdapter['proveConversationGone'],
+  // Claude's: a resume carries its prompt on the command line. The
+  // resume-prompt-delivery describe below sets 'typed' and resets it.
+  resumePromptDelivery: 'command-line' as AgentAdapter['resumePromptDelivery'],
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -1389,7 +1394,7 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
     expect(capturedOptions?.prompt).toContain('Fix login flow');
   });
 
-  describe('the message the downgraded resume carried (resumePromptUnsent)', () => {
+  describe('the message the downgraded resume carried (unsentPrompt)', () => {
     // `runSpawn` above carries no resumePrompt, so it cannot tell whether the
     // downgrade left a carried message out. These call the resume entry point
     // with one, the way a column move with a Send message row does.
@@ -1421,7 +1426,7 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
 
       // Not recap-only: a conversation that never started has nothing to recap,
       // so the downgrade is a plain fresh spawn and the message is still owed.
-      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: true });
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: '/code-review' });
       expect(capturedOptions?.resume).toBe(false);
       expect(capturedOptions?.prompt).toContain('Fix login flow');
       expect(capturedOptions?.prompt).not.toContain('/code-review');
@@ -1441,9 +1446,149 @@ describe('TransitionEngine - resume downgraded to fresh when the conversation wa
         null, true, '/code-review', undefined, 'claude',
       );
 
-      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, resumePromptUnsent: false });
+      expect(outcome).toEqual({ startOver: 'never-started', recapOnly: false, unsentPrompt: null });
       expect(capturedOptions?.prompt).toBe('/code-review');
     });
+  });
+});
+
+describe('TransitionEngine - a resume prompt that does not ride the command line (unsentPrompt)', () => {
+  // Codex, Copilot, Grok, OpenCode and Cursor once dropped the prompt from a
+  // resume command while the engine reported it sent, so the caller skipped
+  // its typed fallback and the column's message never arrived. The engine now
+  // decides whether a resume prompt rides, keeps one that does not off the
+  // command line, and names it in `unsentPrompt` for the caller to type.
+  const RECORD_ID = 'resumable-record-1';
+  const AGENT_SESSION_ID = 'agent-uuid-resumable';
+  let projectPath: string;
+  let capturedOptions: { resume?: boolean; prompt?: string } | undefined;
+
+  function resumableRepo() {
+    const sessionRepo = makeSessionRepo();
+    // No status.json is written, so the never-started guard finds no evidence
+    // and the record resumes as before.
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: RECORD_ID,
+      agent_session_id: AGENT_SESSION_ID,
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: projectPath,
+    });
+    return sessionRepo;
+  }
+
+  let sessionManager: ReturnType<typeof makeSessionManager>;
+
+  async function resumeWith(resumePrompt: string | undefined, handoffPromptPrefix?: string) {
+    sessionManager = makeSessionManager();
+    const { engine } = makeEngine({ sessionManager, sessionRepo: resumableRepo(), projectPath });
+    return engine.resumeSuspendedSession(
+      makeTask({ worktree_path: null }) as Parameters<typeof engine.resumeSuspendedSession>[0],
+      null, true, resumePrompt, undefined, 'claude', handoffPromptPrefix,
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedOptions = undefined;
+    mockAdapter.buildCommand.mockImplementation((options: { resume?: boolean; prompt?: string }) => {
+      capturedOptions = options;
+      return `claude ${options.prompt ?? ''}`;
+    });
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-te-resume-prompt-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(projectPath, { recursive: true, force: true });
+    mockAdapter.resumePromptDelivery = 'command-line';
+    resolveShimLaunchMock.mockImplementation(async (input) => ({
+      agentPath: input.agentPath,
+      prompt: input.prompt,
+      strategy: 'unchanged' as const,
+    }));
+  });
+
+  it('carries the prompt on the command line when the adapter\'s resume takes one', async () => {
+    const outcome = await resumeWith('/code-review');
+
+    expect(capturedOptions?.resume).toBe(true);
+    expect(capturedOptions?.prompt).toBe('/code-review');
+    expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
+    // The prompt starts a real turn, so the session is not asserted idle.
+    expect(sessionManager.markIdleAuthoritative).not.toHaveBeenCalled();
+  });
+
+  it('asserts idle on a resume whose prompt it kept off, so the typed delivery is not held back', async () => {
+    mockAdapter.resumePromptDelivery = 'typed';
+
+    await resumeWith('Review the diff');
+
+    expect(sessionManager.markIdleAuthoritative).toHaveBeenCalledWith('pty-session-1');
+  });
+
+  it('reports the prompt unsent, and keeps it off the command line, when the adapter types it instead', async () => {
+    mockAdapter.resumePromptDelivery = 'typed';
+
+    const outcome = await resumeWith('Address the review findings, then push a fix.');
+
+    // Red before the fix: the builder was handed the prompt and the outcome
+    // said nothing was owed, so the message was lost on these CLIs.
+    expect(capturedOptions?.resume).toBe(true);
+    expect(capturedOptions?.prompt).toBeUndefined();
+    expect(outcome.unsentPrompt).toBe('Address the review findings, then push a fix.');
+  });
+
+  it('names the handoff pointer unsent too, ahead of the carried message', async () => {
+    mockAdapter.resumePromptDelivery = 'typed';
+
+    const outcome = await resumeWith('Review the diff', 'The previous agent\'s history is at /mock/history.jsonl');
+
+    expect(capturedOptions?.prompt).toBeUndefined();
+    expect(outcome.unsentPrompt).toBe('The previous agent\'s history is at /mock/history.jsonl\n\nReview the diff');
+  });
+
+  it('keeps a multi-line prompt off a launch that would flatten it, so its lines arrive whole', async () => {
+    resolveShimLaunchMock.mockImplementation(async (input) => ({
+      agentPath: input.agentPath,
+      prompt: input.prompt?.replace(/\n+/g, ' '),
+      strategy: 'flattened-prompt' as const,
+    }));
+
+    const outcome = await resumeWith('Address the review findings.\n\n1. Lower the cap.\n\n2. Rethrow the last error.');
+
+    expect(capturedOptions?.prompt).toBeUndefined();
+    expect(outcome.unsentPrompt).toBe('Address the review findings.\n\n1. Lower the cap.\n\n2. Rethrow the last error.');
+  });
+
+  it('still carries a one-line prompt on a flattening launch, which loses nothing', async () => {
+    resolveShimLaunchMock.mockImplementation(async (input) => ({
+      agentPath: input.agentPath,
+      prompt: input.prompt,
+      strategy: 'flattened-prompt' as const,
+    }));
+
+    const outcome = await resumeWith('/code-review');
+
+    expect(capturedOptions?.prompt).toBe('/code-review');
+    expect(outcome.unsentPrompt).toBeNull();
+  });
+
+  it('keeps a prompt over the command-line cap off the command line', async () => {
+    const longPrompt = 'x'.repeat(RESUME_PROMPT_COMMAND_LINE_CAP + 1);
+
+    const outcome = await resumeWith(longPrompt);
+
+    expect(capturedOptions?.prompt).toBeUndefined();
+    expect(outcome.unsentPrompt).toBe(longPrompt);
+  });
+
+  it('reports nothing unsent for a resume with no prompt at all', async () => {
+    mockAdapter.resumePromptDelivery = 'typed';
+
+    const outcome = await resumeWith(undefined);
+
+    expect(capturedOptions?.prompt).toBeUndefined();
+    expect(outcome.unsentPrompt).toBeNull();
   });
 });
 
@@ -1532,8 +1677,8 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
     );
 
     // recapOnly: the recap IS the prompt and the message is withheld on purpose,
-    // so it is not "unsent" in the sense `resumePromptUnsent` reports.
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, resumePromptUnsent: false });
+    // so it is not "unsent" in the sense `unsentPrompt` reports.
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: true, unsentPrompt: null });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.sessionId).not.toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toContain('deleted it after its retention period');
@@ -1583,7 +1728,7 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
 
     // skipPromptTemplate is true, so the message IS the fresh prompt (it is the
     // last thing in it): nothing was left out for the caller to deliver.
-    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, resumePromptUnsent: false });
+    expect(outcome).toEqual({ startOver: 'expired', recapOnly: false, unsentPrompt: null });
     expect(capturedOptions?.resume).toBe(false);
     expect(capturedOptions?.prompt).toContain('for context');
     expect(capturedOptions?.prompt).not.toContain('then wait');
@@ -1621,7 +1766,7 @@ describe('TransitionEngine - a resume whose conversation the agent deleted start
     );
 
     // A resume that went ahead carries the message as its own prompt.
-    expect(outcome).toEqual({ startOver: null, recapOnly: false, resumePromptUnsent: false });
+    expect(outcome).toEqual({ startOver: null, recapOnly: false, unsentPrompt: null });
     expect(capturedOptions?.resume).toBe(true);
     expect(capturedOptions?.sessionId).toBe(AGENT_SESSION_ID);
     expect(capturedOptions?.prompt).toBe('/code-review');

@@ -59,7 +59,7 @@ Both of those produce a **permanent** false negative rather than an intermittent
 
 The wrapping half of that risk is partly mechanised: `tests/unit/command-injection-real-capture-extractors.test.ts` runs each extractor over a real captured history file committed under `tests/fixtures/` and asserts it hands back text that trim-equals what was typed. A hand-authored fixture cannot do this - it pins our belief about the shape rather than the shape itself. Codex, Qwen, Kimi, and Aider have such a capture; Copilot, OpenCode, Grok, and Antigravity do not, and adding one is the cheapest single contribution toward graduating any of them.
 
-Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
+Mechanically: `canEscalateOnVerificationFailure() === false` makes `prepareInjectionPlan` mark the auto_command `escalatable: false`, and `TerminalSubmitScheduler.escalate` filters it out. So does a `resumePromptDelivery` other than `command-line` (Copilot, Grok, OpenCode and Cursor are `typed`, Aider is `no-resume`): the restart would type the command again rather than carry it. Worst case for a confirm-only adapter is a `failed` outcome and a notice, never a respawn. The tiers are pinned per adapter in `tests/unit/agent-submission-verifier-shape.test.ts`, so flipping one without recording the evidence fails CI.
 
 ### Graduating an adapter (the contributor recipe)
 
@@ -76,7 +76,7 @@ To force the negative case, or to avoid spending a turn at all, point `agent.cli
 
 **3. Add a real capture, if the adapter has none.** Sanitize one of that agent's own history files into `tests/fixtures/` and extend `tests/unit/command-injection-real-capture-extractors.test.ts`. This is what proves the CLI does not wrap or decorate the stored text, and it is the cheapest single contribution for Copilot or OpenCode.
 
-**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part.
+**4. Flip the flag and say why.** Drop that adapter's `canEscalateOnVerificationFailure` override, update its row in the matrix above and its entry in `agent-submission-verifier-shape.test.ts`, and record what you ran. **Do not drop the override because the parser tests pass** - the parser was never the risky part. Dropping it lets an adapter escalate only if its `resumePromptDelivery` is `command-line`; a `typed` or `no-resume` one (Copilot, Grok, OpenCode, Cursor, Aider, Ollama, Warp) still stops at `failed`.
 
 Any subset of this is worth a PR. Step 1 alone puts numbers in the table; step 3 alone strengthens an adapter without touching its tier. And if an adapter simply misbehaves for you, the useful bug report is the agent, the task's `auto_command_state`, and whether the session was local or remote.
 

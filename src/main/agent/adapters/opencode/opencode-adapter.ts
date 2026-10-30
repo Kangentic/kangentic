@@ -126,6 +126,12 @@ export class OpenCodeAdapter implements AgentAdapter {
   readonly displayName = 'OpenCode';
   readonly sessionType = 'opencode_agent';
   readonly supportsCallerSessionId = false;
+  /**
+   * Typed. The TUI lists `--session` and `--prompt` side by side, but neither
+   * `opencode --help` nor its docs say the prompt runs on a session it
+   * continues, so a message is typed in once the resume is ready.
+   */
+  readonly resumePromptDelivery = 'typed' as const;
   // Its plugin hook and labelled banner (`runtime.sessionId`).
   readonly capturesInteractiveSessionId = true;
   // The whole config in `OPENCODE_CONFIG_CONTENT`, the session's own env.

@@ -146,7 +146,7 @@ grok [-s <uuid> | --resume <uuid>] --permission-mode <mode> [--allow "MCPTool(ka
 - `--permission-mode` is always emitted (see below).
 - `--allow "MCPTool(kangentic__*)"` rides along only when the Kangentic MCP server is attached, so a board-driven session never stalls on grok's interactive approval prompt for Kangentic's own tools. An explicit user deny still wins.
 - Model and effort overrides pass straight through as `--model <slug>` and `--reasoning-effort <effort>` when set.
-- The interactive prompt is delivered after `--` (end-of-options), so prompt text starting with a dash can never be parsed as a CLI option regardless of shell quoting. Non-interactive spawns (`nonInteractive` transition actions) use `-p "<prompt>" --output-format plain` instead, which prints one turn and exits. A resume passes no prompt at all.
+- The interactive prompt is delivered after `--` (end-of-options), so prompt text starting with a dash can never be parsed as a CLI option regardless of shell quoting. Non-interactive spawns (`nonInteractive` transition actions) use `-p "<prompt>" --output-format plain` instead, which prints one turn and exits. A resume passes no prompt. `grok [PROMPT]` is "Initial prompt for the interactive session", but neither `grok --help` nor its docs say it runs on a `--resume`, so the adapter declares `resumePromptDelivery: 'typed'` and Kangentic types a resume's message in once Grok is ready (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)).
 
 ## WSL
 

@@ -21,7 +21,7 @@
 
 ## Sessions and diagnostics
 
-* [Session tools](session-tools.md) - MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes and loop guards, mark_background_service, and reserve_dev_ports and check_dev_ports.
+* [Session tools](session-tools.md) - MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes, held messages and loop guards, mark_background_service, and reserve_dev_ports and check_dev_ports.
 * [Diagnostics tools](diagnostics-tools.md) - Read-only MCP tools for debugging Kangentic itself: query_db under query_only, tail_logs, get_recent_crashes, get_process_metrics, get_ipc_log (needs developer.recordIpcTraffic) and list_worktrees with ahead and behind counts.
 
 ## Browser

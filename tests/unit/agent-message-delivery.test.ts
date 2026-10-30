@@ -270,6 +270,55 @@ describe('deliverAgentMessageInBackground', () => {
 
     expect(turnWaits).toHaveLength(0);
     expect(reports.map((report) => report.outcome)).toEqual(['failed']);
+    // Nothing was written, so a held message carried by it goes back on hold.
+    expect(reports[0].textReachedAgent).toBe(false);
+  });
+
+  it('says nothing reached the agent for a paste superseded or failed before it wrote', async () => {
+    const context = makeContext();
+    const reports: InjectionReport[] = [];
+    for (const message of ['superseded\nmessage', 'exited\nmessage']) {
+      deliverAgentMessageInBackground(context as never, {
+        taskId: TASK_ID,
+        sessionId: SESSION_ID,
+        message,
+        mode: 'immediate',
+        verifier: null,
+        onOutcome: (report) => reports.push(report),
+      });
+    }
+    await settle();
+    turnWaits[0].resolve('exited');
+    await settle();
+    supersedeMessageDeliveries(TASK_ID);
+    await settle();
+
+    expect(reports.map((report) => [report.outcome, report.textReachedAgent])).toEqual([
+      ['failed', false],
+      ['cancelled', false],
+    ]);
+  });
+
+  it('leaves the flag off once the paste began writing, where a failure may have landed part of it', async () => {
+    const context = makeContext();
+    context.terminalSubmit.submitContent.mockRejectedValueOnce(new Error('no submission evidence'));
+    const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    const reports: InjectionReport[] = [];
+    deliverAgentMessageInBackground(context as never, {
+      taskId: TASK_ID,
+      sessionId: SESSION_ID,
+      message: MULTI_LINE,
+      mode: 'immediate',
+      verifier: null,
+      onOutcome: (report) => reports.push(report),
+    });
+    await settle();
+    turnWaits[0].resolve('completed');
+    await settle();
+
+    expect(reports.map((report) => report.outcome)).toEqual(['failed']);
+    expect(reports[0].textReachedAgent).toBeUndefined();
+    consoleErrorSpy.mockRestore();
   });
 });
 

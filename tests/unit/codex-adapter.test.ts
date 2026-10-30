@@ -185,13 +185,17 @@ describe('Codex Adapter', () => {
       expect(command).toContain('gpt-5.5');
     });
 
-    it('resume command omits prompt even if provided', () => {
+    it('resume command carries the prompt as its last argument: `codex resume <id> [PROMPT]`', () => {
+      // A resume's prompt is the message the spawn chose to carry (a column's
+      // message, held messages). Dropped, it was lost while the spawn reported
+      // it sent (resumePromptDelivery: 'command-line').
       const command = adapter.buildCommand(makeOptions({
         resume: true,
         sessionId: 'sess-abc-123',
-        prompt: 'this should be ignored',
+        prompt: 'Address the review findings',
       }));
-      expect(command).not.toContain('this should be ignored');
+      expect(command).toContain('resume sess-abc-123');
+      expect(command.endsWith('"Address the review findings"')).toBe(true);
     });
 
     it('resume command adds --disable apps when the disableApps launch option is enabled', () => {

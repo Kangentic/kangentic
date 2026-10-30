@@ -25,6 +25,8 @@ Detection follows the standard pattern: check `config.agent.cliPaths.copilot`, f
 
 Copilot CLI 1.0.51+ supports caller-owned session IDs via `--session-id <uuid>` (same semantics as Claude's `--session-id`): passing a new UUID starts a fresh session with that ID, passing an existing UUID resumes it. The builder used `--resume <uuid>`, which 1.0.97 refuses for an id it has not seen ("No session, task, or name matched"), so no new Copilot task started.
 
+A resume carries no prompt. `-i <prompt>` starts an interactive session with one, but neither `copilot --help` nor GitHub's docs say it runs on a session resumed by `--session-id`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic keeps a resume's message (a column's message, held messages) off the command line and types it in once Copilot is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
+
 Per-session config is written to `<eventsOutputPath dir>/copilot-config/` and passed with `--config-dir`, which Copilot 1.0.97 still honors by setting `COPILOT_HOME` (it prints a deprecation line). Three files go there:
 
 - `hooks/kangentic.json` holds the hooks (`preToolUse`, `postToolUse`, `agentStop`, `preCompact`) as `{ "version": 1, "hooks": ... }`. Copilot reads every `*.json` in `<COPILOT_HOME>/hooks/` as user hooks, and has since 0.0.422, so one file covers every version.

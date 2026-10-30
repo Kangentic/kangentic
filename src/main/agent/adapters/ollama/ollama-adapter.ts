@@ -49,6 +49,8 @@ export class OllamaAdapter implements AgentAdapter {
   readonly displayName = 'Ollama';
   readonly sessionType = 'ollama_agent';
   readonly supportsCallerSessionId = false;
+  /** Ollama keeps no session id Kangentic can resume, so every start is fresh. */
+  readonly resumePromptDelivery = 'no-resume' as const;
   // Ollama has no autonomy / permission concept - it is a plain chat REPL.
   // Per cli-features-over-custom-layers.md, expose a single informational
   // entry and inject no permission flags in buildCommand().

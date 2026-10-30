@@ -124,7 +124,7 @@ export const MCP_TOOL_MANIFEST: McpToolManifestEntry[] = [
   { name: 'kangentic_check_dev_ports', label: 'Check Dev Ports', blurb: 'which ports a task holds, and what is actually listening', category: 'sessions' },
   { name: 'kangentic_get_handoff_context', label: 'Handoff Context', blurb: 'the most recent cross-agent handoff record for a task', category: 'sessions' },
   { name: 'kangentic_get_transcript', label: 'Get Transcript', blurb: 'read what the agent on another task or project said', category: 'sessions' },
-  { name: 'kangentic_send_session_message', label: 'Send Session Message', blurb: 'send a message to another task\'s running agent to steer it', category: 'sessions' },
+  { name: 'kangentic_send_session_message', label: 'Send Session Message', blurb: 'send a message to another task\'s agent to steer it, held for its next agent when none is running', category: 'sessions' },
   { name: 'kangentic_get_session_messages_sent', label: 'Sent Session Messages', blurb: 'log of messages sent into a session, and whether each landed', category: 'sessions' },
   { name: 'kangentic_mark_background_service', label: 'Mark Background Service', blurb: 'let a dev server or watcher the agent left running stop keeping its task busy', category: 'sessions' },
 

@@ -68,6 +68,12 @@ export class KimiAdapter implements AgentAdapter {
   readonly displayName = 'Kimi Code';
   readonly sessionType = 'kimi_agent';
   readonly supportsCallerSessionId = true;
+  /**
+   * `--session <id> --prompt "<prompt>"`. `--prompt` is "User prompt to the
+   * agent" and the session stays interactive; only `--print` is non-interactive
+   * (`kimi --help`).
+   */
+  readonly resumePromptDelivery = 'command-line' as const;
   // `--mcp-config-file` pointing at the session's own `mcp.json`.
   readonly kangenticMcp = 'per-session' as const;
   readonly permissions: AgentPermissionEntry[] = [

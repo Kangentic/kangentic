@@ -53,6 +53,14 @@ export interface InjectionReport {
   escalated: boolean;
   /** Human-readable reason, set when the outcome is a failure. */
   reason?: string;
+  /**
+   * False when the delivery ended before writing anything to the agent: the
+   * session was gone, never became ready, or exited first, or the command was
+   * cancelled while it waited. Absent when typing began, or when the reporter
+   * cannot tell. A held message reads it to go back to its hold rather than be
+   * marked failed, since nothing of it reached the agent.
+   */
+  textReachedAgent?: false;
 }
 
 /**
@@ -235,6 +243,7 @@ export class TerminalSubmitScheduler {
         interruptedTurn: false,
         escalated: false,
         reason: 'The session was no longer running.',
+        textReachedAgent: false,
       });
       return;
     }
@@ -267,7 +276,7 @@ export class TerminalSubmitScheduler {
     }
 
     // Fresh spawn or queued - wait for CLI to come alive, then start the burst.
-    this.cancel(taskId);
+    this.cancel(taskId, 'A newer command for this task replaced it before it was sent.');
     this.scheduleDeferred(taskId, burst, isQueued);
   }
 
@@ -275,18 +284,45 @@ export class TerminalSubmitScheduler {
    * Cancel any pending or in-flight injection for a specific task. Aborts the
    * AbortController plumbed through to TerminalSubmit so an in-flight burst
    * stops at the next write/wait boundary, and drops every queued follow-up.
+   *
+   * Each burst it drops before it ran is reported `cancelled`, as
+   * `supersedeDeferred` reports one: no scheduled burst ends without an
+   * outcome. An in-flight burst reports its own, from `runBurst`.
    */
-  cancel(taskId: string): void {
-    const pending = this.deferred.get(taskId);
-    if (pending) {
-      this.deferred.delete(taskId);
-      pending.cleanup();
-    }
+  cancel(taskId: string, reason = 'The task moved on before the command was sent.'): void {
+    const pending = this.dropDeferred(taskId);
+    if (pending) this.reportCancelled(taskId, pending.burst, reason);
     const burst = this.active.get(taskId);
     if (burst) {
-      burst.queue.length = 0;
+      const dropped = burst.queue.splice(0);
       burst.controller.abort();
+      for (const queuedBurst of dropped) this.reportCancelled(taskId, queuedBurst, reason);
     }
+  }
+
+  /** Stop a waiting burst without reporting it, for a caller that reports its own outcome. */
+  private dropDeferred(taskId: string): PendingDeferred | undefined {
+    const pending = this.deferred.get(taskId);
+    if (!pending) return undefined;
+    this.deferred.delete(taskId);
+    pending.cleanup();
+    return pending;
+  }
+
+  private reportCancelled(taskId: string, burst: QueuedBurst, reason: string): void {
+    const commandTexts = burst.commands.map((command) => command.text);
+    this.report(burst.opts, {
+      taskId,
+      sessionId: burst.sessionId,
+      commands: commandTexts,
+      outcome: 'cancelled',
+      unconfirmedCommands: commandTexts,
+      discardedDraft: null,
+      interruptedTurn: false,
+      escalated: false,
+      reason,
+      textReachedAgent: false,
+    });
   }
 
   /**
@@ -430,6 +466,7 @@ export class TerminalSubmitScheduler {
           interruptedTurn: false,
           escalated: false,
           reason: 'The session exited before its turn finished, so the command was not sent.',
+          textReachedAgent: false,
         });
         return;
       }
@@ -467,6 +504,7 @@ export class TerminalSubmitScheduler {
       interruptedTurn: false,
       escalated: false,
       reason: 'A newer command for this task replaced it before it was sent.',
+      textReachedAgent: false,
     });
   }
 
@@ -674,6 +712,8 @@ export class TerminalSubmitScheduler {
 
     const hardTimer = setTimeout(() => {
       console.warn(`[TerminalSubmitScheduler] Hard timeout (${timeoutMs}ms) for task ${taskId.slice(0, 8)} -- cancelling`);
+      // This burst reports its own failure below; `cancel` stops the rest.
+      if (isCurrent()) this.dropDeferred(taskId);
       this.cancel(taskId);
       this.report(opts, {
         taskId,
@@ -685,6 +725,7 @@ export class TerminalSubmitScheduler {
         interruptedTurn: false,
         escalated: false,
         reason: 'The agent never became ready, so the command was not sent.',
+        textReachedAgent: false,
       });
     }, timeoutMs);
 
@@ -732,6 +773,8 @@ export class TerminalSubmitScheduler {
       if (evtSessionId !== sessionId) return;
       if (!isCurrent()) return;
       console.log(`[TerminalSubmitScheduler] Session ${sessionId.slice(0, 8)} exited -- cancelling injection for task ${taskId.slice(0, 8)}`);
+      // This burst reports its own failure below; `cancel` stops the rest.
+      this.dropDeferred(taskId);
       this.cancel(taskId);
       this.report(opts, {
         taskId,
@@ -743,6 +786,7 @@ export class TerminalSubmitScheduler {
         interruptedTurn: false,
         escalated: false,
         reason: 'The session exited before the command could be sent.',
+        textReachedAgent: false,
       });
     };
 

@@ -493,3 +493,38 @@ describe('spawn entry-point parity: resumesEntry belongs to the Resume path', ()
     expect(callerReferences.length).toBeGreaterThan(0);
   });
 });
+
+describe('spawn entry-point parity: held messages are claimed where an opening message is built', () => {
+  /**
+   * Messages held for a task (src/main/held-messages) go into the opening
+   * message of the next agent that starts there. The two places that build one
+   * claim them: `spawnAgent` (every board-driven start) and `resumeTaskSession`
+   * (the Resume button and the phone's resume). Every other start (startup
+   * recovery, a queued session's promotion, the legacy Start agent row) gets
+   * them from the module's session-live flush, typed after the first turn
+   * settles. A third claim site would race those two for the same rows.
+   */
+  const HELD_CLAIM_FILES = new Set([
+    'src/main/ipc/helpers/agent-spawn.ts',
+    'src/main/ipc/handlers/session-resume.ts',
+    'src/main/held-messages/held-messages.ts',
+  ]);
+
+  it('claimHeldMessages is called only by spawnAgent, the Resume body and the module itself', () => {
+    const outsideCalls = collectSinkCalls(/\bclaimHeldMessages\(/)
+      .filter((reference) => !HELD_CLAIM_FILES.has(reference.relativePath))
+      .map((reference) => reference.location);
+    expect(
+      outsideCalls,
+      'claimHeldMessages called outside its classified files:\n'
+        + `${outsideCalls.join('\n')}\n\n`
+        + 'A new start gets held messages from the session-live flush (registerHeldMessageFlush), '
+        + `not a claim of its own. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
+  it('both opening-message builders still claim, so the scan is not vacuous', () => {
+    expect(fileHasNonCommentCall('src/main/ipc/helpers/agent-spawn.ts', 'claimHeldMessages')).toBe(true);
+    expect(fileHasNonCommentCall('src/main/ipc/handlers/session-resume.ts', 'claimHeldMessages')).toBe(true);
+  });
+});

@@ -21,6 +21,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import Database from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { SentSessionMessageRepository } from '../../src/main/db/repositories/sent-session-message-repository';
+import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 
 interface TableColumnInfo {
   name: string;
@@ -29,7 +30,10 @@ interface TableColumnInfo {
 
 const EXPECTED_COLUMNS: Array<{ name: string; notnull: number }> = [
   { name: 'id', notnull: 0 },
-  { name: 'session_id', notnull: 1 },
+  // Nullable since held messages (GitHub #452): a held row waits for the
+  // task's next agent and has no session yet.
+  { name: 'session_id', notnull: 0 },
+  { name: 'task_id', notnull: 1 },
   { name: 'caller_session_id', notnull: 0 },
   { name: 'caller_task_id', notnull: 0 },
   { name: 'caller_project_id', notnull: 0 },
@@ -71,9 +75,10 @@ describe('session_messages_sent migration + repository round-trip', () => {
     expect(columns).toHaveLength(EXPECTED_COLUMNS.length);
   });
 
-  it('indexes session_id, the column every read filters on', () => {
+  it('indexes session_id and (task_id, status), the columns the reads filter on', () => {
     const indexes = database.pragma('index_list(session_messages_sent)') as Array<{ name: string }>;
     expect(indexes.some((index) => index.name === 'idx_session_messages_sent_session_id')).toBe(true);
+    expect(indexes.some((index) => index.name === 'idx_session_messages_sent_task_status')).toBe(true);
   });
 
   /**
@@ -351,5 +356,152 @@ describe('session_messages_sent migration + repository round-trip', () => {
       status: 'delivered',
       error: null,
     })).not.toThrow();
+  });
+
+  it('rebuilds a log from before held messages, keeping its rows in order with task_id taken from each session', () => {
+    seedTask('task-rebuilt');
+    seedSession('session-rebuilt', 'task-rebuilt');
+    // The shape every database had before this migration: session_id NOT NULL, no task_id.
+    database.exec('DROP TABLE session_messages_sent');
+    database.exec(`
+      CREATE TABLE session_messages_sent (
+        id TEXT PRIMARY KEY,
+        session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+        caller_session_id TEXT,
+        caller_task_id TEXT,
+        caller_project_id TEXT,
+        message TEXT NOT NULL,
+        status TEXT NOT NULL,
+        error TEXT,
+        created_at TEXT NOT NULL
+      )
+    `);
+    const sameMillisecond = '2026-10-01T12:00:00.000Z';
+    const insertOld = database.prepare(`
+      INSERT INTO session_messages_sent (id, session_id, caller_session_id, caller_task_id, caller_project_id, message, status, error, created_at)
+      VALUES (?, 'session-rebuilt', NULL, NULL, NULL, ?, 'delivered', NULL, ?)
+    `);
+    // Ids sort opposite to insertion, so only the rowid order keeps them first-to-last.
+    insertOld.run('z-first', 'first', sameMillisecond);
+    insertOld.run('a-second', 'second', sameMillisecond);
+
+    expect(() => runProjectMigrations(database)).not.toThrow();
+
+    const columns = (database.pragma('table_info(session_messages_sent)') as TableColumnInfo[])
+      .map((column) => ({ name: column.name, notnull: column.notnull }));
+    expect(columns).toEqual(EXPECTED_COLUMNS);
+    const rows = new SentSessionMessageRepository(database).listForTask('task-rebuilt');
+    expect(rows.map((row) => [row.message, row.task_id, row.session_id])).toEqual([
+      ['first', 'task-rebuilt', 'session-rebuilt'],
+      ['second', 'task-rebuilt', 'session-rebuilt'],
+    ]);
+    // Idempotent on the new shape.
+    expect(() => runProjectMigrations(database)).not.toThrow();
+    expect(new SentSessionMessageRepository(database).listForTask('task-rebuilt')).toHaveLength(2);
+  });
+
+  describe('held messages', () => {
+    const noCaller = { caller_session_id: null, caller_task_id: null, caller_project_id: null };
+
+    it('holds a message for a task with no session at all, oldest first', () => {
+      seedTask('task-held');
+      const repository = new SentSessionMessageRepository(database);
+      repository.insertHeld({ ...noCaller, taskId: 'task-held', message: 'first' });
+      repository.insertHeld({ ...noCaller, taskId: 'task-held', message: 'second' });
+
+      const held = repository.listHeldForTask('task-held');
+      expect(held.map((row) => [row.message, row.status, row.session_id])).toEqual([
+        ['first', 'held', null],
+        ['second', 'held', null],
+      ]);
+      // The task's log lists them too.
+      expect(repository.listForTask('task-held')).toHaveLength(2);
+    });
+
+    it('marks held messages delivered to the session that got them, once', () => {
+      seedTask('task-held');
+      seedSession('session-next', 'task-held');
+      const repository = new SentSessionMessageRepository(database);
+      const row = repository.insertHeld({ ...noCaller, taskId: 'task-held', message: 'lower the cap' });
+
+      expect(repository.markDeliveredFromHold([row.id], 'session-next')).toBe(1);
+      // A second delivery finds nothing still held.
+      expect(repository.markDeliveredFromHold([row.id], 'session-next')).toBe(0);
+      expect(repository.listHeldForTask('task-held')).toEqual([]);
+      expect(repository.listForSession('session-next')).toEqual([
+        expect.objectContaining({ message: 'lower the cap', status: 'delivered_from_hold', task_id: 'task-held' }),
+      ]);
+    });
+
+    it('keeps a cleared message cleared when its delivery settles later', () => {
+      seedTask('task-held');
+      seedSession('session-next', 'task-held');
+      const repository = new SentSessionMessageRepository(database);
+      const row = repository.insertHeld({ ...noCaller, taskId: 'task-held', message: 'stale by now' });
+
+      expect(repository.markClearedForTask('task-held')).toBe(1);
+      expect(repository.markDeliveredFromHold([row.id], 'session-next')).toBe(0);
+      expect(repository.markHeldFailed([row.id], 'late')).toBe(0);
+      expect(repository.listForTask('task-held').map((entry) => entry.status)).toEqual(['cleared']);
+    });
+
+    it('goes with its task when the task row is deleted', () => {
+      seedTask('task-held');
+      const repository = new SentSessionMessageRepository(database);
+      repository.insertHeld({ ...noCaller, taskId: 'task-held', message: 'for a task about to go' });
+
+      database.prepare('DELETE FROM tasks WHERE id = ?').run('task-held');
+
+      expect(repository.listForTask('task-held')).toEqual([]);
+    });
+
+    it('TaskRepository.delete removes the task\'s log, held and delivered rows alike, without relying on the foreign key cascade', () => {
+      const repository = new SentSessionMessageRepository(database);
+      const countRowsForTask = (taskId: string): number =>
+        (database.prepare('SELECT COUNT(*) AS count FROM session_messages_sent WHERE task_id = ?').get(taskId) as { count: number }).count;
+
+      // Seed with foreign keys ON so insert() can resolve its session, exactly
+      // as production writes these rows.
+      for (const taskId of ['task-control', 'task-deleted', 'task-bystander']) {
+        seedTask(taskId);
+        seedSession(`session-of-${taskId}`, taskId);
+        repository.insertHeld({ ...noCaller, taskId, message: `held for ${taskId}` });
+        repository.insert({
+          ...noCaller,
+          session_id: `session-of-${taskId}`,
+          message: `delivered to ${taskId}`,
+          status: 'delivered',
+          error: null,
+        });
+        expect(countRowsForTask(taskId)).toBe(2);
+      }
+
+      // Now run as an install whose connection never set the pragma: the
+      // cascade on session_messages_sent.task_id is parsed and ignored.
+      database.pragma('foreign_keys = OFF');
+      expect(database.pragma('foreign_keys', { simple: true })).toBe(0);
+
+      // Control: a raw DELETE leaves both rows behind on this connection. This
+      // is what proves the cascade is inert here, so the assertions below can
+      // only pass through TaskRepository.delete's own explicit DELETE.
+      database.prepare('DELETE FROM tasks WHERE id = ?').run('task-control');
+      expect(countRowsForTask('task-control')).toBe(2);
+
+      new TaskRepository(database).delete('task-deleted');
+
+      // Red: removing the `DELETE FROM session_messages_sent WHERE task_id = ?`
+      // statement from TaskRepository.delete (task-repository.ts) leaves both
+      // rows of the deleted task here, the same way the control above does.
+      expect(database.prepare('SELECT id FROM tasks WHERE id = ?').get('task-deleted')).toBeUndefined();
+      expect(countRowsForTask('task-deleted')).toBe(0);
+      expect(repository.listForTask('task-deleted')).toEqual([]);
+      // The session row survives with the pragma off, so the delivered row is
+      // reachable by its session id too, and must be gone by that route as well.
+      expect(repository.listForSession('session-of-task-deleted')).toEqual([]);
+      expect(repository.listHeldForTask('task-deleted')).toEqual([]);
+
+      // Scoped to the one task: another task's log is untouched.
+      expect(repository.listForTask('task-bystander').map((row) => row.status).sort()).toEqual(['delivered', 'held']);
+    });
   });
 });

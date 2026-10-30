@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Session tools
-description: "MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes and loop guards, mark_background_service, and reserve_dev_ports and check_dev_ports."
+description: "MCP tools for inspecting and steering agent sessions: list_sessions, get_transcript formats and views, session files, events and activity intervals, send_session_message delivery modes, held messages and loop guards, mark_background_service, and reserve_dev_ports and check_dev_ports."
 tags: [mcp, sessions, transcript, steering]
 sources:
   - resource: src/main/agent/mcp-http/session-tools.ts
@@ -91,9 +91,15 @@ Structured-format support by agent:
 
 ## kangentic_send_session_message
 
-Send a message to another task's **running** agent session, exactly as if it had been typed into that session's input box. This is the write-side counterpart to the read-only session tools: `kangentic_get_session_events`, `kangentic_get_transcript`, and `kangentic_list_sessions` observe another agent, and this one steers it. Typical uses are handing off a decision, unblocking a stalled agent, answering a question a session is waiting on, and redirecting work a newer decision superseded.
+Send a message to another task's agent, exactly as if it had been typed into that session's input box. This is the write-side counterpart to the read-only session tools: `kangentic_get_session_events`, `kangentic_get_transcript`, and `kangentic_list_sessions` observe another agent, and this one steers it. Typical uses are handing off a decision, unblocking a stalled agent, answering a question a session is waiting on, and redirecting work a newer decision superseded.
 
-Provide either `taskId` or `sessionId` (not both). A `taskId` resolves to that task's live session via the PTY registry, preferring the registry over the `task.session_id` column, which is known to drift.
+Identify the task with `taskId`; `sessionId` is optional. Given together, the session must be that task's own, or the tool refuses and names the session's task; a `sessionId` that names no session at all is refused too, rather than ignored. Given alone, a `sessionId` names its task through the registry, or through its `sessions` record when it is paused or exited. The message goes to the task's running agent: the given session when it has a PTY, else the task's live session from the PTY registry, preferring the registry over the `task.session_id` column, which is known to drift.
+
+**Held for the task's next agent.** When the task has no running agent (paused, exited, still queued for a concurrency slot, or never started), the message is held instead of refused, and the tool replies:
+
+> Held for task #412: no agent is running on it. It goes out when an agent starts or resumes there, and is cleared if the task moves to Done, To Do or Backlog, or is archived or deleted.
+
+A held message goes into the opening message of the next agent that starts or resumes on the task, after the column's own message, whatever its `deliverWhen`. A task in Done holds nothing and the send is refused, since the move out of Done sends the agent no messages. A held message to the caller's own task is refused as a self-send, a held message is at most 20,000 characters (the cap a `kangentic_move_task` message has), and each task takes at most 30 held messages per rolling 5 minutes. A send the task refuses takes no slot of that window. How and when a held message is delivered: [Held messages](../../architecture/sessions/held-messages.md).
 
 **Delivery.** The message goes through the same bracketed-paste submit path a human paste uses (`TerminalSubmit.submitContent`): drain, chunked write, output settle, `\r`, then wait for submission evidence. It is not instant, and it is measurably slower when nobody has the target session's terminal open, because the paste engine's fast path needs the session subscribed. `delivered` means the message was handed to the session's input, not that the agent has finished reading it.
 
@@ -101,18 +107,21 @@ Against a **busy** target, treat `delivered` as weaker still. The paste engine's
 
 A deferred (`"idle"`) delivery that later fails is not reported back - the tool call that queued it has already returned - so it is written as a `failed` row instead (and, for a delivery that threw, logged to the Electron main console too). That covers the target exiting or going unwritable before it ever flushed, which is otherwise silent: a `queued` result is not a promise the message landed.
 
-**Attribution is out-of-band.** The message is delivered **verbatim** - no prefix, no marker, nothing prepended. Instead, every send ATTEMPT is recorded in the target project's `session_messages_sent` table (`session_id`, `caller_session_id`, `caller_task_id`, `caller_project_id`, `message`, `status`, `error`, `created_at`), with the caller resolved server-side from the URL segment rather than from a tool parameter, so an agent cannot omit or alter it through the tool's own arguments. See the caller-identity note under [Security](how-it-works.md#security) for what that does and does not guarantee: it is honesty-by-default, not cryptographic attribution.
+**Attribution is out-of-band.** The message is delivered **verbatim** - no prefix, no marker, nothing prepended. The one change is to a held message that rides a resume command line under PowerShell or cmd.exe: each `"` becomes `'`, as in every prompt the command builders quote there. Instead, every send ATTEMPT is recorded in the target project's `session_messages_sent` table (`session_id`, `task_id`, `caller_session_id`, `caller_task_id`, `caller_project_id`, `message`, `status`, `error`, `created_at`), with the caller resolved server-side from the URL segment rather than from a tool parameter, so an agent cannot omit or alter it through the tool's own arguments. See the caller-identity note under [Security](how-it-works.md#security) for what that does and does not guarantee: it is honesty-by-default, not cryptographic attribution.
 
-`status` is one of four values, so "did my message go through?" always has an answer when debugging:
+`status` answers "did my message go through?" for every attempt when debugging:
 
 | `status` | Meaning | Produced a turn? |
 |----------|---------|------------------|
 | `delivered` | Handed to the session's input | Yes |
 | `queued` | Held for the next idle transition, then delivered | Yes |
-| `refused` | A guard rejected it (self-send, dead session, target at a permission prompt, cross-project session id, hop-depth backstop, rate limit); `error` carries which | No |
-| `failed` | Delivery was attempted and threw (e.g. `no-submission-evidence`), or a `queued` message's target exited before it could flush; `error` carries the detail | **Unknown** - the paste engine can fail with the text half-committed; an exited target produced no turn |
+| `refused` | A guard rejected it (self-send, target at a permission prompt, cross-project session id, hop-depth backstop, rate limit); `error` carries which | No |
+| `failed` | Delivery was attempted and threw (e.g. `no-submission-evidence`), or a `queued` message's target exited before it could flush, or a held message's delivery began and did not finish; `error` carries the detail | **Unknown** - the paste engine can fail with the text half-committed; an exited target produced no turn |
+| `held` | The task had no running agent; the message waits for its next one, with no `session_id` yet | Not yet |
+| `delivered_from_hold` | A held message the task's next agent got, in its opening message; `session_id` is that agent's | Yes |
+| `cleared` | A held message whose task moved to Done or To Do, or was unarchived into To Do, before an agent started | No |
 
-Reconstructing which turns arrived this way means filtering to `delivered` / `queued`. Two caveats for debugging.
+Reconstructing which turns arrived this way means filtering to `delivered` / `queued` / `delivered_from_hold`. Two caveats for debugging.
 
 `session_id` carries a foreign key so these rows are cleaned up with their session, which means an attempt naming a session id that was never real (a typo, or an id from another project) records nothing - there is no session row to attach it to. The caller still receives the refusal synchronously. This does not affect the realistic dead-session case: a session that exited or was suspended still has its row, so its refusal is recorded.
 
@@ -135,27 +144,27 @@ Every refusal comes back as a normal tool result with `isError: true` and text e
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | No | Task ID (numeric display ID like `"42"` or full UUID). Resolves to that task's live session. Mutually exclusive with `sessionId`. |
-| `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Mutually exclusive with `taskId`. |
+| `taskId` | string | No | Task ID (numeric display ID like `"42"` or full UUID). The message goes to that task's running agent, or is held for its next one. |
+| `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). With `taskId` it must be that task's session; alone, it names the task through its session. |
 | `message` | string | Yes | The message to deliver. Write it as a self-contained prompt: it lands in a session that cannot see your conversation. |
-| `deliverWhen` | string | No | `"now"` (default) delivers immediately, like a human typing mid-turn - a busy agent picks it up when its current turn ends. `"idle"` holds the message until the target finishes its turn. |
+| `deliverWhen` | string | No | For a running agent only. `"now"` (default) delivers immediately, like a human typing mid-turn - a busy agent picks it up when its current turn ends. `"idle"` holds the message until the target finishes its turn. A held message ignores it. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 
-Returns `status` (`"delivered"` or `"queued"`), the resolved `sessionId`, the target's `targetActivity` at send time, and the `hopDepth` of this steer chain. `"queued"` is returned only for `deliverWhen: "idle"` against a busy target; if the target is already idle, `"idle"` delivers immediately rather than waiting for a transition that would never come.
+At least one of `taskId` and `sessionId` is required. Returns `status` (`"delivered"` or `"queued"`), the resolved `sessionId`, the target's `targetActivity` at send time, and the `hopDepth` of this steer chain. `"queued"` is returned only for `deliverWhen: "idle"` against a busy target; if the target is already idle, `"idle"` delivers immediately rather than waiting for a transition that would never come. A held message returns the "Held for task #N" text above instead.
 
 ## kangentic_get_session_messages_sent
 
 Read the log of messages sent **into** a session by another agent via `kangentic_send_session_message`. This is the debugging counterpart to that tool: it answers "did my message actually go through?" for every attempt, including the ones that never produced a turn.
 
-Provide either `taskId` or `sessionId` (not both). `taskId` returns messages across **all** of the task's sessions, which is usually what you want - a task accumulates sessions across resumes and agent handoffs, and you should not have to work out which session was live at the time.
+Provide either `taskId` or `sessionId` (not both). `taskId` returns messages across **all** of the task's sessions and the messages held for it, which is usually what you want - a task accumulates sessions across resumes and agent handoffs, and you should not have to work out which session was live at the time. A `sessionId` lists only what reached that session, so a message still held (no session yet) shows up only by task.
 
-Each entry carries the caller (`caller_session_id`, `caller_task_id`, `caller_project_id` - all null for a human-driven send), the exact `message` text, a `status`, and an `error` for anything that did not land cleanly. See the `status` table under `kangentic_send_session_message` for what each value means; the short version is that `delivered` and `queued` produced a turn, `refused` did not, and `failed` is genuinely unknown.
+Each entry carries the caller (`caller_session_id`, `caller_task_id`, `caller_project_id` - all null for a human-driven send), the exact `message` text, a `status`, and an `error` for anything that did not land cleanly. See the `status` table under `kangentic_send_session_message` for what each value means; the short version is that `delivered`, `queued` and `delivered_from_hold` produced a turn, `refused` and `cleared` did not, `held` is still waiting, and `failed` is genuinely unknown.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | No | Task ID (numeric display ID or full UUID). Covers every session the task has had. Mutually exclusive with `sessionId`. |
+| `taskId` | string | No | Task ID (numeric display ID or full UUID). Covers every session the task has had, and its held messages. Mutually exclusive with `sessionId`. |
 | `sessionId` | string | No | Kangentic session UUID (the `sessions.id` column). Mutually exclusive with `taskId`. |
-| `status` | string | No | Only return attempts with this status: `delivered`, `queued`, `refused`, or `failed`. |
+| `status` | string | No | Only return attempts with this status: `delivered`, `queued`, `refused`, `failed`, `held`, `delivered_from_hold`, or `cleared`. |
 | `tail` | number | No | Return only the last N attempts (most recent). Default 100, hard cap 500. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 

@@ -42,29 +42,38 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
 | `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
+| `resumePromptDelivery` | `'command-line' \| 'typed' \| 'no-resume'` | How a message reaches the agent when it resumes a conversation: on the resume command, or typed in once the agent is ready. `no-resume` means the adapter never resumes, so every start is fresh and the message is its prompt or is typed after it. The Resume Prompt column below lists each agent's value (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)) |
 | `permissions` | `AgentPermissionEntry[]` | Supported permission modes with agent-specific labels |
 | `defaultPermission` | `PermissionMode` | Recommended default permission mode |
 | `runtime` | `AdapterRuntimeStrategy` | Activity detection + session ID capture (see [`AdapterRuntimeStrategy`](adapter-types.md#adapterruntimestrategy)) |
 
 ## Supported Agents
 
-| Agent | Adapter | CLI Binary | Session Resume | Status/Events | Settings Merge | Kangentic MCP | Trust |
-|-------|---------|-----------|----------------|---------------|----------------|---------------|-------|
-| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
-| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
-| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
-| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
-| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
-| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
-| Aider | `aider-adapter.ts` | `aider` | No | No | No | Not possible (CLI has no MCP client) | No |
-| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | No | No | Not wired | No |
-| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
-| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
-| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
-| Ollama | `ollama-adapter.ts` | `ollama` | No | No | No | Not possible (CLI has no MCP client) | No |
-| Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
-| Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
-| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | No (PTY-only) | No | Not wired | No |
+| Agent | Adapter | CLI Binary | Session Resume | Resume Prompt | Status/Events | Settings Merge | Kangentic MCP | Trust |
+|-------|---------|-----------|----------------|---------------|---------------|----------------|---------------|-------|
+| Claude Code | `claude-adapter.ts` | `claude` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl; transcript fallback for background sessions, see [Adapter Session History](session-history.md#claude)) | Yes (`--settings`) | `--mcp-config <sessionDir>/mcp.json` | Yes (`~/.claude.json`) |
+| Codex CLI | `codex-adapter.ts` | `codex` | `resume <id>` | `command-line` | Yes (events.jsonl via `-c hooks.*` overrides, rollout for usage and background commands) | No | `-c mcp_servers.*` overrides + `buildEnv` token | Yes (`~/.codex/config.toml` `[projects]`) |
+| Gemini CLI | `gemini-adapter.ts` | `gemini` | `--resume <id>` | `command-line` | Yes (status.json + events.jsonl) | Yes (`.gemini/settings.json`) | `mcpServers` in `.gemini/settings.json` (`httpUrl`) with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.gemini/trustedFolders.json`) |
+| Qwen Code | `qwen-adapter.ts` | `qwen` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `command-line` | Yes (events.jsonl) | Yes (`.qwen/settings.json`) | `--mcp-config <sessionDir>/mcp.json` (`httpUrl`; `.qwen/settings.json` before 0.16) | Yes (`~/.qwen/trustedFolders.json`) |
+| Cursor CLI | `cursor-adapter.ts` | `cursor-agent` (alias `agent`) | `--resume="<id>"` | `typed` | No | No | `<cwd>/.cursor/mcp.json` with `${env:...}` url/token + `buildEnv` + `--approve-mcps` | No |
+| GitHub Copilot CLI | `copilot-adapter.ts` | `copilot` | `--session-id <uuid>` (caller-owned) | `typed` | Partial (events.jsonl + status parser) | Per-session `--config-dir` | `--additional-mcp-config @<path>` | Runtime `--add-dir` |
+| Aider | `aider-adapter.ts` | `aider` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
+| Oz CLI (Warp) | `warp-adapter.ts` | `oz` | No | `no-resume` | No | No | Not wired | No |
+| Kimi Code | `kimi-adapter.ts` | `kimi` | `--session <uuid>` (caller-owned) | `command-line` | Yes (`wire.jsonl`) | No | `--mcp-config-file <sessionDir>/mcp.json` | No |
+| Droid | `droid-adapter.ts` | `droid` | `--resume <uuid>` | `command-line` | No (PTY-only) | No (use Droid's TUI: `/model` + Ctrl+D, shift+tab) | `<cwd>/.factory/mcp.json` + `buildEnv` token | No |
+| OpenCode | `opencode-adapter.ts` | `opencode` | Plugin/PTY-captured `ses_<id>` (auto-generated) | `typed` | Yes (plugin JSONL via `tool.execute.before/after` + `event` `session.*`) | No (`opencode.json` + `OPENCODE_CONFIG_CONTENT` env) | `OPENCODE_CONFIG_CONTENT` (local spawns only) | No (auth via `opencode auth login` -> `~/.local/share/opencode/auth.json`) |
+| Ollama | `ollama-adapter.ts` | `ollama` | No | `no-resume` | No | No | Not possible (CLI has no MCP client) | No |
+| Grok Build | `grok-adapter.ts` | `grok` | `--session-id <uuid>` (caller-owned) / `--resume <id>` | `typed` | Yes (events.jsonl via Claude-compatible hooks; usage from `updates.jsonl` tail) | No (wholly-owned `.grok/hooks/kangentic.json` + `.grok/config.toml` sentinel block) | `[mcp_servers.kangentic]` block in `<cwd>/.grok/config.toml` with `${VAR}` env refs + `buildEnv` URL/token | Yes (`~/.grok/trusted_folders.toml`, cascades from project root) |
+| Antigravity CLI | `antigravity-adapter.ts` | `agy` | `--conversation <id>` | `command-line` | Yes (events.jsonl via `.agents/hooks.json`) | Yes (`.agents/hooks.json`, named-hook merge) | Workspace plugin `.agents/plugins/kangentic/` (`serverUrl` + token header) | Yes (`trustedWorkspaces` in `~/.gemini/antigravity-cli/settings.json`) |
+| Goose CLI | `goose-adapter.ts` | `goose` | `-r -n <name>` (caller-owned name) | `command-line` | No (PTY-only) | No | Not wired | No |
+
+The Resume Prompt column is `resumePromptDelivery`. A `command-line` agent's resume command
+carries the message (a column's message, a plan continuation, a handoff pointer, held messages).
+A `typed` agent's CLI takes a prompt on a new session, but its help and docs never say the prompt
+runs on a resumed one, so Kangentic keeps the message off the command and types it in once the
+agent is ready. A `no-resume` agent has no session id to resume by, so every start is fresh.
+`tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's real resume command with a
+marked prompt and holds the value to what the builder does.
 
 The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
 Qwen and Gemini are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each

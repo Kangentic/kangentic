@@ -60,6 +60,7 @@ function fakeAdapter(overrides: Partial<AgentAdapter>): AgentAdapter {
     displayName: 'Fake',
     sessionType: 'claude_agent',
     supportsCallerSessionId: false,
+    resumePromptDelivery: 'command-line',
     permissions: [],
     defaultPermission: 'projectSettings',
     detect: async () => ({ found: false, path: null, version: null }),
@@ -395,6 +396,23 @@ describe('prepareInjectionPlan', () => {
     });
     expect(plan?.sequence).toEqual([{ text: 'review the diff', verify: 'submitted' }]);
     expect(plan?.sequence[0].escalatable).toBeUndefined();
+  });
+
+  it.each(['typed', 'no-resume'] as const)('marks the auto_command non-escalatable when a resume is %s, not carried on the command line', (resumePromptDelivery) => {
+    // Escalation restarts the session with the command as its resume prompt.
+    // A resume that carries no prompt would only type it again, which is the
+    // delivery whose failure escalation answers.
+    const adapter = fakeAdapter({ getInjectionSequence: () => [], resumePromptDelivery });
+    const plan = prepareInjectionPlan({
+      adapter,
+      sessionRepo: sessionRepoWith({ applied_model: null, applied_effort: null }),
+      task: { id: 't1', agent: 'fake' },
+      toLane: lane({}),
+      autoCommand: 'review the diff',
+    });
+    expect(plan?.sequence).toEqual([
+      { text: 'review the diff', verify: 'submitted', escalatable: false },
+    ]);
   });
 
   it('still verifies a cwd-keyed adapter that has no agent_session_id', async () => {

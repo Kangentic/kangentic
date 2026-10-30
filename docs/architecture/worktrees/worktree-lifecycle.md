@@ -401,7 +401,8 @@ Task moved between active columns (e.g., Planning → Code Review)
   → The target's remaining enter automations run after the move lands
   → Only a model or effort change forces suspend + respawn (a permission-mode
     change alone never does) - and then the message rides along as the
-    resume prompt instead of being typed
+    resume prompt where the agent's resume takes one, and is typed once
+    the resumed agent is ready where it does not
 
 Task moved to Done
   → Confirmation dialog ONLY when the worktree has uncommitted files or unpushed

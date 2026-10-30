@@ -31,7 +31,15 @@ import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
-import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import { deliverAgentMessageInBackground, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import {
+  claimHeldMessages,
+  commitWhenSessionRuns,
+  composeOpeningMessage,
+  pasteHeldAfterTurn,
+  settleClaimFromReport,
+  type HeldClaim,
+} from '../../held-messages/held-messages';
 import type { AgentStartReport } from '../../automations/automation-runner';
 import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyConversationExpired, notifySpawnBlocked } from './task-git';
@@ -305,6 +313,22 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       workflow: readWorkflowPromptFacts(currentTask, options.projectId ?? null),
     });
 
+  /**
+   * Messages held for the task while no agent ran (src/main/held-messages),
+   * claimed as this start begins. They go out in the agent's opening message,
+   * after the column's own: on the spawn's command line where it has a prompt
+   * slot, or typed with the first message otherwise.
+   */
+  let heldClaim: HeldClaim | null = null;
+  /** The claim went to a delivery or a command-line ride, which settles it. */
+  let heldHandedOff = false;
+  /** The held text waits to join the next message typed at the agent. */
+  let heldJoinsNextMessage = false;
+  /** The held text waits for the opening message's turn to end: it is a slash command. */
+  let heldAfterLeadTurn = false;
+  /** A plan continuation the resume could not carry on its command line, typed after the group. */
+  let unsentContinuation: string | null = null;
+
   const run = async (): Promise<void> => {
   // Guard: if the target column doesn't want agents, no-op. An explicit user
   // Start overrides the column's default, as the desktop's Resume button does.
@@ -421,7 +445,11 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
 
     emitSpawnProgress(context.mainWindow, task.id, 'detecting-agent');
 
+    // Messages held for the task go to this agent with the column's message.
+    heldClaim = options.projectId ? claimHeldMessages(context, options.projectId, task.id) : null;
+
     let handoffRecapOnly: boolean;
+    let handoffUnsentPrompt: string | null;
     try {
       const handoffOutcome = await engine.resumeSuspendedSession(
         task, toLane.permission_mode, skipPromptTemplate, undefined, signal,
@@ -433,6 +461,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // had deleted it: the new session opened on a recap that asks it to
       // summarize and wait, so the column's message below is not sent.
       handoffRecapOnly = handoffOutcome?.recapOnly ?? false;
+      // The resume could not carry the pointer to the source agent's history on
+      // its command line (`SpawnOutcome.unsentPrompt`), so it is typed in, ahead
+      // of the column's message, in the same delivery.
+      handoffUnsentPrompt = handoffOutcome?.unsentPrompt ?? null;
     } catch (error) {
       if (isAbortError(error)) throw error;
       console.error('[spawnAgent] Failed to start handoff session:', error);
@@ -472,6 +504,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       }
       const taskOverride = currentTask.auto_command?.trim();
       const effectiveAutoCommand = resolveEffectiveAutoCommand(currentTask.auto_command, columnMessage?.message);
+      let columnText: string | undefined;
       if (handoffRecapOnly && effectiveAutoCommand?.trim()) {
         console.log(`[spawnAgent] Handoff for task ${task.id.slice(0, 8)}: the conversation had expired and the agent is waiting on its recap, so the column's message is not sent.`);
       } else if (!options.suppressAutoCommand && effectiveAutoCommand?.trim()) {
@@ -489,22 +522,66 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         // drop-and-collapse BOTH, so the same message delivered one way on a
         // handoff and another way on every other move.
         const vars = resolveAutoCommandVars(currentTask);
-        const interpolated = taskOverride
+        columnText = taskOverride
           ? interpolateTaskTemplate(effectiveAutoCommand, vars)
           : interpolateTemplate(effectiveAutoCommand, vars);
+      }
+
+      // One typed delivery: the history pointer the resume could not carry,
+      // the column's message, then the held messages (none after an expired
+      // conversation's recap, which withholds them as it withholds the column's).
+      // Text put ahead of a slash command stops it running, and text after one
+      // becomes its arguments, so beside one they are pasted after its turn.
+      const handoffSessionId = currentTask.session_id;
+      const heldText = handoffRecapOnly ? undefined : heldClaim?.text;
+      const opening = composeOpeningMessage(columnText, heldText);
+      let typedMessage = opening.prompt;
+      const pointerAfterTurn = handoffUnsentPrompt !== null && typedMessage !== undefined && isSlashCommand(typedMessage);
+      if (handoffUnsentPrompt !== null && !pointerAfterTurn) {
+        typedMessage = typedMessage === undefined ? handoffUnsentPrompt : `${handoffUnsentPrompt}\n\n${typedMessage}`;
+      }
+      const carried = heldClaim !== null && heldText !== undefined && !opening.heldAfterTurn ? heldClaim : null;
+      if (typedMessage !== undefined) {
         // Keystrokes once the new agent is alive, or, for a message with line
         // breaks, a paste once its first turn ends.
         deliverAgentMessageInBackground(context, {
           taskId: currentTask.id,
-          sessionId: currentTask.session_id,
-          message: interpolated,
+          sessionId: handoffSessionId,
+          message: typedMessage,
           mode: columnMessage?.mode ?? 'immediate',
           verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
           freshlySpawned: true,
-          onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+          onOutcome: (report) => {
+            if (columnText !== undefined) reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
+            if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
+          },
         });
+        if (carried) heldHandedOff = true;
+      }
+      // What waits out the slash command's turn goes as ONE paste, the pointer
+      // first: two pastes waiting on the same turn could land in either order.
+      const heldAfterLead = heldClaim !== null && heldText !== undefined && opening.heldAfterTurn ? heldClaim : null;
+      const afterTurn = [pointerAfterTurn ? handoffUnsentPrompt : null, heldAfterLead?.text ?? null]
+        .filter((part): part is string => part !== null);
+      if (afterTurn.length > 0) {
+        pasteAgentMessageInBackground(context, {
+          taskId: currentTask.id,
+          sessionId: handoffSessionId,
+          message: afterTurn.join('\n\n'),
+          onOutcome: (report) => {
+            if (heldAfterLead) {
+              settleClaimFromReport(heldAfterLead, report, { flushOnRelease: true });
+            } else if (report.outcome !== 'confirmed' && report.outcome !== 'unconfirmed') {
+              console.warn(`[spawnAgent] Handoff for task ${currentTask.id.slice(0, 8)}: the history pointer was not pasted (${report.outcome}).`);
+            }
+          },
+        });
+        if (heldAfterLead) heldHandedOff = true;
       }
     }
+    // A recap-only start, or one that left no session, keeps them held for the
+    // next start (the `finally` around this function releases them).
+    if (handoffRecapOnly) heldClaim?.release();
 
     return;
   }
@@ -604,7 +681,8 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // appears. That reads as "the automation never ran".
     const overrideBeforeTake = pendingTaskOverride;
     const message = takeMessage(pendingPrompt ?? '');
-    const takesPromptSlot = message !== '' && (canResumeDestination || skipPromptTemplate === true);
+    const promptSlotOpen = canResumeDestination || skipPromptTemplate === true;
+    const takesPromptSlot = message !== '' && promptSlotOpen;
     if (takesPromptSlot && pendingPrompt !== undefined) promptTakenFromRow = pendingPrompt;
 
     // The continuation prompt (plan-exit auto-move) says why the session
@@ -614,15 +692,23 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // handoff drops it too. The resume check above is scoped to the TARGET
     // agent, so on a handoff it finds that agent's older conversation, which
     // never saw the plan. The handoff-context branch above already passes none.
-    const resumePrompt = takesPromptSlot
-      ? message
-      : (canResumeDestination && !isHandoff ? options.continuationPrompt : undefined);
+    const continuation = !takesPromptSlot && canResumeDestination && !isHandoff ? options.continuationPrompt : undefined;
+    const lead = takesPromptSlot ? message : continuation;
+
+    // Messages held for the task join the opening message, after the lead,
+    // wherever the spawn has a prompt slot. Claimed here, once, as the agent
+    // starts; a later start finds them gone.
+    if (heldClaim === null && options.projectId) heldClaim = claimHeldMessages(context, options.projectId, task.id);
+    const opening = promptSlotOpen
+      ? composeOpeningMessage(lead, heldClaim?.text)
+      : { prompt: lead, heldAfterTurn: false };
+    const heldInPrompt = heldClaim !== null && promptSlotOpen && !opening.heldAfterTurn;
 
     try {
       // Always pass targetAgent so the column's agent_override is respected.
       // Without it a first-time spawn would fall through to the project default.
       const outcome = await engine.resumeSuspendedSession(
-        beforeSpawn, toLane.permission_mode, skipPromptTemplate, resumePrompt, signal,
+        beforeSpawn, toLane.permission_mode, skipPromptTemplate, opening.prompt, signal,
         targetAgent,
         undefined,
         resolveSpawnOverrides(beforeSpawn, toLane, project),
@@ -631,17 +717,36 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       // The agent deleted the conversation this move would have resumed, so
       // the task started over from a recap that asks the agent to summarize and
       // wait. The column's messages, the one in the prompt slot included, are
-      // not sent; the runner records each as skipped with this reason.
-      if (outcome?.recapOnly) return { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
+      // not sent; the runner records each as skipped with this reason. Held
+      // messages wait for the next start.
+      if (outcome?.recapOnly) {
+        heldClaim?.release();
+        return { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
+      }
       // A message the spawn did not send goes out after it, and so does the
       // task's own command: `deliverToAgent` sends both. The spawn did not send
-      // it when it did not take the prompt slot, or when the engine spawned
-      // fresh with the task template as the prompt (the conversation never
-      // started or expired on an isolated column, or the column always spawns
-      // new).
-      if (!takesPromptSlot || outcome?.resumePromptUnsent) {
+      // it when it did not take the prompt slot, when the engine spawned fresh
+      // with the task template as the prompt (the conversation never started
+      // or expired on an isolated column, or the column always spawns new), or
+      // when the resume could not carry it on its command line
+      // (`SpawnOutcome.unsentPrompt`).
+      const unsentPrompt = outcome?.unsentPrompt ?? null;
+      if (!takesPromptSlot || unsentPrompt !== null) {
         promptTakenFromRow = null;
         pendingTaskOverride = overrideBeforeTake;
+      }
+      if (continuation !== undefined && unsentPrompt !== null) unsentContinuation = continuation;
+      const startedSessionId = tasks.getById(task.id)?.session_id;
+      if (heldClaim !== null && startedSessionId) {
+        if (opening.heldAfterTurn) {
+          heldAfterLeadTurn = true;
+        } else if (heldInPrompt && unsentPrompt === null) {
+          // They rode the command line; they count as delivered once it runs.
+          commitWhenSessionRuns(context, heldClaim, startedSessionId);
+          heldHandedOff = true;
+        } else {
+          heldJoinsNextMessage = true;
+        }
       }
     } catch (error) {
       if (isAbortError(error)) throw error;
@@ -675,16 +780,73 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const currentTask = tasks.getById(task.id);
     if (!currentTask?.session_id) return;
 
+    // Held messages the spawn's prompt could not carry join the first message
+    // typed at the agent, as one delivery. After a slash command they wait for
+    // its turn instead (`deliverHeldRemainder`).
+    let outgoing = effective;
+    let carried: HeldClaim | null = null;
+    if (heldJoinsNextMessage && heldClaim !== null && !heldClaim.isSettled()) {
+      heldJoinsNextMessage = false;
+      const opening = composeOpeningMessage(effective, heldClaim.text);
+      if (opening.heldAfterTurn) {
+        heldAfterLeadTurn = true;
+      } else {
+        outgoing = opening.prompt ?? effective;
+        carried = heldClaim;
+        heldHandedOff = true;
+      }
+    }
+
     // Keystrokes once the CLI is alive, or, for a message with line breaks, a
     // paste once the fresh agent's first turn ends, whatever the row's mode.
     deliverAgentMessageInBackground(context, {
       taskId: currentTask.id,
       sessionId: currentTask.session_id,
-      message: effective,
+      message: outgoing,
       mode,
       verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
       freshlySpawned: true,
-      onOutcome: (report) => reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId),
+      onOutcome: (report) => {
+        reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
+        if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
+      },
+    });
+  };
+
+  /**
+   * What the start owes the agent once the enter group is done and no row
+   * carried it: held messages waiting out a slash command's turn, or held
+   * messages and a plan continuation the spawn's prompt could not carry, sent
+   * on their own. A move superseded meanwhile sends nothing; the `finally`
+   * around this function puts the held messages back.
+   */
+  const deliverHeldRemainder = (): void => {
+    if (signal?.aborted) return;
+    const sessionId = tasks.getById(task.id)?.session_id;
+    if (!sessionId) return;
+    const held = heldClaim !== null && !heldClaim.isSettled() && !heldHandedOff ? heldClaim : null;
+    if (held !== null && heldAfterLeadTurn) {
+      pasteHeldAfterTurn(context, held, sessionId);
+      heldHandedOff = true;
+    }
+    const carried = held !== null && heldJoinsNextMessage ? held : null;
+    const remainder = [unsentContinuation, carried?.text].filter((part): part is string => Boolean(part?.trim())).join('\n\n');
+    unsentContinuation = null;
+    if (!remainder) return;
+    if (carried) {
+      heldJoinsNextMessage = false;
+      heldHandedOff = true;
+    }
+    deliverAgentMessageInBackground(context, {
+      taskId: task.id,
+      sessionId,
+      message: remainder,
+      mode: 'immediate',
+      verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
+      freshlySpawned: true,
+      onOutcome: (report) => {
+        if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
+      },
     });
   };
 
@@ -743,6 +905,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         await deliverToAgent('', 'immediate');
       }
     }
+    deliverHeldRemainder();
     return;
   }
 
@@ -756,13 +919,25 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     // after a message row. An expired conversation's recap-only start leaves
     // none to send.
     if (pendingTaskOverride !== null) await deliverToAgent('', 'immediate');
+    deliverHeldRemainder();
   } catch (error) {
     if (isAbortError(error)) throw error;
     // startAgent has already logged, counted, and notified.
   }
   };
 
-  return project?.name ? runWithProjectLogContext(project.name, run) : run();
+  // Held messages claimed for this start that nothing carried (a failed or
+  // superseded spawn, a row that never sent its message) go back on hold, and
+  // to the task's agent at once if one is live by now.
+  const runAndSettleHeld = async (): Promise<void> => {
+    try {
+      await run();
+    } finally {
+      if (heldClaim !== null && !heldHandedOff) heldClaim.release({ flush: true });
+    }
+  };
+
+  return project?.name ? runWithProjectLogContext(project.name, runAndSettleHeld) : runAndSettleHeld();
 }
 
 /**

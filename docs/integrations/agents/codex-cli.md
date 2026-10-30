@@ -44,8 +44,11 @@ codex resume <sessionId> -C <cwd> --sandbox <level> --ask-for-approval <level> [
   -c <the same two MCP overrides> \
   [-c <the same task tag override>] \
   -c check_for_update_on_startup=false \
-  [-c <the same hook and trust overrides>]
+  [-c <the same hook and trust overrides>] \
+  ["prompt text"]
 ```
+
+`codex resume --help` lists `[PROMPT]`, "Optional user prompt to start the session", so a resume's message (a column's message, a plan continuation, held messages) rides it as the positional argument, as on a new session (`resumePromptDelivery: 'command-line'`). The builder used to drop it, and a column's message never reached a resumed Codex session. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
 The hook overrides appear only when Codex confirmed their trust for this binary (see [Hook Integration](#hook-integration)).
 

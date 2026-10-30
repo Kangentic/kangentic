@@ -116,6 +116,13 @@ export interface SessionSendDependencies {
 
 export interface SessionSendCoordinator {
   send(request: SessionSendRequest): Promise<SessionSendOutcome>;
+  /**
+   * Take a slot in a task's sliding window before holding a message for it
+   * (src/main/held-messages). False when the task has had the window's worth
+   * of messages already: a loop sending to a paused task would otherwise fill
+   * the database with held rows instead of a PTY with turns.
+   */
+  reserveHoldSlot(taskId: string): boolean;
   /** Detach the SessionManager listeners. Called on server shutdown. */
   dispose(): void;
   /** @internal Test-only view of the tracked-map sizes, to assert they drain. */
@@ -477,6 +484,16 @@ export function createSessionSendCoordinator(
         targetActivity: targetActivity ?? 'unknown',
         hopDepth,
       };
+    },
+
+    reserveHoldSlot(taskId: string): boolean {
+      // A task window has no session exit to drop it, so the windows that have
+      // rolled off go here, on the one path that adds them.
+      const cutoff = Date.now() - windowMs;
+      for (const [key, sentAt] of sendWindows) {
+        if (key.startsWith('task:') && sentAt.every((at) => at <= cutoff)) sendWindows.delete(key);
+      }
+      return reserveSendSlot(`task:${taskId}`);
     },
 
     dispose(): void {

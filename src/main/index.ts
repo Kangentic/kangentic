@@ -29,6 +29,7 @@ import { registerSeedKnowledgeGraphRealDevIpc } from '../devtools/main/seed-know
 import { registerSeedKnowledgeGraphDemoDevIpc } from '../devtools/main/seed-knowledge-graph-demo';
 import { installDevtools } from '../devtools/install';
 import { startMcpHttpServer, type McpHttpServerHandle } from './agent/mcp-http-server';
+import { holdTaskMessage } from './held-messages/held-messages';
 import { recordMcpServerStartFailure } from './agent/mcp-server-start-failure';
 import { readBrowserAutomationConfig } from './browser/browser-automation-config';
 import { browserPaneRegistry } from './browser/browser-pane-registry';
@@ -1929,7 +1930,11 @@ app.whenReady().then(async () => {
       () => {
         const ctx = getOptionalIpcContext();
         if (!ctx) return null;
-        return { sessionManager: ctx.sessionManager, terminalSubmit: ctx.terminalSubmit };
+        return {
+          sessionManager: ctx.sessionManager,
+          terminalSubmit: ctx.terminalSubmit,
+          holdTaskMessage: (input) => holdTaskMessage(ctx, input),
+        };
       },
     );
   } catch (err) {

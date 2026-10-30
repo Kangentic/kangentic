@@ -1016,7 +1016,16 @@ export const handleMoveTask: CommandHandler = (
   });
 
   const placement = parsedSlot ? ` at position ${slot}` : '';
-  const handOff = message ? ' Its agent there gets your message once it is ready.' : '';
+  // Where the column runs no agent, the message is held for the task's next one
+  // (src/main/held-messages); Done holds nothing.
+  let handOff = '';
+  if (message && targetSwimlane.role === 'done') {
+    handOff = ' Done runs no agent and holds no messages, so your message is not delivered.';
+  } else if (message && targetSwimlane.auto_spawn === false) {
+    handOff = ` No agent runs in ${targetSwimlane.name}, so your message is held for the task's next agent.`;
+  } else if (message) {
+    handOff = ' Its agent there gets your message once it is ready.';
+  }
   return {
     success: true,
     message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}${ownSessionNote(moverSessionId, targetSwimlane)}`,

@@ -42,6 +42,8 @@ export class QwenAdapter implements AgentAdapter {
   readonly displayName = 'Qwen Code';
   readonly sessionType = 'qwen_agent';
   readonly supportsCallerSessionId = true;
+  /** The resume command carries the prompt (`-i`, or `-p` when non-interactive). */
+  readonly resumePromptDelivery = 'command-line' as const;
   // `--mcp-config` naming the session's own `mcp.json` (command-builder.ts,
   // `mcpDelivery`). Only a Qwen before 0.16, which has no such flag, still gets
   // the URL in the folder's `.qwen/settings.json`.

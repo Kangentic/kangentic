@@ -63,8 +63,10 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
  *
  * - Resume uses `--session <id>` (alias `-s`). The flag is part of the
  *   TUI command (the docs list it under "TUI - Terminal User
- *   Interface"), not the `run` subcommand. We omit `--prompt` when
- *   resuming so the user can continue the prior conversation.
+ *   Interface"), not the `run` subcommand. A resume carries no
+ *   `--prompt`: nothing documents the prompt running on a session the TUI
+ *   continues, so the adapter types a resume's message in instead
+ *   (`resumePromptDelivery: 'typed'`).
  *
  * - There is no `--dangerously-skip-permissions` flag in TUI mode.
  *   That flag is only documented for `opencode run` (non-interactive).
@@ -112,8 +114,9 @@ export class OpenCodeCommandBuilder {
 
     if (options.resume && options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
-      // Resume attaches to the existing OpenCode session - no prompt
-      // is delivered (mirrors Claude's --resume convention). We also
+      // Resume attaches to the existing OpenCode session with no prompt:
+      // the engine types a resume's message in once the TUI is ready
+      // (`resumePromptDelivery: 'typed'`). We also
       // do not pass --agent on resume: the saved session already has
       // an active agent and the user may have Tab-switched mid-session.
       // Forcing it here would shadow that runtime choice.

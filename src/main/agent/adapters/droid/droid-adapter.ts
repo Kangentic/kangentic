@@ -62,6 +62,8 @@ export class DroidAdapter implements AgentAdapter {
    * (see runtime.sessionId.fromFilesystem).
    */
   readonly supportsCallerSessionId = false;
+  /** The resume command carries the prompt as its positional argument. */
+  readonly resumePromptDelivery = 'command-line' as const;
   // Its session files (`runtime.sessionId.fromFilesystem`).
   readonly capturesInteractiveSessionId = true;
   // The literal URL goes into the folder's `.factory/mcp.json`.
