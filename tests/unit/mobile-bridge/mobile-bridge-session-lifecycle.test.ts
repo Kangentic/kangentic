@@ -186,6 +186,8 @@ const { MessageEncodeError, RESPONSE_TOO_LARGE_ERROR } = await import('../../../
 const { noteRequestSpan, takeRequestSpans, resetRequestSpansForTests } = await import('../../../src/main/mobile-bridge/request-spans');
 const { trackEvent } = await import('../../../src/main/analytics/analytics');
 const { createTransport } = await import('../../../src/main/mobile-bridge/transport/transport-factory');
+// The capturing subclass the mock above installed: the service constructs this one, so a spy on its prototype is the one the service hits.
+const { PushNotifier } = await import('../../../src/main/mobile-bridge/push/push-notifier');
 type MobileBridgeServiceInstance = InstanceType<typeof MobileBridgeService>;
 
 /** Settle every microtask queued by the fire-and-forget async chain reconcile() -> syncSessions() -> runSyncSessions() -> openSessionForDevice() kicks off. */
@@ -1359,5 +1361,178 @@ describe('MobileBridgeService.attachContext() push lane and placement wiring', (
 
     expect(options.boardEvents).toBe(boardEvents);
     expect(boardEvents.onBoardChanged).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The service half of a Notify me automation row's phone push. The notifier's
+ * own sealing, presence and cooldown are pinned in push-notifier.test.ts; what
+ * only the service decides is pinned here: it reads the task title from the
+ * row's OWN project, hands the notifier exactly the row's text plus that title,
+ * survives a failed read, and skips the read altogether while the bridge is off
+ * (every Notify me row on every column comes through it, bridge or no bridge).
+ *
+ * Project and task ids are distinct strings, and the repos sit behind the
+ * getProjectRepos seam, so a read from the wrong project cannot match by
+ * accident.
+ */
+describe('MobileBridgeService.notifyAutomation()', () => {
+  const automationInput = { title: 'Deploy finished', body: 'The build is green', projectId: 'proj-a', taskId: 'task-1' };
+
+  const servicesToDispose: Array<InstanceType<typeof MobileBridgeService>> = [];
+  /** `<projectId>/<taskId>` for every task row the service looked up. */
+  const taskRowReads: string[] = [];
+  /** What the task repos of each project answer, by project id then task id. An id not listed answers undefined. */
+  let taskTitlesByProject: Record<string, Record<string, string>> = {};
+
+  function spyOnNotifyAutomation() {
+    return vi.spyOn(PushNotifier.prototype, 'notifyAutomation').mockImplementation(() => {});
+  }
+  let notifierSpy: ReturnType<typeof spyOnNotifyAutomation>;
+
+  /** The fake repos of every project: getById reads taskTitlesByProject and records the lookup. The lane is set on purpose, to show it never reaches the notifier. */
+  function installTaskRepos(): void {
+    attachCapture.projectRepos = (projectId) => ({
+      tasks: {
+        getById: (taskId: string) => {
+          taskRowReads.push(`${projectId}/${taskId}`);
+          const title = taskTitlesByProject[projectId]?.[taskId];
+          return title === undefined ? undefined : { id: taskId, title, swimlane_id: 'lane-review' };
+        },
+      },
+    });
+  }
+
+  /** A service with the context attached, so its notifier and context both exist. */
+  function attachedService(enabled: boolean): MobileBridgeServiceInstance {
+    const service = new MobileBridgeService({ enabled, relayUrl: 'wss://relay.example.com' });
+    servicesToDispose.push(service);
+    const sessionManager = Object.assign(new EventEmitter(), { setMobileTerminalProbe: vi.fn() });
+    service.attachContext({ sessionManager, boardEvents: { emitBoardChanged: vi.fn(), onBoardChanged: vi.fn(() => () => {}) }, projectRepo: { list: () => [] } } as never);
+    return service;
+  }
+
+  beforeEach(() => {
+    notifierSpy = spyOnNotifyAutomation();
+    attachCapture.projectRepos = null;
+    taskRowReads.length = 0;
+    taskTitlesByProject = {};
+  });
+
+  afterEach(() => {
+    for (const service of servicesToDispose) service.dispose();
+    servicesToDispose.length = 0;
+    notifierSpy.mockRestore();
+    attachCapture.projectRepos = null;
+  });
+
+  it('hands the notifier the row\'s title and body with the task title read from the row\'s own project', () => {
+    taskTitlesByProject = {
+      'proj-a': { 'task-1': 'Add dark mode' },
+      'proj-b': { 'task-1': 'A task of another project' },
+    };
+    installTaskRepos();
+    const service = attachedService(true);
+
+    service.notifyAutomation(automationInput);
+
+    expect(notifierSpy).toHaveBeenCalledExactlyOnceWith({
+      title: 'Deploy finished',
+      body: 'The build is green',
+      projectId: 'proj-a',
+      taskId: 'task-1',
+      taskTitle: 'Add dark mode',
+    });
+    // PushNotifier.notifyAutomation's input type has no swimlaneId, so the lane the fake row sits in must not ride along, not even as undefined.
+    expect(notifierSpy.mock.calls[0][0]).not.toHaveProperty('swimlaneId');
+    expect(taskRowReads).toEqual(['proj-a/task-1']);
+  });
+
+  it('passes an empty task title when the task row is gone', () => {
+    taskTitlesByProject = { 'proj-a': {} };
+    installTaskRepos();
+    const service = attachedService(true);
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(notifierSpy).toHaveBeenCalledExactlyOnceWith({ ...automationInput, taskTitle: '' });
+    expect(taskRowReads).toEqual(['proj-a/task-1']);
+  });
+
+  it('passes an empty task title and does not throw when reading the task row throws', () => {
+    attachCapture.projectRepos = () => ({
+      tasks: {
+        getById: () => {
+          throw new Error('database is locked');
+        },
+      },
+    });
+    const service = attachedService(true);
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(notifierSpy).toHaveBeenCalledExactlyOnceWith({ ...automationInput, taskTitle: '' });
+  });
+
+  it('passes an empty task title and does not throw when the project repos cannot be resolved', () => {
+    attachCapture.projectRepos = () => {
+      throw new Error('No project is currently open');
+    };
+    const service = attachedService(true);
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(notifierSpy).toHaveBeenCalledExactlyOnceWith({ ...automationInput, taskTitle: '' });
+  });
+
+  it('reads no task row and notifies nobody while the bridge is disabled', () => {
+    taskTitlesByProject = { 'proj-a': { 'task-1': 'Add dark mode' } };
+    installTaskRepos();
+    const service = attachedService(false);
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(taskRowReads).toEqual([]);
+    expect(notifierSpy).not.toHaveBeenCalled();
+  });
+
+  it('reads no task row and notifies nobody once a running bridge is disabled by reconcile', () => {
+    taskTitlesByProject = { 'proj-a': { 'task-1': 'Add dark mode' } };
+    installTaskRepos();
+    const service = attachedService(true);
+    service.notifyAutomation(automationInput);
+    expect(notifierSpy).toHaveBeenCalledTimes(1);
+    notifierSpy.mockClear();
+    taskRowReads.length = 0;
+
+    service.reconcile({ enabled: false, relayUrl: 'wss://relay.example.com' });
+    service.notifyAutomation(automationInput);
+
+    expect(taskRowReads).toEqual([]);
+    expect(notifierSpy).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op before the context is attached', () => {
+    taskTitlesByProject = { 'proj-a': { 'task-1': 'Add dark mode' } };
+    installTaskRepos();
+    const service = new MobileBridgeService({ enabled: true, relayUrl: 'wss://relay.example.com' });
+    servicesToDispose.push(service);
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(taskRowReads).toEqual([]);
+    expect(notifierSpy).not.toHaveBeenCalled();
+  });
+
+  it('is a no-op again after the service is disposed', () => {
+    taskTitlesByProject = { 'proj-a': { 'task-1': 'Add dark mode' } };
+    installTaskRepos();
+    const service = attachedService(true);
+    service.dispose();
+
+    expect(() => service.notifyAutomation(automationInput)).not.toThrow();
+
+    expect(taskRowReads).toEqual([]);
+    expect(notifierSpy).not.toHaveBeenCalled();
   });
 });
