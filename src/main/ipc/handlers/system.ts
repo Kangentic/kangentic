@@ -327,8 +327,8 @@ export function registerSystemHandlers(context: IpcContext): void {
   // immediately unregister so Kangentic holds no real global shortcuts.
   // Electron's macOS Accessibility-permission caveat for globalShortcut applies
   // only to media-key accelerators (Media Play/Pause, etc.), which
-  // comboToAccelerator never emits (modifier + letter/digit/F-key only), so the
-  // probe is not subject to that false-'taken' case.
+  // comboToAccelerator never emits (modifier + letter, digit, F-key, Tab or `
+  // only), so the probe is not subject to that false-'taken' case.
   ipcMain.handle(
     IPC.KEYBINDINGS_PROBE_GLOBAL,
     (_, combos: string[]): Record<string, 'available' | 'taken' | 'unsupported'> => {

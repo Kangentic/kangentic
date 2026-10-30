@@ -15,12 +15,17 @@
  *
  * Canonical combo format: modifier tokens then a single main key, joined by `+`.
  *   - `Mod` is the platform-primary modifier (Cmd on macOS, Ctrl elsewhere).
- *   - `Ctrl` (literal) is the control key on every platform; reserved for the
- *     terminal SIGINT combo, which is never Cmd on macOS.
+ *   - `Ctrl` (literal) is the control key on every platform. Used for the
+ *     terminal SIGINT combo, which is never Cmd on macOS, and for a combo whose
+ *     Cmd form macOS keeps for itself (Cmd+Tab, Cmd+`), so the default works the
+ *     same on all three platforms.
  *   - Other modifiers: `Alt`, `Shift`. Order is normalized to [Mod, Ctrl, Alt, Shift].
  *   - Main key: a single uppercase letter (`P`), digit (`0`), symbol (`=`, `-`),
- *     or a named key verbatim (`Enter`, `Escape`, `F5`).
- *   Examples: `Mod+Shift+P`, `Mod+I`, `Mod+0`, `Ctrl+C`, `F5`.
+ *     or a named key verbatim (`Enter`, `Escape`, `F5`, `Tab`).
+ *   - `Backquote` is the one main key matched by its physical position
+ *     (`KeyboardEvent.code`) rather than the character it types, because that
+ *     key types `` ` ``, `^`, `²` or a dead key depending on the layout.
+ *   Examples: `Mod+Shift+P`, `Mod+I`, `Mod+0`, `Ctrl+C`, `F5`, `Ctrl+Backquote`.
  *
  * Main bundles this module with plain esbuild, so a label is a descriptor from
  * `@lingui/core/runtime-macro`, never the build-time macro (.claude/rules/i18n.md).
@@ -79,7 +84,9 @@ export interface KeybindingDefinition {
   group: KeyGroup;
   /** Conflict-detection context. */
   scope: KeyScope;
-  /** Canonical default combo (e.g. `Mod+Shift+P`). */
+  /** Canonical default combo (e.g. `Mod+Shift+P`). An empty string means the
+   *  action ships unbound: it is listed in the Hotkeys tab for the user to bind,
+   *  and nothing listens for it until they do. */
   defaultCombo: string;
   /** Optional secondary combo bound to the same action (e.g. F5 + Mod+R). */
   defaultComboAlt?: string;
@@ -182,6 +189,67 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     group: 'General',
     scope: 'global',
     defaultCombo: 'Mod+Shift+P',
+    rebindable: true,
+  },
+  // Cycle keys (GitHub #176). A terminal is a running board agent or a Command
+  // Terminal terminal. Literal Ctrl on every platform, because Cmd+Tab and Cmd+`
+  // belong to macOS. Claude Code binds neither Ctrl+Tab nor Ctrl+`, and xterm sends
+  // Ctrl+Tab as a plain Tab, so taking them costs the agent nothing. Only
+  // Ctrl+Tab and Ctrl+Shift+Tab are free in the Tab family (Ctrl+Alt+Tab is the
+  // Windows switcher), so Shift picks the scope and both previous-terminal
+  // actions ship unbound. PageUp/PageDown is Claude Code's fullscreen scroll.
+  {
+    id: 'session.cycleNext',
+    label: msg`Next terminal in this project`,
+    description: msg`Go to the next running agent or Command Terminal terminal in this project.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Ctrl+Tab',
+    rebindable: true,
+  },
+  {
+    id: 'session.cyclePrev',
+    label: msg`Previous terminal in this project`,
+    description: msg`Go to the previous running agent or Command Terminal terminal in this project.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: '',
+    rebindable: true,
+  },
+  {
+    id: 'session.cycleAllNext',
+    label: msg`Next terminal in any project`,
+    description: msg`Go to the next running agent or Command Terminal terminal, switching project when it is in another.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Ctrl+Shift+Tab',
+    rebindable: true,
+  },
+  {
+    id: 'session.cycleAllPrev',
+    label: msg`Previous terminal in any project`,
+    description: msg`Go to the previous running agent or Command Terminal terminal, switching project when it is in another.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: '',
+    rebindable: true,
+  },
+  {
+    id: 'project.cycleNext',
+    label: msg`Next project`,
+    description: msg`Open the next project in sidebar order.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Ctrl+Backquote',
+    rebindable: true,
+  },
+  {
+    id: 'project.cyclePrev',
+    label: msg`Previous project`,
+    description: msg`Open the previous project in sidebar order.`,
+    group: 'General',
+    scope: 'global',
+    defaultCombo: 'Ctrl+Shift+Backquote',
     rebindable: true,
   },
   {
@@ -768,6 +836,18 @@ export interface KeyConflict {
 interface DetectConflictsOptions {
   /** Include devOnly bindings (the developer overlay flag is on). Default false. */
   includeDevOnly?: boolean;
+  /** `Mod` and literal `Ctrl` are the same physical key here (every platform but
+   *  macOS), so compare them as one. A rebind captured on Windows records a
+   *  physical Ctrl+Tab as `Mod+Tab`, which must clash with a `Ctrl+Tab` default.
+   *  Default false, which keeps the two apart as they are on macOS. */
+  modIsCtrl?: boolean;
+}
+
+/** `normalizeCombo`, with `Mod` folded into literal `Ctrl` when the two are one key. */
+function comparableCombo(combo: string, modIsCtrl: boolean): string {
+  const normalized = normalizeCombo(combo);
+  if (!modIsCtrl || isMouseCombo(normalized)) return normalized;
+  return normalizeCombo(normalized.split('+').map((part) => (part === 'Mod' ? 'Ctrl' : part)).join('+'));
 }
 
 /**
@@ -776,19 +856,22 @@ interface DetectConflictsOptions {
  * A `conflict` is two+ rebindable actions resolving to the same normalized combo
  * whose scopes overlap. A `terminal-warn` is a rebindable action resolving onto
  * a combo the embedded terminal consumes (so it would not fire while the terminal
- * is focused).
+ * is focused). An unbound action (empty combo) is never part of either.
  */
 export function detectConflicts(
   overrides?: Record<string, string> | null,
   options: DetectConflictsOptions = {},
 ): KeyConflict[] {
+  const modIsCtrl = options.modIsCtrl === true;
   const active = KEYBINDINGS.filter(
     (definition) => definition.rebindable && (!definition.devOnly || options.includeDevOnly),
   );
-  const resolved = active.map((definition) => ({
-    definition,
-    combo: normalizeCombo(effectiveCombo(definition.id, overrides)),
-  }));
+  const resolved = active
+    .map((definition) => ({
+      definition,
+      combo: comparableCombo(effectiveCombo(definition.id, overrides), modIsCtrl),
+    }))
+    .filter((entry) => entry.combo !== '');
 
   const conflicts: KeyConflict[] = [];
 
@@ -819,8 +902,8 @@ export function detectConflicts(
   const terminalCombos = new Set(
     KEYBINDINGS.filter((definition) => definition.terminalUnsafe).flatMap((definition) =>
       definition.defaultComboAlt
-        ? [normalizeCombo(definition.defaultCombo), normalizeCombo(definition.defaultComboAlt)]
-        : [normalizeCombo(definition.defaultCombo)],
+        ? [comparableCombo(definition.defaultCombo, modIsCtrl), comparableCombo(definition.defaultComboAlt, modIsCtrl)]
+        : [comparableCombo(definition.defaultCombo, modIsCtrl)],
     ),
   );
   for (const entry of resolved) {
@@ -838,12 +921,13 @@ export function detectConflicts(
  * expressed as an accelerator (symbols, named keys other than F-keys). A `null`
  * result tells the probe to skip the combo and report it as unsupported.
  *
- * Only modifier + single A-Z letter, 0-9 digit, or F1-F24 is supported, which
- * covers every rebindable global/dialog shortcut a user is likely to probe.
+ * Supported main keys: a single A-Z letter, a 0-9 digit, F1-F24, `Tab`, and
+ * `Backquote` (emitted as `` ` ``). That covers every rebindable global/dialog
+ * default. An unbound (empty) combo has nothing to probe and returns null.
  */
 export function comboToAccelerator(combo: string): string | null {
   // Mouse buttons are never OS global shortcuts; skip the accelerator probe.
-  if (isMouseCombo(combo)) return null;
+  if (combo === '' || isMouseCombo(combo)) return null;
   const parts = combo.split('+');
   const mainKey = parts[parts.length - 1];
   const modifiers = parts.slice(0, -1).map((modifier) => modifier.toLowerCase());
@@ -861,6 +945,10 @@ export function comboToAccelerator(combo: string): string | null {
     acceleratorKey = mainKey;
   } else if (/^F([1-9]|1[0-9]|2[0-4])$/.test(mainKey)) {
     acceleratorKey = mainKey;
+  } else if (mainKey === 'Tab') {
+    acceleratorKey = 'Tab';
+  } else if (mainKey === 'Backquote') {
+    acceleratorKey = '`';
   }
   if (!acceleratorKey) return null;
 

@@ -43,6 +43,7 @@ import {
   selectOptionOnSelector,
   setDialogResponse,
 } from '../../src/main/browser/cdp/cdp';
+import { chordKeyIdentity } from '../../src/main/browser/cdp/key-combo';
 
 interface SentCommand {
   method: string;
@@ -597,6 +598,41 @@ describe('input payloads', () => {
     detachDebugger(guest);
   });
 
+  it('dispatchKeypress names a digit or punctuation chord by its real key', async () => {
+    // A chord on a non-letter used to carry `code: 'Key1'` / "Key" plus a
+    // backtick and the character code as the virtual key (96 for a backtick,
+    // which is Numpad 0). A handler matching `event.code` (Kangentic's own
+    // Ctrl+Backquote project cycle) never fired, and xterm reads `keyCode`.
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await dispatchKeypress(guest, 'Ctrl+`');
+    await dispatchKeypress(guest, 'Ctrl+1');
+    await dispatchKeypress(guest, 'Ctrl+/');
+
+    expect(sent.map((entry) => entry.params)).toEqual([
+      { type: 'keyDown', key: '`', code: 'Backquote', windowsVirtualKeyCode: 192, modifiers: 2 },
+      { type: 'keyUp', key: '`', code: 'Backquote', windowsVirtualKeyCode: 192, modifiers: 2 },
+      { type: 'keyDown', key: '1', code: 'Digit1', windowsVirtualKeyCode: 49, modifiers: 2 },
+      { type: 'keyUp', key: '1', code: 'Digit1', windowsVirtualKeyCode: 49, modifiers: 2 },
+      { type: 'keyDown', key: '/', code: 'Slash', windowsVirtualKeyCode: 191, modifiers: 2 },
+      { type: 'keyUp', key: '/', code: 'Slash', windowsVirtualKeyCode: 191, modifiers: 2 },
+    ]);
+    detachDebugger(guest);
+  });
+
+  it('dispatchKeypress sends no invented code for a character with no key of its own', async () => {
+    const { guest, sent } = fakeGuest();
+    attachDebugger(guest);
+    sent.length = 0;
+
+    await dispatchKeypress(guest, 'Ctrl+~');
+
+    expect(sent.every((entry) => (entry.params as { code?: string }).code === undefined)).toBe(true);
+    detachDebugger(guest);
+  });
+
   it('dispatchKeypress leaves a shifted SYMBOL text-free rather than guessing a layout', async () => {
     // Shift+1 is `!` on a US layout and something else on many others, and there
     // is no layout map here. Guessing would be a lie; `type` is the right tool.
@@ -1003,5 +1039,40 @@ describe('scroll, hover and select', () => {
       reason: 'no-match',
     });
     detachDebugger(noMatch.guest);
+  });
+});
+
+describe('chordKeyIdentity', () => {
+  // The expected `code` and `vk` are the UI Events key names and the standard Windows
+  // virtual-key codes (VK_OEM_1 is 186 through VK_OEM_7 is 222), written out here
+  // rather than read from the table under test.
+  it.each([
+    ['`', 'Backquote', 192],
+    ['-', 'Minus', 189],
+    ['=', 'Equal', 187],
+    ['[', 'BracketLeft', 219],
+    [']', 'BracketRight', 221],
+    ['\\', 'Backslash', 220],
+    [';', 'Semicolon', 186],
+    ["'", 'Quote', 222],
+    [',', 'Comma', 188],
+    ['.', 'Period', 190],
+    ['/', 'Slash', 191],
+  ])('names the US punctuation key %s as %s with virtual key %i', (character, code, vk) => {
+    expect(chordKeyIdentity(character)).toEqual({ code, vk });
+  });
+
+  it('names a lowercase letter by its physical key and uppercase virtual key', () => {
+    expect(chordKeyIdentity('v')).toEqual({ code: 'KeyV', vk: 86 });
+  });
+
+  it('names a digit by its physical digit key', () => {
+    expect(chordKeyIdentity('7')).toEqual({ code: 'Digit7', vk: 55 });
+  });
+
+  it('gives a character with no key of its own on a US keyboard no code', () => {
+    // A shifted symbol is not a physical key, and inventing a code for it
+    // ("Key~") would be one no real keyboard sends.
+    expect(chordKeyIdentity('~')).not.toHaveProperty('code');
   });
 });

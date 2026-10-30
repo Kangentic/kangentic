@@ -24,7 +24,32 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useWindowStore } from '../store/window-store';
 
+// hmr-safe: holds only the one-shot listener a cycle keypress registers while it
+// waits for a switch to land. A reset drops that one landing, which then ends on
+// its own timeout, and the next press starts a fresh one.
+const restoredListeners = new Set<(projectId: string) => void>();
+
+/**
+ * Hear when a project's workspace has been restored, the last step of a project
+ * switch on both the warm and the cold path. Fires for a project with no saved
+ * layout too. The all-projects cycle key waits on it to land on a terminal in
+ * the project it just switched to. Returns the unsubscribe.
+ */
+export function onWorkspaceRestored(listener: (projectId: string) => void): () => void {
+  restoredListeners.add(listener);
+  return () => { restoredListeners.delete(listener); };
+}
+
+function notifyWorkspaceRestored(projectId: string): void {
+  for (const listener of [...restoredListeners]) listener(projectId);
+}
+
 export function restoreWorkspaceForProject(projectId: string): void {
+  restoreWorkspace(projectId);
+  notifyWorkspaceRestored(projectId);
+}
+
+function restoreWorkspace(projectId: string): void {
   const workspace = useConfigStore.getState().config.workspaceByProject?.[projectId];
   // Order matters: adopt what the blob names FIRST (adoption is what clears
   // retention for a window the blob knows about), then release whatever is

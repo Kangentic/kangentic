@@ -154,4 +154,38 @@ test.describe('Hotkeys settings tab', () => {
     await expect(page.getByTestId('hotkey-row-view.toggleSidebar').getByText('Custom')).toHaveCount(0);
     await closeSettings();
   });
+
+  test('the previous-terminal rows ship unbound, read Not set, and can be bound', async () => {
+    await openHotkeys();
+    for (const id of ['session.cyclePrev', 'session.cycleAllPrev']) {
+      const combo = page.getByTestId(`hotkey-row-${id}`).getByTestId('key-combo');
+      await expect(combo).toHaveText('Not set');
+      await expect(combo).toHaveAttribute('data-unbound', 'true');
+    }
+    // The bound cycle keys draw their chips. The backtick key is shown as a backtick.
+    await expect(page.getByTestId('hotkey-row-project.cycleNext').getByTestId('key-combo')).toHaveAttribute('aria-label', 'Ctrl+`');
+
+    const row = page.getByTestId('hotkey-row-session.cyclePrev');
+    await rebind('hotkey-row-session.cyclePrev', 'Control+Shift+Y');
+    await expect(row.getByText('Custom')).toBeVisible();
+    await expect(row.getByTestId('key-combo')).toHaveAttribute('aria-label', 'Ctrl+Shift+Y');
+
+    await row.getByTestId('hotkey-reset-session.cyclePrev').click();
+    await expect(row.getByTestId('key-combo')).toHaveText('Not set');
+    await closeSettings();
+  });
+
+  test('a rebind pressed as Ctrl+Tab clashes with the Ctrl+Tab cycle default', async () => {
+    // Off macOS the capture records a physical Ctrl+Tab as Mod+Tab; the tab folds
+    // Mod into Ctrl, so it still lands on session.cycleNext's literal Ctrl+Tab.
+    await openHotkeys();
+    await rebind('hotkey-row-view.toggleSidebar', 'Control+Tab');
+
+    await expect(page.getByTestId('hotkey-conflict-view.toggleSidebar')).toBeVisible();
+    await expect(page.getByTestId('hotkey-conflict-session.cycleNext')).toBeVisible();
+
+    await page.getByTestId('hotkey-reset-view.toggleSidebar').click();
+    await expect(page.getByTestId('hotkey-conflict-view.toggleSidebar')).toHaveCount(0);
+    await closeSettings();
+  });
 });

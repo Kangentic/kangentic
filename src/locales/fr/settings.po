@@ -1859,6 +1859,11 @@ msgstr "Aucun"
 msgid "Not found"
 msgstr "Introuvable"
 
+#: src/renderer/components/settings/keybindings/KeyCombo.tsx
+msgctxt "hotkey"
+msgid "Not set"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not signed in"

@@ -46,6 +46,43 @@ const SPECIAL_KEY_MAP: Record<string, SpecialKey> = {
   Delete: { code: 'Delete', key: 'Delete', vk: 46 },
 };
 
+/**
+ * The keys a US keyboard types punctuation with, by the unshifted character:
+ * the UI Events `code` and the Windows virtual-key code Chromium reports as
+ * `keyCode`. xterm reads `keyCode`, and handlers matching a key by position
+ * read `code`, so both have to name the real key.
+ */
+const US_PUNCTUATION_KEYS: Record<string, { code: string; vk: number }> = {
+  '`': { code: 'Backquote', vk: 192 },
+  '-': { code: 'Minus', vk: 189 },
+  '=': { code: 'Equal', vk: 187 },
+  '[': { code: 'BracketLeft', vk: 219 },
+  ']': { code: 'BracketRight', vk: 221 },
+  '\\': { code: 'Backslash', vk: 220 },
+  ';': { code: 'Semicolon', vk: 186 },
+  "'": { code: 'Quote', vk: 222 },
+  ',': { code: 'Comma', vk: 188 },
+  '.': { code: 'Period', vk: 190 },
+  '/': { code: 'Slash', vk: 191 },
+};
+
+/**
+ * The physical key a chord's single character names: `KeyV` and 86 for `v`,
+ * `Digit1` and 49 for `1`, `Backquote` and 192 for `` ` ``. The UI Events spec
+ * names every `code` after the key's place on a US keyboard, so the US
+ * character is the honest spelling of that key. A character with no key of its
+ * own there (a shifted symbol, non-Latin text) gets no `code` rather than an
+ * invented one: `Key1`, or "Key" plus a backtick, is a code no real keyboard
+ * ever sends, and a handler matching `event.code` never fired on it.
+ */
+export function chordKeyIdentity(character: string): { code?: string; vk: number } {
+  const upper = character.toUpperCase();
+  if (/^[A-Z]$/.test(upper)) return { code: `Key${upper}`, vk: upper.charCodeAt(0) };
+  if (/^[0-9]$/.test(character)) return { code: `Digit${character}`, vk: character.charCodeAt(0) };
+  if (Object.hasOwn(US_PUNCTUATION_KEYS, character)) return US_PUNCTUATION_KEYS[character];
+  return { vk: upper.charCodeAt(0) };
+}
+
 export const MODIFIER_FLAGS: Record<string, number> = {
   Alt: 1,
   Ctrl: 2,

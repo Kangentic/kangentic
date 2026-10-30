@@ -18,6 +18,7 @@ import { describe, it, expect, vi, beforeAll, afterAll } from 'vitest';
 // ---------------------------------------------------------------------------
 function makeEvent(overrides: {
   key: string;
+  code?: string;
   ctrlKey?: boolean;
   metaKey?: boolean;
   shiftKey?: boolean;
@@ -25,6 +26,7 @@ function makeEvent(overrides: {
 }): KeyboardEvent {
   return {
     key: overrides.key,
+    code: overrides.code ?? '',
     ctrlKey: overrides.ctrlKey ?? false,
     metaKey: overrides.metaKey ?? false,
     shiftKey: overrides.shiftKey ?? false,
@@ -184,6 +186,49 @@ describe('Non-Mac helpers (IS_MAC = false)', () => {
       const event = makeEvent({ key: 'F5' });
       expect(comboFromEvent(event)).toBe('F5');
     });
+
+    it('records the key left of 1 as Backquote, whatever character the layout gives it', () => {
+      // US, German (dead circumflex), French (superscript two).
+      expect(comboFromEvent(makeEvent({ key: '`', code: 'Backquote', ctrlKey: true }))).toBe('Mod+Backquote');
+      expect(comboFromEvent(makeEvent({ key: 'Dead', code: 'Backquote', ctrlKey: true }))).toBe('Mod+Backquote');
+      expect(comboFromEvent(makeEvent({ key: '²', code: 'Backquote', ctrlKey: true, shiftKey: true }))).toBe('Mod+Shift+Backquote');
+    });
+
+    it('records Ctrl+Tab as Mod+Tab off macOS', () => {
+      expect(comboFromEvent(makeEvent({ key: 'Tab', code: 'Tab', ctrlKey: true }))).toBe('Mod+Tab');
+    });
+  });
+
+  // ── Backquote and Tab (the cycle keys) ────────────────────────────────────
+
+  describe('matchesCombo: cycle keys', () => {
+    it('Ctrl+Backquote matches the physical key on any layout', () => {
+      for (const key of ['`', '^', 'Dead', '²']) {
+        expect(matchesCombo(makeEvent({ key, code: 'Backquote', ctrlKey: true }), 'Ctrl+Backquote')).toBe(true);
+      }
+    });
+
+    it('Ctrl+Shift+Backquote matches with Shift held, which turns ` into ~ on US layouts', () => {
+      const event = makeEvent({ key: '~', code: 'Backquote', ctrlKey: true, shiftKey: true });
+      expect(matchesCombo(event, 'Ctrl+Shift+Backquote')).toBe(true);
+      expect(matchesCombo(event, 'Ctrl+Backquote')).toBe(false);
+    });
+
+    it('a backtick typed from another physical key does not match Backquote', () => {
+      expect(matchesCombo(makeEvent({ key: '`', code: 'IntlBackslash', ctrlKey: true }), 'Ctrl+Backquote')).toBe(false);
+    });
+
+    it('Ctrl+Tab and Ctrl+Shift+Tab match only their own Shift state', () => {
+      const plain = makeEvent({ key: 'Tab', code: 'Tab', ctrlKey: true });
+      const shifted = makeEvent({ key: 'Tab', code: 'Tab', ctrlKey: true, shiftKey: true });
+      expect(matchesCombo(plain, 'Ctrl+Tab')).toBe(true);
+      expect(matchesCombo(shifted, 'Ctrl+Tab')).toBe(false);
+      expect(matchesCombo(shifted, 'Ctrl+Shift+Tab')).toBe(true);
+    });
+
+    it('an unbound (empty) combo matches nothing', () => {
+      expect(matchesCombo(makeEvent({ key: 'Tab', code: 'Tab', ctrlKey: true }), '')).toBe(false);
+    });
   });
 
   // ── formatComboSegments ───────────────────────────────────────────────────
@@ -203,6 +248,14 @@ describe('Non-Mac helpers (IS_MAC = false)', () => {
     it('leaves named keys (Enter, F5) verbatim', () => {
       expect(formatComboSegments('Enter')).toEqual(['Enter']);
       expect(formatComboSegments('F5')).toEqual(['F5']);
+    });
+
+    it('shows Backquote as a backtick', () => {
+      expect(formatComboSegments('Ctrl+Backquote')).toEqual(['Ctrl', '`']);
+    });
+
+    it('returns no segments for an unbound (empty) combo', () => {
+      expect(formatComboSegments('')).toEqual([]);
     });
   });
 
@@ -356,6 +409,13 @@ describe('Mac helpers (IS_MAC = true)', () => {
     it('Mod+= zoom-in: matches metaKey + "+" (shift-held) on Mac', () => {
       const event = makeEvent({ key: '+', metaKey: true, shiftKey: true });
       expect(matchesComboMac(event, 'Mod+=')).toBe(true);
+    });
+
+    it('the cycle keys are literal Ctrl on Mac, never Cmd (Cmd+Tab and Cmd+` belong to macOS)', () => {
+      expect(matchesComboMac(makeEvent({ key: 'Tab', code: 'Tab', ctrlKey: true }), 'Ctrl+Tab')).toBe(true);
+      expect(matchesComboMac(makeEvent({ key: 'Tab', code: 'Tab', metaKey: true }), 'Ctrl+Tab')).toBe(false);
+      expect(matchesComboMac(makeEvent({ key: '`', code: 'Backquote', ctrlKey: true }), 'Ctrl+Backquote')).toBe(true);
+      expect(matchesComboMac(makeEvent({ key: '`', code: 'Backquote', metaKey: true }), 'Ctrl+Backquote')).toBe(false);
     });
   });
 

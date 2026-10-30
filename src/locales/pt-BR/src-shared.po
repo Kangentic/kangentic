@@ -458,6 +458,22 @@ msgstr "Nome do branch do Git (vazio se a tarefa não tiver um)."
 msgid "Give up after"
 msgstr "Desistir após"
 
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgctxt "automation field"
@@ -670,6 +686,18 @@ msgstr "Próxima coluna"
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
 msgstr "Próxima coluna é a primeira opção: a próxima coluna na rota da tarefa ou no quadro."
 
+#: src/shared/keybindings.ts
+msgid "Next project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in this project"
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -835,6 +863,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Abrir a caixa de diálogo Nova tarefa no quadro."
 
 #: src/shared/keybindings.ts
+msgid "Open the next project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the previous project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open the Workflows view; pressed there, return to the view you came from."
 msgstr "Abrir a visão Fluxos de trabalho; se pressionado nela, voltar à visão anterior."
@@ -907,6 +943,18 @@ msgstr "Arquivo alterado anterior"
 #, fuzzy
 msgid "Previous column"
 msgstr "Coluna anterior"
+
+#: src/shared/keybindings.ts
+msgid "Previous project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in this project"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

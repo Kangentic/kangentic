@@ -1,7 +1,7 @@
 import type { WebContents } from 'electron';
 import type { QueryAllResult } from './types';
 import { keyboardFocusIsInHost, KeyboardFocusNotInGuestError } from './keyboard-focus';
-import { MODIFIER_FLAGS, parseKeyCombo } from './key-combo';
+import { MODIFIER_FLAGS, chordKeyIdentity, parseKeyCombo } from './key-combo';
 
 /**
  * Wraps `webContents.debugger.attach('1.3')` and exposes typed helpers
@@ -1560,7 +1560,9 @@ export async function dispatchKeypress(
       return true;
     }
     const upper = target.toUpperCase();
-    const vk = upper.charCodeAt(0);
+    // The real key's `code` and virtual-key code (`chordKeyIdentity`), so a chord
+    // on a digit or a punctuation key reaches a page the way the physical press does.
+    const { code, vk } = chordKeyIdentity(target);
     // Shift alone PRODUCES TEXT; Ctrl / Alt / Meta do not.
     //
     // Without this, `Shift+a` sent a keyDown/keyUp pair carrying no `text` and
@@ -1585,7 +1587,7 @@ export async function dispatchKeypress(
     await dispatchKeyEvent(webContents, {
       type: 'keyDown',
       key,
-      code: `Key${upper}`,
+      ...(code ? { code } : {}),
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
       // On the keyDown, never on a separate `char`: see `typeText`.
@@ -1594,7 +1596,7 @@ export async function dispatchKeypress(
     await dispatchKeyEvent(webContents, {
       type: 'keyUp',
       key,
-      code: `Key${upper}`,
+      ...(code ? { code } : {}),
       windowsVirtualKeyCode: vk,
       modifiers: modifierFlags,
     });

@@ -458,6 +458,22 @@ msgstr "Git 분기 이름(작업에 없으면 비어 있음)."
 msgid "Give up after"
 msgstr "제한 시간"
 
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgctxt "automation field"
@@ -670,6 +686,18 @@ msgstr "다음 열"
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
 msgstr "첫 번째 선택지는 다음 열로, 작업 경로 또는 보드상의 다음 열입니다."
 
+#: src/shared/keybindings.ts
+msgid "Next project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in this project"
+msgstr ""
+
 #: src/shared/automation-describe.ts
 #, fuzzy
 msgid "No message yet."
@@ -835,6 +863,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "보드에서 새 작업 대화 상자를 엽니다."
 
 #: src/shared/keybindings.ts
+msgid "Open the next project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the previous project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Open the Workflows view; pressed there, return to the view you came from."
 msgstr "워크플로 보기를 엽니다. 워크플로 보기에서 누르면 이전 보기로 돌아갑니다."
@@ -907,6 +943,18 @@ msgstr "이전 변경된 파일"
 #, fuzzy
 msgid "Previous column"
 msgstr "이전 열"
+
+#: src/shared/keybindings.ts
+msgid "Previous project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in this project"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 #, fuzzy

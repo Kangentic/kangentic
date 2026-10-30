@@ -12,6 +12,7 @@ import {
   effectiveCombo,
   type KeyGroup,
 } from '../../../../shared/keybindings';
+import { IS_MAC } from '../../../utils/keybindings';
 import { useScopedUpdate } from '../shared';
 import { SettingsCard } from '../settings-card';
 import { CountBadge } from '../../CountBadge';
@@ -64,7 +65,9 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
   );
 
   const conflicts = useMemo(
-    () => detectConflicts(overrides, { includeDevOnly: isDev }),
+    // Off macOS, Mod and literal Ctrl are one key, so a rebind captured as Mod+Tab
+    // must clash with the Ctrl+Tab default.
+    () => detectConflicts(overrides, { includeDevOnly: isDev, modIsCtrl: !IS_MAC }),
     // Re-derive when the override map reference changes (after any update).
     [overrides, isDev],
   );
@@ -100,7 +103,9 @@ export function HotkeysTab({ globalConfig }: { globalConfig: AppConfig }) {
       new Set(
         visibleDefinitions
           .filter((definition) => definition.rebindable)
-          .map((definition) => effectiveCombo(definition.id, overrides)),
+          .map((definition) => effectiveCombo(definition.id, overrides))
+          // An unbound action has nothing to probe.
+          .filter((combo) => combo !== ''),
       ),
     );
     if (combos.length === 0) return;
