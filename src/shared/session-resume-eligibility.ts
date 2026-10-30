@@ -79,21 +79,31 @@ export function isPausedTaskSession(session: Pick<Session, 'status' | 'transient
   return session.status === 'suspended' && session.transient !== true;
 }
 
-/** The two task sets one registry scan yields; see `taskSessionStatesOf`. */
+/** What one registry scan yields; see `taskSessionStatesOf`. */
 export interface TaskSessionStates {
   /** Tasks with a live (`running` or `queued`) session. */
   liveTaskIds: Set<string>;
   /** Tasks with a paused session (`isPausedTaskSession`) and no live one. */
   pausedTaskIds: Set<string>;
+  /**
+   * The registry id of each `pausedTaskIds` task's paused row, keyed by task.
+   * Its keys are exactly `pausedTaskIds`. A task holding two paused rows maps
+   * to the later one in registry order, which is the newer row.
+   */
+  pausedSessionIdByTaskId: Map<string, string>;
 }
 
 /**
  * The one registry scan behind the phone's Pause and Resume promises.
- * read-board reads both sets for every task on a board: `pausable` from
- * `liveTaskIds`, and `paused` and `resumable` from `pausedTaskIds`. One scan,
- * so a task can never be in both: a paused task has no live session.
+ * read-board reads it for every task on a board: `pausable` from
+ * `liveTaskIds`, and `paused`, `paused_session_id` and `resumable` from
+ * `pausedSessionIdByTaskId`. One scan, so a task can never be both live and
+ * paused: a paused task has no live session.
  * Reads the registry by task rather than by `task.session_id`, because a pause
- * clears that pointer while the suspended row stays.
+ * clears that pointer while the suspended row stays. The paused row's id is
+ * the registry's, not the task's or the DB's, because a restart re-registers
+ * the row under a fresh id (`registerSuspendedPlaceholder`) and the phone's
+ * `send-user-message` looks the id up in the registry.
  *
  * `liveTaskIds` uses the predicate `findLiveSessionByTaskId` uses, which is
  * how `pauseTaskSession` finds the session it suspends, so a task listed there
@@ -108,17 +118,25 @@ export interface TaskSessionStates {
  * nothing performs.
  */
 export function taskSessionStatesOf(
-  sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>,
+  sessions: ReadonlyArray<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>>,
 ): TaskSessionStates {
   const pausedTaskIds = new Set<string>();
+  const pausedSessionIdByTaskId = new Map<string, string>();
   const liveTaskIds = new Set<string>();
   for (const session of sessions) {
     if (!session.taskId) continue;
-    if (isPausedTaskSession(session)) pausedTaskIds.add(session.taskId);
-    else if (isLiveSessionStatus(session.status)) liveTaskIds.add(session.taskId);
+    if (isPausedTaskSession(session)) {
+      pausedTaskIds.add(session.taskId);
+      pausedSessionIdByTaskId.set(session.taskId, session.id);
+    } else if (isLiveSessionStatus(session.status)) {
+      liveTaskIds.add(session.taskId);
+    }
   }
-  for (const taskId of liveTaskIds) pausedTaskIds.delete(taskId);
-  return { liveTaskIds, pausedTaskIds };
+  for (const taskId of liveTaskIds) {
+    pausedTaskIds.delete(taskId);
+    pausedSessionIdByTaskId.delete(taskId);
+  }
+  return { liveTaskIds, pausedTaskIds, pausedSessionIdByTaskId };
 }
 
 /**
@@ -127,7 +145,7 @@ export function taskSessionStatesOf(
  * which is how `startTaskSession` chooses the Resume path. read-board reads
  * `taskSessionStatesOf` directly, because it needs the live half as well.
  */
-export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>): Set<string> {
+export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>>): Set<string> {
   return taskSessionStatesOf(sessions).pausedTaskIds;
 }
 
@@ -137,7 +155,7 @@ export function pausedTaskIdsOf(sessions: ReadonlyArray<Pick<Session, 'taskId' |
  * same function over that task's rows, so the rule stays defined once.
  */
 export function isTaskPaused(
-  sessions: ReadonlyArray<Pick<Session, 'taskId' | 'status' | 'transient'>>,
+  sessions: ReadonlyArray<Pick<Session, 'id' | 'taskId' | 'status' | 'transient'>>,
   taskId: string,
 ): boolean {
   return pausedTaskIdsOf(sessions.filter((session) => session.taskId === taskId)).has(taskId);

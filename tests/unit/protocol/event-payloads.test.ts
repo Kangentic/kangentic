@@ -70,6 +70,7 @@ const boardTaskFixture: JsonValue = {
   spawn_progress: null,
   resumable: false,
   paused: false,
+  paused_session_id: null,
   pausable: true,
   automations_disabled: false,
   workflow: null,
@@ -435,6 +436,19 @@ describe('board row guards', () => {
     delete withoutPaused.paused;
     expect(parseBoardTaskWire(withoutPaused).paused).toBeNull();
     expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused: 'yes' }).paused).toBeNull();
+  });
+
+  it('passes paused_session_id through, and reads an absent or non-string one as null (pre-0.27.0 desktop)', () => {
+    const pausedRow = { ...(boardTaskFixture as Record<string, JsonValue>), session_id: null, paused: true, paused_session_id: 'sess-paused' };
+    const parsed = parseBoardTaskWire(pausedRow);
+    expect(parsed.paused_session_id).toBe('sess-paused');
+    // session_id keeps its meaning: the parse never copies the paused id there.
+    expect(parsed.session_id).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused_session_id: null }).paused_session_id).toBeNull();
+    const withoutPausedSessionId = { ...(boardTaskFixture as Record<string, JsonValue>) };
+    delete withoutPausedSessionId.paused_session_id;
+    expect(parseBoardTaskWire(withoutPausedSessionId).paused_session_id).toBeNull();
+    expect(parseBoardTaskWire({ ...(boardTaskFixture as Record<string, JsonValue>), paused_session_id: 7 }).paused_session_id).toBeNull();
   });
 
   it('passes pausable through as true or false, and reads an absent or non-boolean one as null (pre-0.18.0 desktop)', () => {

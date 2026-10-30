@@ -379,12 +379,14 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
  * decides, and so a bare `.map(toBoardTaskWire)` (which would pass the array
  * index here) fails to compile.
  *
- * `pauseFlags` holds `paused`, whether the task has a paused session and no
- * live one (`taskSessionStatesOf`), `resumable`, `isResumeOffered` for that
- * same answer, and `pausable`, `isPauseOffered` for the task's live session.
- * The caller resolves all three because they need the session registry and
- * the column; see `BoardTaskWire.paused`, `BoardTaskWire.resumable` and
- * `BoardTaskWire.pausable`. One object rather than positional booleans, so a
+ * `pauseFlags` holds `pausedSessionId`, the registry id of the task's paused
+ * session when it has one and no live one (`taskSessionStatesOf`), else null;
+ * `resumable`, `isResumeOffered` for that same answer; and `pausable`,
+ * `isPauseOffered` for the task's live session. The caller resolves all three
+ * because they need the session registry and the column; see
+ * `BoardTaskWire.paused_session_id`, `BoardTaskWire.resumable` and
+ * `BoardTaskWire.pausable`. `paused` is derived from the id here, so the two
+ * fields can never disagree. One object rather than positional values, so a
  * call site cannot swap them.
  *
  * `workflow` is read per board, not per task (`workflowWireFacts`), since a
@@ -398,7 +400,7 @@ export function toSpawnProgressLabelWire(label: string | null): string | null {
 export function toBoardTaskWire(
   task: Task,
   spawnProgressLabel: string | null,
-  pauseFlags: { paused: boolean; resumable: boolean; pausable: boolean },
+  pauseFlags: { pausedSessionId: string | null; resumable: boolean; pausable: boolean },
   workflow: BoardTaskWorkflowWire | null = null,
 ): BoardTaskWire {
   return {
@@ -425,7 +427,8 @@ export function toBoardTaskWire(
     updated_at: task.updated_at,
     spawn_progress: toSpawnProgressLabelWire(spawnProgressLabel),
     resumable: pauseFlags.resumable,
-    paused: pauseFlags.paused,
+    paused: pauseFlags.pausedSessionId !== null,
+    paused_session_id: pauseFlags.pausedSessionId,
     pausable: pauseFlags.pausable,
     automations_disabled: task.automations_disabled === true,
     workflow,

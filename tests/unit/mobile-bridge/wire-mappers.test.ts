@@ -52,7 +52,7 @@ function makeTask(overrides: Partial<Task> = {}): Task {
 
 describe('toBoardTaskWire', () => {
   /** A task with no paused or live session, for the tests that are not about pausing. */
-  const notPaused = { paused: false, resumable: false, pausable: false };
+  const notPaused = { pausedSessionId: null, resumable: false, pausable: false };
 
   it('carries a judged pr_merge_readiness value through to the wire shape', () => {
     const task = makeTask({ pr_merge_readiness: 'ready' });
@@ -75,20 +75,36 @@ describe('toBoardTaskWire', () => {
   });
 
   it('carries resumable as given, true and false, through the phone-side parse', () => {
-    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: true, pausable: false }) as unknown as JsonValue).resumable).toBe(true);
+    expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: true, pausable: false }) as unknown as JsonValue).resumable).toBe(true);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).resumable).toBe(false);
   });
 
-  it('carries paused as given, apart from resumable, through the phone-side parse', () => {
+  it('carries paused apart from resumable, through the phone-side parse', () => {
     // A paused task in Done: paused, but no Resume on offer.
-    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: true, resumable: false, pausable: false }) as unknown as JsonValue);
+    const pausedInDone = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: false, pausable: false }) as unknown as JsonValue);
     expect(pausedInDone.paused).toBe(true);
     expect(pausedInDone.resumable).toBe(false);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).paused).toBe(false);
   });
 
+  it('carries the paused session id through the phone-side parse, with paused true exactly while it is set', () => {
+    const paused = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: 'session-paused', resumable: true, pausable: false }) as unknown as JsonValue);
+    expect(paused.paused_session_id).toBe('session-paused');
+    expect(paused.paused).toBe(true);
+    // session_id keeps its meaning: a desktop pause cleared it, and the id
+    // never moves there.
+    expect(paused.session_id).toBeNull();
+    const notPausedWire = toBoardTaskWire(makeTask({ session_id: 'session-live' }), null, notPaused);
+    // A real null, never an absent key, which the phone would read as an older desktop.
+    expect(notPausedWire.paused_session_id).toBeNull();
+    const notPausedParsed = parseBoardTaskWire(notPausedWire as unknown as JsonValue);
+    expect(notPausedParsed.paused_session_id).toBeNull();
+    expect(notPausedParsed.paused).toBe(false);
+    expect(notPausedParsed.session_id).toBe('session-live');
+  });
+
   it('carries pausable as given, true and false, through the phone-side parse', () => {
-    const live = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { paused: false, resumable: false, pausable: true }) as unknown as JsonValue);
+    const live = parseBoardTaskWire(toBoardTaskWire(makeTask(), null, { pausedSessionId: null, resumable: false, pausable: true }) as unknown as JsonValue);
     expect(live.pausable).toBe(true);
     expect(live.paused).toBe(false);
     expect(parseBoardTaskWire(toBoardTaskWire(makeTask(), null, notPaused) as unknown as JsonValue).pausable).toBe(false);

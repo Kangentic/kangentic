@@ -291,22 +291,37 @@ describe('the paused-session definition behind the phone\'s Resume promise', () 
 
   it('taskSessionStatesOf yields the live and the paused tasks from one scan, never the same task in both', () => {
     const sessions = [
-      { taskId: 'task-running', status: 'running' as const },
-      { taskId: 'task-queued', status: 'queued' as const },
-      { taskId: 'task-paused', status: 'suspended' as const },
+      { id: 'session-running', taskId: 'task-running', status: 'running' as const },
+      { id: 'session-queued', taskId: 'task-queued', status: 'queued' as const },
+      { id: 'session-paused', taskId: 'task-paused', status: 'suspended' as const },
       // A queued successor beside the paused row it will replace: live, not paused.
-      { taskId: 'task-paused-with-queued-successor', status: 'suspended' as const },
-      { taskId: 'task-paused-with-queued-successor', status: 'queued' as const },
-      { taskId: 'task-exited', status: 'exited' as const },
-      { taskId: 'task-command-terminal', status: 'suspended' as const, transient: true },
-      { taskId: '', status: 'running' as const },
+      { id: 'session-paused-before-successor', taskId: 'task-paused-with-queued-successor', status: 'suspended' as const },
+      { id: 'session-queued-successor', taskId: 'task-paused-with-queued-successor', status: 'queued' as const },
+      { id: 'session-exited', taskId: 'task-exited', status: 'exited' as const },
+      { id: 'session-command-terminal', taskId: 'task-command-terminal', status: 'suspended' as const, transient: true },
+      { id: 'session-no-task', taskId: '', status: 'running' as const },
     ];
-    const { liveTaskIds, pausedTaskIds } = taskSessionStatesOf(sessions);
+    const { liveTaskIds, pausedTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf(sessions);
     expect([...liveTaskIds].sort()).toEqual(['task-paused-with-queued-successor', 'task-queued', 'task-running']);
     expect([...pausedTaskIds].sort()).toEqual(['task-paused']);
     for (const taskId of liveTaskIds) expect(pausedTaskIds.has(taskId)).toBe(false);
+    // The paused row's own registry id, for exactly the paused tasks.
+    expect(Object.fromEntries(pausedSessionIdByTaskId)).toEqual({ 'task-paused': 'session-paused' });
     // pausedTaskIdsOf is the same scan's paused half.
     expect([...pausedTaskIdsOf(sessions)].sort()).toEqual([...pausedTaskIds].sort());
+  });
+
+  it('taskSessionStatesOf names the later paused row of a task that holds two, whichever way the live rows fall', () => {
+    const { pausedTaskIds, pausedSessionIdByTaskId } = taskSessionStatesOf([
+      { id: 'session-older', taskId: 'task-paused-twice', status: 'suspended' },
+      { id: 'session-newer', taskId: 'task-paused-twice', status: 'suspended', transient: false },
+      // A live row listed first still unpauses the task, id and all.
+      { id: 'session-live', taskId: 'task-paused-with-running-successor', status: 'running' },
+      { id: 'session-left-behind', taskId: 'task-paused-with-running-successor', status: 'suspended' },
+    ]);
+    expect(Object.fromEntries(pausedSessionIdByTaskId)).toEqual({ 'task-paused-twice': 'session-newer' });
+    // Its keys are exactly the paused set.
+    expect([...pausedSessionIdByTaskId.keys()].sort()).toEqual([...pausedTaskIds].sort());
   });
 
   it('isPauseOffered needs a live session and a column other than To Do, and keeps Pause in Done', () => {

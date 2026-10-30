@@ -435,7 +435,8 @@ export interface BoardTaskWire {
    * `paused: true`.
    *
    * A desktop pause clears the task's `session_id`, so find a paused session
-   * from this field, not from `session_id`. A respawn queued behind the
+   * from this field, not from `session_id`, and name it by
+   * `paused_session_id` (from 0.27.0). A respawn queued behind the
    * desktop's concurrency limit leaves the task holding a paused session and a
    * queued one; that task reads false, as the desktop card shows the queued
    * session. While `spawn_progress` is non-null the desktop card shows that
@@ -450,6 +451,36 @@ export interface BoardTaskWire {
    * the key from every real wire response.
    */
   paused?: boolean | null;
+  /**
+   * The id of the task's paused session while `paused` is true, and null
+   * otherwise. It is the id to name in `send-user-message` for a paused task:
+   * the desktop holds that message for the task's next agent and answers
+   * `delivered: true`. Data only; nothing on the desktop displays it.
+   *
+   * It is the desktop's live id for the paused session, which a restart
+   * replaces: the desktop re-registers each paused session under a new id
+   * that no earlier snapshot, `session_id` or session list carries. That
+   * change reaches the phone as a `task-updated` board event, after which the
+   * next snapshot carries the new id. Read it from the latest snapshot rather
+   * than keeping one, and treat an `unknown-session` answer as a sign to
+   * re-read the board.
+   *
+   * `session_id` keeps its meaning and stays null while the task is paused. A
+   * resume never reuses this id: the resumed agent arrives as a new session in
+   * `session_id`, and this field turns null. The id follows `paused` exactly,
+   * so a paused task in Done or on the archived page carries one too. The
+   * desktop refuses a hold for such a task with the `unknown-session` code it
+   * sent there before 0.26.0 and the hold's reason as the error text, and a
+   * re-read of the board does not change that answer.
+   *
+   * Null or absent also means a desktop that predates the field (pre-0.27.0).
+   * On such a desktop a phone can still name a paused session's id it already
+   * knows, from a session screen that was open through the pause.
+   *
+   * Declared OPTIONAL (`?`) like `paused`; `parseBoardTaskWire` populates the
+   * key from every real wire response.
+   */
+  paused_session_id?: string | null;
   /**
    * True when the task has a live session (`running` or `queued`) and is not
    * in To Do. It is the desktop's promise that `pause-session` for this task
@@ -919,6 +950,7 @@ export function parseBoardTaskWire(value: JsonValue): BoardTaskWire {
     spawn_progress: nullableString(value, 'spawn_progress'),
     resumable: nullableBoolean(value, 'resumable'),
     paused: nullableBoolean(value, 'paused'),
+    paused_session_id: nullableString(value, 'paused_session_id'),
     pausable: nullableBoolean(value, 'pausable'),
     automations_disabled: nullableBoolean(value, 'automations_disabled'),
     workflow: parseBoardTaskWorkflowWire(value.workflow),
