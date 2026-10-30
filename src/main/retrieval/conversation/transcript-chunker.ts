@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { TranscriptEntry } from '../../../shared/types';
+import type { TranscriptEntry, TranscriptSystemSubtype } from '../../../shared/types';
 import { sanitizeTranscriptText } from '../../../shared/ansi-strip';
 import { estimateTokens } from '../token-estimate';
 import type { ChunkInput } from '../types';
@@ -20,6 +20,75 @@ const MAX_CHARS = MAX_TOKENS * 4;
 const OVERLAP_CHARS = 200;
 const TOOL_INPUT_SUMMARY_CHARS = 200;
 const TOOL_RESULT_CHARS = 400;
+
+const USER_LABEL = 'User';
+const ASSISTANT_LABEL = 'Assistant';
+const THINKING_LABEL = 'Assistant (thinking)';
+const TOOL_CALL_LABEL = 'Tool';
+const TOOL_RESULT_LABEL = 'Tool result';
+const TOOL_ERROR_LABEL = 'Tool error';
+
+/** What the user and the agent said, as against tool calls, tool results and system lines. */
+const PROSE_LABELS: ReadonlyArray<string> = [USER_LABEL, ASSISTANT_LABEL, THINKING_LABEL];
+const TOOL_LABELS: ReadonlyArray<string> = [TOOL_CALL_LABEL, TOOL_RESULT_LABEL, TOOL_ERROR_LABEL];
+/** A system fragment is labeled with its subtype in brackets. */
+const SYSTEM_LABEL = /^\[([a-z_]+)\]: /;
+/** The subtypes that label can carry. A record, so a new subtype fails
+ *  typecheck until it is listed, and a bracketed line in a turn's own text
+ *  (a markdown reference `[1]: url`, a log line `[ERROR]: ...`) opens nothing. */
+const SYSTEM_SUBTYPES: Record<TranscriptSystemSubtype, true> = {
+  compaction: true,
+  command: true,
+  command_output: true,
+  session_boundary: true,
+  truncated: true,
+};
+/** The least share of a chunk's text in prose fragments for it to count as prose. */
+const PROSE_SHARE_MIN = 0.5;
+
+function opensSystemFragment(line: string): boolean {
+  const subtype = SYSTEM_LABEL.exec(line)?.[1];
+  return subtype !== undefined && Object.hasOwn(SYSTEM_SUBTYPES, subtype);
+}
+
+/** Whether a line opens a prose fragment, opens another kind, or continues the one before it. */
+function lineOpens(line: string): 'prose' | 'other' | null {
+  if (PROSE_LABELS.some((label) => line.startsWith(`${label}: `))) return 'prose';
+  if (TOOL_LABELS.some((label) => line.startsWith(`${label}: `)) || opensSystemFragment(line)) return 'other';
+  return null;
+}
+
+/**
+ * Whether a chunk is mostly what the user and the agent said: it opens on a
+ * prose fragment, and at least half its text is prose. The task window's prior
+ * work scores only these, since a chunk of tool calls and results matches on
+ * the files it read rather than on what was said about them.
+ *
+ * Read off the labels `renderEntry` writes. A line that opens with one starts
+ * a fragment, and any other line continues the fragment before it. Lines
+ * before the first label continue a prose fragment split across chunks: only
+ * prose and system text is ever split, since a tool fragment's input and
+ * result are capped well under `MAX_TOKENS`.
+ *
+ * A fragment's text keeps its own newlines, so a line inside it can look like
+ * a label. System labels are matched against the real subtypes only. A line
+ * of a turn that starts with a role or tool label (`Tool: `) still reads as a
+ * new fragment: the chunk keeps no fragment boundaries to tell them apart.
+ */
+export function isProseChunk(text: string): boolean {
+  let inProse = true;
+  let opensOnProse: boolean | null = null;
+  let proseChars = 0;
+  let totalChars = 0;
+  for (const line of text.split('\n')) {
+    const opens = lineOpens(line);
+    if (opens !== null) inProse = opens === 'prose';
+    if (opensOnProse === null) opensOnProse = inProse;
+    totalChars += line.length + 1;
+    if (inProse) proseChars += line.length + 1;
+  }
+  return opensOnProse === true && proseChars / totalChars >= PROSE_SHARE_MIN;
+}
 
 /** One rendered unit of conversation, before accumulation into chunks. */
 interface Fragment {
@@ -62,23 +131,23 @@ function renderEntry(entry: TranscriptEntry): Fragment[] {
 
   switch (entry.kind) {
     case 'user':
-      push('User', entry.text, 'user');
+      push(USER_LABEL, entry.text, 'user');
       break;
     case 'assistant':
       for (const block of entry.blocks) {
         if (block.type === 'text') {
-          push('Assistant', block.text, 'assistant');
+          push(ASSISTANT_LABEL, block.text, 'assistant');
         } else if (block.type === 'thinking') {
-          push('Assistant (thinking)', block.text, 'assistant');
+          push(THINKING_LABEL, block.text, 'assistant');
         } else if (block.type === 'tool_use') {
           const summary = summarizeToolInput(block.input);
-          push('Tool', summary ? `${block.name} ${summary}` : block.name, 'assistant');
+          push(TOOL_CALL_LABEL, summary ? `${block.name} ${summary}` : block.name, 'assistant');
         }
       }
       break;
     case 'tool_result': {
       const body = entry.content.slice(0, TOOL_RESULT_CHARS);
-      push(entry.isError ? 'Tool error' : 'Tool result', body, 'tool_result');
+      push(entry.isError ? TOOL_ERROR_LABEL : TOOL_RESULT_LABEL, body, 'tool_result');
       break;
     }
     case 'system':

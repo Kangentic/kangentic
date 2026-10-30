@@ -18,8 +18,9 @@ test.describe.configure({ mode: 'parallel' });
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
+/** A hit in the shape main's prior work sends: no agent name, a semantic match, no turn time. */
 function hit(sessionId: string, title: string, snippet: string): string {
-  return `{ docKey: 'conversation::${sessionId}', sessionId: '${sessionId}', taskId: 'other-task', taskTitle: ${JSON.stringify(title)}, agentName: 'claude', snippet: ${JSON.stringify(snippet)}, score: 0.9, matchKind: 'hybrid', matchCount: 2, turnTs: null }`;
+  return `{ docKey: 'conversation::${sessionId}', sessionId: '${sessionId}', taskId: 'other-task', taskTitle: ${JSON.stringify(title)}, agentName: null, snippet: ${JSON.stringify(snippet)}, score: 0.9, matchKind: 'semantic', matchCount: 2, turnTs: null }`;
 }
 
 const RUN_SUFFIX = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
@@ -159,12 +160,12 @@ test.describe('task prior work', () => {
   });
 
   test('renders one row per hit it is given, and adds none of its own', async () => {
-    // Retrieval collapses to one hit per SESSION, and a task usually has
-    // several, so the raw list repeats the same task title back at the user -
-    // which reads as a bug. The unit here is the task. The mock returns what
-    // main would already have deduped, so this pins only the rendering side:
-    // two distinct hits become two rows with two distinct titles. The dedupe
-    // itself is main's, and is not asserted here.
+    // A task usually has several sessions, and a list of them would repeat the
+    // same task title back at the user, which reads as a bug. The unit here is
+    // the task: the retrieval worker's related-work rollup gives one row per
+    // task, and the mock returns rows already in that shape. So this pins only
+    // the rendering side: two distinct hits become two rows with two distinct
+    // titles. The rollup is pinned in tests/unit/related-work.test.ts.
     const related = `[${hit('s-1', 'Terminal resize debounce', 'first session')}, ${hit('s-2', 'ConPTY width drift', 'other work')}]`;
     const { browser, page } = await launchWithState(preConfig(related));
     try {
@@ -175,6 +176,44 @@ test.describe('task prior work', () => {
       const titles = await items.allInnerTexts();
       const firstLines = titles.map((text) => text.split('\n')[0]);
       expect(new Set(firstLines).size).toBe(firstLines.length);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // A close passage can sit inside a task whose title reads as unrelated, so
+  // the row's tip carries the passage that matched.
+  //
+  // Red-green: with the tip's label back to "Open this conversation" alone,
+  // the row's description no longer holds the passage.
+  test('a row describes itself with the passage that matched', async () => {
+    const passage = 'Assistant: Deleting a started workflow only clears each unfinished task\'s membership.';
+    const related = `[${hit('s-5', 'Task comments on desktop', passage)}]`;
+    const { browser, page } = await launchWithState(preConfig(related));
+    try {
+      await openFirstTask(page);
+      await page.locator('[data-testid="task-prior-work-toggle"]').click();
+      const item = page.locator('[data-testid="task-prior-work-item"]').first();
+      await expect(item).toHaveAccessibleDescription(new RegExp(passage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Main sends an empty snippet when it has no passage for a row, so the tip
+  // falls back to the action alone. The description is exactly that, with no
+  // passage line above it and no second copy of it below.
+  //
+  // Red-green: with the tip's label left as the snippet alone (no fallback),
+  // the label is empty, the tip stays shut, and the row has no description.
+  test('a row with no passage describes itself as the action alone', async () => {
+    const related = `[${hit('s-6', 'Terminal resize debounce', '')}]`;
+    const { browser, page } = await launchWithState(preConfig(related));
+    try {
+      await openFirstTask(page);
+      await page.locator('[data-testid="task-prior-work-toggle"]').click();
+      const item = page.locator('[data-testid="task-prior-work-item"]').first();
+      await expect(item).toHaveAccessibleDescription(/^Open this conversation$/);
     } finally {
       await browser.close();
     }

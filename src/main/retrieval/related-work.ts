@@ -81,6 +81,31 @@
  *   clear it. Identifier questions clear 0.35 down to their p10 (0.407, against
  *   0.250 on bge-large). bge-small calibrates to its own noise floor, but these
  *   floors were not measured on it.
+ * - PRIOR WORK ON A TASK, BY A MARGIN OVER ITS OWN BACKGROUND. The task
+ *   window's "N earlier conversations about this" line ranks the task's title
+ *   and description here (`priorWork`). Its first version was conversation
+ *   search gated only by the 0.15 cutoff. On 2026-10-29 it showed on 32 of 32
+ *   tasks, with 41 of 153 rows from later tasks and 56 won on a chunk of tool
+ *   output. So only turns from before the task was created count, and only
+ *   chunks that open on prose and are at least half prose (`isProseChunk`). An
+ *   absolute floor alone could not keep #913's real prior work (#411 and #907,
+ *   at 0.531 and 0.537) without showing the line on 19 of 32 tasks, because how
+ *   close a task's text sits to the index differs from task to task. A task
+ *   shows when its best passage is `PRIOR_WORK_MARGIN` above the 100th best
+ *   chunk of other tasks for the same text, and at least `PRIOR_WORK_FLOOR`.
+ *   On granite-r2 over the same 32 tasks that shows the line on 11, with 21
+ *   rows, none later and none on tool output. The range that works is narrow:
+ *   from 0.115 to 0.13 #913 keeps both and at most 13 tasks show, at 0.11 the
+ *   line shows on 16, and at 0.135 #411 drops. On the next 40 archived tasks
+ *   it shows on 27, because most of them have real prior work: earlier
+ *   releases, the Electron 44 upgrade, the earlier DESKTOP-19 fixes. The floor
+ *   binds on neither set. It stops a sparse neighborhood, whose background is
+ *   low, from clearing on the margin alone. Measured with each task's text
+ *   embedded as the IPC handler sends it: a trailing space cut into the text
+ *   moved #907 by 0.016, more than the width of that range. With no query
+ *   vector, or fewer than `PRIOR_WORK_BACKGROUND_RANK` chunks of other tasks,
+ *   there is no background to measure a margin against, so the line stays
+ *   hidden: keywords alone cannot say how close the text sits to the index.
  */
 
 import type Database from 'better-sqlite3';
@@ -125,6 +150,15 @@ const LEXICAL_RANK_SPAN = 200;
 const RELATED_FLOOR = 0.6;
 export const MIN_HANDED = 12;
 export const MAX_HANDED = 80;
+/** Prior work (see the header): the rank, among other tasks' conversation
+ *  chunks, of the relevance that stands for the task text's background. */
+export const PRIOR_WORK_BACKGROUND_RANK = 100;
+/** How far above that background a task's best passage must be to show. */
+export const PRIOR_WORK_MARGIN = 0.125;
+/** The least relevance a passage must have at all, whatever the background. */
+export const PRIOR_WORK_FLOOR = 0.45;
+/** Prior work rows shown at most: few enough to read at a glance. */
+export const PRIOR_WORK_ROWS = 5;
 /** Characters of a passage, enough to judge relevance by. */
 const PASSAGE_CHARS = 220;
 /** Nearest code chunks read for the question: enough to fill the passages two to a file. */
@@ -175,6 +209,10 @@ export interface RelatedWorkTask {
   displayId: number | null;
   title: string;
   score: number;
+  /** The best passage's relevance, before the match-count and keyword terms
+   *  `score` adds (a side corpus's rescaled to the conversations'). 0 for a
+   *  task matched by keyword alone. */
+  relevance: number;
   /** `score` over the best task's score: 1 for the best, falling to the floor. */
   strength: number;
   /** Chunks of this task that matched. */
@@ -213,6 +251,18 @@ export interface RollUpInput {
    * task that does have a conversation in scope always counts.
    */
   recordOnlyTasks?: ReadonlyMap<string, RelatedWorkRecordTask>;
+  /** When set, a chunk from this time (ms) on counts toward nothing: prior
+   *  work counts only what happened before the task was created. */
+  beforeMs?: number;
+  /** Chunks that count toward nothing: for prior work, every chunk but the
+   *  passages that reach its floor and are mostly prose (`isProseChunk`). */
+  excludedChunkIds?: ReadonlySet<number>;
+}
+
+/** Whether a chunk starts before a cutoff (ms). Written so a chunk with no
+ *  time, or a cutoff that is not a number, is never before it. */
+function startsBefore(tsStart: number | null, beforeMs: number): boolean {
+  return tsStart !== null && tsStart < beforeMs;
 }
 
 /** The task a node belongs to. A conversation with no task is its own task. */
@@ -267,6 +317,8 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
   const accumulatorFor = (chunkId: number): { entry: Accumulator; placement: ChunkPlacement } | null => {
     const placement = input.placements.get(chunkId);
     if (!placement) return null;
+    if (input.excludedChunkIds?.has(chunkId)) return null;
+    if (input.beforeMs !== undefined && !startsBefore(placement.tsStart, input.beforeMs)) return null;
     const node = nodeFor(placement);
     if (!node) return null;
     const key = relatedTaskKey(node);
@@ -330,6 +382,7 @@ export function rollUpRelatedWork(input: RollUpInput): RelatedWorkTask[] {
       displayId: entry.node.displayId,
       title: entry.node.title ?? 'Untitled',
       score,
+      relevance: entry.best,
       strength: top > 0 ? score / top : 0,
       matches: entry.chunkIds.size,
       firstMs: entry.firstMs,
@@ -361,6 +414,50 @@ export function selectHandedTasks<Task extends RelatedWorkTask>(
     if (pinnedKeys.has(task.key) && !present.has(task.key)) handed.push(task);
   }
   return handed;
+}
+
+/**
+ * The task window's prior work: the tasks whose best passage stands
+ * `PRIOR_WORK_MARGIN` above the background and reaches `PRIOR_WORK_FLOOR`,
+ * each with a conversation to open, best passage first, at most
+ * `PRIOR_WORK_ROWS`. Nothing when none does, or when there is no background
+ * to measure against, so the line stays hidden.
+ */
+export function selectPriorWork<Task extends RelatedWorkTask>(ranked: ReadonlyArray<Task>, background: number | null): Task[] {
+  if (background === null) return [];
+  const floor = priorWorkFloor(background);
+  return ranked
+    .filter((task) => task.taskId !== null && task.sessionId !== null && task.relevance >= floor)
+    .sort((left, right) => right.relevance - left.relevance)
+    .slice(0, PRIOR_WORK_ROWS);
+}
+
+/** The relevance a prior work row must reach: `PRIOR_WORK_MARGIN` above the
+ *  background, and never under `PRIOR_WORK_FLOOR`. */
+function priorWorkFloor(background: number): number {
+  return Math.max(PRIOR_WORK_FLOOR, background + PRIOR_WORK_MARGIN);
+}
+
+/**
+ * The relevance that stands for a prior work query's background: the
+ * `PRIOR_WORK_BACKGROUND_RANK`th best among its conversation chunks, the
+ * task's own left out, since its own conversations match its text best. Null
+ * when the pool holds fewer than that, which is too little to measure against.
+ *
+ * The pool is every conversation chunk the search found, later ones and tool
+ * output included: it measures how close the index sits to the text, and the
+ * margin was measured against that pool, not against the rows' own filters.
+ */
+export function priorWorkBackground(
+  relevanceByChunk: ReadonlyMap<number, number>,
+  placements: ReadonlyMap<number, ChunkPlacement>,
+  taskId: string | null,
+): number | null {
+  const others = [...relevanceByChunk]
+    .filter(([chunkId]) => taskId === null || placements.get(chunkId)?.taskId !== taskId)
+    .map(([, relevance]) => relevance)
+    .sort((left, right) => right - left);
+  return others[PRIOR_WORK_BACKGROUND_RANK - 1] ?? null;
 }
 
 /** One passage of source code handed with the related work. */
@@ -437,6 +534,14 @@ export interface SearchRelatedWorkInput {
    * words and matches everything.
    */
   keywordText?: string;
+  /**
+   * The task window's prior work, for the task `taskId` created at `before`
+   * (ms). Only conversation chunks from before it count, and only prose ones
+   * (`isProseChunk`). The side corpora are not searched, since a row must open
+   * a conversation, and `handed` is `selectPriorWork` rather than the relative
+   * floor. See the header.
+   */
+  priorWork?: { before: number; taskId: string | null };
 }
 
 export interface RelatedWork {
@@ -537,13 +642,15 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     }
     return relevanceByChunk;
   };
+  const priorWork = input.priorWork;
+  const sideCorpora = priorWork ? [] : SIDE_CORPORA;
   const conversationRelevance = await semanticPool(CONVERSATION_CORPUS, SEMANTIC_POOL);
   const relevanceByChunk = new Map(conversationRelevance);
 
   // Each side corpus on the conversation scale: its best chunk scores what the
   // best conversation chunk does (see the header), within bounds.
   const conversationBest = Math.max(0, ...conversationRelevance.values());
-  for (const side of SIDE_CORPORA) {
+  for (const side of sideCorpora) {
     if (side.semanticPool === 0) continue;
     const sideRelevance = await semanticPool([side.corpus], side.semanticPool);
     const sideBest = Math.max(0, ...sideRelevance.values());
@@ -591,12 +698,14 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     // Each scan is 20 to 140 ms on main: a turn for everything else between them.
     await yieldToEventLoop();
     // The side corpora in one full-text scan, each still ranked on its own.
-    let side: Array<{ chunkId: number; rank: number }>;
-    try {
-      const limits = new Map(SIDE_CORPORA.map((entry) => [entry.corpus, entry.lexicalPool]));
-      side = [...timeSyncWork('related:lexical-side', () => store.searchLexicalPerCorpus(keywordQuery, limits)).values()].flat();
-    } catch {
-      side = [];
+    let side: Array<{ chunkId: number; rank: number }> = [];
+    if (sideCorpora.length > 0) {
+      try {
+        const limits = new Map(sideCorpora.map((entry) => [entry.corpus, entry.lexicalPool]));
+        side = [...timeSyncWork('related:lexical-side', () => store.searchLexicalPerCorpus(keywordQuery, limits)).values()].flat();
+      } catch {
+        side = [];
+      }
     }
     lexical = [...conversationKeywords, ...side];
   }
@@ -612,14 +721,46 @@ export async function searchRelatedWork(input: SearchRelatedWorkInput): Promise<
     return { ...empty, code, elapsedMs: Date.now() - started };
   }
 
+  // Prior work counts only the prose passages that could show: a chunk of tool
+  // calls and results matches on the files it read, not on what was said about
+  // them, and a passage under the floor cannot win a row that shows. So only
+  // the earlier chunks of a task in scope that reach the floor are read, and
+  // every other chunk counts toward nothing.
+  let excludedChunkIds: Set<number> | undefined;
+  let background: number | null = null;
+  if (priorWork) {
+    background = priorWorkBackground(conversationRelevance, placements, priorWork.taskId);
+    const floor = background === null ? null : priorWorkFloor(background);
+    const candidates = floor === null ? [] : chunkIds.filter((chunkId) => {
+      const placement = placements.get(chunkId);
+      return placement !== undefined
+        && startsBefore(placement.tsStart, priorWork.before)
+        && nodesByDocKey.has(`${placement.corpus}::${placement.docId}`)
+        && (relevanceByChunk.get(chunkId) ?? 0) >= floor;
+    });
+    let nonProse = new Set<number>();
+    if (candidates.length > 0) {
+      await yieldToEventLoop();
+      try {
+        nonProse = timeSyncWork('related:prose', () => store.nonProseChunkIds(candidates));
+      } catch {
+        return { ...empty, code, elapsedMs: Date.now() - started };
+      }
+    }
+    const counted = new Set(candidates.filter((chunkId) => !nonProse.has(chunkId)));
+    excludedChunkIds = new Set(chunkIds.filter((chunkId) => !counted.has(chunkId)));
+  }
+
   const ranked = rollUpRelatedWork({
     semantic: [...relevanceByChunk.entries()].map(([chunkId, relevance]) => ({ chunkId, relevance })),
     lexical,
     placements,
     nodesByDocKey,
     recordOnlyTasks,
+    beforeMs: priorWork?.before,
+    excludedChunkIds,
   });
-  const handed = selectHandedTasks(ranked, input.pinnedKeys);
+  const handed = priorWork ? selectPriorWork(ranked, background) : selectHandedTasks(ranked, input.pinnedKeys);
 
   const passageIds = handed
     .slice(0, PASSAGES_SHOWN)

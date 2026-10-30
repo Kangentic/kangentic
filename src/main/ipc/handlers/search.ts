@@ -29,9 +29,9 @@ import { withAnswerRunDirectory } from '../../agent/shared/answer-run-directory'
 import { ANSWER_CALLER_PREFIX } from '../../agent/mcp-http/caller-url';
 import { resolveAnswerRun, type AnswerRun } from '../../retrieval/answer-run';
 import { retrievalClient, RetrievalUnavailableError } from '../../retrieval/retrieval-client';
-import { findPriorWork, INDEX_RESTARTING, searchConversations } from '../../retrieval/retrieval-queries';
+import { INDEX_RESTARTING, rankRelatedWork, searchConversations } from '../../retrieval/retrieval-queries';
 import { embedQueryTexts } from '../../retrieval/query-vectors';
-import { passageKey, PASSAGES_SHOWN, relatedQueryTexts } from '../../retrieval/related-query-text';
+import { passageKey, PASSAGES_SHOWN, relatedQueryTexts, TASK_TEXT_CHARS } from '../../retrieval/related-query-text';
 import type { ProjectIndexSummaryRow } from '../../retrieval/worker/methods';
 import type { PreparedAnswer } from '../../retrieval/worker/answer-prepare';
 import type {
@@ -67,13 +67,6 @@ function isCallerSegment(value: unknown): value is string {
   return typeof value === 'string' && /^[\w-]{1,64}$/.test(value);
 }
 
-/** Characters of the task's title + description used as the recall query.
- *  Enough to carry the task's meaning; past this the embedding blurs. */
-const RELATED_QUERY_BUDGET = 1200;
-/** Fetched before this task's own conversations are dropped. */
-const RELATED_OVERFETCH = 24;
-/** Shown. Short enough to read at a glance while reading the task. */
-const RELATED_RESULT_COUNT = 5;
 import type { IpcContext } from '../ipc-context';
 
 /**
@@ -661,9 +654,11 @@ export function registerSearchHandlers(context: IpcContext): void {
    * actually matters.
    *
    * The task's own title and description ARE the query, so there is nothing to
-   * type. Its own conversations are excluded: a task's own history is already
-   * one click away in the header, and leaving it in would crowd out the prior
-   * work this exists to surface.
+   * type. It ranks through the related-work rollup with the task left out,
+   * restricted to work from before the task was created and to prose turns.
+   * A task shows when its best passage stands a margin above the text's
+   * background and reaches an absolute floor (`selectPriorWork` in
+   * related-work.ts). When none does, the line stays hidden.
    */
   ipcMain.handle(
     IPC.KNOWLEDGE_GRAPH_RELATED_TO_TASK,
@@ -676,17 +671,46 @@ export function registerSearchHandlers(context: IpcContext): void {
       const task = new TaskRepository(getProjectDb(resolvedProjectId)).getById(taskId);
       if (!task) return [];
 
-      const query = `${task.title}\n${task.description ?? ''}`.trim().slice(0, RELATED_QUERY_BUDGET);
-      if (query.length === 0) return [];
+      const text = `${task.title}\n${task.description ?? ''}`.trim().slice(0, TASK_TEXT_CHARS);
+      if (text.length === 0) return [];
 
-      // The search runs in the retrieval worker; the query is embedded here.
-      return findPriorWork({
-        project,
-        taskId,
-        query,
-        embedder: retrievalService.getEmbedder(context),
-        overfetch: RELATED_OVERFETCH,
-        rows: RELATED_RESULT_COUNT,
+      // The ranking runs in the retrieval worker; the text is embedded here.
+      let ranked: Awaited<ReturnType<typeof rankRelatedWork>>;
+      try {
+        ranked = await rankRelatedWork({
+          projectId: project.id,
+          question: text,
+          keywordText: task.title,
+          excludeTaskId: task.id,
+          priorWorkBefore: task.created_at,
+          embedder: retrievalService.getEmbedder(context),
+          vectorTexts: [text],
+          embedWaitMs: RELATED_EMBED_WAIT_MS,
+          withExtras: false,
+        });
+      } catch (error) {
+        // Recall is never a blocker: a failure reads as nothing to show.
+        console.warn('[retrieval] prior work unavailable:', error instanceof Error ? error.message : error);
+        return [];
+      }
+      if (!ranked) return [];
+      const { related, sessionIdByDocKey } = ranked;
+      return related.handed.flatMap((row): KnowledgeGraphQueryHit[] => {
+        if (!row.sessionId) return [];
+        const docKey = row.docKeys.find((key) => sessionIdByDocKey.get(key) === row.sessionId) ?? row.docKeys[0];
+        if (!docKey) return [];
+        return [{
+          docKey,
+          sessionId: row.sessionId,
+          taskId: row.taskId,
+          taskTitle: row.title,
+          agentName: null,
+          snippet: (row.bestChunkId !== null ? related.passages.get(row.bestChunkId) : undefined) ?? '',
+          score: row.relevance,
+          matchKind: 'semantic',
+          matchCount: row.matches,
+          turnTs: null,
+        }];
       });
     },
   );

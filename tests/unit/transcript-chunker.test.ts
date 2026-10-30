@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { chunkTranscript, CHUNKER_VERSION } from '../../src/main/retrieval/conversation/transcript-chunker';
-import type { TranscriptEntry, TranscriptBlock } from '../../src/shared/types';
+import { chunkTranscript, CHUNKER_VERSION, isProseChunk } from '../../src/main/retrieval/conversation/transcript-chunker';
+import type { TranscriptEntry, TranscriptBlock, TranscriptSystemSubtype } from '../../src/shared/types';
 
 /**
  * The transcript chunker greedily accumulates rendered conversation fragments
@@ -322,5 +322,86 @@ describe('chunkTranscript - splitOversizeText branches (via an oversize fragment
     const matches = joined.match(/Sentence number \d{3}/g) ?? [];
     expect(matches.length).toBe(sentenceCount);
     expect(new Set(matches).size).toBe(sentenceCount);
+  });
+});
+
+/**
+ * Prior work on a task scores only chunks of what was said (`isProseChunk`).
+ * Each case runs the real chunker, so the labels the classifier reads are the
+ * labels `renderEntry` writes: a relabeled fragment fails here, not silently
+ * in the ranking.
+ */
+describe('isProseChunk', () => {
+  const textOf = (entries: TranscriptEntry[]): string => {
+    const chunks = chunkTranscript(entries);
+    expect(chunks).toHaveLength(1);
+    return chunks[0].text;
+  };
+
+  it('counts a conversation of user and assistant turns, thinking included, as prose', () => {
+    expect(isProseChunk(textOf([
+      userEntry('u1', 'Why does the resize drop scrollback?'),
+      assistantEntry('a1', [
+        { type: 'thinking', text: 'The debounce fires before the fit runs.' },
+        { type: 'text', text: 'The debounce fires before the fit, so the grid is measured at the old size.' },
+      ]),
+    ]))).toBe(true);
+  });
+
+  // Red-green: with the opening check dropped this chunk is prose, since the
+  // reply after the tool lines is longer than they are.
+  it('leaves out a chunk that opens on a tool call, even when prose follows', () => {
+    expect(isProseChunk(textOf([
+      assistantEntry('a1', [{ type: 'tool_use', id: 'tu-1', name: 'Read', input: { file_path: 'src/main/pty/resize.ts' } }]),
+      toolResultEntry('t1', 'export function resize() {}'),
+      assistantEntry('a2', [{ type: 'text', text: `The resize path is short. ${'It measures the grid, then fits it. '.repeat(8)}` }]),
+    ]))).toBe(false);
+  });
+
+  it('leaves out a chunk that opens on a tool result or a tool error', () => {
+    expect(isProseChunk(textOf([toolResultEntry('t1', 'file contents '.repeat(20))]))).toBe(false);
+    expect(isProseChunk(textOf([toolResultEntry('t1', 'ENOENT '.repeat(20), true)]))).toBe(false);
+  });
+
+  // Red-green: with the share check dropped this chunk is prose, since it
+  // opens on the user's line.
+  it('leaves out a chunk that opens on prose but is mostly tool output', () => {
+    expect(isProseChunk(textOf([
+      userEntry('u1', 'Check the lockfile.'),
+      assistantEntry('a1', [{ type: 'tool_use', id: 'tu-1', name: 'Bash', input: { command: 'npm ls better-sqlite3' } }]),
+      toolResultEntry('t1', 'better-sqlite3@13.0.3 '.repeat(15)),
+      assistantEntry('a2', [{ type: 'tool_use', id: 'tu-2', name: 'Bash', input: { command: 'npm ls sqlite-vec' } }]),
+      toolResultEntry('t2', 'sqlite-vec@0.1.9 '.repeat(15)),
+    ]))).toBe(false);
+  });
+
+  it('counts a piece of a split prose turn, which opens on no label, as prose', () => {
+    const chunks = chunkTranscript([userEntry('u1', Array.from({ length: 80 }, (_, index) => `Sentence ${index} of a long brief.`).join(' '))]);
+    expect(chunks.length).toBeGreaterThan(1);
+    expect(chunks[1].text.startsWith('User: ')).toBe(false);
+    expect(isProseChunk(chunks[1].text)).toBe(true);
+  });
+
+  it('does not count a system line as prose, whatever its subtype', () => {
+    const subtypes: TranscriptSystemSubtype[] = ['compaction', 'command', 'command_output', 'session_boundary', 'truncated'];
+    for (const subtype of subtypes) {
+      const system: TranscriptEntry = { kind: 'system', uuid: `sys-${subtype}`, ts: 5000, subtype, text: 'Conversation compacted. '.repeat(20) };
+      expect(isProseChunk(textOf([system])), subtype).toBe(false);
+    }
+  });
+
+  // A turn's own text keeps its newlines, so a line inside it can look like a
+  // system label. Red-green: with any bracketed `[x]: ` opening a system
+  // fragment, the reply after the reference lines reads as system text and
+  // the chunk is not prose.
+  it('keeps a reply prose when its lines look like a bracketed label', () => {
+    const reply = [
+      'The resize path drops scrollback because the fit runs before the debounce settles. Sources:',
+      '[1]: https://xtermjs.org/docs/api/addons/fit/',
+      '[ERROR]: grid measured at 0 rows',
+      '[note]: the debounce is 200ms',
+      ...Array.from({ length: 8 }, (_unused, index) => `Step ${index}: the grid is measured at its old size, then the fit runs and the rows above are lost.`),
+    ].join('\n');
+    expect(isProseChunk(textOf([assistantEntry('a1', [{ type: 'text', text: reply }])]))).toBe(true);
   });
 });
