@@ -203,7 +203,7 @@ folder and one manifest entry. See `.claude/rules/automation-adapters.md` for th
 | `send_message` | Send message to agent | the agent | the scheduler's own 120s | Deliver an interpolated message to the task's agent, through the three delivery rungs |
 | `run_script` | Run script | none | 10 minutes by default, per automation | Run a script as a child process in the task's worktree, awaiting the exit and recording the code |
 | `webhook` | Call webhook | none | 30s | Send a request with an interpolated body, retried on a transport error, 408, 429 or 5xx with an idempotency key |
-| `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses |
+| `notify` | Notify me | none | none | Raise one desktop notification through the same path `DesktopNotifier` uses, and push the row's Title and Body to every paired phone (`showAutomationNotification`) |
 | `move_to_column` | Move to column | none | none (the move owns its deadlines) | Move the task to a named column, or the next one when none is named, and hand the agent there an optional message. Runs on `turn_end` only, and a row that runs ends its group |
 | `spawn_agent` | Start agent | none | none | Legacy. Kept so a row carrying a custom `promptTemplate` still runs; never offered for a new automation |
 
@@ -361,7 +361,7 @@ src/main/automations/
     send-message/           # deliver the column's message to the agent
     run-script/             # child process in the task's worktree, awaits the exit
     webhook/                # request with retry, idempotency key, response.ok check
-    notify/                 # one desktop notification
+    notify/                 # one desktop notification and one push to every paired phone
     move-to-column/         # move the task at a turn end, then hand on the message
     legacy/spawn-agent.ts   # status 'legacy', never offered for a new automation
   turn-end/                 # the On agent turn end runner, per-task pass tracking, message delivery

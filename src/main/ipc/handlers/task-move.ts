@@ -23,7 +23,7 @@ import {
   spawnAgent,
 } from '../helpers';
 import { closeTaskWindows } from '../helpers/task-windows';
-import { showDesktopNotification } from './system';
+import { showAutomationNotification } from '../../automations/shared/show-automation-notification';
 import { autoLinkPRForTask } from '../../pr/pr-linking';
 import { forgetPRLinkOnTodoReset } from '../../pr/pr-link-reset';
 import { sendToRenderer } from '../send-to-renderer';
@@ -733,7 +733,7 @@ export async function handleTaskMove(
                 turnWait: 'when-deferred',
               });
             },
-            showNotification: (notification) => showDesktopNotification(context, notification),
+            showNotification: (notification) => showAutomationNotification(context, notification),
             // The card names the row that is running. Without it a 60s exit
             // group looked like a card that simply took a long time to move.
             onProgress: createProgressCallback(context.mainWindow, task.id),
@@ -832,7 +832,7 @@ export async function handleTaskMove(
                 onOutcome: (report) => reportAutoCommandOutcome(context, tasks, task, report, resolvedProjectId),
               });
             },
-            showNotification: (notification) => showDesktopNotification(context, notification),
+            showNotification: (notification) => showAutomationNotification(context, notification),
             onProgress: createProgressCallback(context.mainWindow, task.id),
             fromColumn: fromLane ?? null,
             toColumn: toLane,

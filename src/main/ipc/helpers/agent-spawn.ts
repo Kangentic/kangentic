@@ -17,7 +17,7 @@ import { placeOfRecord } from '../../agent/shared/cli-target';
 import { buildSessionHistoryReference } from '../../agent/handoff/session-history-reference';
 import { DEFAULT_AGENT, NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import type { Task, Swimlane, Project, AutoCommandMode } from '../../../shared/types';
-import { showDesktopNotification } from '../handlers/system';
+import { showAutomationNotification } from '../../automations/shared/show-automation-notification';
 import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
@@ -871,7 +871,7 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         startedAgentInGroup = true;
         if (outcome?.recapOnly) legacyStartReport = { withholdMessages: EXPIRED_CONVERSATION_SKIP_REASON };
       },
-      showNotification: (input) => showDesktopNotification(context, input),
+      showNotification: (input) => showAutomationNotification(context, input),
       onProgress: createProgressCallback(context.mainWindow, task.id),
       fromColumn: resolveFromColumn(),
       toColumn: toLane,

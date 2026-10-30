@@ -64,7 +64,7 @@ describe('the row sentence', () => {
     expect(describeAutomation('send_message', {})).toBe('No message yet.');
     expect(describeAutomation('run_script', {})).toBe('No script yet.');
     expect(describeAutomation('webhook', {})).toBe('No URL yet.');
-    expect(describeAutomation('notify', {})).toBe('Shows a desktop notification.');
+    expect(describeAutomation('notify', {})).toBe('Notifies you on the desktop and your phone.');
     expect(describeAutomation('spawn_agent', {})).toBe('Starts the agent.');
   });
 

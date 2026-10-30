@@ -134,6 +134,38 @@ describe('push envelope', () => {
     expect(opened.taskTitle).toBe('Fix the bug');
   });
 
+  it('round-trips an input-required alert naming its wait kind (protocol 0.26.0)', () => {
+    for (const waitKind of ['question', 'approval'] as const) {
+      const plaintext = plaintextFixture({ detail: '', waitKind });
+      expect(openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, plaintext))).toEqual(plaintext);
+    }
+  });
+
+  it('drops a wait kind it does not know instead of rejecting the alert', () => {
+    const fromNewerDesktop = { ...plaintextFixture(), waitKind: 'future-kind' } as unknown as PushEnvelopePlaintext;
+    const opened = openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, fromNewerDesktop));
+    expect('waitKind' in opened).toBe(false);
+    expect(opened.category).toBe('input-required');
+  });
+
+  it('round-trips a Notify me alert with its own title and body (protocol 0.26.0)', () => {
+    const plaintext = plaintextFixture({ sessionId: '', detail: 'Blocked', title: 'Cap retries in the sync client', body: 'Blocked' });
+    expect(openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, plaintext))).toEqual(plaintext);
+  });
+
+  it('drops a title or body that is not a string, and the alert still opens', () => {
+    const malformed = { ...plaintextFixture(), title: 42, body: null } as unknown as PushEnvelopePlaintext;
+    const opened = openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, malformed));
+    expect('title' in opened).toBe(false);
+    expect('body' in opened).toBe(false);
+    expect(opened.taskTitle).toBe('Fix the bug');
+  });
+
+  it('opens a task alert with none of the optional fields without adding them', () => {
+    const opened = openPushEnvelope(pushKey, recipientKey, sealPushEnvelope(pushKey, recipientKey, plaintextFixture()));
+    for (const field of ['waitKind', 'title', 'body']) expect(field in opened).toBe(false);
+  });
+
   it('isPushSessionKind accepts exactly the known kinds', () => {
     for (const kind of PUSH_SESSION_KINDS) expect(isPushSessionKind(kind)).toBe(true);
     expect(isPushSessionKind('task')).toBe(false);

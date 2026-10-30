@@ -19,8 +19,8 @@ import { isJsonValue, isRecord } from './json-value';
 import { base64UrlDecode } from './base64url';
 import { isPushCategory, type PushCategory } from '../crypto/push-envelope';
 import {
-  isActivityReasonWire,
   isActivityStateWire,
+  parseActivityReasonWire,
   parseBacklogItemWire,
   parseBoardColumnWire,
   parseBoardTaskWire,
@@ -152,9 +152,9 @@ export function parseReadStreamResponsePayload(payload: JsonValue): ReadStreamRe
   if (typeof payload.scrollback !== 'string') throw new Error('read-stream response is missing "scrollback"');
   if (!isRecord(payload.activity)) throw new Error('read-stream response is missing "activity"');
   const state = payload.activity.state;
-  const reason = payload.activity.reason;
+  const reason = payload.activity.reason === null ? null : parseActivityReasonWire(payload.activity.reason);
   if (state !== null && !isActivityStateWire(state)) throw new Error('read-stream response has an invalid activity "state"');
-  if (reason !== null && !isActivityReasonWire(reason)) throw new Error('read-stream response has an invalid activity "reason"');
+  if (payload.activity.reason !== null && reason === null) throw new Error('read-stream response has an invalid activity "reason"');
   if (payload.awaitedPromptId !== null && typeof payload.awaitedPromptId !== 'string') {
     throw new Error('read-stream response has an invalid "awaitedPromptId"');
   }
@@ -661,6 +661,12 @@ export interface SendUserMessageRequestPayload {
 }
 
 export interface SendUserMessageResponsePayload {
+  /**
+   * True when the desktop accepted the message. Since protocol 0.26.0 that
+   * covers a session with no running agent (a paused task): the desktop holds
+   * the message for the task's next agent and answers true. A message that
+   * cannot be held (a task in Done, one too long to hold) is refused as before.
+   */
   delivered: boolean;
 }
 

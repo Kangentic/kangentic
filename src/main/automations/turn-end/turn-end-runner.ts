@@ -10,7 +10,7 @@ import { getProjectRepos } from '../../ipc/helpers/project-repos';
 import { planExitTargetFor } from '../../ipc/helpers/plan-exit-target';
 import { createTransitionEngine, resolveInjectionVerifier } from '../../ipc/helpers/agent-spawn';
 import { reportAutomationFailures } from '../../ipc/helpers/automation-failures';
-import { showDesktopNotification } from '../../ipc/handlers/system';
+import { showAutomationNotification } from '../shared/show-automation-notification';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { frequencyLimitReason } from '../automation-runner';
@@ -834,7 +834,7 @@ async function runRows(
       move,
       fromTurnEndGroup: true,
     }),
-    showNotification: (notification) => showDesktopNotification(context, notification),
+    showNotification: (notification) => showAutomationNotification(context, notification),
     onProgress: createProgressCallback(context.mainWindow, task.id),
   });
   reportAutomationFailures(context, summary, current.task, payload.projectId);

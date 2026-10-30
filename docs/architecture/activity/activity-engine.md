@@ -195,8 +195,10 @@ the flag (the newest wait wins) and cleared at every site that clears the flag: 
 clear, Prompt, Interrupted, TurnFailed, SubagentStart, a non-permission Idle, `forceThinking`,
 `forceIdle`, a rejection read from the transcript and a terminal TurnRetrying. The permission
 reason carries it as `waitKind`, absent rather than null when the agent did not say, and the debug
-overlay shows it as Wait kind. The phone's wire does not carry it: `toActivityReasonWire` builds the
-permission reason field by field, so `ActivityReasonWire` is unchanged.
+overlay shows it as Wait kind. The phone's wire carries it too (protocol 0.26.0):
+`toActivityReasonWire` builds the permission reason field by field and adds `waitKind` only when the
+reason has one, and the `input-required` push seals the snapshot's `permissionWaitKind` as its own
+`waitKind`, so a phone titles the push "Agent has a question" or "Agent needs your approval".
 
 Every new wait an adapter reports needs an end the engine already clears on, and the end must not
 fake a turn end: a plain non-permission Idle from a parser is read as the agent's own Stop

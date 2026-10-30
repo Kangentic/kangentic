@@ -715,6 +715,14 @@ msgstr "Při vstupu úkolu do sloupce To Do nebo Done se nic nespustí."
 msgid "Notifies \"{title}\""
 msgstr "Upozorní „{title}“"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "Zobrazí nebo skryje panel popisu v dialogu s podrobnostmi úkolu."
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Zobrazí nebo skryje postranní panel projektu."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "Zobrazí oznámení na ploše."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "Zobrazí oznámení na ploše. Kliknutím na něj se otevře úloha."
 
 #: src/shared/keybindings.ts
 #, fuzzy

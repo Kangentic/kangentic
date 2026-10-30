@@ -32,8 +32,8 @@ import { isRecord } from '../wire/json-value';
 // alone, so there is no runtime cycle.
 import { isReadStreamSessionStatusWire, type ReadStreamSessionStatusWire } from '../wire/payloads';
 import {
-  isActivityReasonWire,
   isActivityStateWire,
+  parseActivityReasonWire,
   parseSessionEventWire,
   parseSessionUsageWire,
   parseTerminalDimensionsWire,
@@ -249,8 +249,9 @@ export function parseActivityEventPayload(payload: JsonValue): ActivityEventPayl
   switch (payload.type) {
     case 'activity': {
       if (!isActivityStateWire(payload.state)) throw new Error('activity payload has an invalid "state"');
-      if (!isActivityReasonWire(payload.reason)) throw new Error('activity payload has an invalid "reason"');
-      return { type: 'activity', state: payload.state, reason: payload.reason };
+      const reason = parseActivityReasonWire(payload.reason);
+      if (!reason) throw new Error('activity payload has an invalid "reason"');
+      return { type: 'activity', state: payload.state, reason };
     }
     case 'usage':
       return { type: 'usage', usage: parseSessionUsageWire(payload.usage as JsonValue) };

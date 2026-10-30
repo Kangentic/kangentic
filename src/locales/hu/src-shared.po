@@ -715,6 +715,14 @@ msgstr "Semmi sem fut, amikor egy feladat a Teendők vagy a Kész oszlopba kerü
 msgid "Notifies \"{title}\""
 msgstr "Értesít: „{title}”"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "A leírás panel megjelenítése vagy elrejtése a feladat részletei p�
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "A projekt oldalsávjának megjelenítése vagy elrejtése."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "Asztali értesítést jelenít meg."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "Asztali értesítést jelenít meg. Rákattintva megnyílik a feladat."
 
 #: src/shared/keybindings.ts
 #, fuzzy

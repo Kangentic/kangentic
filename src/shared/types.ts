@@ -1921,8 +1921,9 @@ export type ActivityReason =
       /**
        * What the wait is for, when the agent reported it. Absent means the
        * agent did not say: the UI draws that as a question and the desktop
-       * notification falls back to "Agent needs your input". Main-side only:
-       * `toActivityReasonWire` strips it, so the phone wire is unchanged.
+       * notification falls back to "Agent needs your input".
+       * `toActivityReasonWire` carries it to the phone as the wire reason's
+       * `waitKind`.
        */
       waitKind?: PermissionWaitKind;
     }

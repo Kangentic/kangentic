@@ -715,6 +715,14 @@ msgstr "Rien ne s'exécute quand une tâche entre dans À faire ou Terminé."
 msgid "Notifies \"{title}\""
 msgstr "Notifie « {title} »"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "Affiche ou masque le panneau de description dans la boîte de dialogue d
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Affiche ou masque la barre latérale des projets."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "Affiche une notification sur le bureau."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "Affiche une notification de bureau. Un clic dessus ouvre la tâche."
 
 #: src/shared/keybindings.ts
 #, fuzzy

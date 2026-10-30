@@ -430,16 +430,26 @@ export class MobileBridgeService extends EventEmitter {
   /** Push a running workflow task that needs the user (a wait on them, a stall) to the paired phones. */
   notifyWorkflowTask(input: { projectId: string; taskId: string; detail: string }): void {
     if (!this.pushNotifier || !this.ipcContext) return;
-    let taskTitle = '';
-    let swimlaneId: string | undefined;
+    const { taskTitle, swimlaneId } = this.readTaskForPush(this.ipcContext, input.projectId, input.taskId);
+    this.pushNotifier.notifyWorkflowTask({ ...input, taskTitle, ...(swimlaneId !== undefined ? { swimlaneId } : {}) });
+  }
+
+  /** Push a Notify me automation row's Title and Body to every paired phone. The notifier sends nothing while the bridge is off. */
+  notifyAutomation(input: { title: string; body: string; projectId: string; taskId: string }): void {
+    // Every Notify me row comes through here, so the task read is skipped while the bridge is off.
+    if (!this.pushNotifier || !this.ipcContext || !this.config.enabled) return;
+    const { taskTitle } = this.readTaskForPush(this.ipcContext, input.projectId, input.taskId);
+    this.pushNotifier.notifyAutomation({ ...input, taskTitle });
+  }
+
+  /** A task's title and lane for a push. Best-effort: an unknown title still yields a useful notification. */
+  private readTaskForPush(context: IpcContext, projectId: string, taskId: string): { taskTitle: string; swimlaneId: string | undefined } {
     try {
-      const task = getProjectRepos(this.ipcContext, input.projectId).tasks.getById(input.taskId);
-      taskTitle = task?.title ?? '';
-      swimlaneId = task?.swimlane_id;
+      const task = getProjectRepos(context, projectId).tasks.getById(taskId);
+      return { taskTitle: task?.title ?? '', swimlaneId: task?.swimlane_id };
     } catch {
-      // Best-effort: an unknown title still yields a useful notification.
+      return { taskTitle: '', swimlaneId: undefined };
     }
-    this.pushNotifier?.notifyWorkflowTask({ ...input, taskTitle, ...(swimlaneId !== undefined ? { swimlaneId } : {}) });
   }
 
   /**

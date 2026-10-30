@@ -7,7 +7,7 @@ import { deliverAgentMessageInBackground } from '../../automations/turn-end/agen
 import { readSessionFinalReply } from '../../automations/turn-end/final-reply-reader';
 import { moveTaskFromRow } from '../../automations/turn-end/move-from-row';
 import { needsAgentReply } from '../../automations/row-guards';
-import { showDesktopNotification } from '../handlers/system';
+import { showAutomationNotification } from '../../automations/shared/show-automation-notification';
 import { createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { automationMovesTask } from '../../../shared/automation-manifest';
@@ -169,7 +169,7 @@ async function runRowAgain(
           onOutcome: (report) => reportAutoCommandOutcome(context, repos.tasks, task, report, projectId),
         });
       },
-      showNotification: (notification) => showDesktopNotification(context, notification),
+      showNotification: (notification) => showAutomationNotification(context, notification),
       onProgress: createProgressCallback(context.mainWindow, taskId),
       agentReply,
       moveTask,

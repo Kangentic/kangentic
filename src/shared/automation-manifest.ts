@@ -372,7 +372,7 @@ export const AUTOMATION_MANIFEST: Record<AutomationType, AutomationManifestEntry
 
   notify: {
     label: msg`Notify me`,
-    description: msg`Shows a desktop notification. Clicking it opens the task.`,
+    description: msg`Notifies you on the desktop and your phone. Opening it opens the task.`,
     icon: 'bell',
     status: 'stable',
     needs: [],

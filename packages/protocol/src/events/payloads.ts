@@ -103,15 +103,34 @@ export interface TerminalDimensionsWire {
 export type ActivityStateWire = 'thinking' | 'idle' | 'permission';
 
 /**
+ * What a `permission` wait is for, when the agent reported it: `question`
+ * when it asked the user something, `approval` when it wants a tool allowed
+ * or a plan approved. Mirrors the desktop's PermissionWaitKind. Append only:
+ * every reader drops a kind it does not know rather than rejecting what
+ * carries it, so a kind a newer desktop adds reads as an unknown wait.
+ */
+export const PERMISSION_WAIT_KINDS = ['question', 'approval'] as const;
+
+export type PermissionWaitKindWire = (typeof PERMISSION_WAIT_KINDS)[number];
+
+export function isPermissionWaitKindWire(value: unknown): value is PermissionWaitKindWire {
+  return typeof value === 'string' && (PERMISSION_WAIT_KINDS as readonly string[]).includes(value);
+}
+
+/**
  * Mirrors the desktop's ActivityReason discriminated union. `since` (epoch ms
  * the session first needed the user) is optional, additive-field style like
  * `toolCallCount`/`effort` above: an older phone parsing a payload with the
  * field missing still validates, and a desktop that has not yet learned a
  * `since` for a phantom-state edge case can omit it.
+ *
+ * `waitKind` on `permission` (protocol 0.26.0) says what the wait is for.
+ * Absent means the agent did not say, or an older desktop. An older phone
+ * ignores it.
  */
 export type ActivityReasonWire =
   | { kind: 'idle'; since?: number }
-  | { kind: 'permission'; since?: number }
+  | { kind: 'permission'; since?: number; waitKind?: PermissionWaitKindWire }
   | { kind: 'tool'; pendingCount: number; currentTool: string | null }
   | { kind: 'subagent'; depth: number }
   | { kind: 'background-shell'; count: number; ids: string[] }
@@ -716,13 +735,19 @@ export function isActivityStateWire(value: unknown): value is ActivityStateWire 
   return value === 'thinking' || value === 'idle' || value === 'permission';
 }
 
-/** True for a well-formed ActivityReasonWire value. */
+/**
+ * True for a well-formed ActivityReasonWire value. A `waitKind` this version
+ * does not know fails it; read a reason from the wire with
+ * `parseActivityReasonWire`, which drops such a kind first.
+ */
 export function isActivityReasonWire(value: unknown): value is ActivityReasonWire {
   if (!isRecord(value)) return false;
   switch (value.kind) {
     case 'idle':
-    case 'permission':
       return value.since === undefined || typeof value.since === 'number';
+    case 'permission':
+      return (value.since === undefined || typeof value.since === 'number')
+        && (value.waitKind === undefined || isPermissionWaitKindWire(value.waitKind));
     case 'turn-active':
       return true;
     case 'tool':
@@ -734,6 +759,21 @@ export function isActivityReasonWire(value: unknown): value is ActivityReasonWir
     default:
       return false;
   }
+}
+
+/**
+ * Reads an activity reason off the wire: the value when it is a well-formed
+ * ActivityReasonWire, else null. A `permission` reason's `waitKind` that this
+ * version does not know (from a newer desktop) is dropped, not rejected, so
+ * the reason reads as a wait of unknown kind and the event that carries it
+ * still parses.
+ */
+export function parseActivityReasonWire(value: unknown): ActivityReasonWire | null {
+  if (isRecord(value) && value.kind === 'permission' && value.waitKind !== undefined && !isPermissionWaitKindWire(value.waitKind)) {
+    const { waitKind: _unknownWaitKind, ...withoutWaitKind } = value;
+    return isActivityReasonWire(withoutWaitKind) ? withoutWaitKind : null;
+  }
+  return isActivityReasonWire(value) ? value : null;
 }
 
 /** Narrows a usage payload to the SessionUsageWire subset. Throws on a malformed required field. */
@@ -924,7 +964,7 @@ export function parseCommandTerminalWire(value: JsonValue): CommandTerminalWire 
     named: requireBoolean(value, 'named', 'command terminal'),
     activity: {
       state: isActivityStateWire(activity.state) ? activity.state : null,
-      reason: isActivityReasonWire(activity.reason) ? activity.reason : null,
+      reason: parseActivityReasonWire(activity.reason),
     },
   };
 }

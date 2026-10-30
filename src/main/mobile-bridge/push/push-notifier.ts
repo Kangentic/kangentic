@@ -6,7 +6,9 @@
  *
  * - transition INTO 'permission': 'input-required'. Debounced 2s and
  *   re-checked at fire time, so a prompt the user answers at the desk
- *   within the debounce never pings their phone.
+ *   within the debounce never pings their phone. The envelope's `waitKind`
+ *   (a question or an approval) is read at fire time too, from the same
+ *   snapshot, so the phone can title the push by it.
  * - transition 'thinking' -> 'idle': 'turn-complete', on the same
  *   debounce-and-re-check pattern but with a much longer window. It
  *   used to fire inline, which made it one alert PER REPLY: every
@@ -26,6 +28,12 @@
  * neither a session nor one task: notifyWorkflowComplete (called by
  * workflows/workflow-complete.ts) names the workflow and cools down per
  * workflow.
+ *
+ * A Notify me automation row sends an 'input-required' too, through
+ * notifyAutomation, with the row's own Title and Body sealed in. The row is
+ * the user's own choice to be told, so it skips everything below that stands
+ * between a notification and a device: presence, the device's categories and
+ * the cooldown. It is never recorded for clears either (see CLEARS).
  *
  * Per registered device: presence suppression (a bridge session reporting
  * 'connected' means the user is already watching from that device), then
@@ -87,6 +95,9 @@
  *   plan-complete, whose recorded lane moves with the task instead.
  * - workflow-complete is never recorded; the phone clears it when the
  *   Board opens.
+ * - A Notify me push is never recorded. It reports a moment, which nothing
+ *   at the desk resolves, and an exit row fires as its task leaves the lane,
+ *   so a recorded one would be cleared by the very move that sent it.
  *
  * A device connected at that moment is skipped: the app is running and
  * reconciles its own notifications. Otherwise the clear waits a short
@@ -147,11 +158,14 @@ const CLEAR_COALESCE_MS = 5_000;
 /** Apple asks for no more than two or three background pushes an hour; past that iOS throttles them anyway. */
 const IOS_STANDALONE_CLEAR_INTERVAL_MS = 20 * 60_000;
 /**
- * The longest sealed blob (base64url characters) a message carrying clears
- * may have. Expo caps the whole payload it hands APNs and FCM at 4096 bytes;
- * this leaves room for Expo's own fields and the iOS placeholder.
+ * The longest sealed blob (base64url characters) a message carrying clears,
+ * or text the user wrote, may have. Expo caps the whole payload it hands
+ * APNs and FCM at 4096 bytes; this leaves room for Expo's own fields and the
+ * iOS placeholder.
  */
 const CLEAR_BLOB_BUDGET = 3_000;
+/** A Notify me row's Title is cut to this many characters before sealing; its Body shrinks to fit CLEAR_BLOB_BUDGET. */
+const AUTOMATION_TITLE_MAX_CHARS = 200;
 
 /**
  * OS-visible placeholder body per category - never real content, and
@@ -285,6 +299,53 @@ interface VisibleDelivery {
   replacedRecord: OutstandingNotification | undefined;
   /** Pending clears riding this envelope. */
   piggybacked: PickedClear[];
+}
+
+/** How one notification is dispatched, beyond its category and task. */
+interface DispatchOptions {
+  /** Optional envelope fields the notification carries. */
+  envelope?: Pick<PushEnvelopePlaintext, 'waitKind' | 'title' | 'body'>;
+  /**
+   * The user asked for this notification (a Notify me row). It reaches every
+   * registered device: presence, the device's categories and the cooldown do
+   * not apply, and it is not recorded for clears.
+   */
+  userRequested?: boolean;
+}
+
+/**
+ * `text` cut to `maxChars` characters, ending in "..." when cut. A cut below
+ * 3 characters is "..." alone, so the reader still sees that text was cut.
+ */
+function truncateText(text: string, maxChars: number): string {
+  const characters = Array.from(text);
+  if (characters.length <= maxChars) return text;
+  return `${characters.slice(0, Math.max(0, maxChars - 3)).join('')}...`;
+}
+
+/**
+ * A Notify me row's text, cut to fit one push. The Title is capped; the Body,
+ * sealed twice (as `body`, and as `detail` for a phone that predates `body`),
+ * is halved until the sealed blob fits CLEAR_BLOB_BUDGET. Both are templated
+ * fields, so a row can carry a whole task description, and a blob over
+ * Expo's limit is refused outright.
+ *
+ * `base` must hold every field `notifyWithContext` seals besides these three,
+ * or the fit measures a smaller blob than the one sent.
+ */
+function fitAutomationText(
+  base: Omit<PushEnvelopePlaintext, 'detail' | 'title' | 'body'>,
+  title: string,
+  body: string,
+): { title: string; body: string } {
+  const fittedTitle = truncateText(title, AUTOMATION_TITLE_MAX_CHARS);
+  let maxBodyChars = Array.from(body).length;
+  let fittedBody = body;
+  while (maxBodyChars > 0 && sealedPushBlobLength({ ...base, detail: fittedBody, title: fittedTitle, body: fittedBody }) > CLEAR_BLOB_BUDGET) {
+    maxBodyChars = Math.floor(maxBodyChars / 2);
+    fittedBody = truncateText(body, maxBodyChars);
+  }
+  return { title: fittedTitle, body: fittedBody };
 }
 
 /** A thrown send's stack (or message), redacted: a replacement WakeChannel may put the token in its error text. */
@@ -427,7 +488,8 @@ export class PushNotifier {
       // window must not ping the phone.
       const statsSnapshot = this.options.sessionManager.getActivityStatsSnapshot(sessionId);
       if (!statsSnapshot?.permissionPending) return;
-      this.notify(sessionId, 'input-required', '');
+      const waitKind = statsSnapshot.permissionWaitKind;
+      this.notify(sessionId, 'input-required', '', waitKind ? { envelope: { waitKind } } : {});
     }, PERMISSION_DEBOUNCE_MS);
     debounceTimer.unref?.();
     this.permissionDebounceTimers.set(sessionId, debounceTimer);
@@ -482,11 +544,11 @@ export class PushNotifier {
     this.idleSettleTimers.delete(sessionId);
   }
 
-  private notify(sessionId: string, category: PushCategory, detail: string): void {
+  private notify(sessionId: string, category: PushCategory, detail: string, dispatch: DispatchOptions = {}): void {
     if (this.disposed) return;
     const taskContext = this.options.resolveTaskContext(sessionId);
     if (!taskContext) return;
-    this.notifyWithContext(taskContext, sessionId, sessionId, category, detail);
+    this.notifyWithContext(taskContext, sessionId, sessionId, category, detail, dispatch);
   }
 
   /**
@@ -530,20 +592,54 @@ export class PushNotifier {
     this.notifyWithContext({ projectId: input.projectId, taskId: '', taskTitle: input.title }, input.workflowId, '', 'workflow-complete', detail);
   }
 
-  private notifyWithContext(taskContext: PushTaskContext, cooldownSubject: string, envelopeSessionId: string, category: PushCategory, detail: string): void {
+  /**
+   * A Notify me automation row ran: its own Title and Body, to every paired
+   * phone. Sent as `input-required`, which every phone already shows and opens
+   * on the task, with an empty session id so a tap opens the task and the push
+   * never replaces a session's own alert. A phone that predates `title` and
+   * `body` shows "Agent needs your input" over `taskTitle - detail`, so
+   * `detail` carries the Body as well. See DispatchOptions.userRequested for
+   * what it skips.
+   */
+  notifyAutomation(input: { projectId: string; taskId: string; taskTitle: string; title: string; body: string }): void {
+    if (this.disposed || !this.options.isBridgeEnabled()) return;
+    const { title, body, ...taskContext } = input;
+    const fitted = fitAutomationText(
+      // The plaintext notifyWithContext seals, less detail, title and body.
+      { category: 'input-required', projectId: input.projectId, taskId: input.taskId, sessionId: '', taskTitle: input.taskTitle, sentAt: Date.now() },
+      title,
+      body,
+    );
+    this.notifyWithContext(taskContext, `automation:${input.taskId}`, '', 'input-required', fitted.body, {
+      envelope: { title: fitted.title, body: fitted.body },
+      userRequested: true,
+    });
+  }
+
+  private notifyWithContext(
+    taskContext: PushTaskContext,
+    cooldownSubject: string,
+    envelopeSessionId: string,
+    category: PushCategory,
+    detail: string,
+    dispatch: DispatchOptions = {},
+  ): void {
     if (!this.options.isBridgeEnabled()) return;
+    const userRequested = dispatch.userRequested === true;
     const connectedDeviceIds = this.options.getConnectedDeviceIds();
     const now = Date.now();
     this.clearLedger.prune(now);
 
     for (const registration of this.options.registrationStore.list()) {
-      if (connectedDeviceIds.has(registration.deviceId)) continue;
-      // undefined categories means every category (the device's default / an older registration).
-      if (registration.categories && !registration.categories.includes(category)) continue;
+      if (!userRequested) {
+        if (connectedDeviceIds.has(registration.deviceId)) continue;
+        // undefined categories means every category (the device's default / an older registration).
+        if (registration.categories && !registration.categories.includes(category)) continue;
+      }
 
       const cooldownKey = `${registration.deviceId}|${cooldownSubject}|${category}`;
       const lastNotifiedAt = this.cooldowns.get(cooldownKey);
-      if (lastNotifiedAt !== undefined && now - lastNotifiedAt < CATEGORY_COOLDOWN_MS) continue;
+      if (!userRequested && lastNotifiedAt !== undefined && now - lastNotifiedAt < CATEGORY_COOLDOWN_MS) continue;
 
       const deviceStaticPublicKey = this.options.getDeviceStaticPublicKey(registration.deviceId);
       if (!deviceStaticPublicKey) continue;
@@ -557,6 +653,7 @@ export class PushNotifier {
         detail,
         sentAt: now,
         ...(taskContext.sessionKind ? { sessionKind: taskContext.sessionKind } : {}),
+        ...dispatch.envelope,
       };
       const acceptsClears = registration.acceptsClears === true;
       const piggybacked = acceptsClears
@@ -573,10 +670,11 @@ export class PushNotifier {
       } catch {
         continue; // a malformed stored key must not take down the other devices' sends
       }
-      this.cooldowns.set(cooldownKey, now);
+      if (!userRequested) this.cooldowns.set(cooldownKey, now);
       // The phone has nothing to clear a workflow's completion against until
-      // it opens the Board, so that one is never recorded.
-      const clearKey = acceptsClears && category !== 'workflow-complete' ? `${cooldownSubject}|${category}` : null;
+      // it opens the Board, so that one is never recorded, and nothing at the
+      // desk resolves a notification the user asked for.
+      const clearKey = acceptsClears && category !== 'workflow-complete' && !userRequested ? `${cooldownSubject}|${category}` : null;
       let replacedRecord: OutstandingNotification | undefined;
       if (clearKey !== null) {
         // Copied from the sealed plaintext, never from the cooldown subject:

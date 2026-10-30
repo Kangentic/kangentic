@@ -78,6 +78,11 @@ export interface AutomationContext {
    * caps it.
    */
   deliverToAgent(message: string, mode: AutoCommandMode, signal: AbortSignal): Promise<void>;
+  /**
+   * Notify the user on the desktop and on every paired phone, outside the
+   * notification settings. Every builder of this context wires it to
+   * `showAutomationNotification`.
+   */
   showNotification(input: NotificationInput): void;
   /**
    * Run the full agent-spawn pipeline for a legacy `spawn_agent` row. Present

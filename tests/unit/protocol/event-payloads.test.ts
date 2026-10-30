@@ -10,8 +10,12 @@ import {
   parseActivityEventPayload,
 } from '../../../packages/protocol/src/events/event';
 import {
+  isActivityReasonWire,
   isDoneRole,
+  isPermissionWaitKindWire,
   isTodoRole,
+  parseActivityReasonWire,
+  PERMISSION_WAIT_KINDS,
   parseBacklogItemWire,
   parseBoardColumnWire,
   parseBoardTaskWire,
@@ -124,6 +128,28 @@ describe('parseTranscriptEntriesWire', () => {
   });
 });
 
+describe('the permission wait kind', () => {
+  it('isPermissionWaitKindWire accepts exactly the known kinds', () => {
+    expect([...PERMISSION_WAIT_KINDS]).toEqual(['question', 'approval']);
+    for (const kind of PERMISSION_WAIT_KINDS) expect(isPermissionWaitKindWire(kind)).toBe(true);
+    expect(isPermissionWaitKindWire('unknown')).toBe(false);
+    expect(isPermissionWaitKindWire(undefined)).toBe(false);
+  });
+
+  it('isActivityReasonWire stays strict about the kind; parseActivityReasonWire drops one it does not know', () => {
+    const fromNewerDesktop = { kind: 'permission', since: 5, waitKind: 'future-kind' };
+    expect(isActivityReasonWire(fromNewerDesktop)).toBe(false);
+    expect(parseActivityReasonWire(fromNewerDesktop)).toStrictEqual({ kind: 'permission', since: 5 });
+    expect(parseActivityReasonWire({ kind: 'permission', waitKind: 'question' })).toStrictEqual({ kind: 'permission', waitKind: 'question' });
+  });
+
+  it('parseActivityReasonWire still answers null for a malformed reason', () => {
+    expect(parseActivityReasonWire({ kind: 'permission', since: 'soon', waitKind: 'future-kind' })).toBeNull();
+    expect(parseActivityReasonWire({ kind: 'nope' })).toBeNull();
+    expect(parseActivityReasonWire(null)).toBeNull();
+  });
+});
+
 describe('parseActivityEventPayload', () => {
   it('parses an activity payload', () => {
     const payload: JsonValue = { type: 'activity', state: 'thinking', reason: { kind: 'tool', pendingCount: 1, currentTool: 'Bash' } };
@@ -144,6 +170,19 @@ describe('parseActivityEventPayload', () => {
 
   it('rejects an idle/permission reason whose since is not a number', () => {
     expect(() => parseActivityEventPayload({ type: 'activity', state: 'idle', reason: { kind: 'idle', since: '1700000000000' } })).toThrow(/reason/);
+  });
+
+  it('carries a permission reason\'s known wait kind (protocol 0.26.0)', () => {
+    for (const waitKind of PERMISSION_WAIT_KINDS) {
+      const payload: JsonValue = { type: 'activity', state: 'permission', reason: { kind: 'permission', since: 1700000000000, waitKind } };
+      expect(parseActivityEventPayload(payload)).toEqual(payload);
+    }
+  });
+
+  it('drops a wait kind it does not know, and the event still parses', () => {
+    // A newer desktop may add a kind: the event must not be lost for it.
+    const parsed = parseActivityEventPayload({ type: 'activity', state: 'permission', reason: { kind: 'permission', since: 1700000000000, waitKind: 'future-kind' } });
+    expect(parsed).toStrictEqual({ type: 'activity', state: 'permission', reason: { kind: 'permission', since: 1700000000000 } });
   });
 
   it('parses a usage payload', () => {
@@ -576,6 +615,14 @@ describe('read-* response parsers', () => {
     expect(parsed.usage).toEqual(usageFixture);
   });
 
+  it('keeps a read-stream reason\'s known wait kind and drops an unknown one', () => {
+    const base = { scrollback: '', usage: null, awaitedPromptId: null };
+    const known = parseReadStreamResponsePayload({ ...base, activity: { state: 'permission', reason: { kind: 'permission', waitKind: 'approval' } } });
+    expect(known.activity.reason).toStrictEqual({ kind: 'permission', waitKind: 'approval' });
+    const unknown = parseReadStreamResponsePayload({ ...base, activity: { state: 'permission', reason: { kind: 'permission', waitKind: 'future-kind' } } });
+    expect(unknown.activity.reason).toStrictEqual({ kind: 'permission' });
+  });
+
   it('rejects a read-stream response without scrollback', () => {
     expect(() => parseReadStreamResponsePayload({ activity: { state: null, reason: null }, usage: null, awaitedPromptId: null })).toThrow(
       /scrollback/,
@@ -813,6 +860,42 @@ describe('read-* response parsers', () => {
       commandTerminals: [{ sessionId: 's-1', projectId: 'p-1', slot: 1, name: 'x', named: false, activity: { state: 'dreaming', reason: { kind: 'future-kind' } } }],
     });
     expect(parsed).toMatchObject({ commandTerminals: [{ activity: { state: null, reason: null } }] });
+  });
+
+  it('keeps a Command Terminal\'s permission reason and drops only a wait kind this version does not know', () => {
+    // A newer desktop may add a wait kind. The reason must survive as a wait of
+    // unknown kind, not collapse to null the way an unknown reason kind does.
+    const parsed = parseReadBoardResponsePayload({
+      projectId: 'p-1',
+      columns: [],
+      tasks: [],
+      commandTerminals: [{
+        sessionId: 's-1',
+        projectId: 'p-1',
+        slot: 1,
+        name: 'x',
+        named: false,
+        activity: { state: 'permission', reason: { kind: 'permission', waitKind: 'future-kind' } },
+      }],
+    });
+    expect(parsed.commandTerminals?.[0]?.activity.reason).toStrictEqual({ kind: 'permission' });
+  });
+
+  it('keeps a Command Terminal permission reason\'s known wait kind', () => {
+    const parsed = parseReadBoardResponsePayload({
+      projectId: 'p-1',
+      columns: [],
+      tasks: [],
+      commandTerminals: [{
+        sessionId: 's-1',
+        projectId: 'p-1',
+        slot: 1,
+        name: 'x',
+        named: false,
+        activity: { state: 'permission', reason: { kind: 'permission', waitKind: 'question' } },
+      }],
+    });
+    expect(parsed.commandTerminals?.[0]?.activity.reason).toStrictEqual({ kind: 'permission', waitKind: 'question' });
   });
 
   it('leaves both Command Terminal fields absent for an older desktop, and rejects malformed ones', () => {

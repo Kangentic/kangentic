@@ -2,6 +2,48 @@
 
 <!-- releases -->
 
+## [Unreleased]
+
+Tells a phone what an agent's wait is for, carries a Notify me automation row
+to the phone, and holds a phone's message for a paused task. Additive on the
+wire; `PROTOCOL_VERSION` stays '3'.
+
+`ActivityReasonWire`'s `permission` variant gains an optional `waitKind`:
+`question` when the agent asked the user something, `approval` when it wants a
+tool allowed or a plan approved. Absent means the agent did not say. The set is
+exported as `PERMISSION_WAIT_KINDS`, with `PermissionWaitKindWire` and
+`isPermissionWaitKindWire`. `parseActivityReasonWire` reads a reason off the
+wire and drops a `waitKind` it does not know, so a kind a newer desktop adds
+costs the field, not the event. `parseActivityEventPayload`,
+`parseReadStreamResponsePayload` and `parseCommandTerminalWire` read the reason
+through it. `isActivityReasonWire` stays a strict guard.
+
+`PushEnvelopePlaintext` gains three optional fields, each dropped rather than
+rejected by `parsePushEnvelopePlaintext` when malformed or unknown:
+
+- **`waitKind`**, on an `input-required` push from a session's wait. A phone
+  that knows it titles the push "Agent has a question" or "Agent needs your
+  approval". One that predates it keeps "Agent needs your input". A workflow
+  task's notice carries none.
+- **`title` and `body`**, set together by a Notify me automation row: its own
+  Title and Body. The push is an `input-required` with an empty `sessionId`, so
+  a tap opens the task and a phone keys it by task, the identity a workflow
+  task's notice already uses. `detail` carries the Body too, so a phone that
+  predates the fields shows "Agent needs your input" over "task - body". The
+  desktop sends it to every paired device, whatever its categories and whether
+  or not it is connected, with no cooldown, and never clears it.
+
+`send-user-message` to a session with no running agent (a paused, queued or
+exited task session) no longer refuses. The desktop holds the message for the
+task's next agent and answers `delivered: true`. A hold the desktop refuses (a
+task in Done, a message too long to hold) answers with the refusal and code it
+sent before. A Command Terminal is refused as before.
+
+### Features
+- Carry the wait's kind on the activity reason and the input-required push
+- Push Notify me automation rows to every paired phone
+- Hold a phone's message for a task with no running agent
+
 ## [protocol-v0.25.0] - 2026-10-28
 
 Lets a phone hold one workflow task out of its workflow with the task's own

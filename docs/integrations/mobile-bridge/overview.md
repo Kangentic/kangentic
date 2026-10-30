@@ -77,7 +77,7 @@ src/main/mobile-bridge/       # desktop implementation, consumes @kangentic/prot
     transcript-sync.ts         # per-subscription transcript diff engine: indexed delta upserts, chunking, reset fallback
     read-board.ts              # repository snapshot + the consolidated board-changed bus
     read-diff.ts               # DiffService (bridge-owned DiffWatcher, never IpcContext.diffWatcher)
-    send-user-message.ts       # delivery via TerminalSubmit.submitContent (bracketed paste), not a raw write
+    send-user-message.ts       # delivery via TerminalSubmit.submitContent (bracketed paste), not a raw write; held for a task with no running agent
     move-task.ts               # routes through handleTaskMove (task-lifecycle-lock + transition engine)
     start-session.ts           # resume or start in the task's current column via startTaskSession (paused: resumeTaskSession; else autoSpawnForTask -> spawnAgent)
     pause-session.ts           # pause a task's live session via pauseTaskSession, the desktop Pause button's own path

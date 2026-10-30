@@ -197,11 +197,11 @@ export function toActivityReasonWire(reason: ActivityReason): ActivityReasonWire
   switch (reason.kind) {
     case 'background-shell':
       return { kind: 'background-shell', count: reason.count, ids: [...reason.ids] };
-    // Built field by field: the desktop reason carries a `waitKind` the wire
-    // does not define, and `default` would hand it to the phone unchecked
-    // (TypeScript runs no excess-property check on a non-literal return).
+    // Built field by field, so the wire carries exactly the fields it defines
+    // (TypeScript runs no excess-property check on a non-literal return), and
+    // a reason whose agent did not say what it waits for carries no `waitKind`.
     case 'permission':
-      return { kind: 'permission', since: reason.since };
+      return { kind: 'permission', since: reason.since, ...(reason.waitKind ? { waitKind: reason.waitKind } : {}) };
     default:
       return reason;
   }

@@ -715,6 +715,14 @@ msgstr "작업이 To Do 또는 Done에 들어갈 때는 아무것도 실행되�
 msgid "Notifies \"{title}\""
 msgstr "\"{title}\" 알림 표시"
 
+#: src/shared/automation-describe.ts
+msgid "Notifies you on the desktop and your phone."
+msgstr ""
+
+#: src/shared/automation-manifest.ts
+msgid "Notifies you on the desktop and your phone. Opening it opens the task."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 #, fuzzy
 msgid "Notify me"
@@ -1092,16 +1100,6 @@ msgstr "작업 세부 정보 대화 상자에서 설명 패널을 표시하거�
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "프로젝트 사이드바를 표시하거나 숨깁니다."
-
-#: src/shared/automation-describe.ts
-#, fuzzy
-msgid "Shows a desktop notification."
-msgstr "데스크톱 알림을 표시합니다."
-
-#: src/shared/automation-manifest.ts
-#, fuzzy
-msgid "Shows a desktop notification. Clicking it opens the task."
-msgstr "데스크톱 알림을 표시합니다. 클릭하면 작업이 열립니다."
 
 #: src/shared/keybindings.ts
 #, fuzzy
