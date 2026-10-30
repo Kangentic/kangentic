@@ -499,6 +499,9 @@ export async function performSpawn(
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
     permissionMode: input.permissionMode ?? null,
+    // Known before launch (a caller-owned id, or a chat created for this
+    // start). Capture still overwrites it when the agent reports another.
+    ...(input.agentSessionId ? { agentSessionId: input.agentSessionId } : {}),
     cliTarget: input.cliTarget ?? null,
     lastPtyGrid: { cols: spawnCols, rows: spawnRows },
   };

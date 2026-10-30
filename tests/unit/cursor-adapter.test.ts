@@ -183,12 +183,19 @@ describe('CursorAdapter', () => {
 
   // ── A conversation created before launch ─────────────────────────────────
   //
-  // An interactive Cursor session prints no session id, so a workflow's agent
-  // on Cursor would lose its conversation at every Pause. `create-chat` makes
-  // an empty chat and prints its id (measured: a bare UUID line), and the launch
+  // An interactive Cursor session prints no session id. `create-chat` makes an
+  // empty chat and prints its id (measured: a bare UUID line), and the launch
   // opens it with `--resume=<id>`, so Kangentic knows the id from the start.
+  // The print path reports its own id and does not create a chat first.
   describe('a conversation created before launch', () => {
     const CHAT_ID = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
+
+    it('reports its own session id only on the print path', () => {
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'default' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits', nonInteractive: true })).toBe(true);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'bypassPermissions' })).toBe(true);
+    });
 
     it('creates a chat and reads its id', async () => {
       mockAboutStdout = `${CHAT_ID}\n`;

@@ -32,6 +32,7 @@ import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
+import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
 import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
 import { agentRegistry } from '../agent/agent-registry';
@@ -739,11 +740,17 @@ export class TransitionEngine {
 
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
     // - Resume: the reconciled id above.
-    // - Fresh + Claude (supportsCallerSessionId): generate UUID, pass via --session-id
-    // - Fresh + Codex/Gemini: null (CLI generates its own ID, captured later via hooks)
+    // - Fresh: an id the CLI accepts, or one it creates before launch when this
+    //   start will not report its own (Cursor's session screen). Otherwise null,
+    //   and hooks or the print stream fill it in after launch.
     const agentSessionId = canResume
       ? resumedAgentSessionId
-      : (adapter.supportsCallerSessionId ? randomUUID() : null);
+      : await resolveFreshAgentSessionId(adapter, {
+          cliPath: detection.path,
+          workingDirectory: cwd,
+          permissionMode,
+          nonInteractive: config.nonInteractive,
+        });
 
     let prompt = intent.prompt;
 

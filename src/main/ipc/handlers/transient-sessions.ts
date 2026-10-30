@@ -20,6 +20,7 @@ import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
+import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -303,6 +304,16 @@ export async function startCommandTerminal(
     // (shim-launch.ts). No prompt here, but the head must match what task
     // spawns use, so a Command Terminal never runs a different process shape.
     const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt: undefined });
+    // A fresh interactive Cursor session prints no id. Create the chat first
+    // and open it. A resume already has one. A CLI that accepts an id
+    // Kangentic chose still reports its own after launch here, as before.
+    const createdAgentSessionId = resume || adapter.supportsCallerSessionId || !adapter.createSessionId
+      ? null
+      : await resolveFreshAgentSessionId(adapter, {
+          cliPath: detection.path,
+          workingDirectory: projectRoot,
+          permissionMode,
+        });
     const commandOptions = {
       agentPath: launch.agentPath,
       taskId: transientTaskId,
@@ -330,8 +341,13 @@ export async function startCommandTerminal(
       // instead of the CLI's own default.
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
-      // The conversation to pick up, through the CLI's own resume.
-      ...(resume ? { sessionId: resume.agentSessionId, resume: true } : {}),
+      // The conversation to pick up, through the CLI's own resume. A fresh
+      // start that created an id opens that empty chat and keeps the screen.
+      ...(resume
+        ? { sessionId: resume.agentSessionId, resume: true }
+        : createdAgentSessionId
+          ? { sessionId: createdAgentSessionId, resume: false }
+          : {}),
       cliTarget,
     };
     const command = adapter.buildCommand(commandOptions);
@@ -367,7 +383,11 @@ export async function startCommandTerminal(
       rows: input.rows,
       // A resumed terminal holds a conversation from its first frame, so it is
       // used already: another Earlier click never replaces it.
-      ...(resume ? { agentSessionId: resume.agentSessionId, resuming: true, hasUserInput: true } : {}),
+      ...(resume
+        ? { agentSessionId: resume.agentSessionId, resuming: true, hasUserInput: true }
+        : createdAgentSessionId
+          ? { agentSessionId: createdAgentSessionId }
+          : {}),
       // The shell the command was built for, and where its CLI runs.
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
@@ -390,6 +410,12 @@ export async function startCommandTerminal(
     // A resumed terminal keeps the name it had. Seeded before any prompt, so
     // the namer (first write wins) leaves it alone.
     if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
+    // Earlier conversations are recorded when a session reports its id. A chat
+    // created before launch already has one, and the print stream will not
+    // report it again, so say so now. The session row is in the registry.
+    if (createdAgentSessionId) {
+      context.sessionManager.emit('agent-session-id', session.id, transientTaskId, input.projectId, createdAgentSessionId);
+    }
 
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a

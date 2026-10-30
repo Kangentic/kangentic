@@ -119,6 +119,16 @@ interface CursorSessionLaunch {
 const CHAT_ID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/im;
 
 /**
+ * Confirm-changes and skip-approvals keep the session screen. Anything else,
+ * and an explicit non-interactive flag, is one print turn. The screen prints
+ * no conversation id. The print path does, on the stream-json init line.
+ */
+function cursorKeepsSessionScreen(permissionMode: PermissionMode, nonInteractive: boolean | undefined): boolean {
+  const interactive = permissionMode === 'default' || permissionMode === 'acceptEdits';
+  return interactive && !nonInteractive;
+}
+
+/**
  * `create-chat` reaches Cursor's servers (a probe left nothing on disk), so it
  * gets longer than `about`; a start waits on it, and past this it goes ahead
  * without an id.
@@ -196,8 +206,9 @@ export class CursorAdapter implements AgentAdapter {
   // model + session ID together over a documented public schema, so this
   // mode is what lets ContextBar resolve the model pill and what lets
   // `--resume=<id>` work reliably. Interactive mode is still selectable.
-  // Its TUI status bar (`Composer 2.5 · 7.8%`) is parsed for occupancy,
-  // and `agent about` still fills the model pill.
+  // Its TUI status bar (`Composer 2.5 · 7.8%`) is parsed for occupancy
+  // and the live model. `agent about` still seeds the pill until that
+  // bar paints.
   readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   // Cursor CLI uses the shared AgentDetector via composition.
@@ -275,9 +286,9 @@ export class CursorAdapter implements AgentAdapter {
     // bar on "Starting agent...", because the init event is the only
     // documented place the model and session id arrive together.
     // An explicit nonInteractive flag wins over both session screens.
-    const confirmSession = options.permissionMode === 'default' && !options.nonInteractive;
-    const forceSession = options.permissionMode === 'acceptEdits' && !options.nonInteractive;
-    const sessionUi = confirmSession || forceSession;
+    const sessionUi = cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+    const confirmSession = sessionUi && options.permissionMode === 'default';
+    const forceSession = sessionUi && options.permissionMode === 'acceptEdits';
 
     if (!confirmSession) {
       // A directory Cursor has not seen prints "Workspace Trust Required"
@@ -343,9 +354,17 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
+   * The print path reports its own id on the stream-json init line. The
+   * session screen does not, so those starts create one first.
+   */
+  reportsLaunchSessionId(options: { permissionMode: PermissionMode; nonInteractive?: boolean }): boolean {
+    return !cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+  }
+
+  /**
    * A new chat's id, before launch. An interactive session never prints its
-   * id (only `--output-format stream-json` does, and it needs `--print`), so a
-   * workflow's agent on Cursor would lose its conversation at every Pause.
+   * id (only `--output-format stream-json` does, and it needs `--print`), so
+   * a fresh interactive start would otherwise have nothing to resume.
    * `create-chat` makes an empty chat and prints its id; the launch opens it
    * with `--resume=<id>`. Run in the session's own folder, in case Cursor
    * files chats by workspace as the editor does.
@@ -410,8 +429,9 @@ export class CursorAdapter implements AgentAdapter {
    *      "model":"<display>",...}
    * - streamOutput: same init event populates SessionUsage.model so
    *   ContextBar can lift its "Starting agent..." spinner. Interactive
-   *   TUI occupancy (`Composer 2.5 · 7.8%`) is parsed from the same
-   *   stream so the board card does not sit at 0%.
+   *   TUI status (`Composer 2.5 · 7.8%`) is parsed from the same stream
+   *   so the board card does not sit at 0% and the model pill is the
+   *   live TUI name, not the spawn-time `about` seed.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     // Only terminal silence says a turn ended.
@@ -436,7 +456,9 @@ export class CursorAdapter implements AgentAdapter {
    * NDJSON init event and the ContextBar spinner would otherwise hang
    * forever. `agent about --format json` is a documented, stable CLI
    * command that returns `{ "model": "<name>", ... }` in under a
-   * second and works in every permission mode.
+   * second and works in every permission mode. It is a seed (no
+   * `reportedByAgent`): the TUI status bar is what confirms the live
+   * model once it paints.
    *
    * The fetch is fire-and-forget. `dispose()` sets a cancel flag so a
    * late-arriving result does not push usage into a torn-down session.

@@ -635,9 +635,19 @@ export interface AgentAdapter {
    * can create an empty conversation and name it (Cursor's `create-chat`). The
    * launch then opens that conversation, so Kangentic knows its id from the
    * start, as with a caller-chosen one. Null when the CLI could not create one;
-   * never throws. A workflow's agent uses it on a fresh start.
+   * never throws. A workflow's agent calls it on every fresh start. A task,
+   * startup recovery, and a Command Terminal call it when
+   * `reportsLaunchSessionId` is not true.
    */
   createSessionId?(cliPath: string, workingDirectory: string): Promise<string | null>;
+
+  /**
+   * True when this launch reports its own conversation id, so a fresh start
+   * must not create one first. Cursor's print path does (`stream-json` init).
+   * Its session screen does not. Omitted, a fresh start that has
+   * `createSessionId` creates one.
+   */
+  reportsLaunchSessionId?(options: { permissionMode: PermissionMode; nonInteractive?: boolean }): boolean;
 
   /**
    * Why a session started in `workingDirectory` would not reach Kangentic's MCP
