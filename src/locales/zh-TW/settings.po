@@ -1501,6 +1501,11 @@ msgstr "無"
 msgid "Not found"
 msgstr "找不到"
 
+#: src/renderer/components/settings/keybindings/KeyCombo.tsx
+msgctxt "hotkey"
+msgid "Not set"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "Not signed in"
 msgstr "未登入"

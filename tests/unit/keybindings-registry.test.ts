@@ -162,6 +162,79 @@ describe('detectConflicts', () => {
     const warn = conflicts.filter((entry) => entry.severity === 'terminal-warn');
     expect(warn.some((entry) => entry.ids.includes('settings.toggle'))).toBe(true);
   });
+
+  it('reports no conflicts for the defaults when Mod and Ctrl are one key', () => {
+    expect(detectConflicts(undefined, { includeDevOnly: true, modIsCtrl: true })).toEqual([]);
+  });
+
+  it('flags a rebind captured as Mod+Tab against the Ctrl+Tab default only when Mod is Ctrl', () => {
+    // Off macOS, a physical Ctrl+Tab press is recorded as Mod+Tab.
+    const overrides = { 'settings.toggle': 'Mod+Tab' };
+    const folded = detectConflicts(overrides, { modIsCtrl: true }).filter((entry) => entry.severity === 'conflict');
+    expect(folded.some((entry) => entry.ids.includes('settings.toggle') && entry.ids.includes('session.cycleNext'))).toBe(true);
+    // On macOS Mod is Cmd, a different key.
+    const apart = detectConflicts(overrides).filter((entry) => entry.severity === 'conflict');
+    expect(apart).toEqual([]);
+  });
+
+  // The terminal-unsafe defaults are written with Mod (paste is Mod+V, the newline
+  // key is Mod+Enter). Off macOS, Mod is Ctrl, so a rebind captured as a physical
+  // Ctrl+V must still warn. `settings.toggle` is a rebindable global action, and the
+  // terminal-warn pass never looks at scope, so it stands in for any rebindable id.
+  // Ctrl+C is deliberately not used here: the terminal.interrupt default is a literal
+  // Ctrl+C, which would warn whether or not the terminal set were folded.
+  it.each(['Ctrl+V', 'Mod+V', 'Ctrl+Shift+V', 'Ctrl+Enter'])(
+    'warns when a rebind to %s lands on a terminal key once Mod is Ctrl',
+    (combo) => {
+      const conflicts = detectConflicts({ 'settings.toggle': combo }, { modIsCtrl: true });
+      const warn = conflicts.filter((entry) => entry.severity === 'terminal-warn');
+      expect(warn.some((entry) => entry.ids.includes('settings.toggle'))).toBe(true);
+    },
+  );
+
+  it('keeps Ctrl+V apart from the terminal paste key when Mod is Cmd (macOS)', () => {
+    // On macOS the terminal pastes with Cmd+V, so a physical Ctrl+V is a different key.
+    const ctrlV = detectConflicts({ 'settings.toggle': 'Ctrl+V' }).filter((entry) => entry.severity === 'terminal-warn');
+    expect(ctrlV).toEqual([]);
+    const ctrlEnter = detectConflicts({ 'settings.toggle': 'Ctrl+Enter' }).filter((entry) => entry.severity === 'terminal-warn');
+    expect(ctrlEnter).toEqual([]);
+    // Cmd+V is the terminal paste key there, so it still warns.
+    const modV = detectConflicts({ 'settings.toggle': 'Mod+V' }).filter((entry) => entry.severity === 'terminal-warn');
+    expect(modV.some((entry) => entry.ids.includes('settings.toggle'))).toBe(true);
+  });
+
+  it('never counts an unbound action as a conflict, even beside another unbound one', () => {
+    expect(getKeybinding('session.cyclePrev')?.defaultCombo).toBe('');
+    expect(getKeybinding('session.cycleAllPrev')?.defaultCombo).toBe('');
+    const conflicts = detectConflicts(undefined, { includeDevOnly: true });
+    expect(conflicts.some((entry) => entry.ids.includes('session.cyclePrev') || entry.ids.includes('session.cycleAllPrev'))).toBe(false);
+  });
+
+  it('flags a rebind onto a cycle key in the same scope', () => {
+    const conflicts = detectConflicts({ 'view.toggleSidebar': 'Ctrl+Backquote' }).filter((entry) => entry.severity === 'conflict');
+    expect(conflicts.some((entry) => entry.ids.includes('view.toggleSidebar') && entry.ids.includes('project.cycleNext'))).toBe(true);
+  });
+});
+
+describe('cycle keys (GitHub #176)', () => {
+  it('registers the six cycle actions in General, global and rebindable', () => {
+    const expected: Record<string, string> = {
+      'session.cycleNext': 'Ctrl+Tab',
+      'session.cyclePrev': '',
+      'session.cycleAllNext': 'Ctrl+Shift+Tab',
+      'session.cycleAllPrev': '',
+      'project.cycleNext': 'Ctrl+Backquote',
+      'project.cyclePrev': 'Ctrl+Shift+Backquote',
+    };
+    for (const [id, combo] of Object.entries(expected)) {
+      const definition = getKeybinding(id);
+      expect(definition, id).toBeDefined();
+      expect(definition?.group).toBe('General');
+      expect(definition?.scope).toBe('global');
+      expect(definition?.rebindable).toBe(true);
+      expect(definition?.defaultCombo).toBe(combo);
+    }
+  });
 });
 
 describe('comboToAccelerator', () => {
@@ -173,6 +246,17 @@ describe('comboToAccelerator', () => {
   it('supports digits and function keys', () => {
     expect(comboToAccelerator('Mod+0')).toBe('CommandOrControl+0');
     expect(comboToAccelerator('F5')).toBe('F5');
+  });
+
+  it('supports Tab and Backquote, so the probe covers the cycle defaults', () => {
+    expect(comboToAccelerator('Ctrl+Tab')).toBe('Control+Tab');
+    expect(comboToAccelerator('Ctrl+Shift+Tab')).toBe('Control+Shift+Tab');
+    expect(comboToAccelerator('Ctrl+Backquote')).toBe('Control+`');
+    expect(comboToAccelerator('Ctrl+Shift+Backquote')).toBe('Control+Shift+`');
+  });
+
+  it('returns null for an unbound (empty) combo', () => {
+    expect(comboToAccelerator('')).toBeNull();
   });
 
   it('returns null for combos that cannot be expressed as accelerators', () => {

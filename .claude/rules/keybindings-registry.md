@@ -24,8 +24,13 @@ the same array.
   or default) live, so a rebind in settings takes effect immediately. Use `opts` for capture
   phase, `document` vs `window` target, `enabled` gating, `when` predicates, and
   preventDefault/stopPropagation.
-- **Combos are canonical** (`Mod+Shift+P` form; `Mod` = Cmd on macOS, Ctrl elsewhere; literal
-  `Ctrl` only for terminal SIGINT). Default combos must already be normalized.
+- **Combos are canonical** (`Mod+Shift+P` form; `Mod` = Cmd on macOS, Ctrl elsewhere). Literal
+  `Ctrl` is for terminal SIGINT and for a default whose Cmd form macOS keeps for itself (the cycle
+  keys: Cmd+Tab and Cmd+` are the OS's). `Backquote` is the one main key matched by position
+  (`KeyboardEvent.code`), since its character changes with the layout. An empty `defaultCombo`
+  ships the action unbound: the Hotkeys tab shows "Not set", nothing listens, and `detectConflicts`
+  skips it. The Hotkeys tab passes `modIsCtrl` off macOS, so a rebind captured as `Mod+Tab` still
+  clashes with a literal `Ctrl+Tab`. Default combos must already be normalized.
 - **Three narrow exception families, each kept hand-written on purpose:**
   - The embedded xterm clipboard/SIGINT handlers in `terminal-clipboard.ts` (they live inside
     xterm's own key pipeline, not a window listener). They are registered in `KEYBINDINGS` as

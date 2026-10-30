@@ -1,15 +1,19 @@
 ---
 type: Guide
 title: Keyboard shortcuts
-description: Every default shortcut by area (general toggles, task detail, description editor, window snapping and dragging, terminal copy and paste), which ones are rebindable in Settings > Hotkeys, and which are fixed.
+description: Every default shortcut by area (general toggles, terminal and project cycling, task detail, description editor, window snapping and dragging, terminal copy and paste), which ones are rebindable in Settings > Hotkeys, and which are fixed.
 tags: [shortcuts, hotkeys, keybindings]
 sources:
   - resource: src/shared/keybindings.ts
     title: KEYBINDINGS
+  - resource: src/renderer/hooks/useCycleShortcuts.ts
+  - resource: src/renderer/utils/cycle-targets.ts
 ---
 # Keyboard shortcuts
 
-Every shortcut is declared in a central registry, and nearly all are **rebindable** under Settings > Hotkeys, where each can be bound to a key chord or a mouse button (middle or side buttons). Hotkeys also flags conflicts and combos already claimed by the OS or another app. The description-editor keys below are the exception: they are **fixed**, because they are the platform conventions for text formatting. Fixed keys are still listed in Hotkeys for reference, just not editable. `Mod` below is Cmd on macOS and Ctrl on every other platform.
+Every shortcut is declared in a central registry, and nearly all are **rebindable** under Settings > Hotkeys, where each can be bound to a key chord or a mouse button (middle or side buttons). Hotkeys also flags conflicts and combos already claimed by the OS or another app. The description-editor keys below are the exception: they are **fixed**, because they are the platform conventions for text formatting. Fixed keys are still listed in Hotkeys for reference, just not editable. `Mod` below is Cmd on macOS and Ctrl on every other platform. `Ctrl` is the Control key everywhere, macOS included. The cycle keys use it because macOS keeps Cmd+Tab and Cmd+\` for itself.
+
+The cycle keys work while a terminal has focus, and the agent loses nothing: the terminal sends Ctrl+Tab as a plain Tab, and Claude Code binds neither Ctrl+Tab nor Ctrl+\`. They do nothing while a dialog, Settings, Quick Find, the Agent Monitor, the Knowledge Graph or Usage Stats is open, and a terminal inside one of them, such as an Agent Monitor terminal, never receives them either, so a press there cannot reach the agent as Tab or Shift+Tab. On macOS, the system's automatic window tabbing can claim Ctrl+Tab ("Show Next Tab") before the app sees it. If Ctrl+Tab does nothing there, rebind it in Hotkeys.
 
 General:
 
@@ -22,6 +26,10 @@ General:
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window
+- **Ctrl+Tab** - Go to the next terminal in this project: each running agent in the order the bottom panel lists it, then each Command Terminal terminal. A workflow's own agent is skipped, so is an agent whose task window is in the detached Agent Monitor, and so is a project whose Command Terminal is popped out into its own window. From Backlog or Workflows it switches to the board first. It lands on the agent's task window when one is open, and otherwise on its panel tab. With the panel hidden in Settings, or while a paired phone streams that agent, it opens the agent's window
+- **Ctrl+Shift+Tab** - Go to the next terminal in any project, walking projects in sidebar order and switching project when the next terminal is in another
+- **Ctrl+\`** / **Ctrl+Shift+\`** - Open the next / previous project in sidebar order, collapsed groups included. The backtick key is matched by its position, so it is the same key on layouts where it types another character
+- Previous terminal in this project / in any project - Listed in Hotkeys as "Not set" for you to bind. Shift already picks the scope on the Tab keys, and Ctrl+Alt+Tab belongs to the Windows task switcher
 - **Mod+Shift+F** - Open Quick Find (cross-project search palette)
 - **Mod+F** - Find on board (focuses board search; opens Quick Find when not on the board)
 - **Mod+N** - New Task on the board

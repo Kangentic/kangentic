@@ -371,6 +371,22 @@ msgstr "Git 分支名稱（任務沒有分支時為空白）。"
 msgid "Give up after"
 msgstr "放棄前等待"
 
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal in this project."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
+msgstr ""
+
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"
 msgid "Headers"
@@ -543,6 +559,18 @@ msgstr "下一欄"
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
 msgstr "第一個選項是「下一欄」：任務路線上的下一欄，或看板上的下一欄。"
 
+#: src/shared/keybindings.ts
+msgid "Next project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in this project"
+msgstr ""
+
 #: src/shared/automation-describe.ts
 msgid "No message yet."
 msgstr "尚無訊息。"
@@ -677,6 +705,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "在看板上開啟新增任務對話方塊。"
 
 #: src/shared/keybindings.ts
+msgid "Open the next project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Open the previous project in sidebar order."
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Open the Workflows view; pressed there, return to the view you came from."
 msgstr "開啟工作流程檢視；在該檢視中按下時，返回你原本所在的檢視。"
 
@@ -735,6 +771,18 @@ msgstr "上一個變更的檔案"
 #: src/shared/keybindings.ts
 msgid "Previous column"
 msgstr "上一欄"
+
+#: src/shared/keybindings.ts
+msgid "Previous project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in any project"
+msgstr ""
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in this project"
+msgstr ""
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

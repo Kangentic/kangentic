@@ -8,6 +8,8 @@ sources:
   - resource: src/renderer/components/search/SearchPalette.tsx
   - resource: src/renderer/components/FilterPopover.tsx
   - resource: src/renderer/components/sidebar/ProjectSidebar.tsx
+  - resource: src/renderer/components/sidebar/project-sidebar/sidebar-project-order.ts
+  - resource: src/renderer/components/sidebar/project-sidebar/useSidebarDragDrop.ts
 ---
 # Board basics
 

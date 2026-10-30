@@ -371,6 +371,22 @@ msgstr "Git branch name (empty if the task has none)."
 msgid "Give up after"
 msgstr "Give up after"
 
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal in this project."
+msgstr "Go to the next running agent or Command Terminal terminal in this project."
+
+#: src/shared/keybindings.ts
+msgid "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
+msgstr "Go to the next running agent or Command Terminal terminal, switching project when it is in another."
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal in this project."
+msgstr "Go to the previous running agent or Command Terminal terminal in this project."
+
+#: src/shared/keybindings.ts
+msgid "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
+msgstr "Go to the previous running agent or Command Terminal terminal, switching project when it is in another."
+
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"
 msgid "Headers"
@@ -543,6 +559,18 @@ msgstr "Next column"
 msgid "Next column is the first choice: the next column on the task's route, or on the board."
 msgstr "Next column is the first choice: the next column on the task's route, or on the board."
 
+#: src/shared/keybindings.ts
+msgid "Next project"
+msgstr "Next project"
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in any project"
+msgstr "Next terminal in any project"
+
+#: src/shared/keybindings.ts
+msgid "Next terminal in this project"
+msgstr "Next terminal in this project"
+
 #: src/shared/automation-describe.ts
 msgid "No message yet."
 msgstr "No message yet."
@@ -677,6 +705,14 @@ msgid "Open the New Task dialog on the board."
 msgstr "Open the New Task dialog on the board."
 
 #: src/shared/keybindings.ts
+msgid "Open the next project in sidebar order."
+msgstr "Open the next project in sidebar order."
+
+#: src/shared/keybindings.ts
+msgid "Open the previous project in sidebar order."
+msgstr "Open the previous project in sidebar order."
+
+#: src/shared/keybindings.ts
 msgid "Open the Workflows view; pressed there, return to the view you came from."
 msgstr "Open the Workflows view; pressed there, return to the view you came from."
 
@@ -735,6 +771,18 @@ msgstr "Previous changed file"
 #: src/shared/keybindings.ts
 msgid "Previous column"
 msgstr "Previous column"
+
+#: src/shared/keybindings.ts
+msgid "Previous project"
+msgstr "Previous project"
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in any project"
+msgstr "Previous terminal in any project"
+
+#: src/shared/keybindings.ts
+msgid "Previous terminal in this project"
+msgstr "Previous terminal in this project"
 
 #: src/shared/automation-manifest.ts
 msgctxt "automation field"

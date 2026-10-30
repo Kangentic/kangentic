@@ -1859,6 +1859,11 @@ msgstr "Nessuno"
 msgid "Not found"
 msgstr "Non trovato"
 
+#: src/renderer/components/settings/keybindings/KeyCombo.tsx
+msgctxt "hotkey"
+msgid "Not set"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy
 msgid "Not signed in"

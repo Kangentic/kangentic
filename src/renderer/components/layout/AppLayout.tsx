@@ -52,6 +52,7 @@ import { useMonitorDetailOwnership } from '../monitor/useMonitorDetailOwnership'
 import { useDictation } from '../../hooks/useDictation';
 import { DictationSurface } from '../dictation/DictationSurface';
 import { useKeybinding } from '../../hooks/useKeybinding';
+import { useCycleShortcuts } from '../../hooks/useCycleShortcuts';
 import { StatsPage } from '../stats/StatsPage';
 import { MonitorPage } from '../monitor/MonitorPage';
 import { KnowledgeGraphPage } from '../knowledge-graph/KnowledgeGraphPage';
@@ -181,11 +182,12 @@ export function AppLayout() {
   // The Workflows view collapses the panel for the most canvas, through the same
   // input a detached task window uses, so the user's own preference is never
   // overwritten and comes back on the way out.
+  const terminalForceCollapsed = terminalForceCollapse !== null || activeView === 'workflows';
   const terminal = useTerminalResize(
     terminalLayout,
     terminalContentColRef,
     terminalPanelContainerRef,
-    terminalForceCollapse !== null || activeView === 'workflows',
+    terminalForceCollapsed,
     `${currentProjectId ?? 'none'}:${detailWindowRestorePending ? 'restoring' : 'settled'}`,
   );
   // With every session detached the panel renders nothing, so its container takes no height
@@ -323,6 +325,20 @@ export function AppLayout() {
   useKeybinding('view.toggleTerminalPanel', () => terminal.onToggleCollapse());
   useKeybinding('task.create', () => useBoardStore.getState().requestNewTask(), {
     enabled: activeView === 'board' && !!currentProject,
+  });
+  // Next/previous terminal and project. The panel's forced collapse is the same
+  // value `useTerminalResize` gets, so landing never toggles a forced panel.
+  useCycleShortcuts({
+    commandBar,
+    panel: {
+      rendered: terminalPanelRendered,
+      collapsed: terminal.collapsed,
+      forceCollapsed: terminalForceCollapsed,
+      onToggleCollapse: terminal.onToggleCollapse,
+    },
+    overlayShowing: (statsOpen && !statsPopOut.isOpen)
+      || (monitorOpen && !monitorPopOut.isOpen)
+      || (knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen),
   });
 
   // Bring the checklist back once the user is done with the surface a step sent them to.

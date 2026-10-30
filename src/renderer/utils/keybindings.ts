@@ -54,6 +54,9 @@ export function matchesMouseRelease(event: PointerEvent, combo: string): boolean
 
 /** Compare the event's main key against a canonical main-key token. */
 function keyMatches(event: KeyboardEvent, mainKey: string): boolean {
+  // The key left of 1 types a different character on each layout (`, ^, ², a
+  // dead key), and Shift changes it again, so it is matched by position.
+  if (mainKey === 'Backquote') return event.code === 'Backquote';
   // Letters: case-insensitive (Shift changes event.key casing).
   if (mainKey.length === 1 && /[a-z]/i.test(mainKey)) {
     return event.key.toLowerCase() === mainKey.toLowerCase();
@@ -140,6 +143,7 @@ const MAIN_KEY_LABELS: Record<string, string> = {
   ArrowRight: '→',
   ArrowUp: '↑',
   ArrowDown: '↓',
+  Backquote: '`',
 };
 
 /** Human-readable labels for the bindable mouse buttons, translated where a
@@ -160,9 +164,11 @@ function mouseComboLabel(token: string): string {
  * Split a canonical combo into display segments for rendering as `<kbd>`
  * elements. macOS uses glyphs (no separator on screen); other platforms use
  * word labels. Returns segments in canonical order, main key last. A mouse combo
- * renders as a single readable segment.
+ * renders as a single readable segment. An unbound action (empty combo) has no
+ * segments, so no caller draws an empty key chip.
  */
 export function formatComboSegments(combo: string): string[] {
+  if (combo === '') return [];
   // A mouse combo renders one segment per button (a chord becomes two chips).
   if (isMouseCombo(combo)) return combo.split('+').map(mouseComboLabel);
   const parts = combo.split('+');
@@ -207,6 +213,8 @@ export function comboFromEvent(event: KeyboardEvent): string | null {
   }
   // Fold the Shift-shifted symbol for zoom-in back to its canonical token.
   if (mainKey === '+') mainKey = '=';
+  // The key left of 1 is recorded by position, whatever character this layout gives it.
+  if (event.code === 'Backquote') mainKey = 'Backquote';
 
   return normalizeCombo([...modifiers, mainKey].join('+'));
 }

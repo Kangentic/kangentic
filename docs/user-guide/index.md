@@ -27,5 +27,5 @@
 ## Settings and help
 
 * [Settings](settings.md) - Every Settings tab in the unified panel: project tabs (General with Move project, Theme, Agent, Git worktree and PR settings, Browser, Shortcuts) and shared tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer).
-* [Keyboard shortcuts](keyboard-shortcuts.md) - Every default shortcut by area (general toggles, task detail, description editor, window snapping and dragging, terminal copy and paste), which ones are rebindable in Settings > Hotkeys, and which are fixed.
+* [Keyboard shortcuts](keyboard-shortcuts.md) - Every default shortcut by area (general toggles, terminal and project cycling, task detail, description editor, window snapping and dragging, terminal copy and paste), which ones are rebindable in Settings > Hotkeys, and which are fixed.
 * [Troubleshooting](troubleshooting.md) - Two failures after install: the window vanishing with no crash dialog when the Chromium graphics process fails (Kangentic turns off Graphics acceleration, gpu-process-gone crash records), and the Windows Low on memory warning (commit limit, page file size, Max Concurrent Sessions).

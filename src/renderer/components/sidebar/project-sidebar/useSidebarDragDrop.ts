@@ -11,6 +11,7 @@ import {
 import { arrayMove } from '@dnd-kit/sortable';
 import { POINTER_SENSOR_OPTIONS } from '../../../utils/dnd-sensor-options';
 import type { Project, ProjectGroup } from '../../../../shared/types';
+import { groupSidebarProjects, sidebarVisualOrder } from './sidebar-project-order';
 
 export function useSidebarDragDrop(
   projects: Project[],
@@ -24,26 +25,10 @@ export function useSidebarDragDrop(
     useSensor(PointerSensor, POINTER_SENSOR_OPTIONS),
   );
 
-  // Build sorted groups and project maps
-  const { sortedGroups, ungroupedProjects, groupedProjectsMap } = useMemo(() => {
-    const hasGroups = groups.length > 0;
-    const sorted = [...groups].sort((a, b) => a.position - b.position);
-    const ungrouped = hasGroups
-      ? projects.filter((p) => !p.group_id)
-      : projects;
-    const grouped = new Map<string, Project[]>();
-    if (hasGroups) {
-      for (const group of sorted) {
-        grouped.set(
-          group.id,
-          projects
-            .filter((p) => p.group_id === group.id)
-            .sort((a, b) => a.position - b.position),
-        );
-      }
-    }
-    return { sortedGroups: sorted, ungroupedProjects: ungrouped, groupedProjectsMap: grouped };
-  }, [projects, groups]);
+  // Build sorted groups and project maps. Shared with the project cycle keys,
+  // which walk the same order.
+  const grouping = useMemo(() => groupSidebarProjects(projects, groups), [projects, groups]);
+  const { sortedGroups, ungroupedProjects, groupedProjectsMap } = grouping;
 
   // Build sortable IDs: only project IDs, groups first then ungrouped
   const sortableIds = useMemo(() => {
@@ -83,19 +68,8 @@ export function useSidebarDragDrop(
     setActiveId(String(event.active.id));
   }, []);
 
-  // Build the full visual order: all groups' projects (by group position),
-  // then ungrouped. Includes collapsed groups' projects so reorderProjects
-  // always receives the complete list.
-  const buildVisualOrder = useCallback((): Project[] => {
-    const order: Project[] = [];
-    for (const group of sortedGroups) {
-      const groupProjects = groupedProjectsMap.get(group.id) || [];
-      order.push(...groupProjects);
-    }
-    order.push(...ungroupedProjects);
-    return order;
-  }, [sortedGroups, groupedProjectsMap, ungroupedProjects]);
-
+  // Reorders read the full visual order (`sidebarVisualOrder`), collapsed groups'
+  // projects included, so reorderProjects always receives the complete list.
   const handleDragEnd = useCallback((event: DragEndEvent) => {
     setActiveId(null);
     const { active, over } = event;
@@ -114,7 +88,7 @@ export function useSidebarDragDrop(
         setProjectGroup(activeIdStr, targetGroupId);
       }
       // Move to top of target group
-      const visualOrder = buildVisualOrder();
+      const visualOrder = sidebarVisualOrder(grouping);
       const oldIndex = visualOrder.findIndex((p) => p.id === activeIdStr);
       // Find first project in the target group to insert before it
       const firstInGroup = visualOrder.findIndex(
@@ -137,14 +111,14 @@ export function useSidebarDragDrop(
     }
 
     // Reorder using visual order
-    const visualOrder = buildVisualOrder();
+    const visualOrder = sidebarVisualOrder(grouping);
     const oldIndex = visualOrder.findIndex((p) => p.id === activeIdStr);
     const newIndex = visualOrder.findIndex((p) => p.id === overIdStr);
     if (oldIndex === -1 || newIndex === -1) return;
 
     const reordered = arrayMove(visualOrder, oldIndex, newIndex);
     reorderProjects(reordered.map((p) => p.id));
-  }, [projects, buildVisualOrder, reorderProjects, setProjectGroup]);
+  }, [projects, grouping, reorderProjects, setProjectGroup]);
 
   return {
     sensors,
