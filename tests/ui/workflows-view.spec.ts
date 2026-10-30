@@ -15,7 +15,7 @@
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
-import { waitForViteReady, gotoVite, computedColor, pressPortToStartLink } from './helpers';
+import { waitForViteReady, gotoVite, computedColor, pressPortToStartLink, settleFrames } from './helpers';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -523,6 +523,68 @@ test.describe('Workflows header', () => {
       await expect(byTestId(page, 'workflow-rename-confirm')).toBeEnabled();
       await page.keyboard.type('Design tokens');
       await page.keyboard.press('Enter');
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Design tokens');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Ctrl+S renames as the Rename button does', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await byTestId(page, 'workflow-rename').click();
+      const input = byTestId(page, 'workflow-rename-input');
+      await expect(input).toHaveValue('Theme tokens');
+      await input.fill('Design tokens');
+
+      await page.keyboard.press('Control+S');
+
+      await expect(byTestId(page, 'workflow-rename-dialog')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Design tokens');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Ctrl+S with the name unchanged closes the dialog and renames nothing, as Rename does', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await byTestId(page, 'workflow-rename').click();
+      await expect(byTestId(page, 'workflow-rename-input')).toHaveValue('Theme tokens');
+
+      await page.keyboard.press('Control+S');
+
+      await expect(byTestId(page, 'workflow-rename-dialog')).toHaveCount(0);
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Ctrl+S with an empty name is consumed and renames nothing; a name lifts that', async () => {
+    const { browser, page } = await launch('draft');
+    try {
+      await byTestId(page, 'workflow-rename').click();
+      const dialog = byTestId(page, 'workflow-rename-dialog');
+      const input = byTestId(page, 'workflow-rename-input');
+      await input.fill('   ');
+      await expect(byTestId(page, 'workflow-rename-confirm')).toBeDisabled();
+
+      // Returns false when a listener called preventDefault, which is what keeps
+      // the press from reaching the browser's Save Page in the web build.
+      const notConsumed = await input.evaluate((element) => element.dispatchEvent(
+        new KeyboardEvent('keydown', { key: 's', code: 'KeyS', ctrlKey: true, bubbles: true, cancelable: true }),
+      ));
+      expect(notConsumed).toBe(false);
+      await settleFrames(page);
+
+      await expect(dialog).toBeVisible();
+      await expect(byTestId(page, 'workflow-picker')).toContainText('Theme tokens');
+
+      // Positive control: with a name the same key renames.
+      await input.fill('Design tokens');
+      await page.keyboard.press('Control+S');
+      await expect(dialog).toHaveCount(0);
       await expect(byTestId(page, 'workflow-picker')).toContainText('Design tokens');
     } finally {
       await browser.close();
