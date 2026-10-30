@@ -177,3 +177,75 @@ export async function discoverCursorCapabilities(
   cache = { cliPath, capabilities };
   return capabilities;
 }
+
+function collapseWhitespace(value: string): string {
+  return value.trim().replace(/\s+/g, ' ');
+}
+
+/** Lowercase, dashes and underscores as spaces, so `cursor-grok-4.6-high` and `grok 4.6 high` compare. */
+function normalizeCursorModelToken(value: string): string {
+  return collapseWhitespace(value.toLowerCase().replace(/[-_]+/g, ' '));
+}
+
+export interface CursorModelCatalog {
+  models: readonly string[];
+  displayNames: Record<string, string>;
+}
+
+/**
+ * The value `--model` accepts for a stored picker value. The combobox shows
+ * Cursor's display names ("Grok 4.6") and a live session reports those names
+ * as its model (stream-json init and `agent about`), so a column can hold
+ * `grok 4.6 high` rather than `cursor-grok-4.6-high`. The CLI rejects the
+ * display spelling. Resolve against the last `--list-models` catalog:
+ * exact id, then display name, then the id with dashes read as spaces, then a
+ * unique `cursor-` prefix or unique suffix of a normalized id. Unresolved
+ * input is returned trimmed, so a genuinely unknown value still reaches the CLI.
+ */
+export function resolveCursorModelId(input: string, catalog: CursorModelCatalog): string {
+  const trimmed = input.trim();
+  if (!trimmed || catalog.models.length === 0) return trimmed;
+  if (catalog.models.includes(trimmed)) return trimmed;
+
+  const collapsedLower = collapseWhitespace(trimmed).toLowerCase();
+  const byDisplayName = catalog.models.filter(
+    (modelId) => collapseWhitespace(catalog.displayNames[modelId] ?? '').toLowerCase() === collapsedLower,
+  );
+  if (byDisplayName.length === 1) return byDisplayName[0];
+
+  const normalized = normalizeCursorModelToken(trimmed);
+  const byNormalizedId = catalog.models.filter((modelId) => normalizeCursorModelToken(modelId) === normalized);
+  if (byNormalizedId.length === 1) return byNormalizedId[0];
+
+  const byCursorPrefix = catalog.models.filter(
+    (modelId) => normalizeCursorModelToken(modelId) === `cursor ${normalized}`,
+  );
+  if (byCursorPrefix.length === 1) return byCursorPrefix[0];
+
+  const bySuffix = catalog.models.filter((modelId) => {
+    const normalizedId = normalizeCursorModelToken(modelId);
+    return normalizedId === normalized || normalizedId.endsWith(` ${normalized}`);
+  });
+  if (bySuffix.length === 1) return bySuffix[0];
+
+  return trimmed;
+}
+
+/**
+ * Resolve against the catalog `discoverCursorCapabilities` last stored for
+ * `cliPath`, or the most recent catalog if that path has not been probed.
+ * Trimmed input when nothing is cached, so a spawn before discovery still
+ * passes what was stored.
+ */
+export function resolveCachedCursorModel(input: string, cliPath?: string): string {
+  const trimmed = input.trim();
+  if (!trimmed) return trimmed;
+  const capabilities = (cliPath && cache?.cliPath === cliPath ? cache.capabilities : null)
+    ?? cache?.capabilities
+    ?? null;
+  if (!capabilities?.models?.length) return trimmed;
+  return resolveCursorModelId(trimmed, {
+    models: capabilities.models,
+    displayNames: capabilities.modelDisplayNames ?? {},
+  });
+}

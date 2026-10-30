@@ -127,6 +127,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 // Import after mocks are set up
 const { CursorAdapter } = await import('../../src/main/agent/adapters/cursor');
+const { resetCursorCapabilityCacheForTests } = await import('../../src/main/agent/adapters/cursor/capability-discovery');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,7 @@ describe('CursorAdapter', () => {
 
   beforeEach(() => {
     adapter = new CursorAdapter();
+    resetCursorCapabilityCacheForTests();
     mockWhichResult = '/usr/local/bin/agent';
     mockExecVersionStdout = '0.50.3\n';
     mockExecVersionShouldFail = false;
@@ -764,16 +766,16 @@ describe('CursorAdapter', () => {
       const { context, applied } = makeContext();
       adapter.attachSession!(context);
       await flushPromises();
-      expect(applied).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+      expect(applied).toEqual([{ model: { id: 'Auto', displayName: 'Auto' } }]);
     });
 
-    it('lowercases the id but preserves the displayName casing', async () => {
+    it('keeps the about display name when no --list-models catalog is cached', async () => {
       mockAboutStdout = JSON.stringify({ model: 'Claude 4.6 Sonnet' });
       const { context, applied } = makeContext();
       adapter.attachSession!(context);
       await flushPromises();
       expect(applied).toEqual([
-        { model: { id: 'claude 4.6 sonnet', displayName: 'Claude 4.6 Sonnet' } },
+        { model: { id: 'Claude 4.6 Sonnet', displayName: 'Claude 4.6 Sonnet' } },
       ]);
     });
 
@@ -883,7 +885,7 @@ describe('CursorAdapter', () => {
       expect(appliedA).toHaveLength(0);
 
       // Second: untouched, so the model should resolve normally
-      expect(appliedB).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+      expect(appliedB).toEqual([{ model: { id: 'Auto', displayName: 'Auto' } }]);
 
       // Dispose the second cleanly
       if (attachmentB) attachmentB.dispose();
@@ -1019,6 +1021,7 @@ describe('CursorAdapter - getInjectionSequence', () => {
 
   beforeEach(() => {
     adapter = new CursorAdapter();
+    resetCursorCapabilityCacheForTests();
   });
 
   it('emits /model <name> when modelChanged is true', () => {

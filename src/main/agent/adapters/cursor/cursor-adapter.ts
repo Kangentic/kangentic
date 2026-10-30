@@ -12,7 +12,7 @@ import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
-import { discoverCursorCapabilities } from './capability-discovery';
+import { discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import {
   CURSOR_KANGENTIC_MCP_ENTRY,
@@ -315,7 +315,7 @@ export class CursorAdapter implements AgentAdapter {
       if (quotedPrompt) parts.push('-p', quotedPrompt);
       // Per-column model override: apply before output format (flag order doesn't matter)
       if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(options.model.trim(), shell));
+        parts.push('--model', quoteArg(resolveCachedCursorModel(options.model, options.agentPath), shell));
       }
       parts.push('--output-format', 'stream-json');
     } else {
@@ -324,7 +324,7 @@ export class CursorAdapter implements AgentAdapter {
       if (quotedPrompt) parts.push(quotedPrompt);
       // Per-column model override in interactive mode
       if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(options.model.trim(), shell));
+        parts.push('--model', quoteArg(resolveCachedCursorModel(options.model, options.agentPath), shell));
       }
     }
 
@@ -463,7 +463,12 @@ export class CursorAdapter implements AgentAdapter {
     const stdout = await runAgentAbout(cliPath, launch?.target ?? null);
     const payload: unknown = JSON.parse(stdout);
     if (!isAboutPayload(payload)) return null;
-    return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
+    // `about` reports a display name ("Grok 4.6 High"), not a `--model` id.
+    // Using that string as the id taught the picker a value the CLI then
+    // rejected. Resolve against `--list-models` when we have it; otherwise
+    // keep the display name for the pill and do not invent a lowercase id.
+    const displayName = payload.model;
+    return { model: { id: resolveCachedCursorModel(displayName, cliPath), displayName } };
   }
 
   removeHooks(directory: string, sessionId?: string): void {
@@ -507,7 +512,7 @@ export class CursorAdapter implements AgentAdapter {
     const sequence: string[] = [];
     // Cursor supports `/model <model>` slash command for live model switching
     if (spec.modelChanged && spec.model) {
-      sequence.push(`/model ${spec.model}`);
+      sequence.push(`/model ${resolveCachedCursorModel(spec.model)}`);
     }
     // Cursor has no separate effort concept - reasoning is encoded in model names
     // (e.g., "Claude 4.1 Sonnet" vs "Claude 4.1 Sonnet Thinking")
@@ -536,7 +541,7 @@ export class CursorAdapter implements AgentAdapter {
     // empty on the title prompt.
     return runCliPrintSummarize({
       cliPath,
-      args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : []), '-p'],
+      args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', resolveCachedCursorModel(options.model, cliPath)] : []), '-p'],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
@@ -644,7 +649,7 @@ export class CursorAdapter implements AgentAdapter {
           '--output-format', 'stream-json',
           ...(onEvent ? ['--stream-partial-output'] : []),
           ...(search ? ['--approve-mcps'] : []),
-          ...(model ? ['--model', model] : []),
+          ...(model ? ['--model', resolveCachedCursorModel(model, cliPath)] : []),
           '-p',
         ],
         prompt: input.prompt,

@@ -26,8 +26,11 @@ import {
   discoverCursorCapabilities,
   parseCursorModelsOutput,
   resetCursorCapabilityCacheForTests,
+  resolveCachedCursorModel,
+  resolveCursorModelId,
 } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor/cursor-adapter';
+import { CursorStreamParser } from '../../src/main/agent/adapters/cursor/stream-parser';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -318,6 +321,120 @@ describe('discoverCursorCapabilities', () => {
       } finally {
         Object.defineProperty(process, 'platform', platformDescriptor);
       }
+    });
+  });
+});
+
+describe('resolveCursorModelId', () => {
+  const GROK_LIST = `Available models
+
+auto - Auto (default)
+cursor-grok-4.6-low - Grok 4.6 Low
+cursor-grok-4.6-high - Grok 4.6
+cursor-grok-4.6-high-fast - Grok 4.6 Fast
+grok-4.7-high - Grok 4.7  High
+
+Tip: use --model <id>
+`;
+  const catalog = (() => {
+    const parsed = parseCursorModelsOutput(GROK_LIST);
+    return { models: parsed.models, displayNames: parsed.displayNames };
+  })();
+
+  it('returns an exact id unchanged', () => {
+    expect(resolveCursorModelId('cursor-grok-4.6-high', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('maps a display name, including collapsed extra spaces', () => {
+    expect(resolveCursorModelId('Grok 4.6', catalog)).toBe('cursor-grok-4.6-high');
+    expect(resolveCursorModelId('Grok 4.7 High', catalog)).toBe('grok-4.7-high');
+  });
+
+  it('maps the display-style spelling the picker and about payload store', () => {
+    expect(resolveCursorModelId('grok 4.6 high', catalog)).toBe('cursor-grok-4.6-high');
+    expect(resolveCursorModelId('cursor grok 4.6 high', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('maps a family name that is also a unique display name', () => {
+    // High's listed name is "Grok 4.6", so the family spelling is that row.
+    expect(resolveCursorModelId('grok 4.6', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('does not map a suffix shared by more than one id', () => {
+    expect(resolveCursorModelId('high', catalog)).toBe('high');
+  });
+
+  it('leaves an unknown value trimmed', () => {
+    expect(resolveCursorModelId('  mystery-model  ', catalog)).toBe('mystery-model');
+  });
+});
+
+describe('resolveCachedCursorModel', () => {
+  it('resolves against the last discovered catalog for that CLI path', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    expect(resolveCachedCursorModel('grok 4.6 high', '/usr/bin/cursor-agent')).toBe('cursor-grok-4.6-high');
+  });
+
+  it('returns the stored spelling when nothing is cached', () => {
+    expect(resolveCachedCursorModel('grok 4.6 high')).toBe('grok 4.6 high');
+  });
+
+  it('buildCommand passes the spawnable id, not the display-style spelling', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    const adapter = new CursorAdapter();
+    const command = adapter.buildCommand({
+      agentPath: '/usr/bin/cursor-agent',
+      taskId: 'task-1',
+      cwd: '/projects/app',
+      permissionMode: 'bypassPermissions',
+      prompt: 'go',
+      model: 'grok 4.6 high',
+      shell: 'bash',
+    });
+    expect(command).toContain('--model cursor-grok-4.6-high');
+    expect(command).not.toContain('grok 4.6 high');
+  });
+
+  it('init telemetry stores the spawnable id and keeps the display name on the pill', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    const parser = new CursorStreamParser();
+    const initLine = JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'session-1',
+      model: 'Grok 4.6',
+    });
+    const result = parser.parseTelemetry(`${initLine}\n`);
+    expect(result?.usage?.model).toEqual({
+      id: 'cursor-grok-4.6-high',
+      displayName: 'Grok 4.6',
     });
   });
 });

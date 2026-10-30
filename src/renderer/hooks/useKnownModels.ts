@@ -42,7 +42,12 @@ export function unionKnownModels(
   const union = new Set<string>();
   if (capabilityModels) for (const value of capabilityModels) union.add(value);
   if (discoveredModels) for (const value of discoveredModels) union.add(value);
-  return Array.from(union).sort((first, second) => first.localeCompare(second));
+  // Display names learned as ids (Cursor's init event, `agent about`) have
+  // spaces. A spawnable id never does, so drop them rather than offer a row
+  // `--model` will reject.
+  return Array.from(union)
+    .filter((modelId) => !/\s/.test(modelId))
+    .sort((first, second) => first.localeCompare(second));
 }
 
 const EMPTY_WINDOWS: Record<string, number> = {};

@@ -469,7 +469,11 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     },
 
     rememberDiscoveredModel: (agent, model) => {
-      if (!agent || !model) return;
+      // A spawnable model id never contains a space (`resolveSpacedModelName`,
+      // `parseCursorModelsOutput`). Cursor's stream-json init and `agent about`
+      // report a display name ("Grok 4.6 High"); storing that as an id put a
+      // value in the picker that `--model` then rejected.
+      if (!agent || !model || /\s/.test(model)) return;
       const current = get().config.discoveredModelsByAgent ?? {};
       const existing = current[agent] ?? [];
       if (existing.includes(model)) return;

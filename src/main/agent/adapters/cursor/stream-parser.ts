@@ -4,6 +4,7 @@ import {
   type SessionUsage,
   type StreamOutputParser,
 } from '../../../../shared/types';
+import { resolveCachedCursorModel } from './capability-discovery';
 
 /**
  * Parses Cursor CLI's `--output-format stream-json` NDJSON stream as it
@@ -25,8 +26,9 @@ import {
  *   {"type":"result","subtype":"success","duration_ms":5234,...}
  *
  * Cursor uses a single `model` string (e.g. "Claude 4 Sonnet") with no
- * separate id/displayName split, so we mirror it into both fields of
- * `SessionUsage.model`.
+ * separate id/displayName split. The pill shows that display name. The stored
+ * id is resolved against `--list-models` when a catalog is cached, so a
+ * later spawn does not pass the display spelling to `--model`.
  */
 export class CursorStreamParser implements StreamOutputParser {
   /**
@@ -87,7 +89,10 @@ export class CursorStreamParser implements StreamOutputParser {
       if (type === 'system' && subtype === 'init') {
         const model = entry.model;
         if (typeof model === 'string' && model.length > 0) {
-          usage = { ...usage, model: { id: model, displayName: model } };
+          usage = {
+            ...usage,
+            model: { id: resolveCachedCursorModel(model), displayName: model },
+          };
         }
       } else if (type === 'tool_call' && subtype === 'started') {
         const toolName = extractToolName(entry.tool_call);

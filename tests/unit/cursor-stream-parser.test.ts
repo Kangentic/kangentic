@@ -4,8 +4,9 @@
  *
  * Pure logic; no Electron, no IPC, no filesystem.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import { CursorStreamParser } from '../../src/main/agent/adapters/cursor/stream-parser';
+import { resetCursorCapabilityCacheForTests } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import { EventType } from '../../src/shared/types';
 
 // Documented example sequence from
@@ -50,9 +51,15 @@ const resultLine = JSON.stringify({
 });
 
 describe('CursorStreamParser', () => {
+  beforeEach(() => {
+    resetCursorCapabilityCacheForTests();
+  });
+
   it('extracts model from the init event', () => {
     const parser = new CursorStreamParser();
     const result = parser.parseTelemetry(`${initLine}\n`);
+    // No `--list-models` catalog is cached in this file, so the display
+    // name is kept as the id rather than inventing a lowercase slug.
     expect(result?.usage?.model).toEqual({
       id: 'Claude 4 Sonnet',
       displayName: 'Claude 4 Sonnet',

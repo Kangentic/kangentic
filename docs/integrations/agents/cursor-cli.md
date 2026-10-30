@@ -1,13 +1,14 @@
 ---
 type: Reference
 title: Cursor CLI
-description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p --trust stream-json commands, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
+description: Cursor CLI detection that probes cursor-agent before the agent alias Grok also installs, interactive versus -p --trust stream-json commands, --model ids resolved from display names, --resume=id quoting, the project .cursor/mcp.json with --approve-mcps, and create-chat session ids for workflow agents.
 tags: [agents, adapter, cursor]
 sources:
   - resource: src/main/agent/adapters/cursor/cursor-adapter.ts
   - resource: src/main/agent/adapters/cursor/project-mcp-config.ts
   - resource: src/main/agent/adapters/cursor/answer-workspace.ts
   - resource: src/main/agent/adapters/cursor/stream-parser.ts
+  - resource: src/main/agent/adapters/cursor/capability-discovery.ts
 ---
 # Cursor CLI
 
@@ -56,6 +57,12 @@ A Cursor installed in a WSL distro runs there (`supportsWslCli`) when its CLI pa
 Kangentic's MCP server stays a static entry in the project's `.cursor/mcp.json`. On mirrored networking the distro reaches this machine's loopback, so the entry is the URL one. On NAT networking it is the WSL hook transport's stdio bridge (`CURSOR_KANGENTIC_BRIDGE_MCP_ENTRY`): `sh` with the script, `mcp` and the URL, and the token in the server's `env`. The script path, URL and token are `${env:...}` references, filled from the session's `KANGENTIC_MCP_BRIDGE_SCRIPT`, `KANGENTIC_MCP_URL` and `KANGENTIC_MCP_TOKEN`, which cross into the distro through `WSLENV`. That Cursor fills references in `command`, `args` and `env` comes from Cursor's MCP docs ("Config interpolation"); only the `url` and `headers` case was measured, by the answer path. The CLI path is the project's, so every session sharing a folder shares the entry.
 
 A Knowledge Graph answer from a distro starts in a stable folder beside the shared answer home, `<home>-wsl-<distro>` (`cursorAnswerHome`), so its entry never overwrites the one a Cursor on this machine reads. Beside it rather than inside, in case Cursor looks for a `.cursor` folder above the one it starts in. Its chat is removed from the distro's `~/.cursor/chats`. Not yet run against a Cursor installed in a distro.
+
+## Model override
+
+`--list-models` prints `cursor-grok-4.6-high - Grok 4.6`. The picker shows the display name. A live session's stream-json init event and `agent about --format json` report that display name as `model`, not the id. A column that stored `grok 4.6 high` used to be passed through as `--model "grok 4.6 high"`, which the CLI rejects.
+
+`resolveCursorModelId` maps the stored value onto the last `--list-models` catalog before `--model` or `/model` is emitted: exact id, display name, dashes-as-spaces, then a unique `cursor-` prefix or unique suffix. The stream-json init event and `agent about` keep the display name on the pill and store the resolved id. Display names with spaces are not written into `discoveredModelsByAgent`, so they do not reappear as picker rows.
 
 ## Permission Modes
 
