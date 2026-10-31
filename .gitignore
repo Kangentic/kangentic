@@ -161,6 +161,8 @@ e2e-timings*.json
 .claude/settings.local.json
 .claude/scheduled_tasks.lock
 kangentic.local.json
+# Local VS Code multi-root workspace. It is per machine and must not be committed.
+kangentic.code-workspace
 # Dogfood launcher shortcut (scripts/dogfood-launcher.ps1 -CreateShortcut). It carries this
 # checkout's absolute path, so every machine generates its own.
 /Kangentic (dev).lnk
