@@ -79,6 +79,21 @@ to the head branch only when there is no stored number.
 Every later `gh pr` command (view, checks, merge) targets `<pr>` or `<prHead>`; the local `<branch>`
 is for local git only.
 
+**Fork PR.** When `gh pr view <pr> --json isCrossRepository` reads true, the head is on a
+contributor's fork, and the steps below change in three places:
+
+- **Every push** (Step 1 item 4, Step 2 item 2) is a bare `git push` from the branch
+  `gh pr checkout <pr>` created, after the two checks in `/pull-request`'s "Fork PRs" section: the
+  fork's current head is an ancestor of `HEAD`, and `git push --dry-run` names the fork and
+  `<prHead>`. Never `git push origin ...`, which creates a stray branch here that the PR never sees.
+- **Step 2 item 2 merges instead of rebasing:** `git merge origin/<sourceBranch>`. Never rewrite or
+  force-push the contributor's commits.
+- **Step 3 squashes, without `--delete-branch`:** write a short English body to
+  `.kangentic/SQUASH_BODY.tmp`, then run `gh pr merge <pr> --admin --squash --subject "<conventional
+  English subject> (#<pr>)" --body-file .kangentic/SQUASH_BODY.tmp`. Without a body GitHub joins
+  every commit message, and a contributor's may not be in English. The head branch belongs to the
+  contributor, so leave it. Record `<mergeMethod>` = squash.
+
 ## Step 1 - Doc backstop (fix anything it finds, here and now)
 
 The doc audit's real home is `/pull-request`, BEFORE the PR is created (its Step 1 item 3, which
