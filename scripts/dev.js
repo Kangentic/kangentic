@@ -5,6 +5,7 @@ const http = require('http');
 const { ensureNodeModules, npmCiInvocation, stopInstall } = require('./ensure-node-modules');
 const { worktreeViteCacheDir, worktreeViteConfig } = require('./worktree-vite-config');
 const { copyExternalScripts } = require('./copy-external-scripts');
+const { writeCursorRules } = require('./cursor-rules');
 const { compileCatalogsForMainInBackground } = require('./i18n-catalogs');
 const { writeExitRecord } = require('./preview-exit-record');
 const {
@@ -496,6 +497,19 @@ async function start() {
   // .claude/rules/external-scripts-parity.md.
   copyExternalScripts(projectDir);
   console.log('[dev] Copied external scripts (bridges + adapter plugins)');
+
+  // Cursor's copy of .claude/rules/ (scripts/cursor-rules.js), refreshed on
+  // every start so a pull that changed a rule reaches Cursor without a
+  // reinstall. A failure only warns: a rule the translator cannot carry must not
+  // stop the dev server, and tests/unit/cursor-rules.test.ts fails on it in CI.
+  try {
+    const cursorRules = writeCursorRules(projectDir);
+    if (cursorRules.written + cursorRules.removed > 0) {
+      console.log(`[dev] Refreshed Cursor rules (${cursorRules.written} written, ${cursorRules.removed} removed)`);
+    }
+  } catch (cursorRulesError) {
+    console.warn('[dev] could not refresh .cursor/rules/:', cursorRulesError);
+  }
 
   // The MCP server is now hosted in-process by Electron main (see
   // src/main/agent/mcp-http-server.ts), so we no longer need to bundle a

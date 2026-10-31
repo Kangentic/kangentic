@@ -1,4 +1,5 @@
 ---
+name: release
 description: Version bump, changelog, tag, push release, and mark the Sentry issues it fixes
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(gh:*), Bash(npm:*), Bash(npx:*), Bash(curl:*), PowerShell, Agent
 argument-hint: [patch|minor|major]

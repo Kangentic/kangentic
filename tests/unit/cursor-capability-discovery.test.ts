@@ -10,7 +10,7 @@
  * shell on win32 and `execFile` elsewhere - the helper below answers both
  * call shapes so these tests pass identically on Windows and on CI's Linux.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 vi.mock('node:child_process', () => ({
   execFile: vi.fn(),
@@ -26,8 +26,13 @@ import {
   discoverCursorCapabilities,
   parseCursorModelsOutput,
   resetCursorCapabilityCacheForTests,
+  resolveCachedCursorModel,
+  resolveCursorModelId,
 } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import { CursorAdapter } from '../../src/main/agent/adapters/cursor/cursor-adapter';
+import { CursorStreamParser } from '../../src/main/agent/adapters/cursor/stream-parser';
+import { setOffMainCliSpawner } from '../../src/main/utility-process/off-main-cli';
+import type { SessionUsage } from '../../src/shared/types';
 
 const execMock = exec as unknown as ReturnType<typeof vi.fn>;
 const execFileMock = execFile as unknown as ReturnType<typeof vi.fn>;
@@ -61,15 +66,26 @@ function isListModelsCall(args: unknown[]): boolean {
   return Array.isArray(second) && second.includes('--list-models');
 }
 
+/** True when this invocation is `agent about --format json`, in either call shape. */
+function isAboutCall(args: unknown[]): boolean {
+  const [first, second] = args;
+  if (typeof first === 'string' && first.includes(' about --format json')) return true;
+  return Array.isArray(second) && second.includes('about');
+}
+
 /**
  * Answer both the win32 `exec(commandString)` and the POSIX
  * `execFile(path, args)` shapes. Pass `null` for either response to make that
  * invocation reject, which is how a missing binary or a bad credential
- * presents (the real CLI exits non-zero with a stderr warning).
+ * presents (the real CLI exits non-zero with a stderr warning). `about` is the
+ * `agent about --format json` payload; left out, that call gets the help body,
+ * as every call that is not a model listing always did.
  */
-function setCliResponses(options: { help: string | null; listModels: string | null }): void {
+function setCliResponses(options: { help: string | null; listModels: string | null; about?: string }): void {
   const respond = (...args: unknown[]): Promise<{ stdout: string; stderr: string }> => {
-    const body = isListModelsCall(args) ? options.listModels : options.help;
+    let body: string | null = options.help;
+    if (isListModelsCall(args)) body = options.listModels;
+    else if (options.about !== undefined && isAboutCall(args)) body = options.about;
     if (body === null) {
       const rejected = Promise.reject(new Error('command failed')) as Promise<{
         stdout: string;
@@ -319,6 +335,230 @@ describe('discoverCursorCapabilities', () => {
         Object.defineProperty(process, 'platform', platformDescriptor);
       }
     });
+  });
+});
+
+describe('resolveCursorModelId', () => {
+  const GROK_LIST = `Available models
+
+auto - Auto (default)
+cursor-grok-4.6-low - Grok 4.6 Low
+cursor-grok-4.6-high - Grok 4.6
+cursor-grok-4.6-high-fast - Grok 4.6 Fast
+grok-4.7-high - Grok 4.7  High
+
+Tip: use --model <id>
+`;
+  const catalog = (() => {
+    const parsed = parseCursorModelsOutput(GROK_LIST);
+    return { models: parsed.models, displayNames: parsed.displayNames };
+  })();
+
+  it('returns an exact id unchanged', () => {
+    expect(resolveCursorModelId('cursor-grok-4.6-high', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('maps a display name, including collapsed extra spaces', () => {
+    expect(resolveCursorModelId('Grok 4.6', catalog)).toBe('cursor-grok-4.6-high');
+    expect(resolveCursorModelId('Grok 4.7 High', catalog)).toBe('grok-4.7-high');
+  });
+
+  it('maps the display-style spelling the picker and about payload store', () => {
+    expect(resolveCursorModelId('grok 4.6 high', catalog)).toBe('cursor-grok-4.6-high');
+    expect(resolveCursorModelId('cursor grok 4.6 high', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('maps a family name that is also a unique display name', () => {
+    // High's listed name is "Grok 4.6", so the family spelling is that row.
+    expect(resolveCursorModelId('grok 4.6', catalog)).toBe('cursor-grok-4.6-high');
+  });
+
+  it('does not map a suffix shared by more than one id', () => {
+    expect(resolveCursorModelId('high', catalog)).toBe('high');
+  });
+
+  it('leaves an unknown value trimmed', () => {
+    expect(resolveCursorModelId('  mystery-model  ', catalog)).toBe('mystery-model');
+  });
+});
+
+describe('resolveCachedCursorModel', () => {
+  it('resolves against the last discovered catalog for that CLI path', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    expect(resolveCachedCursorModel('grok 4.6 high', '/usr/bin/cursor-agent')).toBe('cursor-grok-4.6-high');
+  });
+
+  it('returns the stored spelling when nothing is cached', () => {
+    expect(resolveCachedCursorModel('grok 4.6 high')).toBe('grok 4.6 high');
+  });
+
+  it('buildCommand passes the spawnable id, not the display-style spelling', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    const adapter = new CursorAdapter();
+    const command = adapter.buildCommand({
+      agentPath: '/usr/bin/cursor-agent',
+      taskId: 'task-1',
+      cwd: '/projects/app',
+      permissionMode: 'bypassPermissions',
+      prompt: 'go',
+      model: 'grok 4.6 high',
+      shell: 'bash',
+    });
+    expect(command).toContain('--model cursor-grok-4.6-high');
+    expect(command).not.toContain('grok 4.6 high');
+  });
+
+  it('init telemetry stores the spawnable id and keeps the display name on the pill', async () => {
+    setCliResponses({
+      help: HELP_WITH_MODEL,
+      listModels: `Available models
+
+cursor-grok-4.6-high - Grok 4.6
+
+Tip: use --model <id>
+`,
+    });
+    await discoverCursorCapabilities('/usr/bin/cursor-agent');
+    const parser = new CursorStreamParser();
+    const initLine = JSON.stringify({
+      type: 'system',
+      subtype: 'init',
+      session_id: 'session-1',
+      model: 'Grok 4.6',
+    });
+    const result = parser.parseTelemetry(`${initLine}\n`);
+    expect(result?.usage?.model).toEqual({
+      id: 'cursor-grok-4.6-high',
+      displayName: 'Grok 4.6',
+      reportedByAgent: true,
+    });
+  });
+});
+
+describe('CursorAdapter resolves a picker value to the catalog id at every --model site', () => {
+  // The combobox stores Cursor's display names, and the CLI rejects the display
+  // spelling, so each site that hands a stored value to the CLI resolves it
+  // against the catalog `discoverCursorCapabilities` last cached. buildCommand
+  // and the stream parser are pinned above; these are the other four. Each
+  // asserts a display-style input, so passing the stored value through
+  // unresolved fails it (an id input would pass either way).
+  const CURSOR_CLI_PATH = '/usr/bin/cursor-agent';
+  const GROK_CATALOG_OUTPUT = `Available models
+
+cursor-grok-4.6-high - Grok 4.6 High
+
+Tip: use --model <id>
+`;
+
+  const spawnedRuns: Array<{ command: string; args: string[] }> = [];
+
+  async function seedGrokCatalog(about?: string): Promise<void> {
+    setCliResponses({ help: HELP_WITH_MODEL, listModels: GROK_CATALOG_OUTPUT, about });
+    await discoverCursorCapabilities(CURSOR_CLI_PATH);
+  }
+
+  /**
+   * Take over the agent CLI spawn and record it, then stop there: the throw
+   * rejects the call from inside its spawn, before a timer or a child exists,
+   * so nothing is left running. `--model` is already in the recorded args.
+   */
+  function captureCliRuns(): void {
+    setOffMainCliSpawner((command, args) => {
+      spawnedRuns.push({ command, args });
+      throw new Error('stopped at the spawn, as the test intends');
+    });
+  }
+
+  function modelArgumentOf(args: string[]): string | undefined {
+    const flagIndex = args.indexOf('--model');
+    return flagIndex === -1 ? undefined : args[flagIndex + 1];
+  }
+
+  beforeEach(() => {
+    spawnedRuns.length = 0;
+  });
+
+  afterEach(() => {
+    setOffMainCliSpawner(null);
+  });
+
+  it('getInjectionSequence types the catalog id for a display-style model change', async () => {
+    await seedGrokCatalog();
+    const sequence = new CursorAdapter().getInjectionSequence({
+      model: 'grok 4.6 high',
+      modelChanged: true,
+      effort: null,
+      effortChanged: false,
+    });
+    expect(sequence).toEqual(['/model cursor-grok-4.6-high']);
+  });
+
+  it('the about probe seeds the pill with the catalog id and keeps the reported name as its label', async () => {
+    await seedGrokCatalog(JSON.stringify({ cliVersion: '2026.04.15-dccdccd', model: 'Grok 4.6 High' }));
+    const adapter = new CursorAdapter();
+    // The launch is how the adapter learns which CLI to ask. Without one it
+    // would look for a Cursor on PATH, and this machine's PATH is not under test.
+    adapter.buildCommand({
+      agentPath: CURSOR_CLI_PATH,
+      taskId: 'task-1',
+      cwd: '/projects/app',
+      permissionMode: 'bypassPermissions',
+      ptySessionId: 'pty-1',
+      shell: 'bash',
+    });
+    const applied: Array<Partial<SessionUsage>> = [];
+    const attachment = adapter.attachSession({
+      sessionId: 'pty-1',
+      applyUsage: (usage) => { applied.push(usage); },
+    });
+    try {
+      await vi.waitFor(() => {
+        expect(applied).toEqual([{ model: { id: 'cursor-grok-4.6-high', displayName: 'Grok 4.6 High' } }]);
+      });
+    } finally {
+      attachment.dispose();
+    }
+  });
+
+  it('summarize passes the catalog id after --model', async () => {
+    await seedGrokCatalog();
+    captureCliRuns();
+    await expect(
+      new CursorAdapter().summarize('Fix the login race', CURSOR_CLI_PATH, '/projects/app', { model: 'grok 4.6 high' }),
+    ).rejects.toThrow('stopped at the spawn');
+    expect(spawnedRuns).toHaveLength(1);
+    expect(modelArgumentOf(spawnedRuns[0].args)).toBe('cursor-grok-4.6-high');
+    expect(spawnedRuns[0].args).not.toContain('grok 4.6 high');
+  });
+
+  it('answerFromContext passes the catalog id after --model', async () => {
+    await seedGrokCatalog();
+    captureCliRuns();
+    // No retrieval option: the run writes no workspace and needs no run directory.
+    await expect(
+      new CursorAdapter().answerFromContext('What changed?', CURSOR_CLI_PATH, '/projects/app', 'Grok 4.6 High'),
+    ).rejects.toThrow('stopped at the spawn');
+    expect(spawnedRuns).toHaveLength(1);
+    expect(modelArgumentOf(spawnedRuns[0].args)).toBe('cursor-grok-4.6-high');
+    expect(spawnedRuns[0].args).not.toContain('Grok 4.6 High');
   });
 });
 

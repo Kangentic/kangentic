@@ -11,7 +11,7 @@ import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 //   2. `scripts/worktree-preview.js` - CommonJS, cannot import a `.ts` module.
 //      Prints the `Watch:` command the agent runs.
 //   3. `.claude/skills/preview/SKILL.md` - markdown, cannot import anything.
-//   4. `CLAUDE.md` - markdown, the instruction that a background server the
+//   4. `AGENTS.md` - markdown, the instruction that a background server the
 //      agent leaves running carries the flag.
 //
 // Nothing links them at compile time, so a rename in (1) silently strands the
@@ -27,7 +27,7 @@ import { NO_ACTIVITY_HOLD_FLAG } from '../../src/shared/background-shell-hold';
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const PREVIEW_SCRIPT = path.join(REPO_ROOT, 'scripts/worktree-preview.js');
 const PREVIEW_SKILL = path.join(REPO_ROOT, '.claude/skills/preview/SKILL.md');
-const PROJECT_INSTRUCTIONS = path.join(REPO_ROOT, 'CLAUDE.md');
+const PROJECT_INSTRUCTIONS = path.join(REPO_ROOT, 'AGENTS.md');
 
 function read(filePath: string): string {
   return fs.readFileSync(filePath, 'utf-8');
@@ -84,14 +84,14 @@ describe('no-activity-hold sentinel parity', () => {
     }
   });
 
-  it('CLAUDE.md tells an agent to put the flag on a background server it leaves running', () => {
+  it('AGENTS.md tells an agent to put the flag on a background server it leaves running', () => {
     // Its example command must carry the current flag. A dev server started
     // without it held a task active for hours, through every Stop, so the
     // column's turn-end automations never ran.
     const exampleLine = read(PROJECT_INSTRUCTIONS)
       .split('\n')
       .find((line) => line.includes('npm run demo:serve #'));
-    expect(exampleLine, 'CLAUDE.md no longer shows a background server carrying the flag').toBeDefined();
+    expect(exampleLine, 'AGENTS.md no longer shows a background server carrying the flag').toBeDefined();
     expect(exampleLine).toContain(`npm run demo:serve # ${NO_ACTIVITY_HOLD_FLAG}`);
   });
 });

@@ -1,4 +1,5 @@
 ---
+name: session-lifecycle
 description: Session state machine, PTY lifecycle, and terminal ownership patterns
 ---
 

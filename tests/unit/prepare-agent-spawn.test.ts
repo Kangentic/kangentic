@@ -300,6 +300,12 @@ function makeCaptureAdapter(
      * after the fact). Defaults to undefined, matching every adapter but
      * Codex. */
     launchOptions?: readonly AgentLaunchOptionInfo[];
+    /** A CLI that can create an empty chat and name it (Cursor). Defaults to
+     * undefined, matching every adapter but Cursor. */
+    createSessionId?: AgentAdapter['createSessionId'];
+    /** Whether a launch prints its own conversation id (Cursor's print path).
+     * Defaults to undefined, matching every adapter but Cursor. */
+    reportsLaunchSessionId?: AgentAdapter['reportsLaunchSessionId'];
   } = {},
 ): { adapter: AgentAdapter; capturedCommandOptions: SpawnCommandOptions[] } {
   const capturedCommandOptions: SpawnCommandOptions[] = [];
@@ -311,6 +317,8 @@ function makeCaptureAdapter(
     sessionType: `${adapterName}_agent` as AgentAdapter['sessionType'],
     supportsCallerSessionId: options.supportsCallerSessionId ?? false,
     launchOptions: options.launchOptions,
+    createSessionId: options.createSessionId,
+    reportsLaunchSessionId: options.reportsLaunchSessionId,
     permissions: [],
     defaultPermission: 'default',
     async detect(_overridePath?: string | null) {
@@ -820,5 +828,106 @@ describe('prepareAgentSpawn - MCP caller-session URL stamping', () => {
     if (!result.ok) throw new Error('Expected ok:true');
     expect(capturedCommandOptions).toHaveLength(1);
     expect(capturedCommandOptions[0].mcpServerUrl).toBeUndefined();
+  });
+});
+
+describe('prepareAgentSpawn - the id of a fresh agent session', () => {
+  // A fresh start asks resolveFreshAgentSessionId (agent/shared/fresh-agent-session-id.ts,
+  // unit-tested on its own) for the conversation id. A CLI that cannot take an
+  // id Kangentic chose but can create an empty chat (Cursor's session screen)
+  // is asked to create one first, and the launch opens it. This pins the CALL
+  // SITE in prepareAgentSpawn: what it hands the helper, and where the answer
+  // lands (the builder's options and the returned agentSessionId). This path's
+  // command carries no nonInteractive flag and no abort signal.
+  //
+  // Red-green: reverting the id to
+  // `adapter.supportsCallerSessionId ? randomUUID() : null` fails the first
+  // case (no chat is created, the id stays null). Skipping the helper's
+  // reportsLaunchSessionId gate (calling `adapter.createSessionId` directly)
+  // fails the print-launch case.
+  const makeChatAdapter = (options: { reportsLaunchSession: boolean; chat: string | null }) => {
+    const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => options.chat);
+    const reportsLaunchSessionId = vi.fn((_launch: { permissionMode: string; nonInteractive?: boolean }): boolean => options.reportsLaunchSession);
+    const captured = makeCaptureAdapter({ createSessionId, reportsLaunchSessionId });
+    return { ...captured, createSessionId, reportsLaunchSessionId };
+  };
+
+  it('creates a chat in the task cwd with the detected CLI, then opens it fresh and returns it as the agent session id', async () => {
+    const { adapter, capturedCommandOptions, createSessionId, reportsLaunchSessionId } = makeChatAdapter({
+      reportsLaunchSession: false,
+      chat: 'chat-created',
+    });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({
+      task: makeTask({ permission_mode: 'auto' } as Partial<Task>),
+      cwd: '/home/dev/project/.kangentic/worktrees/fix-login',
+    }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(createSessionId).toHaveBeenCalledTimes(1);
+    expect(createSessionId).toHaveBeenCalledWith('/usr/bin/opencode', '/home/dev/project/.kangentic/worktrees/fix-login');
+    expect(capturedCommandOptions).toHaveLength(1);
+    expect(capturedCommandOptions[0].sessionId).toBe('chat-created');
+    expect(capturedCommandOptions[0].resume).toBe(false);
+    expect(result.data.agentSessionId).toBe('chat-created');
+    expect(result.data.resumed).toBe(false);
+    // The launch is asked with the resolved permission mode, and with no
+    // nonInteractive flag: this path's command never sets one.
+    expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+    const launch = reportsLaunchSessionId.mock.calls[0][0];
+    expect(launch.permissionMode).toBe('auto');
+    expect(launch.nonInteractive).toBeUndefined();
+  });
+
+  it('creates no chat when the launch reports its own id, and starts with no agent session id', async () => {
+    const { adapter, capturedCommandOptions, createSessionId, reportsLaunchSessionId } = makeChatAdapter({
+      reportsLaunchSession: true,
+      chat: 'chat-created',
+    });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(createSessionId).not.toHaveBeenCalled();
+    expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+    expect(capturedCommandOptions[0].sessionId).toBeUndefined();
+    expect(capturedCommandOptions[0].resume).toBe(false);
+    expect(result.data.agentSessionId).toBeNull();
+  });
+
+  it('starts with no agent session id when the chat could not be created', async () => {
+    const { adapter, capturedCommandOptions, createSessionId } = makeChatAdapter({
+      reportsLaunchSession: false,
+      chat: null,
+    });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(createSessionId).toHaveBeenCalledTimes(1);
+    expect(capturedCommandOptions[0].sessionId).toBeUndefined();
+    expect(result.data.agentSessionId).toBeNull();
+  });
+
+  it('hands a CLI that accepts a chosen id an id of Kangentic\'s own and never asks it to create a chat', async () => {
+    const createSessionId = vi.fn(async (): Promise<string | null> => 'chat-created');
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter({ supportsCallerSessionId: true, createSessionId });
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput());
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error('Expected ok:true');
+    expect(createSessionId).not.toHaveBeenCalled();
+    expect(result.data.agentSessionId).toBeTruthy();
+    expect(result.data.agentSessionId).not.toBe('chat-created');
+    expect(capturedCommandOptions[0].sessionId).toBe(result.data.agentSessionId);
+    expect(capturedCommandOptions[0].resume).toBe(false);
   });
 });

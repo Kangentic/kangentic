@@ -295,6 +295,17 @@ describe('config-store rememberDiscoveredModel reloads the agent list', () => {
     expect(configSet.mock.invocationCallOrder[0]).toBeLessThan(agentsList.mock.invocationCallOrder[0]);
   });
 
+  it('neither writes nor reloads a display name that contains a space', async () => {
+    const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
+    const { useConfigStore, configSet } = await freshConfigStore(agentsList);
+
+    useConfigStore.getState().rememberDiscoveredModel('cursor', 'grok 4.6 high');
+    await vi.advanceTimersByTimeAsync(0);
+
+    expect(configSet).not.toHaveBeenCalled();
+    expect(agentsList).not.toHaveBeenCalled();
+  });
+
   it('neither writes nor reloads for an id it already knows', async () => {
     const agentsList = vi.fn(async (_forceRefresh?: boolean) => [] as AgentDetectionInfo[]);
     const { useConfigStore, configSet } = await freshConfigStore(agentsList);

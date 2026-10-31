@@ -1,4 +1,5 @@
 ---
+name: sync-docs
 description: Review and update documentation to match current source code
 allowed-tools: Read, Edit, Write, Glob, Grep, Bash(git:*), Bash(node scripts/docs-bundle.mjs:*), Agent
 ---

@@ -147,6 +147,7 @@ function createContext(history: Record<string, { agent_name: string; label: stri
       listSessions: vi.fn(() => []),
       setCommandTerminalLabel: vi.fn(() => true),
       endCommandTerminal: vi.fn(),
+      emit: vi.fn(),
     },
   };
 }
@@ -299,6 +300,133 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
 
       expect(context.sessionManager.spawn).toHaveBeenCalled();
     });
+  });
+});
+
+describe('startCommandTerminal: the conversation a fresh start opens', () => {
+  // A CLI that cannot take an id Kangentic chose but can create an empty chat
+  // (Cursor's session screen) gets one created before launch. The launch opens
+  // it, the session row carries it from the start, and an `agent-session-id`
+  // is announced once the row exists, because the print stream will not report
+  // an id the chat already has. Earlier conversations record a session when it
+  // reports its id, so without that announcement this terminal is never
+  // recorded.
+  //
+  // Red-green:
+  // - Dropping the `emit` after the spawn fails the first case.
+  // - Dropping `agentSessionId` from the spawn input (conversationSessionFields)
+  //   or `{ sessionId, resume: false }` from the command options
+  //   (conversationCommandOptions) fails the first case.
+  // - Dropping `resume ||` from the guard before the helper makes a resume ask
+  //   for a chat (and hand the CLI the new id instead of the resumed one).
+  // - Dropping `|| adapter.supportsCallerSessionId` makes the helper mint an id
+  //   for a CLI that reports its own after launch, which fails the caller-id case.
+  // - Skipping the helper's reportsLaunchSessionId gate fails the print-launch case.
+  function makeChatAdapter(
+    name: string,
+    options: { supportsCallerSessionId?: boolean; reportsLaunchSession?: boolean; chat?: string | null } = {},
+  ) {
+    const chat = options.chat === undefined ? 'chat-created' : options.chat;
+    return {
+      ...makeAdapter(name, { resumable: options.supportsCallerSessionId === true }),
+      createSessionId: vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => chat),
+      reportsLaunchSessionId: vi.fn((_launch: { permissionMode: string; nonInteractive?: boolean }): boolean => options.reportsLaunchSession === true),
+    };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    capturedHandlers.clear();
+    adapters.clear();
+  });
+
+  it('creates a chat at the project root, opens it fresh, seeds it on the row, and announces it once the row exists', async () => {
+    const adapter = makeChatAdapter('codex');
+    adapters.set('codex', adapter);
+    const context = createContext({});
+
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(adapter.createSessionId).toHaveBeenCalledTimes(1);
+    expect(adapter.createSessionId).toHaveBeenCalledWith('/mock/codex', PROJECT_ROOT);
+    // The launch is asked with the resolved permission mode and no
+    // nonInteractive flag: a Command Terminal is always the session screen.
+    expect(adapter.reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+    const launch = adapter.reportsLaunchSessionId.mock.calls[0][0];
+    expect(launch.permissionMode).toBe('default');
+    expect(launch.nonInteractive).toBeUndefined();
+
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'chat-created', resume: false }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created' }));
+    // A fresh chat is not a resumed, already-used terminal.
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ resuming: true }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ hasUserInput: true }));
+
+    expect(context.sessionManager.emit).toHaveBeenCalledTimes(1);
+    expect(context.sessionManager.emit).toHaveBeenCalledWith('agent-session-id', 'session-1', 'mock-transient-task-id', 'proj-1', 'chat-created');
+
+    // The chat exists before the command that opens it is built, and the id is
+    // announced only after the spawn put the row in the registry.
+    expect(adapter.createSessionId.mock.invocationCallOrder[0]).toBeLessThan(adapter.buildCommand.mock.invocationCallOrder[0]);
+    expect(context.sessionManager.spawn.mock.invocationCallOrder[0]).toBeLessThan(context.sessionManager.emit.mock.invocationCallOrder[0]);
+  });
+
+  it('announces nothing for a shell that did not start', async () => {
+    adapters.set('codex', makeChatAdapter('codex'));
+    const context = createContext({});
+    context.sessionManager.spawn.mockResolvedValueOnce({ id: 'session-1', status: 'exited' });
+
+    await expect(spawn(context, { projectId: 'proj-1', slot: 'slot-1' })).rejects.toMatchObject({ code: 'spawn-failed' });
+
+    expect(context.sessionManager.emit).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ['the launch reports its own id', { reportsLaunchSession: true }, 0],
+    ['the CLI could not create a chat', { chat: null }, 1],
+  ])('opens no conversation, seeds no id and announces nothing when %s', async (_name, options, chatRequests) => {
+    const adapter = makeChatAdapter('codex', options);
+    adapters.set('codex', adapter);
+    const context = createContext({});
+
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(adapter.createSessionId).toHaveBeenCalledTimes(chatRequests);
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ sessionId: expect.anything() }));
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ resume: true }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ agentSessionId: expect.anything() }));
+    expect(context.sessionManager.emit).not.toHaveBeenCalled();
+  });
+
+  it('never asks a CLI that accepts a chosen id for a chat: it reports its own id after launch, as before', async () => {
+    const adapter = makeChatAdapter('codex', { supportsCallerSessionId: true });
+    adapters.set('codex', adapter);
+    const context = createContext({});
+
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    expect(adapter.createSessionId).not.toHaveBeenCalled();
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.not.objectContaining({ sessionId: expect.anything() }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ agentSessionId: expect.anything() }));
+    expect(context.sessionManager.emit).not.toHaveBeenCalled();
+  });
+
+  it('resumes the earlier conversation without creating a chat, and announces nothing extra', async () => {
+    // A createSessionId adapter counts as resumable by id.
+    const adapter = makeChatAdapter('cursor');
+    adapters.set('cursor', adapter);
+    const context = createContext({ 'conversation-a': { agent_name: 'cursor', label: null } });
+
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+
+    expect(adapter.createSessionId).not.toHaveBeenCalled();
+    expect(adapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true }));
+    expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+      agentSessionId: 'conversation-a',
+      resuming: true,
+      hasUserInput: true,
+    }));
+    expect(context.sessionManager.emit).not.toHaveBeenCalled();
   });
 });
 

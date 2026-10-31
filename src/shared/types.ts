@@ -6814,6 +6814,17 @@ export interface SessionAttachment {
 }
 
 /**
+ * A usage report merged into a session's usage (`UsageAccumulator.setSessionUsage`):
+ * any subset of its fields, and any subset of the context window, since the
+ * merge spreads the report's window over the session's. A TUI that paints
+ * only an occupancy percent (Cursor's interactive status bar) reports the
+ * percent alone.
+ */
+export type SessionUsagePatch = Omit<Partial<SessionUsage>, 'contextWindow'> & {
+  contextWindow?: Partial<SessionUsage['contextWindow']>;
+};
+
+/**
  * Per-session PTY telemetry parser produced by
  * AdapterRuntimeStrategy.streamOutput.createParser(). Owns whatever
  * carry-over state the adapter needs (e.g. trailing partial JSON line)
@@ -6826,7 +6837,7 @@ export interface StreamOutputParser {
    * non-init lines), so callers can short-circuit without allocating.
    */
   parseTelemetry(data: string): {
-    usage?: Partial<SessionUsage>;
+    usage?: SessionUsagePatch;
     events?: SessionEvent[];
   } | null;
 }

@@ -1,4 +1,5 @@
 ---
+name: pull-request
 description: Create a PR and drive its CI checks to all-green (auto-fixing code and de-flaking/rewriting tests), then stop. Never merges. This is the Testing column skill. Use /merge-pull-request to merge a green PR.
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(gh:*), Agent
 argument-hint: [commit message]
@@ -43,6 +44,35 @@ All git commands below run from the **current working directory** - never use `c
    this skill drives PR checks over `gh` and a long monitor loop must not start unauthenticated.
 
 Report the mode, branch name, source branch, and working tree status before proceeding.
+
+## Fork PRs (the head branch is on a contributor's fork)
+
+A contributor's PR has its head on their fork, and "allow edits by maintainers" lets us push to it.
+This skill's defaults assume a head on `origin`, and three of them break a fork PR: Step 3's rebase
+rewrites the contributor's history, Step 4's `git push origin HEAD:<branch>` creates a stray branch
+on this repository that the PR never sees, and Step 5 would open a second PR.
+
+Check once, after pre-flight. When `kangentic_get_current_task` returns a `pr_number`, run
+`gh pr view <pr> --json isCrossRepository,headRefName,headRefOid,headRepositoryOwner`. When
+`isCrossRepository` is true, every step below applies with these changes:
+
+- **The branch.** Work on the local branch `gh pr checkout <pr>` created, which sets the fork as its
+  push remote. `<branch>` is `headRefName`, and Step 1.5 computes nothing. If the worktree is on any
+  other branch, stop and report.
+- **Step 3 merges, never rebases.** Run `git merge origin/<sourceBranch>`, resolve conflicts the same
+  way, and write the merge message in English. The contributor's commits stay as they are, and the
+  PR lands as a squash (`/merge-pull-request`).
+- **Step 4 and Step 7 item 4 push with a bare `git push`, after two checks.**
+  1. Read `headRefOid` fresh (`gh pr view <pr> --json headRefOid`) and run
+     `git merge-base --is-ancestor <headRefOid> HEAD`. A non-zero exit means the contributor pushed
+     something this branch does not have: stop and report rather than overwrite it.
+  2. `git push --dry-run` must name the fork (owner `headRepositoryOwner.login`) and `headRefName`.
+
+  Never `git push origin ...`, and never force.
+- **Step 5 creates nothing.** Drive the existing PR. Leave its title and body alone unless the task
+  says to replace them, since they are the contributor's text. Step 5b links the existing number.
+- **Step 6 watches by number:** `gh pr checks <pr> --watch ...`. A fork's head name can match a
+  branch on `origin` that belongs to a different PR.
 
 **Expect a commit you did not author.** Upstream of this column, the **Code Review** column runs
 `/code-review` as a separate agent in the SAME worktree (`isolated` isolates the conversation, not
@@ -423,7 +453,7 @@ line is a contract, and this section and that row change together
 - `PR: blocked` comes only from Step 8b.
 - Every other stop prints no outcome line. Each one still ends a turn, so the automation still
   reads it: the Step 0 typecheck or lint failure, a failed `gh auth status`, a detached HEAD, the
-  Step 3 rebase-conflict question, and a push the lease rejects. Main repo mode, the `/merge-back`
+  Step 3 rebase-conflict question, a push the lease rejects, and a fork head the contributor moved. Main repo mode, the `/merge-back`
   fallback, prints none either. It opens no PR, so Merge would have nothing to merge.
 
 The `PR:` prefix marks a pull request outcome, shared with Merge's `PR: merged`. Code Review ends

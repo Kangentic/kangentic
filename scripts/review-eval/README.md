@@ -69,7 +69,7 @@ glob in another session once removed a temp folder that session had not created.
   stop and report before S1.
 - **E2, finder bar:** adopt the precision bar if late-defect recall does not drop and total raised
   falls by 30% or more. The bar: a finding must be a correctness or security defect with its
-  triggering input, a stated requirement, or a named `.claude/rules` or `CLAUDE.md` rule, with
+  triggering input, a stated requirement, or a named `.claude/rules` or `AGENTS.md` rule, with
   `file:line` evidence, and no subjective "consider" items.
 - **E3, delta verify:** adopt if one correctness plus one conventions finder over a pack of the
   commit alone catches at least 3 of D1 to D4. D5 is reported, not counted: it shows whether the

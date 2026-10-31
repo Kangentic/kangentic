@@ -9,10 +9,10 @@ import { CursorStreamParser } from './stream-parser';
 import { runCliPrintSummarize, buildSummarizePrompt } from '../../shared/auto-name';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
-import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
+import { execCliForTarget, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, mcpBridgeScriptEnv, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
-import { discoverCursorCapabilities } from './capability-discovery';
+import { discoverCursorCapabilities, resolveCachedCursorModel } from './capability-discovery';
 import { createCursorAnswerReducer, cursorInitSessionId, extractCursorAnswer } from './answer-stream';
 import {
   CURSOR_KANGENTIC_MCP_ENTRY,
@@ -25,7 +25,9 @@ import {
   type CursorKangenticMcpEntry,
 } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions } from '../../agent-adapter';
+import { locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
+import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
+import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
   AgentCapabilities,
   AgentPermissionEntry,
@@ -119,6 +121,16 @@ interface CursorSessionLaunch {
 const CHAT_ID_LINE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/im;
 
 /**
+ * Confirm-changes and skip-approvals keep the session screen. Anything else,
+ * and an explicit non-interactive flag, is one print turn. The screen prints
+ * no conversation id. The print path does, on the stream-json init line.
+ */
+function cursorKeepsSessionScreen(permissionMode: PermissionMode, nonInteractive: boolean | undefined): boolean {
+  const interactive = permissionMode === 'default' || permissionMode === 'acceptEdits';
+  return interactive && !nonInteractive;
+}
+
+/**
  * `create-chat` reaches Cursor's servers (a probe left nothing on disk), so it
  * gets longer than `about`; a start waits on it, and past this it goes ahead
  * without an id.
@@ -146,13 +158,18 @@ function isAboutPayload(value: unknown): value is { model: string } {
  * (https://cursor.com/cli) behind the generic AgentAdapter interface.
  *
  * Cursor CLI is simpler than Claude Code: no session resume via
- * caller-owned IDs, no structured hooks, no trust mechanism, and
- * no settings merging. Permissions are config-file based only
- * (~/.cursor/cli-config.json), with no CLI flags to control them.
+ * caller-owned IDs, no structured hooks, and no settings merging.
+ * Permissions are config-file based only (~/.cursor/cli-config.json).
+ * A directory Cursor has not seen prints "Workspace Trust Required" and
+ * exits, so every spawn except confirm-changes passes `--trust` (the same
+ * flag summarize and answerFromContext already pass). Confirm-changes leaves
+ * the prompt so the user can decide in the PTY.
  *
- * Two modes:
- *   - Interactive: `agent "prompt"` - user confirms changes in PTY
- *   - Non-interactive: `agent -p "prompt" --output-format stream-json`
+ * Three modes:
+ *   - Confirm changes: `agent "prompt"` - user confirms each change in the PTY
+ *   - Skip approvals: `agent --trust --force "prompt"` - the same screen,
+ *     commands run unless one is explicitly denied
+ *   - Non-interactive: `agent --trust -p "prompt" --output-format stream-json`
  *     - Full write access, emits NDJSON events with session_id on each line
  *     - Enables session ID capture via the init event
  *
@@ -177,20 +194,28 @@ export class CursorAdapter implements AgentAdapter {
   readonly kangenticMcp = 'per-session' as const;
   /** A Cursor installed in a WSL distro runs there (#286). */
   readonly supportsWslCli = true;
+  /**
+   * `agent-transcripts` lines have no timestamp field. Entries use `ts: 0`,
+   * so the viewer shows no clock and orders the conversation by file order.
+   */
+  readonly transcriptHasTimestamps = false;
   /** Folders whose `.cursor/mcp.json` carries Kangentic's entry, and the sessions still using each. */
   private readonly mcpHolds = new SharedFolderHolds();
   /** Each live session's CLI, by its PTY session id, until the session ends. */
   private readonly sessionLaunches = new Map<string, CursorSessionLaunch>();
   readonly permissions: AgentPermissionEntry[] = [
     { mode: 'default', label: 'Interactive (Confirm Changes)' },
+    { mode: 'acceptEdits', label: 'Interactive (Skip Approvals)' },
     { mode: 'bypassPermissions', label: 'Non-Interactive (Full Access)' },
   ];
   // Default to non-interactive (`--output-format stream-json`). The init
   // event on the first NDJSON line is the only place Cursor exposes the
   // model + session ID together over a documented public schema, so this
   // mode is what lets ContextBar resolve the model pill and what lets
-  // `--resume=<id>` work reliably. Interactive mode is still selectable
-  // by the user but produces no machine-readable telemetry.
+  // `--resume=<id>` work reliably. Interactive mode is still selectable.
+  // Its TUI status bar (`Composer 2.5 · 7.8%`) is parsed for occupancy
+  // and the live model. `agent about` still seeds the pill until that
+  // bar paints.
   readonly defaultPermission: PermissionMode = 'bypassPermissions';
 
   // Cursor CLI uses the shared AgentDetector via composition.
@@ -230,7 +255,8 @@ export class CursorAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
-  // Cursor CLI has no trust mechanism - permissions are config-file based
+  // Cursor records workspace trust on `--trust`, not a file Kangentic writes.
+  // That flag rides every spawn except confirm-changes.
   async ensureTrust(_workingDirectory: string): Promise<void> {}
 
   buildCommand(options: SpawnCommandOptions): string {
@@ -254,6 +280,35 @@ export class CursorAdapter implements AgentAdapter {
         this.mcpHolds.retain(options.ptySessionId, options.cwd);
         parts.push('--approve-mcps');
       }
+    }
+
+    // Three ways a session starts:
+    //   default            interactive screen, the user confirms each change
+    //   acceptEdits        the same screen, with --force so commands run
+    //                      unless one is explicitly denied
+    //   anything else      one turn, then exit, as stream-json
+    //
+    // A mode Cursor's own list does not offer (plan, dontAsk, auto) stays
+    // on the print path. Dropping stream-json there would leave the context
+    // bar on "Starting agent...", because the init event is the only
+    // documented place the model and session id arrive together.
+    // An explicit nonInteractive flag wins over both session screens.
+    const sessionUi = cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+    const confirmSession = sessionUi && options.permissionMode === 'default';
+    const forceSession = sessionUi && options.permissionMode === 'acceptEdits';
+
+    if (!confirmSession) {
+      // A directory Cursor has not seen prints "Workspace Trust Required"
+      // and exits. --trust is the documented skip (cursor-agent --help:
+      // "Trust the current workspace without prompting"). summarize and
+      // answerFromContext already pass it. Confirm-changes leaves the
+      // prompt so the user can decide.
+      parts.push('--trust');
+    }
+    if (forceSession) {
+      // --force (alias --yolo) allows commands unless one is explicitly
+      // denied, and keeps the session screen. -p would close that screen.
+      parts.push('--force');
     }
 
     if (options.sessionId) {
@@ -281,47 +336,39 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
-    // Cursor CLI only natively distinguishes two permission modes:
-    //   default           → interactive TUI, user confirms changes
-    //   bypassPermissions → non-interactive, full access, stream-json
-    //
-    // Upstream may pass Kangentic-level modes (`project-settings`,
-    // `acceptEdits`, `plan`, etc.) that Cursor does not recognize. If we
-    // treated every unknown value as interactive, those spawns would
-    // silently drop `--output-format stream-json`, the init event would
-    // never arrive, and ContextBar would be stuck on "Starting agent...".
-    // Treat anything other than an explicit interactive `default` as
-    // bypassPermissions so stream-json is always emitted when reasonable.
-    const interactive = options.permissionMode === 'default' && !options.nonInteractive;
+    // Per-column model override, the `--model` id for a picker value.
+    const modelId = options.model ? resolveCachedCursorModel(options.model, options.agentPath) : '';
+    const modelArgs = modelId ? ['--model', quoteArg(modelId, shell)] : [];
 
-    if (!interactive) {
-      // Non-interactive mode: agent -p "prompt" --output-format stream-json
+    if (!sessionUi) {
+      // Non-interactive mode: agent --trust -p "prompt" --output-format stream-json
       // Has full write access. Uses stream-json (NDJSON) so the runtime
       // sessionId.fromOutput parser can capture the session_id from the
       // init event: {"type":"system","subtype":"init","session_id":"<uuid>",...}
       if (quotedPrompt) parts.push('-p', quotedPrompt);
-      // Per-column model override: apply before output format (flag order doesn't matter)
-      if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(options.model.trim(), shell));
-      }
-      parts.push('--output-format', 'stream-json');
+      parts.push(...modelArgs, '--output-format', 'stream-json');
     } else {
-      // Interactive mode: agent "prompt"
-      // User confirms changes in the PTY.
+      // Session screen: agent "prompt", or agent --trust --force "prompt".
+      // Confirm-changes asks before each change. Skip-approvals does not.
       if (quotedPrompt) parts.push(quotedPrompt);
-      // Per-column model override in interactive mode
-      if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(options.model.trim(), shell));
-      }
+      parts.push(...modelArgs);
     }
 
     return parts.join(' ');
   }
 
   /**
+   * The print path reports its own id on the stream-json init line. The
+   * session screen does not, so those starts create one first.
+   */
+  reportsLaunchSessionId(options: { permissionMode: PermissionMode; nonInteractive?: boolean }): boolean {
+    return !cursorKeepsSessionScreen(options.permissionMode, options.nonInteractive);
+  }
+
+  /**
    * A new chat's id, before launch. An interactive session never prints its
-   * id (only `--output-format stream-json` does, and it needs `--print`), so a
-   * workflow's agent on Cursor would lose its conversation at every Pause.
+   * id (only `--output-format stream-json` does, and it needs `--print`), so
+   * a fresh interactive start would otherwise have nothing to resume.
    * `create-chat` makes an empty chat and prints its id; the launch opens it
    * with `--resume=<id>`. Run in the session's own folder, in case Cursor
    * files chats by workspace as the editor does.
@@ -371,11 +418,12 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: Cursor CLI has no hooks, no caller-owned session
-   * IDs, and no native session-history file format we can read. Every
-   * runtime signal we get comes from the NDJSON stream emitted by
-   * `--output-format stream-json` (active by default - see
-   * `defaultPermission`).
+   * Runtime strategy: Cursor CLI has no hooks and no caller-owned session
+   * IDs. Its `agent-transcripts` JSONL feeds the conversation viewer (the
+   * transcript methods below), not live telemetry. Every runtime signal
+   * comes from the PTY stream: the NDJSON of `--output-format stream-json`
+   * (active by default - see `defaultPermission`), or the TUI status bar of
+   * an interactive session.
    *
    * - Activity: tool_call started/completed events from streamOutput
    *   drive Thinking/Idle through the activity state machine, with PTY
@@ -385,7 +433,10 @@ export class CursorAdapter implements AgentAdapter {
    *     {"type":"system","subtype":"init","session_id":"<uuid>",
    *      "model":"<display>",...}
    * - streamOutput: same init event populates SessionUsage.model so
-   *   ContextBar can lift its "Starting agent..." spinner.
+   *   ContextBar can lift its "Starting agent..." spinner. Interactive
+   *   TUI status (`Composer 2.5 · 7.8%`) is parsed from the same stream
+   *   so the board card does not sit at 0% and the model pill is the
+   *   live TUI name, not the spawn-time `about` seed.
    */
   readonly runtime: AdapterRuntimeStrategy = {
     // Only terminal silence says a turn ended.
@@ -406,11 +457,13 @@ export class CursorAdapter implements AgentAdapter {
   /**
    * Kick off an out-of-band model bootstrap when a session starts.
    * Cursor's `--output-format stream-json` requires `--print`, so
-   * interactive TUI spawns (permissionMode === 'default') emit no
+   * interactive TUI spawns (`default` and `acceptEdits`) emit no
    * NDJSON init event and the ContextBar spinner would otherwise hang
    * forever. `agent about --format json` is a documented, stable CLI
    * command that returns `{ "model": "<name>", ... }` in under a
-   * second and works in every permission mode.
+   * second and works in every permission mode. It is a seed (no
+   * `reportedByAgent`): the TUI status bar is what confirms the live
+   * model once it paints.
    *
    * The fetch is fire-and-forget. `dispose()` sets a cancel flag so a
    * late-arriving result does not push usage into a torn-down session.
@@ -450,7 +503,12 @@ export class CursorAdapter implements AgentAdapter {
     const stdout = await runAgentAbout(cliPath, launch?.target ?? null);
     const payload: unknown = JSON.parse(stdout);
     if (!isAboutPayload(payload)) return null;
-    return { model: { id: payload.model.toLowerCase(), displayName: payload.model } };
+    // `about` reports a display name ("Grok 4.6 High"), not a `--model` id.
+    // Using that string as the id taught the picker a value the CLI then
+    // rejected. Resolve against `--list-models` when we have it; otherwise
+    // keep the display name for the pill and do not invent a lowercase id.
+    const displayName = payload.model;
+    return { model: { id: resolveCachedCursorModel(displayName, cliPath), displayName } };
   }
 
   removeHooks(directory: string, sessionId?: string): void {
@@ -474,15 +532,34 @@ export class CursorAdapter implements AgentAdapter {
     return data.length > 0;
   }
 
-  async locateSessionHistoryFile(_agentSessionId: string, _cwd: string): Promise<string | null> {
-    // The location IS known: Cursor writes
-    // `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl`
-    // plus a per-session `store.db`. It stays unwired because the records carry
-    // NO timestamp and the stored text is WRAPPED (`<user_query>...</user_query>`)
-    // rather than the raw submitted text, so neither a staleness bound nor an
-    // exact match is possible yet. See docs/architecture/automations/command-injection-support-matrix.md,
-    // "Cursor: located, not yet verified".
-    return null;
+  async locateSessionHistoryFile(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<string | null> {
+    return locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
+  }
+
+  async parseTranscript(
+    agentSessionId: string,
+    cwd: string,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<ParsedTranscript> {
+    const filePath = await resolveCursorTranscriptReadPath(agentSessionId, cwd, place ?? null, reportedPath);
+    return parseCursorTranscript(agentSessionId, filePath);
+  }
+
+  async readTranscriptPage(
+    agentSessionId: string,
+    cwd: string,
+    request: TranscriptPageReadRequest,
+    place?: CliPlace | null,
+    reportedPath?: string | null,
+  ): Promise<TranscriptPageReadResult> {
+    const filePath = await resolveCursorTranscriptReadPath(agentSessionId, cwd, place ?? null, reportedPath);
+    return readCursorTranscriptPage(agentSessionId, filePath, request);
   }
 
   async discoverCapabilities(cliPath: string, forceRefresh?: boolean): Promise<AgentCapabilities> {
@@ -494,7 +571,7 @@ export class CursorAdapter implements AgentAdapter {
     const sequence: string[] = [];
     // Cursor supports `/model <model>` slash command for live model switching
     if (spec.modelChanged && spec.model) {
-      sequence.push(`/model ${spec.model}`);
+      sequence.push(`/model ${resolveCachedCursorModel(spec.model)}`);
     }
     // Cursor has no separate effort concept - reasoning is encoded in model names
     // (e.g., "Claude 4.1 Sonnet" vs "Claude 4.1 Sonnet Thinking")
@@ -523,7 +600,7 @@ export class CursorAdapter implements AgentAdapter {
     // empty on the title prompt.
     return runCliPrintSummarize({
       cliPath,
-      args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', options.model] : []), '-p'],
+      args: ['--trust', '--output-format', 'text', ...(options?.model ? ['--model', resolveCachedCursorModel(options.model, cliPath)] : []), '-p'],
       prompt: buildSummarizePrompt(prompt),
       cwd,
       promptVia: 'arg',
@@ -631,7 +708,7 @@ export class CursorAdapter implements AgentAdapter {
           '--output-format', 'stream-json',
           ...(onEvent ? ['--stream-partial-output'] : []),
           ...(search ? ['--approve-mcps'] : []),
-          ...(model ? ['--model', model] : []),
+          ...(model ? ['--model', resolveCachedCursorModel(model, cliPath)] : []),
           '-p',
         ],
         prompt: input.prompt,

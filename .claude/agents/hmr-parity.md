@@ -32,6 +32,7 @@ description: |
   -> Spawn hmr-parity. It will verify all known Pattern D cleanups (`.drop-highlight` removal, `bumpHmrGeneration()` bump) are still present and ordered correctly.
   </example>
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Dev-Mode Parity Auditor

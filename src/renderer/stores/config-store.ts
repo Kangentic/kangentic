@@ -3,7 +3,7 @@ import type { AppConfig, CommandTerminalPanelGeometry, ConfigSetResult, DeepPart
 import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
-import { parseModelId } from '../../shared/model-id';
+import { hasModelIdShape, parseModelId } from '../../shared/model-id';
 import { invalidateAllProjects } from './project-cache';
 import { useAnnouncementsStore } from './announcements-store';
 
@@ -469,7 +469,10 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     },
 
     rememberDiscoveredModel: (agent, model) => {
-      if (!agent || !model) return;
+      // A display name reported as the model (Cursor's stream-json init and
+      // `agent about` say "Grok 4.6 High") is not an id: stored, it put a value
+      // in the picker that `--model` then rejected.
+      if (!agent || !model || !hasModelIdShape(model)) return;
       const current = get().config.discoveredModelsByAgent ?? {};
       const existing = current[agent] ?? [];
       if (existing.includes(model)) return;

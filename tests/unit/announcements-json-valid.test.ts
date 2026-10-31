@@ -88,7 +88,8 @@ describe('committed announcements.json', () => {
     // contributors edit directly) can ship house-style violations that no
     // lint rule catches. The shared writing-style-characters.test.ts scan does
     // not reach this file at all, because announcements.json sits at the repo
-    // root and that test's root list holds only README.md and CLAUDE.md. Both
+    // root and that test's root list holds only README.md, AGENTS.md and
+    // CLAUDE.md. Both
     // assertions below are therefore the only mechanical coverage this feed
     // has. The separator check is also one the shared scan could never take
     // on, since docs/ legitimately carries `npm run x -- --flag`. The escape

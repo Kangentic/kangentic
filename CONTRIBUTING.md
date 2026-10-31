@@ -44,10 +44,19 @@ npm start
 
 ### Where the conventions live
 
-The authoritative conventions for this codebase are [CLAUDE.md](CLAUDE.md) and the focused rule files
+The authoritative conventions for this codebase are [AGENTS.md](AGENTS.md) and the focused rule files
 in [.claude/rules/](.claude/rules/). Each rule names how it is enforced (a CI test, an ESLint rule,
 or code review). The sections below distill the human-relevant subset so you do not have to read all
 of them before your first PR, but those files are the source of truth if anything here is ambiguous.
+
+### Working with a coding agent
+
+Claude Code and Cursor read the same instructions. Both load `AGENTS.md` (Claude Code through the
+import in `CLAUDE.md`), and both load the skills in `.claude/skills/` and the subagents in
+`.claude/agents/`. Cursor cannot read `.claude/rules/`, so `npm run cursor:rules` writes a copy of
+each rule to `.cursor/rules/`. `npm install` and `npm start` run it too, so the copies stay current
+without a manual step. They are gitignored: edit the rule in `.claude/rules/`, never the copy. How it
+fits together: [docs/contributing/agent-instructions.md](docs/contributing/agent-instructions.md).
 
 ### Project Structure
 
@@ -206,7 +215,7 @@ You do not need to run any of this; it is just so the flow is not a mystery. Mai
 to green and merge it through an internal Kanban board: a Testing column runs `/pull-request` (which
 pushes the branch and drives the CI checks to green, auto-fixing and de-flaking along the way), and a
 Merge column runs `/merge-pull-request` (which merges the green PR). The internal board mechanics,
-git worktrees, and agent skills are documented in [CLAUDE.md](CLAUDE.md) and are not something a
+git worktrees, and agent skills are documented in [AGENTS.md](AGENTS.md) and are not something a
 contributor is expected to set up.
 
 ### Agent-specific contributions

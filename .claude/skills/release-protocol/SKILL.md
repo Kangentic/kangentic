@@ -1,4 +1,5 @@
 ---
+name: release-protocol
 description: Version bump, changelog, tag, and push a @kangentic/protocol release, independent of the Kangentic desktop release
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*)
 argument-hint: [patch|minor|major]

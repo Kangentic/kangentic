@@ -13,7 +13,7 @@
  * the window is unknown (the board's TaskCard behavior, load-bearing for
  * dnd-kit's per-card ResizeObserver re-measure during drag - see the comment
  * above TaskCard's call site), and (2) `unknownLabel` only replaces the label
- * when `windowKnown` is false (a known window's real percentage must never be
+ * when `occupancyKnown` is false (a known window's real percentage must never be
  * swapped for the placeholder). Neither was asserted against the component
  * directly before this file - only indirectly, through MonitorCard
  * (tests/ui/agent-monitor.spec.ts), which passes `unknownLabel="-"` on every
@@ -88,7 +88,7 @@ describe('ContextUsageFooter unknownLabel', () => {
     const output = ContextUsageFooter({
       modelName: 'Opus 5',
       percent: 0,
-      windowKnown: false,
+      occupancyKnown: false,
       testId: 'usage-bar',
     });
     const percentSpan = findByTestId(output, 'usage-bar-percent');
@@ -101,7 +101,7 @@ describe('ContextUsageFooter unknownLabel', () => {
     const output = ContextUsageFooter({
       modelName: 'Claude',
       percent: 0,
-      windowKnown: false,
+      occupancyKnown: false,
       unknownLabel: '-',
       testId: 'usage-bar',
     });
@@ -115,7 +115,7 @@ describe('ContextUsageFooter unknownLabel', () => {
     const output = ContextUsageFooter({
       modelName: 'Opus 5',
       percent: 62,
-      windowKnown: true,
+      occupancyKnown: true,
       unknownLabel: '-',
       testId: 'usage-bar',
     });
@@ -125,15 +125,15 @@ describe('ContextUsageFooter unknownLabel', () => {
     expect(collectText(percentSpan)).toBe('62%');
   });
 
-  it('sets data-context-window to the literal string "unknown" only when windowKnown is false', () => {
-    const knownOutput = ContextUsageFooter({ modelName: 'Opus 5', percent: 10, windowKnown: true });
+  it('sets data-context-window to the literal string "unknown" only when occupancyKnown is false', () => {
+    const knownOutput = ContextUsageFooter({ modelName: 'Opus 5', percent: 10, occupancyKnown: true });
     if (!isElementLike(knownOutput)) throw new Error('ContextUsageFooter did not return an element');
     // Not merely falsy/absent-looking: this is `undefined` in the React prop
     // graph pre-DOM-serialization (same trap activity-mark-render.test.ts
     // documents for `aria-hidden`), so assert the exact value.
     expect(knownOutput.props['data-context-window']).toBeUndefined();
 
-    const unknownOutput = ContextUsageFooter({ modelName: 'Opus 5', percent: 10, windowKnown: false });
+    const unknownOutput = ContextUsageFooter({ modelName: 'Opus 5', percent: 10, occupancyKnown: false });
     if (!isElementLike(unknownOutput)) throw new Error('ContextUsageFooter did not return an element');
     expect(unknownOutput.props['data-context-window']).toBe('unknown');
   });
@@ -161,7 +161,7 @@ describe('ContextUsageFooter fill (data-percent and scaleX transform)', () => {
     const output = ContextUsageFooter({
       modelName: 'Opus 5',
       percent: 62,
-      windowKnown: true,
+      occupancyKnown: true,
       testId: 'usage-bar',
     });
     const fill = findByDataPercent(output);
@@ -180,7 +180,7 @@ describe('ContextUsageFooter fill (data-percent and scaleX transform)', () => {
     const output = ContextUsageFooter({
       modelName: 'Opus 5',
       percent: 140,
-      windowKnown: true,
+      occupancyKnown: true,
       testId: 'usage-bar',
     });
     const fill = findByDataPercent(output);
@@ -196,7 +196,7 @@ describe('ContextUsageFooter fill (data-percent and scaleX transform)', () => {
     const output = ContextUsageFooter({
       modelName: 'Opus 5',
       percent: -20,
-      windowKnown: true,
+      occupancyKnown: true,
       testId: 'usage-bar',
     });
     const fill = findByDataPercent(output);

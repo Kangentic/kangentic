@@ -22,6 +22,7 @@ import {
 import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
+import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 
@@ -288,11 +289,15 @@ export async function prepareAgentSpawn(input: {
       }, input.recapSources);
     }
   }
-  // Only Claude accepts caller-specified session IDs. Others capture their
-  // real ID from hooks / PTY output later and come back here as null.
+  // Same id rule as the board spawn. This path's command carries no
+  // nonInteractive flag, so the decision follows the permission mode alone.
   const agentSessionId = canResume
     ? resumedAgentSessionId
-    : (adapter.supportsCallerSessionId ? randomUUID() : null);
+    : await resolveFreshAgentSessionId(adapter, {
+        cliPath: detection.path,
+        workingDirectory: cwd,
+        permissionMode,
+      });
 
   // Same shim resolution as the board path (shim-launch.ts): a `.cmd` head
   // under a PowerShell or Git Bash host is swapped for the sibling shim that

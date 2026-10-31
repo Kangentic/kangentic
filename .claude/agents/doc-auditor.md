@@ -6,6 +6,7 @@ description: |
   Use this agent when running /sync-docs, /pull-request, /merge-pull-request, or /merge-back (if anchor source files changed), or /release (full verification).
 model: haiku
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Documentation Anchor Point Auditor
