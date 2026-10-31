@@ -41,7 +41,9 @@ When you codify a new convention, add it as a `.claude/rules/*.md` file followin
    enforcing agent or skill so the rule stays the single source of truth. A rule that binds only
    Claude Code (today only `bash-single-command.md`) goes under CLAUDE.md's "Always-on rules
    (Claude Code only)" list instead. `tests/unit/rules-index-parity.test.ts` fails when a rule is
-   missing from the index.
+   missing from the index. The rule's Cursor copy needs no edit: `scripts/cursor-rules.js` writes
+   `.cursor/rules/<name>.mdc` on the next `npm install` or `npm start`, or on `npm run cursor:rules`
+   ([Shared agent instructions](agent-instructions.md)).
 7. **Scaling.** Rules are discovered recursively, so when the flat list grows large, group them into
    `.claude/rules/<subsystem>/` subdirectories (for example `frontend/`, `backend/`). There is no
    per-rule local override; machine-specific overrides go in `CLAUDE.local.md`.
