@@ -530,11 +530,6 @@ msgstr "すべてのフィルターをクリア"
 msgid "Clear search"
 msgstr "検索をクリア"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "クリックで並べ替え - Shift+クリックで第 2 の並べ替えを追加"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "セッション終了"
 #, fuzzy
 msgid "Settings"
 msgstr "設定"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+クリックで第 2 の並べ替えを追加"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

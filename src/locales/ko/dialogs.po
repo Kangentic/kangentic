@@ -737,11 +737,6 @@ msgstr "지금 닫으면 이 작업의 변경 사항이 삭제됩니다."
 msgid "Collapse all"
 msgstr "모두 축소"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "기록 접기"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "커밋"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "압축"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "모든 열의 설정을 나란히 비교"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "모두 확장"
 #, fuzzy
 msgid "Expand changes"
 msgstr "변경 사항 확장"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "기록 펼치기"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "자동화 에이전트 설정"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "작업의 대화를 다른 열과 공유합니다."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "변경 사항에서 {fileName} 보기"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "변경 사항에서 {shortSha} 보기"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

@@ -375,11 +375,6 @@ msgstr "タスク詳細のケバブメニューにのみ表示"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "再起動後に適用されます。エージェントの出力やターミナルのテキストは変わりません。"
 
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Applies to all projects"
-msgstr "すべてのプロジェクトに適用"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -1175,11 +1170,6 @@ msgstr "実行"
 #, fuzzy
 msgid "Expand"
 msgstr "展開"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-#, fuzzy
-msgid "Expand the prompt"
-msgstr "プロンプトを展開"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2785,11 +2775,6 @@ msgstr "新しいワークフローで最初に受け取るメッセージ。"
 #, fuzzy
 msgid "The Kangentic relay"
 msgstr "Kangentic リレー"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "ナレッジグラフと、その読み込み元のインデックス。すべてのプロジェクトに適用"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy

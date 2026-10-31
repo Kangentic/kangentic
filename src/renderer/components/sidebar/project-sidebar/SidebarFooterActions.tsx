@@ -67,23 +67,21 @@ export function SidebarFooterActions({ onAddProject, onNewGroup }: SidebarFooter
         ref={containerRef}
         className="flex items-stretch rounded-md border border-edge/60 overflow-hidden focus-within:border-edge"
       >
-        <Tooltip label={t`Open folder as project`}>
-          <button
-            type="button"
-            // Closes the caret menu too: this button is inside `containerRef`, so
-            // the outside-click handler reads a click on it as "inside" and would
-            // leave the menu floating behind the folder picker.
-            onClick={() => {
-              setMenuOpen(false);
-              onAddProject();
-            }}
-            className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
-            data-testid="sidebar-new-project-button"
-          >
-            <FolderPlus size={14} />
-            <Trans>Add project</Trans>
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          // Closes the caret menu too: this button is inside `containerRef`, so
+          // the outside-click handler reads a click on it as "inside" and would
+          // leave the menu floating behind the folder picker.
+          onClick={() => {
+            setMenuOpen(false);
+            onAddProject();
+          }}
+          className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-medium cursor-pointer text-fg-muted hover:text-fg hover:bg-surface-hover/40 transition-colors"
+          data-testid="sidebar-new-project-button"
+        >
+          <FolderPlus size={14} />
+          <Trans>Add project</Trans>
+        </button>
         <Tooltip label={t`More project actions`} enabled={!menuOpen}>
           <button
             ref={caretRef}

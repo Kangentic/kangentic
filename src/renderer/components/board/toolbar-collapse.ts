@@ -19,7 +19,9 @@
  *
  * Nothing is hidden and nothing moves: an icon-only control is the same button in
  * the same place opening the same popover, with its text in a tooltip and its
- * `aria-label`. That is why there is no overflow menu here.
+ * `aria-label`. That is why there is no overflow menu here. The tooltip shows only
+ * while the label is hidden (`filtersCollapsed`, `switcherCollapsed`,
+ * `primaryCollapsed`): with the label showing it would only repeat it.
  *
  * ## The row picks its step by measuring
  *
@@ -107,6 +109,21 @@ export function chooseCollapseStep(
   return Math.max(0, costs.length - 1);
 }
 
+/** Whether Labels, Priorities, Filter and Import Tasks are icon-only at `step`. */
+export function filtersCollapsed(step: number): boolean {
+  return step >= 1;
+}
+
+/** Whether the Board / Backlog / Workflows switcher is icon-only at `step`. */
+export function switcherCollapsed(step: number): boolean {
+  return step >= 2;
+}
+
+/** Whether Add column / New Task are icon-only at `step`. */
+export function primaryCollapsed(step: number): boolean {
+  return step >= 3;
+}
+
 /**
  * The row's attributes for one step: the step itself, and one presence attribute
  * per rung that has collapsed, which the classes below key off.
@@ -114,9 +131,9 @@ export function chooseCollapseStep(
 export function collapseStepAttributes(step: number): Record<`data-${string}`, string | undefined> {
   return {
     [COLLAPSE_STEP_ATTRIBUTE]: String(step),
-    'data-collapse-filters': step >= 1 ? '' : undefined,
-    'data-collapse-switcher': step >= 2 ? '' : undefined,
-    'data-collapse-primary': step >= 3 ? '' : undefined,
+    'data-collapse-filters': filtersCollapsed(step) ? '' : undefined,
+    'data-collapse-switcher': switcherCollapsed(step) ? '' : undefined,
+    'data-collapse-primary': primaryCollapsed(step) ? '' : undefined,
   };
 }
 

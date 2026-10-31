@@ -52,16 +52,6 @@ msgstr "Vše"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Profil nástěnky – agent, model a úsilí pro jednotlivé sloupce, kterými se tato úloha řídí"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "Kliknutím změníte úsilí"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "Kliknutím změníte model"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "Nečinný (čeká na vstup)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "Vstupní / výstupní tokeny"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "Izolovaná relace"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

@@ -14,19 +14,21 @@ import type { ToolbarControlCollapse } from '../board/toolbar-collapse';
 interface ImportPopoverProps {
   onOpenImportDialog: (source: ImportSource) => void;
   /**
-   * Passed only by the backlog toolbar, where the trigger sheds its text as the
-   * row narrows. It is a prop rather than a class baked into this component
-   * because this popover has a second mount site (`BacklogView`'s empty state)
-   * with no `@container` ancestor, where the collapsed BASE state would win
-   * permanently and leave the button icon-only at every width.
+   * Passed only by the backlog toolbar, where the trigger sheds its text at the
+   * row's collapse step (toolbar-collapse.ts). It is a prop rather than a class
+   * baked into this component because this popover has a second mount site
+   * (`BacklogView`'s empty state), outside the toolbar row, where the button
+   * shows its label at every width.
    */
   collapse?: ToolbarControlCollapse;
+  /** True while the collapse step hides the label, so the tip names the icon-only button. */
+  labelHidden?: boolean;
 }
 
 // --- Add source flow phases ---
 type AddPhase = 'provider' | 'sourceType' | 'url';
 
-export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverProps) {
+export function ImportPopover({ onOpenImportDialog, collapse, labelHidden = false }: ImportPopoverProps) {
   const { t } = useLingui();
   const importTasksLabel = t`Import Tasks`;
   const [open, setOpen] = useState(false);
@@ -226,7 +228,7 @@ export function ImportPopover({ onOpenImportDialog, collapse }: ImportPopoverPro
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label={importTasksLabel} enabled={!open}>
+      <Tooltip label={labelHidden ? importTasksLabel : ''} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"

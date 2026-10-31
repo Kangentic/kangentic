@@ -435,10 +435,6 @@ msgstr "清除所有篩選條件"
 msgid "Clear search"
 msgstr "清除搜尋"
 
-#: src/renderer/components/DataTable.tsx
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "按一下以排序 - Shift+按一下可新增次要排序"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
 msgstr "關閉"
@@ -1275,6 +1271,11 @@ msgstr "工作階段已結束"
 #: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "設定"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+按一下可新增次要排序"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"

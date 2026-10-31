@@ -340,11 +340,6 @@ msgstr "エラーまたはタイムアウトになった呼び出し。エージ
 msgid "Chart metric"
 msgstr "グラフの指標"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-#, fuzzy
-msgid "Choose which project's usage to view"
-msgstr "使用状況を表示するプロジェクトを選択"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 #, fuzzy
 msgid "Clear custom range"
@@ -433,11 +428,6 @@ msgstr "カスタム"
 #, fuzzy
 msgid "Day"
 msgstr "日"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-#, fuzzy
-msgid "Edit the custom range"
-msgstr "カスタム期間を編集"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #, fuzzy
@@ -638,11 +628,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "出力"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Output tokens across the turns in this range"
-msgstr "期間内のターンにおける出力トークン"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 #, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
@@ -815,11 +800,6 @@ msgstr "トップエージェント"
 #, fuzzy
 msgid "Total"
 msgstr "合計"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Total tool calls across sessions in the range"
-msgstr "期間内のセッション全体のツール呼び出し総数"
 
 #: src/renderer/components/stats/StatsPage.tsx
 #, fuzzy

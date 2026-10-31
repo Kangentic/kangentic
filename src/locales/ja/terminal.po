@@ -52,16 +52,6 @@ msgstr "すべて"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "ボードプロファイル - このタスクが従う列ごとのエージェント、モデル、エフォート"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "クリックしてエフォートを変更"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "クリックしてモデルを変更"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "アイドル (入力待ち)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "入力 / 出力トークン"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "分離されたセッション"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

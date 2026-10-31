@@ -274,10 +274,6 @@ msgstr "發生錯誤或逾時的呼叫。仍會計入代理回報的費用。"
 msgid "Chart metric"
 msgstr "圖表指標"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-msgid "Choose which project's usage to view"
-msgstr "選擇要檢視使用量的專案"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 msgid "Clear custom range"
 msgstr "清除自訂範圍"
@@ -349,10 +345,6 @@ msgstr "自訂"
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Day"
 msgstr "日期"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-msgid "Edit the custom range"
-msgstr "編輯自訂範圍"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Failed"
@@ -515,10 +507,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "輸出"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Output tokens across the turns in this range"
-msgstr "此範圍內各輪次的輸出 token"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 msgid "over {coveredSessionsCompact} sessions"
 msgstr "共 {coveredSessionsCompact} 個工作階段"
@@ -658,10 +646,6 @@ msgstr "用量最高代理"
 #: src/renderer/components/stats/BackgroundCard.tsx
 msgid "Total"
 msgstr "總計"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Total tool calls across sessions in the range"
-msgstr "此範圍內所有工作階段的工具呼叫總數"
 
 #: src/renderer/components/stats/StatsPage.tsx
 msgid "Usage"

@@ -521,10 +521,6 @@ msgstr "运行中。暂停工作流"
 msgid "Save"
 msgstr "保存"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgid "Select this task"
-msgstr "选择此任务"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Show the workflow agent"
 msgstr "显示工作流智能体"

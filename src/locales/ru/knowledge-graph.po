@@ -445,11 +445,6 @@ msgstr "Мелкая"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "Вернуться к исходному виду"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "Полёт вперёд и вбок"
 
@@ -681,11 +676,6 @@ msgstr "Открыть параметры"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "Открыть полную расшифровку"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "Открыть этот разговор"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

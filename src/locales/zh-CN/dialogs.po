@@ -598,10 +598,6 @@ msgstr "现在关闭将丢弃你对此任务的更改。"
 msgid "Collapse all"
 msgstr "全部折叠"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Collapse history"
-msgstr "折叠历史记录"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Collapse to split view"
 msgstr "折叠为分栏视图"
@@ -686,10 +682,6 @@ msgstr "提交"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "压缩次数"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-msgid "Compare every column's settings side by side"
-msgstr "并排比较所有列的设置"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Comparing pixels"
@@ -1110,10 +1102,6 @@ msgstr "全部展开"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Expand changes"
 msgstr "展开更改"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Expand history"
-msgstr "展开历史记录"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
@@ -2187,14 +2175,6 @@ msgstr "设置自动化智能体"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
 msgstr "与其他列共享任务的对话。"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {fileName} in Changes"
-msgstr "在更改中显示 {fileName}"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {shortSha} in Changes"
-msgstr "在更改中显示 {shortSha}"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Show all"

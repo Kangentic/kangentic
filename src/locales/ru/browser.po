@@ -191,11 +191,6 @@ msgstr "Открыть"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
-msgid "Open {pickUrl}"
-msgstr "Открыть {pickUrl}"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open a URL to preview"
 msgstr "Откройте URL-адрес для предпросмотра"
 

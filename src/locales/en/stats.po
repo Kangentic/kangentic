@@ -274,10 +274,6 @@ msgstr "Calls that errored or timed out. They still cost what the agent reported
 msgid "Chart metric"
 msgstr "Chart metric"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-msgid "Choose which project's usage to view"
-msgstr "Choose which project's usage to view"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 msgid "Clear custom range"
 msgstr "Clear custom range"
@@ -349,10 +345,6 @@ msgstr "Custom"
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Day"
 msgstr "Day"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-msgid "Edit the custom range"
-msgstr "Edit the custom range"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Failed"
@@ -515,10 +507,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "Output"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Output tokens across the turns in this range"
-msgstr "Output tokens across the turns in this range"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 msgid "over {coveredSessionsCompact} sessions"
 msgstr "over {coveredSessionsCompact} sessions"
@@ -658,10 +646,6 @@ msgstr "Top Agent"
 #: src/renderer/components/stats/BackgroundCard.tsx
 msgid "Total"
 msgstr "Total"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Total tool calls across sessions in the range"
-msgstr "Total tool calls across sessions in the range"
 
 #: src/renderer/components/stats/StatsPage.tsx
 msgid "Usage"

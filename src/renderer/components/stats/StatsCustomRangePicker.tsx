@@ -143,18 +143,16 @@ export function StatsCustomRangePicker({ customWindow, onApply, onClear }: Stats
     <div className="relative">
       {customWindow ? (
         <span className="flex items-center rounded-full border border-accent/60 bg-accent/10 text-xs text-fg">
-          <Tooltip label={t`Edit the custom range`} enabled={!open}>
-            <button
-              ref={triggerRef}
-              type="button"
-              onClick={openPicker}
-              className="flex items-center gap-1.5 pl-2.5 py-1 cursor-pointer hover:text-fg transition-colors"
-              data-testid="stats-custom-trigger"
-            >
-              <CalendarRange size={14} className="text-fg-muted" />
-              {customWindowLabel(customWindow)}
-            </button>
-          </Tooltip>
+          <button
+            ref={triggerRef}
+            type="button"
+            onClick={openPicker}
+            className="flex items-center gap-1.5 pl-2.5 py-1 cursor-pointer hover:text-fg transition-colors"
+            data-testid="stats-custom-trigger"
+          >
+            <CalendarRange size={14} className="text-fg-muted" />
+            {customWindowLabel(customWindow)}
+          </button>
           <Tooltip label={t`Clear custom range`}>
             <button
               type="button"

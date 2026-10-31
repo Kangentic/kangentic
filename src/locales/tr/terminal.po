@@ -52,16 +52,6 @@ msgstr "Tümü"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Pano profili - bu görevin izlediği sütun bazlı ajan, model ve efor"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "Eforu değiştirmek için tıklayın"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "Modeli değiştirmek için tıklayın"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "Boşta (girdi bekleniyor)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "Girdi / çıktı token'ları"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "Yalıtılmış oturum"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

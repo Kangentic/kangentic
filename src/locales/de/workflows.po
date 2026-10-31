@@ -641,11 +641,6 @@ msgstr "Läuft. Workflow pausieren"
 msgid "Save"
 msgstr "Speichern"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "Diese Aufgabe auswählen"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

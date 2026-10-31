@@ -25,6 +25,16 @@ the trigger as an `aria-description`.
   `SegmentedControl` option's `tip`, which names the option on purpose. Once a collapse step leaves
   the option an icon, as the board toolbar's view switcher does, the tip is the only visible label
   it has.
+- **A control that shows its label carries no tip that repeats it.** No static tip restates the
+  label or the section header above it (the Settings sidebar's "Applies to all projects" under
+  SYSTEM), and no tip is a generic "Click to..." instruction. A tip says what the control does not
+  already show: the full value of cut-short text, a disabled reason, a shortcut, live state. A
+  label that a JS collapse step hides gets its tip only while hidden, the way `Tabs` gates on
+  `iconAlone` and the board toolbar gates on `filtersCollapsed` / `switcherCollapsed` /
+  `primaryCollapsed` (`board/toolbar-collapse.ts`). A tip that reports live state (the
+  Workflows option's "2 running") shows at every step. A label that a container query hides keeps its tip at every
+  width, because a tip cannot follow a container query (`WorkflowHeader`,
+  `CompletedHeaderStrip`).
 - **An optional tip passes straight through.** An empty label holds the tip shut, so
   `label={tip ?? ''}` needs no `enabled`. `enabled={false}` is for a tip with text that must stay
   shut, such as a trigger whose menu is open. A disabled control shows why with `tipLabel`
@@ -43,6 +53,14 @@ the trigger as an `aria-description`.
 - **Test:** `tests/ui/controls-have-names.spec.ts` strips every `title` before React renders and
   fails on a control with no accessible name, which is what a migrated control that leaned on its
   title becomes. `tests/ui/tooltip.spec.ts` pins the timing, placement, Escape and description.
+- **Test:** `tests/unit/tooltip-copy.test.ts` parses every renderer `.ts` and `.tsx` and fails on
+  any string literal, template (so `t` and `msg`) or JSX text (so `<Trans>`) that opens with
+  "Click to". It reads strings rather than Tooltip props, so a tip built in a local or a helper is
+  caught too. It drives its detector over known-bad source. Runs in CI via `npm run test:unit`.
+- **Review:** a tip that restates its control's label or section header needs to know what the
+  control shows, so `/code-review` is its only guard. The criterion is the `one-tooltip.md` line in
+  that skill's Project Conventions list (`.claude/skills/code-review/SKILL.md`), which the
+  always-on conventions finder checks on every review.
 - **Gap:** a component that spreads `...rest` passes a `title` it was given straight past the scan.
   Pill, IsolatedBadge and Select omit `title` from the attributes they accept; any other forwarding
   wrapper is review-only.

@@ -88,11 +88,6 @@ msgstr "<0>\"{projectName}\"</0>을(를) 삭제하시겠습니까?"
 msgid "Clear search"
 msgstr "검색 지우기"
 
-#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
-#, fuzzy
-msgid "Click to open"
-msgstr "클릭하여 열기"
-
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -175,11 +170,6 @@ msgstr "일치하는 프로젝트 없음"
 #, fuzzy
 msgid "No projects yet"
 msgstr "아직 프로젝트 없음"
-
-#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
-#, fuzzy
-msgid "Open folder as project"
-msgstr "폴더를 프로젝트로 열기"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy

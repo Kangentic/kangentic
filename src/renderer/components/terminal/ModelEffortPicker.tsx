@@ -225,15 +225,16 @@ export function ModelEffortPicker({
   // has arrived yet, which is transient and resolves on its own. A model with no
   // effort levels hides the pill entirely (`agentReportsNoEffort`) rather than
   // explaining a value that does not apply. Each tip is one whole message, the
-  // provisional sentences included, so no translation joins pieces.
+  // provisional sentences included, so no translation joins pieces. A confirmed
+  // trigger has no tip: the pill shows its value and its chevron says it opens.
   const modelTriggerTip = modelConfirmed
-    ? t`Click to change model`
+    ? ''
     : t`Waiting for the agent to report. Showing the model this session was started with. Click to change.`;
   const modelStaticTip = modelConfirmed
     ? t`This agent does not support changing the model from Kangentic`
     : t`Waiting for the agent to report. Showing the model this session was started with. This agent does not support changing it from Kangentic.`;
   const effortTriggerTip = effortConfirmed
-    ? t`Click to change effort`
+    ? ''
     : t`Waiting for the agent to report. Showing your configured default. Click to change.`;
   const effortStaticTip = effortConfirmed
     ? t`This agent does not support changing the effort level from Kangentic`

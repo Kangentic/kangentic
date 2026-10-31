@@ -209,12 +209,11 @@ export function TerminalPanel({ collapsed = false, showContent = true, onToggleC
             // Null/undefined is the Main session; a swimlane id means this is a
             // separate, context-isolated session for that column.
             const isIsolated = session.isolatedSwimlaneId != null;
+            // The tab shows its label and the Isolated badge (which has its own
+            // tip), so the tip is only the shell: the context bar names it for
+            // the active tab alone.
             return (
-              <Tooltip
-                key={session.id}
-                label={`${label} (${shellDisplayName(session.shell)})`}
-                detail={isIsolated ? t`Isolated session` : undefined}
-              >
+              <Tooltip key={session.id} label={shellDisplayName(session.shell)}>
                 <button
                   data-testid="terminal-session-tab"
                   data-session-id={session.id}

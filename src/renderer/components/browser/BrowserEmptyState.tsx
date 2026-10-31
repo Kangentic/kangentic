@@ -6,7 +6,6 @@ import { normalizeUrl } from './BrowserEmptyState.utils';
 import { focusIsInTypingSurface } from '../../utils/terminal-arrival-focus';
 import { translateText } from '../../i18n/translate';
 import type { LocalizedText } from '../../../shared/i18n/text';
-import { Tooltip } from '../Tooltip';
 
 interface BrowserEmptyStateProps {
   onSubmit: (url: string) => void;
@@ -133,21 +132,20 @@ export function BrowserEmptyState({ onSubmit }: BrowserEmptyStateProps) {
             {QUICK_PICKS.map((pick) => {
               const pickUrl = pick.url;
               return (
-                <Tooltip key={pickUrl} label={t`Open ${pickUrl}`}>
-                  <button
-                    type="button"
-                    onClick={() => submit(pickUrl)}
-                    className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
-                    data-testid={`browser-quick-pick-${pick.label}`}
-                  >
-                    <span className="text-xs font-mono text-fg group-hover:text-fg">
-                      {pick.label}
-                    </span>
-                    <span className="text-[11px] text-fg-muted truncate w-full">
-                      {translateText(pick.hint)}
-                    </span>
-                  </button>
-                </Tooltip>
+                <button
+                  key={pickUrl}
+                  type="button"
+                  onClick={() => submit(pickUrl)}
+                  className="flex flex-col items-start gap-0.5 px-3 py-2 rounded border border-edge-input bg-surface-input/50 hover:bg-surface-hover hover:border-accent/40 text-left transition-colors group"
+                  data-testid={`browser-quick-pick-${pick.label}`}
+                >
+                  <span className="text-xs font-mono text-fg group-hover:text-fg">
+                    {pick.label}
+                  </span>
+                  <span className="text-[11px] text-fg-muted truncate w-full">
+                    {translateText(pick.hint)}
+                  </span>
+                </button>
               );
             })}
           </div>

@@ -641,11 +641,6 @@ msgstr "Uruchomiony. Wstrzymaj przepływ pracy"
 msgid "Save"
 msgstr "Zapisz"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "Zaznacz to zadanie"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

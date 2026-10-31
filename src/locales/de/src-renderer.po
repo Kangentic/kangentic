@@ -530,11 +530,6 @@ msgstr "Alle Filter löschen"
 msgid "Clear search"
 msgstr "Suche löschen"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Zum Sortieren klicken – Umschalt+Klick fügt eine sekundäre Sortierung hinzu"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Sitzung beendet"
 #, fuzzy
 msgid "Settings"
 msgstr "Einstellungen"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Umschalt+Klick fügt eine sekundäre Sortierung hinzu"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

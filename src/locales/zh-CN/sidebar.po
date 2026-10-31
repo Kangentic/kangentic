@@ -72,10 +72,6 @@ msgstr "确定要删除<0>「{projectName}」</0>吗？"
 msgid "Clear search"
 msgstr "清除搜索"
 
-#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
-msgid "Click to open"
-msgstr "点击打开"
-
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -142,10 +138,6 @@ msgstr "没有匹配的项目"
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 msgid "No projects yet"
 msgstr "暂无项目"
-
-#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
-msgid "Open folder as project"
-msgstr "将文件夹作为项目打开"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 msgid "Open in Explorer"

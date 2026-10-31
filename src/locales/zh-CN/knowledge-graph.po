@@ -358,10 +358,6 @@ msgid "Fine"
 msgstr "精细"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-msgid "Fly back to the opening view"
-msgstr "飞回初始视图"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "Fly Forward and Sideways"
 msgstr "向前和侧向飞行"
 
@@ -548,10 +544,6 @@ msgstr "打开设置"
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
 msgid "Open the full transcript"
 msgstr "打开完整记录"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "Open this conversation"
-msgstr "打开此对话"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "Orbit the Map"

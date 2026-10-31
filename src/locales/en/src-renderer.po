@@ -427,10 +427,6 @@ msgstr "Clear all filters"
 msgid "Clear search"
 msgstr "Clear search"
 
-#: src/renderer/components/DataTable.tsx
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Click to sort - Shift+Click adds a secondary sort"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
 msgstr "Close"
@@ -1267,6 +1263,10 @@ msgstr "Session ended"
 #: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "Settings"
+
+#: src/renderer/components/DataTable.tsx
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+Click adds a secondary sort"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"

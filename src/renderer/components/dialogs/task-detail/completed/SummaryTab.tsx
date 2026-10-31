@@ -264,8 +264,10 @@ function CommitsCard({ knowledge, taskChanges, onOpenCommit }: {
             </Tooltip>
           );
         }
+        // The same tip as a row that cannot open: the subject the row cuts short
+        // and the exact time. A click on a commit row opening it needs no words.
         return (
-          <Tooltip key={commit.sha} label={t`Show ${shortSha} in Changes`} detail={`${commit.subject}\n${formatDateTime(commit.committedAt)}`}>
+          <Tooltip key={commit.sha} label={commit.subject} detail={formatDateTime(commit.committedAt)}>
             <button
               type="button"
               onClick={() => onOpenCommit(commit.sha)}
@@ -351,11 +353,12 @@ function FileRow({ file, onOpen }: { file: GitTaskChangesFile; onOpen: () => voi
   const { t } = useLingui();
   const status = FILE_STATUS_CONFIG[file.status];
   const StatusIcon = status.icon;
-  const fileName = file.path.split('/').pop() ?? file.path;
   const oldPath = file.oldPath;
   const newPath = file.path;
+  // The whole path the row cuts short, and a rename's old path, which shows
+  // nowhere else.
   return (
-    <Tooltip label={t`Show ${fileName} in Changes`} detail={oldPath ? t`${oldPath} to ${newPath}` : file.path}>
+    <Tooltip label={oldPath ? t`${oldPath} to ${newPath}` : file.path}>
       <button
         type="button"
         onClick={onOpen}
