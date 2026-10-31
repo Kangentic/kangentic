@@ -14,11 +14,6 @@ msgstr "「{automationName}」はタスクの現在の状態に対して失敗�
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "「{automationName}」は{columnName}で失敗しました。"
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "「{automationName}」はタスクの現在の状態に対してまだ実行中です。"
 
@@ -157,6 +152,10 @@ msgstr "前回の会話の有効期限が切れたため、「{taskTitle}」は�
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, other {「{taskTitle}」は#分間アイドル状態でした。}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy

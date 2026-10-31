@@ -25,7 +25,9 @@ import type { AutomationRunAgainResult, AutomationRunFailure, AutomationRunStatu
 test.describe.configure({ mode: 'parallel' });
 
 const PROJECT_ID = 'proj-run-again';
+const OTHER_PROJECT_ID = 'proj-run-again-other';
 const TASK_ID = 'task-run-again';
+const TASK_TITLE = 'Fix the drag ghost';
 const AUTOMATION_ID = 'automation-run-again';
 const AUTOMATION_NAME = 'Notify the channel';
 const COLUMN_NAME = 'Code Review';
@@ -36,11 +38,14 @@ const FAILURE: AutomationRunFailure = {
   automationName: AUTOMATION_NAME,
   columnName: COLUMN_NAME,
   taskId: TASK_ID,
-  taskTitle: 'Fix the drag ghost',
+  taskTitle: TASK_TITLE,
   projectId: PROJECT_ID,
   status: 'failed',
   detail: 'Webhook returned 500',
 };
+
+/** The failure toast's body: the task first, then the automation and its column, then main's detail. */
+const FAILURE_BODY = `"${TASK_TITLE}": "${AUTOMATION_NAME}" failed on ${COLUMN_NAME}. Webhook returned 500.`;
 
 type RunAgainOutcome =
   | { kind: 'result'; result: AutomationRunAgainResult }
@@ -52,7 +57,11 @@ interface RunAgainProbe {
   __releaseRunAgain?: () => void;
 }
 
-/** One project open on a board, so a failure pushed with its id is for "the open project". */
+/**
+ * The failure's project open on a board, so a failure pushed with its id is for
+ * "the open project". A second project is there to switch to, and the failed
+ * task is a real row, so a click that opens it has something to open.
+ */
 async function launchOnProject(): Promise<{ browser: Browser; page: Page }> {
   const { browser, page } = await launchPage({
     beforeLoad: async (target) => {
@@ -68,8 +77,41 @@ async function launchOnProject(): Promise<{ browser: Browser; page: Page }> {
             last_opened: ts,
             created_at: ts,
           });
+          state.projects.push({
+            id: '${OTHER_PROJECT_ID}',
+            name: 'Run Again Elsewhere',
+            path: '/mock/run-again-other',
+            github_url: null,
+            default_agent: 'claude',
+            last_opened: ts,
+            created_at: ts,
+          });
+          var codeReviewLaneId = null;
           state.DEFAULT_SWIMLANES.forEach(function (swimlane, index) {
-            state.swimlanes.push(Object.assign({}, swimlane, { id: 'lane-run-again-' + index, position: index, created_at: ts }));
+            var laneId = 'lane-run-again-' + index;
+            if (swimlane.name === '${COLUMN_NAME}') codeReviewLaneId = laneId;
+            state.swimlanes.push(Object.assign({}, swimlane, { id: laneId, position: index, created_at: ts }));
+          });
+          state.tasks.push({
+            id: '${TASK_ID}',
+            title: '${TASK_TITLE}',
+            description: 'The task the automation failed on',
+            swimlane_id: codeReviewLaneId,
+            position: 0,
+            agent: 'claude',
+            session_id: null,
+            worktree_path: null,
+            branch_name: null,
+            pr_number: null,
+            pr_url: null,
+            base_branch: null,
+            use_worktree: 0,
+            labels: [],
+            priority: 0,
+            attachment_count: 0,
+            archived_at: null,
+            created_at: ts,
+            updated_at: ts,
           });
           return { currentProjectId: '${PROJECT_ID}' };
         });
@@ -119,6 +161,35 @@ function toastTitled(page: Page, title: string): Locator {
   return page.getByTestId('toast').filter({ has: page.getByTestId('toast-title').getByText(title, { exact: true }) });
 }
 
+interface StoreProbe {
+  __zustandStores?: {
+    project?: { getState: () => { currentProject: { id: string } | null; openProject: (id: string) => Promise<unknown> } };
+    session?: { getState: () => { detailTaskId: string | null } };
+  };
+}
+
+async function currentProjectId(page: Page): Promise<string | null> {
+  return page.evaluate(() => (window as unknown as StoreProbe).__zustandStores?.project?.getState().currentProject?.id ?? null);
+}
+
+/** Switch the board to another project the way the sidebar does, and wait for it to land. */
+async function switchToProject(page: Page, projectId: string): Promise<void> {
+  await page.evaluate(async (targetProjectId) => {
+    const projectStore = (window as unknown as StoreProbe).__zustandStores?.project;
+    if (!projectStore) throw new Error('project store not exposed on __zustandStores');
+    await projectStore.getState().openProject(targetProjectId);
+  }, projectId);
+  await expect.poll(() => currentProjectId(page), { timeout: 10000 }).toBe(projectId);
+}
+
+async function projectOpenCalls(page: Page): Promise<string[]> {
+  return page.evaluate(() => (window.electronAPI.projects as unknown as { __openCalls: string[] }).__openCalls.slice());
+}
+
+async function detailTaskId(page: Page): Promise<string | null> {
+  return page.evaluate(() => (window as unknown as StoreProbe).__zustandStores?.session?.getState().detailTaskId ?? null);
+}
+
 /**
  * Fire the failure, press Run again with `runAgain` held, and check the two
  * things that happen before the answer: the failure toast is gone and nothing
@@ -130,7 +201,7 @@ async function pressRunAgain(page: Page, outcome: RunAgainOutcome): Promise<void
 
   const failureToast = toastTitled(page, 'Automation failed');
   await expect(failureToast).toBeVisible();
-  await expect(failureToast.getByTestId('toast-body')).toHaveText(`"${AUTOMATION_NAME}" failed on ${COLUMN_NAME}. Webhook returned 500.`);
+  await expect(failureToast.getByTestId('toast-body')).toHaveText(FAILURE_BODY);
   await expect(failureToast).toHaveAttribute('data-variant', 'warning');
   // Stays until the user acts: a timed toast would take the button with it.
   await expect(failureToast).toHaveAttribute('data-persistent', 'true');
@@ -226,6 +297,101 @@ test.describe('Automation failure toast: Run again', () => {
       await expect(resultToast).toHaveAttribute('data-variant', 'error');
       await expect(resultToast.getByTestId('toast-body')).toHaveText('The project closed first.');
       expect(await toastCountRightNow(page, 'Ran again')).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  // Main pushes `projectId: ''` when it had none (automation-failures.ts). The
+  // handler lets that through as "the open project's", and the fallback is what
+  // hands the open project's id to both actions. Without it the card opens
+  // nothing and Run again asks main to look the automation up in no project.
+  test('a failure pushed with no project belongs to the open one, for the card and for Run again', async () => {
+    const { browser, page } = await launchOnProject();
+    try {
+      await holdRunAgain(page, { kind: 'result', result: runResult('succeeded', null) });
+      await fireRunFailed(page, { ...FAILURE, projectId: '' });
+      const failureToast = toastTitled(page, 'Automation failed');
+      await expect(failureToast).toBeVisible();
+      await expect(failureToast.getByTestId('toast-body')).toHaveText(FAILURE_BODY);
+
+      // A card with nothing to open is inert (pointer-events: none), so this is
+      // the card having a task to open. Asserted first so a missing project
+      // fails here, not as a click that waits out the test timeout.
+      await expect(failureToast).toHaveCSS('pointer-events', 'auto');
+      await failureToast.getByTestId('toast-body').click();
+      await expect.poll(() => detailTaskId(page), { timeout: 5000 }).toBe(TASK_ID);
+
+      // Opening the task is not running it again, and the toast stays.
+      expect(await runAgainCalls(page)).toEqual([]);
+      await expect(failureToast).toBeVisible();
+
+      await failureToast.getByTestId('toast-action').click();
+      await expect.poll(() => runAgainCalls(page)).toEqual([[AUTOMATION_ID, TASK_ID, PROJECT_ID]]);
+      await page.evaluate(() => (window as unknown as RunAgainProbe).__releaseRunAgain?.());
+      await expect(toastTitled(page, 'Ran again')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+});
+
+// The toast is persistent, so it outlives a project switch: the user can be
+// looking at another board when they reach for it. Both of its actions belong
+// to the failure's project, never to whichever project is open at the click.
+test.describe('Automation failure toast after a project switch', () => {
+  test('Run again runs in the failure\'s project, not the one open at the click', async () => {
+    const { browser, page } = await launchOnProject();
+    try {
+      await holdRunAgain(page, { kind: 'result', result: runResult('succeeded', null) });
+      await fireRunFailed(page, FAILURE);
+      const failureToast = toastTitled(page, 'Automation failed');
+      await expect(failureToast).toBeVisible();
+
+      await switchToProject(page, OTHER_PROJECT_ID);
+      await expect(failureToast).toBeVisible();
+
+      await failureToast.getByTestId('toast-action').click();
+
+      // Main looks the automation up in the project it is handed. Handed the
+      // open one, it answers "That automation no longer exists."
+      await expect.poll(() => runAgainCalls(page)).toEqual([[AUTOMATION_ID, TASK_ID, PROJECT_ID]]);
+      await page.evaluate(() => (window as unknown as RunAgainProbe).__releaseRunAgain?.());
+      await expect(toastTitled(page, 'Ran again')).toBeVisible();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a click on the card opens the failed task in its own project and leaves Run again up', async () => {
+    const { browser, page } = await launchOnProject();
+    try {
+      await holdRunAgain(page, { kind: 'result', result: runResult('succeeded', null) });
+      await fireRunFailed(page, FAILURE);
+      const failureToast = toastTitled(page, 'Automation failed');
+      await expect(failureToast).toBeVisible();
+
+      await switchToProject(page, OTHER_PROJECT_ID);
+      expect(await projectOpenCalls(page)).toEqual([OTHER_PROJECT_ID]);
+
+      await failureToast.getByTestId('toast-body').click();
+
+      // The task is not on this board, so the click goes back to its project
+      // first and opens it there.
+      await expect.poll(() => projectOpenCalls(page), { timeout: 5000 }).toEqual([OTHER_PROJECT_ID, PROJECT_ID]);
+      await expect.poll(() => currentProjectId(page), { timeout: 10000 }).toBe(PROJECT_ID);
+      await expect.poll(() => detailTaskId(page), { timeout: 10000 }).toBe(TASK_ID);
+
+      // Opening the task is not running it again, and the toast stays so the
+      // user can press Run again once they have looked, with the task open.
+      expect(await runAgainCalls(page)).toEqual([]);
+      await expect(failureToast).toBeVisible();
+      const action = failureToast.getByTestId('toast-action');
+      await expect(action).toHaveText('Run again');
+      await action.click();
+      await expect.poll(() => runAgainCalls(page)).toEqual([[AUTOMATION_ID, TASK_ID, PROJECT_ID]]);
+      await page.evaluate(() => (window as unknown as RunAgainProbe).__releaseRunAgain?.());
+      await expect(toastTitled(page, 'Ran again')).toBeVisible();
     } finally {
       await browser.close();
     }

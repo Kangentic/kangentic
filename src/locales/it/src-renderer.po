@@ -14,11 +14,6 @@ msgstr "\"{automationName}\" non è riuscita sullo stato corrente dell'attività
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\" non è riuscita in {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "\"{automationName}\" è ancora in esecuzione sullo stato corrente dell'attività."
 
@@ -157,6 +152,10 @@ msgstr "L'attività \"{taskTitle}\" è ripartita da zero perché la sua ultima c
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" è rimasta inattiva per # minuto.} many {\"{taskTitle}\" è rimasta inattiva per # minuti.} other {\"{taskTitle}\" è rimasta inattiva per # minuti.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy

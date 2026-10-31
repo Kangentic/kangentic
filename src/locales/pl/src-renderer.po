@@ -14,11 +14,6 @@ msgstr "Automatyzacja „{automationName}” nie powiodła się dla bieżącego 
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "Automatyzacja „{automationName}” nie powiodła się w kolumnie {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "Automatyzacja „{automationName}” nadal działa dla bieżącego stanu zadania."
 
@@ -157,6 +152,10 @@ msgstr "„{taskTitle}” rozpoczęto od nowa, ponieważ jego ostatnia rozmowa w
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {Zadanie „{taskTitle}” było bezczynne przez # minutę.} few {Zadanie „{taskTitle}” było bezczynne przez # minuty.} many {Zadanie „{taskTitle}” było bezczynne przez # minut.} other {Zadanie „{taskTitle}” było bezczynne przez # minuty.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
