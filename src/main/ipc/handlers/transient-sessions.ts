@@ -566,6 +566,12 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
     context.sessionManager.setCommandTerminalBranch(sessionId, branch);
   });
 
+  // The user renames a terminal, from its header, its ... menu or its rail row.
+  // By session id: the history row the rename updates is found through the
+  // session's own project, never the board the main window shows.
+  ipcMain.handle(IPC.SESSION_RENAME_TRANSIENT, (_, sessionId: string, name: string | null) =>
+    context.sessionManager.renameCommandTerminal(sessionId, typeof name === 'string' ? name : null));
+
   ipcMain.handle(IPC.SESSION_KILL_TRANSIENT, (_, sessionId: string) => {
     // The handler returns at once - the window closes at once - and only the
     // session directory's delete waits for the shell (endCommandTerminal). An

@@ -15,7 +15,7 @@ paths:
 
 Ctrl+Shift+P opens the Command Terminal: one PANEL over a slight backdrop blur, holding a header
 (the window controls), a rail (Add terminal, Earlier conversations, and a
-Running list while a terminal is expanded) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
+Running list of every terminal) and up to four terminals. Each terminal is an ephemeral "transient" session with no task
 row, and each is a window of a SECOND window-manager layer (`CommandTerminalLayer` +
 `CommandTerminalWindow` in `components/command-bar/`), separate from the board task-detail layer:
 the same engine (`src/renderer/window-manager/`) instantiated twice via `createWindowManagerStore`.
@@ -48,13 +48,24 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   sit side by side, three are one tall beside two stacked, four are a two by two grid split by
   columns (`hostArrangementTree`, `arrangeTiles`). Starting or stopping a terminal rebuilds the
   preset, and a dragged seam holds until the count changes (`isHostArranged`). The pane floor is
-  `COMMAND_LAYER_OPTIONS.minSize`: a task window's 650px width (`DEFAULT_MIN_WIDTH_PX`, about
-  80 columns, so the context bar wraps to two rows at most) by 200px. A terminal area too small
-  for the preset at that floor (`commandTerminalGridFits`) shows the focused terminal expanded and
-  the rest under Running (`useExpandWhileGridDoesNotFit`), and gives the grid back once it fits,
-  unless the user expanded that terminal; its Restore is off meanwhile. So the panel's own minimum
-  is one terminal beside the rail, whatever the count. There is no per-terminal pop-out, float or
-  maximize. The panel's
+  `COMMAND_TERMINAL_FLOOR`, 630 by 200 (about 77 columns), the Command Terminal's own: task
+  windows keep 650. 630 is where the context bar's one row (`useContextBarFold`), its bars at their
+  40px minimum, still holds the
+  agent, model, effort, rate limits and context beside its +N pill for every 5.x model and effort;
+  a terminal is never narrowed to fit that row any other way. A resize never takes the grid away. The panel's minimum is the grid at that
+  floor (`commandTerminalGridMinimum`: two columns from two terminals, two rows from three, one
+  terminal while the user has one expanded) beside the open rail at its 200px drag minimum, folded
+  or not (a minimum that followed the fold let a panel shrink to the strip and then put the
+  terminals under their floor when the rail opened). A dragged seam keeps its ratio, but the
+  layout holds every pane at the floor while the area has room for the grid (`resolveTileLayout`'s
+  `minPane`, which `WindowLayer` and `TileSplitter` pass for a host-arranged layer), so a seam
+  skewed toward one side never leaves a terminal under the floor at the panel's minimum. So the
+  edge stops where the grid still fits,
+  and a terminal added (from anywhere) or a Restore grows the panel to fit, and the panel saves the
+  size it grew to, so the next Expand does not shrink it back. Nothing falls back to one terminal
+  expanded and Restore is never off: only an area smaller than the minimum (a small window, the
+  detached window resized small) tiles the terminals under the floor. There is no per-terminal
+  pop-out, float or maximize. The panel's
   own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
   the status bar), it moves by its header and resizes live from its edges, and it maximizes. Its
   box is snapped to whole pixels (`toWholePixels`): the tiles are cut from the terminal area's
@@ -70,8 +81,11 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   load. Never bump the shared `WORKSPACE_SCHEMA_VERSION` for it: board layouts use it too.
 - **Expand and swap move the real terminals, never a copy.** Expand fills the panel with one
   terminal (`expandedWindowId`, transient, never saved); the others stay mounted behind it at the
-  SAME rect, hidden and `inert` like a dormant window, and list in the rail's Running section,
-  whose Stop ends one. Being the panel's size already, a switch through a Running row resizes
+  SAME rect, hidden and `inert` like a dormant window. The rail's Running section lists every
+  terminal in the order they tile, tiled or expanded, with the one in front (the expanded one,
+  else the focused tile) marked; a row's title brings its terminal to the front and its Stop ends
+  it. Folded, the strip lists the same terminals, each as its agent's activity mark
+  (`agentActivityMark`, as a task card draws it), never a Stop. Being the panel's size already, a switch through a Running row resizes
   nothing. Expand and Restore do jump sizes, and until the agent repaints the terminal shows its
   old frame on the new grid (the footer mid-panel, then dropped). The panel adds nothing of its
   own for that: a user's Expand or Restore is a layout change over the panel area
@@ -172,6 +186,33 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   text on the Prompt event, so `startCommandTerminal` passes `capturePromptText` and an adapter
   whose hooks are per-session (Claude) copies its prompt payload into `detail`. Never set that
   flag on a task spawn: task events stay free of prompt text.
+- **A user's name always wins.** The pencil after the title, Rename in the kebab, and a Running
+  row's or strip mark's right-click menu all save through `session:renameTransient`
+  (`SessionManager.renameCommandTerminal`), which normalizes the name
+  (`normalizeCommandTerminalName`: one line, 64 characters, empty or the slot's own title clears)
+  and marks the row `commandTerminalNamedByUser`. `setCommandTerminalLabel` refuses a marked row,
+  which also drops a naming call in flight, and the namer returns before it spends an agent call or
+  a rate-limit slot on one. A clear keeps the namer off for that terminal. The history writes the
+  live label on every CHANGE of it, a clear included (`setLabel` is last write wins), never on an
+  unchanged push, and holds a rename made before the agent's id arrives until the row exists.
+  The kebab and the row menu render one item list (`CommandTerminalMenuItems`), so they cannot
+  drift.
+- **The rail's width and fold are one GLOBAL setting, and what it shows is resolved, never
+  written.** `AppConfig.commandTerminalRail` (`src/shared/command-terminal-rail.ts`) holds the
+  width its edge drag set (200 to 400, 300 by default) and whether it is folded to its 37px strip.
+  `resolveRailWidth` narrows the SHOWN rail, down to 200, so the grid keeps its floor in a narrow
+  row, and never saves the narrowed width. The panel's default size (`PANEL_CHROME`)
+  reads the rail's default width, never its live one, so a drag or fold changes the terminals'
+  share of the panel and never the panel. The edge drag writes the width to the rail's element and
+  holds the manager-resize gate, like the panel's own edges; its release commits, saves and closes
+  the gate as one layout change; Escape cancels it in the capture phase. Where it folds is
+  `resolveFoldingEdgeDrag`, the project sidebar's divider's rule too: held at 200 down to 100,
+  folded past that WHILE the drag runs, never on release alone. Never give either edge a rule of
+  its own. The fold button is the rail's bottom row (outlined at rest; open, full width with the icon and "Hide"), with its
+  icon on the same pixel open and folded, inside the rail so the detached window has it, and the
+  rail is one element in both states so the button keeps focus. Both
+  windows write the setting, so the rail reads it back from disk on mount, and the config store's
+  refetch merge does not preserve it.
 - **An unattended (phone) start never blocks and never moves HEAD under a live session.** Its
   fetch is non-interactive with a 5 s abort, its git phase has one 6 s budget, and it stays on the
   current branch when another running or queued session's cwd is the project root. Every failure
@@ -203,10 +244,11 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   store spawns a fresh PTY under the wrong project before a later reconcile could close it.
 - **There is NO per-terminal close button.** A terminal's Stop destroys THAT terminal's session
   and closes its window; stopping the last one hides the panel. The header reads Stop, the title,
-  the pills, the kebab, then Expand (only beside another terminal). It is responsive
-  (priority-plus via `useHeaderPillOverflow`): only Stop, the title, the kebab and Expand are
-  protected, and the pills and branch picker fold into the kebab as the terminal narrows. The
-  focus line shows only while two or more terminals are visible.
+  the rename pencil, the pills, the kebab, then Expand (only beside another terminal). It is
+  responsive (priority-plus via `useHeaderPillOverflow`): only Stop, the title, the pencil, the
+  kebab and Expand are protected, and the pills and branch picker fold into the kebab as the
+  terminal narrows. While the name field is open the folded set is frozen, so nothing in the
+  header moves. The focus line shows only while two or more terminals are visible.
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
   panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
@@ -243,10 +285,12 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   decides which slots get windows on open. `tests/unit/command-terminal-summary.test.ts` locks
   the shared count/tone selector, and `tests/unit/command-terminal-name.test.ts` the titles. All
   run in CI via `npm run test:unit`.
-- **Test (floor):** `tests/unit/command-terminal-grid-fit.test.ts` pins when the grid fits the
-  terminal area at the 650px floor, and `command-terminal.spec.ts` that a panel too narrow shows
-  the newest terminal expanded with its Restore off, gives the grid back once maximized, and
-  leaves a terminal the user expanded alone.
+- **Test (floor):** `tests/unit/command-terminal-grid-fit.test.ts` pins the grid's minimum at the
+  630px floor for each count and while one is expanded, and `command-terminal.spec.ts` that two
+  tile at 1920 with the panel's edge stopping where they still fit, that an expanded terminal's
+  panel shrinks to one and Restore grows it back and keeps that size, that Add terminal grows a
+  panel wider for two and taller for three, that a window too small for the grid keeps every
+  terminal tiled, and that a terminal the user expanded stays expanded.
 - **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.
@@ -262,7 +306,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `task-detail-maximize.spec.ts` pins that a box that grows shows no old text and fades its new
   frame in, and one that shrinks keeps its input box on screen in every frame with no frame
   painted hidden, and `tests/unit/manager-resize-gate.test.ts` pins the resize the gate holds to
-  the end of a gesture and the gesture it closes when no owner saw the release. The unseen-release
+  the end of a gesture and the gesture it closes when no owner saw the release, and that a
+  release's late look spares a gesture the same pointer opened after it. The unseen-release
   case in `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts` drive it
   in the real app.
 - **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
@@ -301,6 +346,20 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   the detached window that adopts its running terminal and starts no second one), a removal push
   closing its window, and a branch switch keeping it. `command-terminal-branch.spec.ts` and
   `sidebar-command-terminals.spec.ts` cover the branch pill and the sidebar indicator.
+- **Test (rename):** `tests/unit/session-manager-command-terminal-label.test.ts` (the rename, the
+  clear, the namer's setter refused after either), `command-terminal-namer.test.ts` (no agent call
+  for a user-named terminal), `command-terminal-history.test.ts` (a rename and a clear reach the
+  row, an unchanged push writes nothing, an early rename is held until the row exists),
+  `transient-session-rename-handler.test.ts`, and `tests/ui/command-terminal-rename.spec.ts` (the
+  pencil, the kebab, the off state while starting, the Running row's menu).
+- **Test (rail):** `tests/unit/command-terminal-rail.test.ts` pins the resolved width (narrowed,
+  never written, the strip) and `tests/ui/command-terminal-rail.spec.ts` the 300px default, a drag
+  saved on release with one refit per terminal, Escape, the hold at 200, the live fold past 100
+  with one refit and the open from the strip, the footer button keeping its spot and its focus,
+  the panel's box unchanged, the floor
+  after a fold, the strip's activity marks and the one in front, the narrowed rail at the window floor, and the cut-name tip.
+  `tests/unit/demo-fit-layout-blob.test.ts` holds the web demo's panel fit to the rail width the
+  frame's config gives, and the sample install's seeded rail to the fit's fallback.
 - **Review:** the header layout ordering and the title-bar placement are visual conventions with
   no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
 

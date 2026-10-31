@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} キャッシュ (システム) · {conversationTokenTe
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} コンテキストウィンドウ"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, other {さらに # 件を表示}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "残り {remainingPercent}%"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} が中断されました"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

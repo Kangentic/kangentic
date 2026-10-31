@@ -4,16 +4,17 @@
  * The divider between the PROJECTS sidebar and the board is a resize handle.
  * A plain click on it must NOT collapse the sidebar (that used to fire
  * accidentally when a click landed on the thin divider). Collapse happens only
- * via the PROJECTS-panel chevron or by dragging the divider closed past the
- * COLLAPSE_THRESHOLD. Sub-threshold movement (a "dead drag") is treated as a
- * click and is a no-op.
+ * via the PROJECTS-panel chevron or by dragging the divider past half its 200px
+ * minimum (`resolveFoldingEdgeDrag`, the Command Terminal rail's rule too), which
+ * folds it while the drag runs; short of that it holds open at 200.
+ * Sub-threshold movement (a "dead drag") is treated as a click and is a no-op.
  *
  * Assertions read the mock's `sidebarVisible` / `sidebar.width` config (the
  * programmatic source of truth the hook persists) rather than pixel geometry,
  * per .claude/rules/cross-platform-parity.md. Drag input is driven from the
  * divider's live boundingBox.
  *
- * All five tests share one Chromium launch; page.goto() in beforeEach resets the
+ * All six tests share one Chromium launch; page.goto() in beforeEach resets the
  * in-memory mock config so each test starts from a known open sidebar (default
  * sidebarVisible: true, sidebar.width: 224).
  *
@@ -167,19 +168,34 @@ test.describe('Sidebar resize divider', () => {
     expect(after.sidebar.width).toBe(DEFAULT_SIDEBAR_WIDTH);
   });
 
-  test('dragging the divider past the collapse threshold still collapses', async () => {
+  test('dragging the divider past half the minimum folds it while the drag runs', async () => {
     expect((await getConfig(page)).sidebarVisible).toBe(true);
 
     const center = await dividerCenter(page);
-    // Drag far left so the panel width falls below COLLAPSE_THRESHOLD (200).
+    // Drag far left so the width the pointer asks for falls below half the 200px minimum.
     await page.mouse.move(center.x, center.y);
     await page.mouse.down();
     await page.mouse.move(center.x - 220, center.y, { steps: 10 });
+    // The strip shows before the release, so letting go keeps what the screen shows.
+    await expect(page.getByTestId('sidebar-area')).toHaveAttribute('data-open', 'false');
     await page.mouse.up();
 
     await expect
       .poll(async () => (await getConfig(page)).sidebarVisible, { timeout: 5000 })
       .toBe(false);
+  });
+
+  test('a drag that stops short of half the minimum holds the sidebar open at its narrowest', async () => {
+    const center = await dividerCenter(page);
+    // From 224 to a pointer 124px from the sidebar's side: past the 200 minimum, short of the fold at 100.
+    await page.mouse.move(center.x, center.y);
+    await page.mouse.down();
+    await page.mouse.move(center.x - 100, center.y, { steps: 10 });
+    await expect(page.getByTestId('sidebar-area')).toHaveAttribute('data-open', 'true');
+    await page.mouse.up();
+
+    await expect.poll(async () => (await getConfig(page)).sidebar.width, { timeout: 5000 }).toBe(200);
+    expect((await getConfig(page)).sidebarVisible).toBe(true);
   });
 
   test('a normal drag still resizes the sidebar without collapsing', async () => {

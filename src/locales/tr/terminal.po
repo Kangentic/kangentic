@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} önbellekte (sistem) · {conversationTokenText} konuş
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} bağlam penceresi"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {# tane daha göster} other {# tane daha göster}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "%{remainingPercent} kaldı"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} kesintiye uğradı"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

@@ -7,9 +7,30 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: en\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "{name} (needs you)"
+msgstr "{name} (needs you)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "{name} (resting)"
+msgstr "{name} (resting)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "{name} (starting)"
+msgstr "{name} (starting)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "{name} (working)"
+msgstr "{name} (working)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 msgid "Add terminal"
 msgstr "Add terminal"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+msgid "Available once the terminal starts"
+msgstr "Available once the terminal starts"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -19,7 +40,7 @@ msgstr "Command Terminal"
 msgid "Command Terminals"
 msgstr "Command Terminals"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Commands"
 msgstr "Commands"
 
@@ -30,6 +51,10 @@ msgstr "Couldn't check out branch"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Couldn't open the window"
 msgstr "Couldn't open the window"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+msgid "Couldn't rename terminal"
+msgstr "Couldn't rename terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Couldn't resume conversation"
@@ -59,10 +84,6 @@ msgstr "Earlier"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "Ends the terminal, and Earlier keeps its conversation if it was used"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "Expand {name}"
-msgstr "Expand {name}"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Expand terminal"
 msgstr "Expand terminal"
@@ -71,6 +92,16 @@ msgstr "Expand terminal"
 msgid "Failed to load the Changes panel"
 msgstr "Failed to load the Changes panel"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Go to {name}"
+msgstr "Go to {name}"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "Hide"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Hide changes"
 msgstr "Hide changes"
@@ -82,6 +113,10 @@ msgstr "Hide Command Terminal"
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Hide panel"
 msgstr "Hide panel"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Hide rail"
+msgstr "Hide rail"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -96,7 +131,7 @@ msgstr "Maximize panel"
 msgid "Move to its own window"
 msgstr "Move to its own window"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Open folder"
 msgstr "Open folder"
 
@@ -107,6 +142,18 @@ msgstr "Open in new window"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Open project folder"
 msgstr "Open project folder"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Rail width"
+msgstr "Rail width"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Rename"
+msgstr "Rename"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Rename terminal"
+msgstr "Rename terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Restore panel"
@@ -129,9 +176,14 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "Running"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Show changes"
 msgstr "Show changes"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Show rail"
+msgstr "Show rail"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Starting Command Terminal..."
@@ -145,6 +197,7 @@ msgstr "Stop {name}"
 msgid "Stop one of the four to add another"
 msgstr "Stop one of the four to add another"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Stop terminal"
 msgstr "Stop terminal"
@@ -153,13 +206,17 @@ msgstr "Stop terminal"
 msgid "Stopping terminal"
 msgstr "Stopping terminal"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Stopping..."
 msgstr "Stopping..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Switch branch"
 msgstr "Switch branch"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+msgid "Terminal name"
+msgstr "Terminal name"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
@@ -176,7 +233,3 @@ msgstr "Untitled conversation"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Wait for the terminals to start."
 msgstr "Wait for the terminals to start."
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-msgid "Widen the panel to restore the grid"
-msgstr "Widen the panel to restore the grid"

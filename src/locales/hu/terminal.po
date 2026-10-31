@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} gyorsítótárazott (rendszer) · {conversationTokenTe
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} kontextusablak"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {# további megjelenítése} other {# további megjelenítése}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "{remainingPercent}% maradt"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} megszakítva"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

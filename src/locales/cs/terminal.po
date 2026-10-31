@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} v mezipaměti (systém) · {conversationTokenText} kon
 msgid "{contextLabel} context window"
 msgstr "Kontextové okno {contextLabel}"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {Zobrazit # další} few {Zobrazit # další} many {Zobrazit # dalšího} other {Zobrazit # dalších}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "Zbývá {remainingPercent} %"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} přerušen"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

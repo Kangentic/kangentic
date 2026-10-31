@@ -436,7 +436,9 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   the first host pointer event that shows the primary button up (a move, an enter, a new press of
   the same pointer, a release no owner answered) or the window losing focus abandons it: the owner
   commits its drag as it stands and forgets it, then the gesture closes. There is no timer, since
-  holding still mid-drag is a drag. A drag of the OS window's own edge shows the page no pointer,
+  holding still mid-drag is a drag. A release's look runs a task after it, and input outranks
+  that task: measured, it ran 61 ms late while a second drag began, so it abandons only the
+  gestures open at the release, never one the same pointer opened since. A drag of the OS window's own edge shows the page no pointer,
   only a resize event per frame, and each one reached the PTY: measured, a 40-step drag sent 40
   resizes to a maximized task window's terminal, on this branch's base as well. So the gate watches
   the window's resizes too. A second resize within `WINDOW_RESIZE_SETTLE_MS` (150 ms) of the last

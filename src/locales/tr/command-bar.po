@@ -7,10 +7,36 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: tr\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name} (sizi bekliyor)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name} (beklemede)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name} (başlatılıyor)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name} (çalışıyor)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
 msgstr "Terminal ekle"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "Terminal başladığında kullanılabilir"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -22,7 +48,7 @@ msgstr "Komut terminali"
 msgid "Command Terminals"
 msgstr "Komut terminalleri"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Commands"
 msgstr "Komutlar"
@@ -36,6 +62,11 @@ msgstr "Dala geçilemedi"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "Pencere açılamadı"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "Terminal yeniden adlandırılamadı"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -72,11 +103,6 @@ msgstr "Önceki"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "Terminali sonlandırır; kullanıldıysa konuşması Önceki bölümünde saklanır"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-#, fuzzy
-msgid "Expand {name}"
-msgstr "Genişlet: {name}"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Expand terminal"
@@ -87,6 +113,18 @@ msgstr "Terminali genişlet"
 msgid "Failed to load the Changes panel"
 msgstr "Değişiklikler paneli yüklenemedi"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "Git: {name}"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "Gizle"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Hide changes"
@@ -101,6 +139,11 @@ msgstr "Komut Terminalini Gizle"
 #, fuzzy
 msgid "Hide panel"
 msgstr "Paneli gizle"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
+msgstr "Kenar çubuğunu gizle"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -118,7 +161,7 @@ msgstr "Paneli büyüt"
 msgid "Move to its own window"
 msgstr "Ayrı bir pencereye taşı"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Open folder"
 msgstr "Klasörü aç"
@@ -132,6 +175,21 @@ msgstr "Yeni pencerede aç"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Proje klasörünü aç"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "Kenar çubuğu genişliği"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "Yeniden adlandır"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "Terminali yeniden adlandır"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -159,10 +217,16 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "Çalışıyor"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Show changes"
 msgstr "Değişiklikleri göster"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "Kenar çubuğunu göster"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -179,6 +243,7 @@ msgstr "Durdur: {name}"
 msgid "Stop one of the four to add another"
 msgstr "Yenisini eklemek için dördünden birini durdurun"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Stop terminal"
@@ -189,15 +254,20 @@ msgstr "Terminali durdur"
 msgid "Stopping terminal"
 msgstr "Terminal durduruluyor"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Stopping..."
 msgstr "Durduruluyor..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Switch branch"
 msgstr "Dal değiştir"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "Terminal adı"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
@@ -218,8 +288,3 @@ msgstr "Adsız konuşma"
 #, fuzzy
 msgid "Wait for the terminals to start."
 msgstr "Terminallerin başlamasını bekleyin."
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#, fuzzy
-msgid "Widen the panel to restore the grid"
-msgstr "Izgarayı geri yüklemek için paneli genişletin"

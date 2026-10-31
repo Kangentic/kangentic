@@ -1604,7 +1604,14 @@ at scale 2 (the rig's launch, so a tiled figure is at native type there; at scal
 123 and plays the recording widened to it), and the workflow agent's pane at scale 2 as well (91
 wide at scale 1). The spring-petclinic and online-boutique tiled
 boots are still at the earlier 124, recorded before the launch was pinned and not re-recordable
-until Codex credits return; a recording carries its own grid, so a pane plays those at its own. The rows
+until Codex credits return; a recording carries its own grid, so a pane plays those at its own.
+Every Command Terminal width above was measured beside the panel's rail when it was fixed at
+248px. The rail now opens at 300 and drags from 200 to 400, so the sample install sets it to 248
+(`SAMPLE_INSTALL_RAIL_WIDTH_PX` in `demo-dataset.ts`), a width a person can drag it to, and the
+panel fit reads the rail from the frame's config. At 300 a tiled pane is a few columns short of
+its tiled recording and plays the single one. Recording the tiled Command Terminal runs and boots
+again at the default's grid (the Codex boots need Codex credits) lets the sample install take the
+default. The rows
 follow the agent, because the window's context bar
 does: a Claude session's bar carries the account's rate-limit pills and wraps to two rows,
 leaving 37, while every other agent's bar is one row, leaving 39 (`rowsByAgent` in the

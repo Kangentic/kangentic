@@ -79,10 +79,16 @@ export class CommandTerminalHistoryRepository {
     ).run(now, now, agentSessionId);
   }
 
-  /** The terminal's name. First write wins, as the live label's does. */
-  setLabel(agentSessionId: string, label: string): void {
+  /**
+   * The terminal's name, as it changed: the derived name when it arrives, or
+   * the user's rename. Last write wins, and null clears it, so the row reads as
+   * its first prompt again. `CommandTerminalHistory` writes only a CHANGE of the
+   * live name, so a conversation `/resume`d into a terminal keeps its own name
+   * until the terminal is renamed.
+   */
+  setLabel(agentSessionId: string, label: string | null): void {
     this.db.prepare(
-      'UPDATE command_terminal_history SET label = COALESCE(label, ?) WHERE agent_session_id = ?',
+      'UPDATE command_terminal_history SET label = ? WHERE agent_session_id = ?',
     ).run(label, agentSessionId);
   }
 

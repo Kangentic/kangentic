@@ -7,10 +7,36 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: cs\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name} (potřebuje vás)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name} (v klidu)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name} (spouští se)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name} (pracuje)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
 msgstr "Přidat terminál"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "Dostupné po spuštění terminálu"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -22,7 +48,7 @@ msgstr "Příkazový terminál"
 msgid "Command Terminals"
 msgstr "Příkazové terminály"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Commands"
 msgstr "Příkazy"
@@ -36,6 +62,11 @@ msgstr "Větev se nepodařilo přepnout (checkout)"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "Okno se nepodařilo otevřít"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "Terminál se nepodařilo přejmenovat"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -72,11 +103,6 @@ msgstr "Dříve"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "Ukončí terminál a sekce Dříve zachová jeho konverzaci, pokud byl použit"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-#, fuzzy
-msgid "Expand {name}"
-msgstr "Rozbalit {name}"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Expand terminal"
@@ -87,6 +113,18 @@ msgstr "Rozbalit terminál"
 msgid "Failed to load the Changes panel"
 msgstr "Panel Změny se nepodařilo načíst"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "Přejít na {name}"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "Skrýt"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Hide changes"
@@ -100,6 +138,11 @@ msgstr "Skrýt příkazový terminál"
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Hide panel"
+msgstr "Skrýt panel"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
 msgstr "Skrýt panel"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -118,7 +161,7 @@ msgstr "Maximalizovat panel"
 msgid "Move to its own window"
 msgstr "Přesunout do samostatného okna"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Open folder"
 msgstr "Otevřít složku"
@@ -132,6 +175,21 @@ msgstr "Otevřít v novém okně"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Otevřít složku projektu"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "Šířka panelu"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "Přejmenovat"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "Přejmenovat terminál"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -159,10 +217,16 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "Běží"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Show changes"
 msgstr "Zobrazit změny"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "Zobrazit panel"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -179,6 +243,7 @@ msgstr "Zastavit {name}"
 msgid "Stop one of the four to add another"
 msgstr "Chcete-li přidat další, zastavte jeden ze čtyř"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Stop terminal"
@@ -189,15 +254,20 @@ msgstr "Zastavit terminál"
 msgid "Stopping terminal"
 msgstr "Zastavování terminálu"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Stopping..."
 msgstr "Zastavování..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Switch branch"
 msgstr "Přepnout větev"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "Název terminálu"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
@@ -218,8 +288,3 @@ msgstr "Konverzace bez názvu"
 #, fuzzy
 msgid "Wait for the terminals to start."
 msgstr "Počkejte, až se terminály spustí."
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#, fuzzy
-msgid "Widen the panel to restore the grid"
-msgstr "Rozšiřte panel pro obnovení mřížky"

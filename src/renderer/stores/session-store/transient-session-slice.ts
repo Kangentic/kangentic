@@ -42,6 +42,9 @@ export interface TransientSessionEntry {
  */
 export type TransientKillOutcome = 'killed' | 'no-session' | 'failed';
 
+/** What a rail row's menu can ask a terminal's window to open once it is expanded. */
+export type CommandTerminalWindowAction = 'commands' | 'switch-branch' | 'toggle-changes' | 'rename';
+
 /** Composite map key. One Command Terminal window owns one (project, slot) PTY. */
 export function transientKey(projectId: string, slot: string): string {
   return `${projectId}::${slot}`;
@@ -197,6 +200,17 @@ export interface TransientSessionSlice {
   /** Drop the project's pending resumes for slots with no window, so a request
    *  a closed window never took cannot resume in the next terminal there. */
   dropCommandTerminalResumesExcept: (projectId: string, windowSlots: ReadonlySet<string>) => void;
+  /**
+   * Something the rail asked a terminal's window to open, keyed by
+   * `transientKey()`, with a nonce so asking twice still reaches it. A Running
+   * row's (or a strip chip's) menu expands the terminal and leaves the request;
+   * the slot's window takes it and opens its Commands palette, its branch
+   * picker, its Changes, or its name field, where the user can see them.
+   */
+  pendingCommandTerminalWindowActions: Record<string, { action: CommandTerminalWindowAction; nonce: number }>;
+  requestCommandTerminalWindowAction: (projectId: string, slot: string, action: CommandTerminalWindowAction) => void;
+  /** Take (and clear) the slot's pending window action, or null when there is none. */
+  takeCommandTerminalWindowAction: (projectId: string, slot: string) => CommandTerminalWindowAction | null;
   /** Pair an ALREADY-RUNNING transient PTY to `(projectId, slot)` without spawning.
    *
    *  The window mount effect's last resort before it spawns: main's session row
@@ -346,6 +360,33 @@ export function createTransientSessionSlice(preserved: {
         for (const key of orphanedKeys) delete pendingCommandTerminalResumes[key];
         return { pendingCommandTerminalResumes };
       });
+    },
+
+    // Not carried through the HMR stash, for the same reason as the resumes.
+    pendingCommandTerminalWindowActions: {},
+
+    requestCommandTerminalWindowAction: (projectId, slot, action) => {
+      set((state) => ({
+        pendingCommandTerminalWindowActions: {
+          ...state.pendingCommandTerminalWindowActions,
+          [transientKey(projectId, slot)]: {
+            action,
+            nonce: (state.pendingCommandTerminalWindowActions[transientKey(projectId, slot)]?.nonce ?? 0) + 1,
+          },
+        },
+      }));
+    },
+
+    takeCommandTerminalWindowAction: (projectId, slot) => {
+      const key = transientKey(projectId, slot);
+      const pending = get().pendingCommandTerminalWindowActions[key];
+      if (!pending) return null;
+      set((state) => {
+        const pendingCommandTerminalWindowActions = { ...state.pendingCommandTerminalWindowActions };
+        delete pendingCommandTerminalWindowActions[key];
+        return { pendingCommandTerminalWindowActions };
+      });
+      return pending.action;
     },
 
     adoptTransientSession: (projectId, slot, session) => {

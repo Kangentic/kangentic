@@ -78,16 +78,19 @@ export interface ManagedSession {
    */
   commandTerminalBranch?: string | null;
   /**
-   * For a transient session, the name auto-derived from its first prompt.
-   * Undefined for task agents and until one is derived.
+   * For a transient session, its name: the user's (`renameCommandTerminal`),
+   * else the one auto-derived from its first prompt. Undefined for task agents
+   * and until either exists.
    *
-   * Derived here in main (`CommandTerminalNamer`, through the session's own
-   * agent's `summarize`), so a terminal a phone started, or one in a project
-   * the desktop does not have open, is named too. First write wins. The window
-   * title, the Agent Monitor row, a phone's snapshot, and the push notification
-   * all read it from here.
+   * Derived here in main (`CommandTerminalNamer`), so a terminal a phone
+   * started, or one in a project the desktop does not have open, is named too.
+   * The derived name is first write wins; a user's rename replaces anything.
+   * The window title, the Agent Monitor row, a phone's snapshot, and the push
+   * notification all read it from here.
    */
   commandTerminalLabel?: string | null;
+  /** The user renamed or cleared this terminal's name, so the namer stands down. */
+  commandTerminalNamedByUser?: boolean;
   /**
    * Someone typed, pasted or sent something into this session (see
    * `Session.hasUserInput`). Set once by `SessionManager.markUserInput`, or at
@@ -292,6 +295,7 @@ export function toSession(session: ManagedSession): Session {
     commandTerminalSlot: session.commandTerminalSlot ?? null,
     commandTerminalBranch: session.commandTerminalBranch ?? null,
     commandTerminalLabel: session.commandTerminalLabel ?? null,
+    commandTerminalNamedByUser: session.commandTerminalNamedByUser || undefined,
     hasUserInput: session.hasUserInput || undefined,
     isolatedSwimlaneId: session.isolatedSwimlaneId,
     agentSessionId: session.agentSessionId ?? null,

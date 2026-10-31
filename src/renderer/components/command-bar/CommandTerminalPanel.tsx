@@ -176,7 +176,7 @@ interface CommandTerminalPanelProps {
   rail: ReactNode;
   /** The terminal area's element, once mounted: the window layer renders into it. */
   onTerminalAreaReady: (element: HTMLElement | null) => void;
-  /** The smallest the panel may be: one terminal at the pane floor beside the rail, whatever the count. */
+  /** The smallest the panel may be: the terminals' grid at the pane floor beside the rail. */
   minSize: PanelSize;
   /** What the panel adds around its terminals: the rail and the header, with the border. */
   chrome: PanelSize;
@@ -207,6 +207,23 @@ export function CommandTerminalPanel({
   // The gesture in flight. A move translates the panel; a resize writes its box
   // straight to the element, and React takes it back over on the save.
   const gestureRef = useRef<PanelGesture | null>(null);
+
+  // A panel its terminals outgrew (one added, or the grid restored from an
+  // expanded terminal) already shows at the larger size, since `toPixels` holds
+  // it above the floor. Saving that size keeps it, so the next Expand does not
+  // shrink the panel back; the box on screen does not move. A floor the area
+  // cannot hold (a small window) is not a size to keep.
+  const previousMinSizeRef = useRef(minSize);
+  useLayoutEffect(() => {
+    const previous = previousMinSizeRef.current;
+    previousMinSizeRef.current = minSize;
+    if (minSize.width <= previous.width && minSize.height <= previous.height) return;
+    if (gestureRef.current) return;
+    if (!isUsableGeometry(savedGeometry) || savedGeometry.maximized || areaSize.width === 0 || areaSize.height === 0) return;
+    if (minSize.width > areaSize.width || minSize.height > areaSize.height) return;
+    if (savedGeometry.w * areaSize.width >= minSize.width && savedGeometry.h * areaSize.height >= minSize.height) return;
+    saveGeometry(toGeometry(rect, areaSize));
+  });
 
   useLayoutEffect(() => {
     const area = areaRef.current;

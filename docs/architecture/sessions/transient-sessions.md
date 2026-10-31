@@ -32,9 +32,10 @@ regardless, so without recovery a reload left a live conversation with nothing p
 and the window came back as an empty fresh boot.
 
 Main is the authority for the pairing. `ManagedSession` retains `commandTerminalSlot`,
-`commandTerminalBranch`, and `commandTerminalLabel` (in memory, not a DB row, so this does not
-make a transient session persistent), and `toSession` carries all three to the renderer on every
-session row. `planTransientRecovery`
+`commandTerminalBranch`, `commandTerminalLabel` and `commandTerminalNamedByUser` (in memory, not a
+DB row, so this does not make a transient session persistent), and `toSession` carries them to the
+renderer on every session row. The flag marks a label the user set or cleared by hand
+(`session:renameTransient`), which the namer and the resume seed then leave alone. `planTransientRecovery`
 (`src/renderer/stores/session-store/transient-recovery.ts`) rebuilds the map from that on every
 `syncSessions`, for every project:
 

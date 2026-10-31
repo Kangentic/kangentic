@@ -41,7 +41,8 @@ the same array.
     window, guarded so open overlays, DOM windows, and focused text fields keep their Escape),
     and a TRANSIENT IN-GESTURE cancel that must beat the dialog dismissal to the event: BrowserPane's
     Esc-cancels-Inspect, `useWindowDrag`'s Esc-cancels-drag, the Command Terminal panel's move and
-    resize (`CommandTerminalPanel.tsx`) and its header swap drag (`swap-drag.ts`), and
+    resize (`CommandTerminalPanel.tsx`), its rail's edge drag (`useCommandTerminalRail.ts`) and its
+    header swap drag (`swap-drag.ts`), and
     `IntentKeyboardSensor`'s document tracker (`src/renderer/utils/intent-keyboard-sensor.ts`),
     which consumes Escape only while a keyboard drag is in flight and the key is aimed at the
     dragged node (see `keyboard-drag-intent.md`). All of them register a

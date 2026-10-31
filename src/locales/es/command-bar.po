@@ -7,10 +7,36 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: es\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name} (te necesita)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name} (en reposo)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name} (iniciando)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name} (trabajando)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
 msgstr "Agregar terminal"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "Disponible cuando se inicie el terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -22,7 +48,7 @@ msgstr "Terminal de comandos"
 msgid "Command Terminals"
 msgstr "Terminales de comandos"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Commands"
 msgstr "Comandos"
@@ -36,6 +62,11 @@ msgstr "No se pudo cambiar a la rama"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "No se pudo abrir la ventana"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "No se pudo cambiar el nombre del terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -72,11 +103,6 @@ msgstr "Anteriores"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "Cierra el terminal y Anteriores conserva su conversación si se usó"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-#, fuzzy
-msgid "Expand {name}"
-msgstr "Expandir {name}"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Expand terminal"
@@ -87,6 +113,18 @@ msgstr "Expandir terminal"
 msgid "Failed to load the Changes panel"
 msgstr "No se pudo cargar el panel Cambios"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "Ir a {name}"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "Ocultar"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Hide changes"
@@ -101,6 +139,11 @@ msgstr "Ocultar terminal de comandos"
 #, fuzzy
 msgid "Hide panel"
 msgstr "Ocultar panel"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
+msgstr "Ocultar panel lateral"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -118,7 +161,7 @@ msgstr "Maximizar panel"
 msgid "Move to its own window"
 msgstr "Mover a una ventana propia"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Open folder"
 msgstr "Abrir carpeta"
@@ -132,6 +175,21 @@ msgstr "Abrir en una ventana nueva"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Abrir carpeta del proyecto"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "Ancho del panel lateral"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "Cambiar nombre"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "Cambiar nombre del terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -159,10 +217,16 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "En ejecución"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Show changes"
 msgstr "Mostrar cambios"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "Mostrar panel lateral"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -179,6 +243,7 @@ msgstr "Detener {name}"
 msgid "Stop one of the four to add another"
 msgstr "Detén uno de los cuatro para añadir otro"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Stop terminal"
@@ -189,15 +254,20 @@ msgstr "Detener terminal"
 msgid "Stopping terminal"
 msgstr "Deteniendo terminal"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Stopping..."
 msgstr "Deteniendo..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Switch branch"
 msgstr "Cambiar de rama"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "Nombre del terminal"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
@@ -218,8 +288,3 @@ msgstr "Conversación sin título"
 #, fuzzy
 msgid "Wait for the terminals to start."
 msgstr "Espera a que se inicien los terminales."
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#, fuzzy
-msgid "Widen the panel to restore the grid"
-msgstr "Ensanche el panel para restaurar la cuadrícula"

@@ -388,9 +388,9 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     scope: 'project',
     title: msg`Command Terminal`,
     defaultBounds: { width: 1180, height: 770 },
-    // The app window's own floor: one terminal at the 650 x 200 pane floor fits
-    // beside the 248px rail, and a window too small for the grid shows one
-    // terminal expanded, as the panel does.
+    // The app window's own floor. One terminal at the 630 x 200 pane floor fits
+    // beside the rail; a window too small for the grid tiles every terminal
+    // under the floor, as the panel does in a small app window.
     minSize: { width: 900, height: 600 },
     needsWebview: false,
     resolveTitle: (params) => ({ ...COMMAND_TERMINAL_TITLE, values: { projectName: (params as PopOutProjectParams).projectName } }),

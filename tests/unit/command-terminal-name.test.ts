@@ -1,9 +1,38 @@
 import { describe, it, expect } from 'vitest';
 import {
   COMMAND_TERMINAL_BASE_TITLE,
+  COMMAND_TERMINAL_NAME_MAX_LENGTH,
   commandTerminalSlotNumber,
   commandTerminalTitle,
+  normalizeCommandTerminalName,
 } from '../../src/shared/command-terminal-name';
+
+/**
+ * A user's rename is normalized in ONE place: main stores what this returns,
+ * and the name field asks it whether a commit changed anything, so the two can
+ * never disagree about what "Command Terminal 2" or a blank entry means.
+ */
+describe('normalizeCommandTerminalName', () => {
+  it('puts the name on one line and trims it', () => {
+    expect(normalizeCommandTerminalName('  Fix\n the   parser\t ', 'slot-1')).toBe('Fix the parser');
+  });
+
+  it('cuts it to the cap, and trims what the cut leaves', () => {
+    expect(normalizeCommandTerminalName('a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH + 10), 'slot-1')).toHaveLength(COMMAND_TERMINAL_NAME_MAX_LENGTH);
+    const endsInSpaceAtCut = `${'a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 1)} b`;
+    expect(normalizeCommandTerminalName(endsInSpaceAtCut, 'slot-1')).toBe('a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 1));
+  });
+
+  it('clears for an empty entry, null, and the slot\'s own title', () => {
+    expect(normalizeCommandTerminalName('   ', 'slot-2')).toBeNull();
+    expect(normalizeCommandTerminalName(null, 'slot-2')).toBeNull();
+    expect(normalizeCommandTerminalName(' Command  Terminal 2 ', 'slot-2')).toBeNull();
+  });
+
+  it('keeps another slot\'s title as a real name', () => {
+    expect(normalizeCommandTerminalName('Command Terminal 3', 'slot-2')).toBe('Command Terminal 3');
+  });
+});
 
 /**
  * The Command Terminal's name is rendered by TWO processes: the renderer draws

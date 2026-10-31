@@ -7,10 +7,36 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ko\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name} (응답 필요)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name} (대기 중)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name} (시작 중)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name} (작업 중)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
 msgstr "터미널 추가"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "터미널이 시작되면 사용 가능"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -22,7 +48,7 @@ msgstr "명령 터미널"
 msgid "Command Terminals"
 msgstr "명령 터미널"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Commands"
 msgstr "명령"
@@ -36,6 +62,11 @@ msgstr "분기를 체크아웃할 수 없음"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "창을 열 수 없습니다"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "터미널 이름을 바꿀 수 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -72,11 +103,6 @@ msgstr "이전"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "터미널을 종료하며, 사용한 경우 대화는 이전 항목에 유지됩니다"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-#, fuzzy
-msgid "Expand {name}"
-msgstr "{name} 펼치기"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Expand terminal"
@@ -87,6 +113,18 @@ msgstr "터미널 확장"
 msgid "Failed to load the Changes panel"
 msgstr "변경 사항 패널을 로드하지 못했습니다"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "{name}(으)로 이동"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "숨기기"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Hide changes"
@@ -101,6 +139,11 @@ msgstr "명령 터미널 숨기기"
 #, fuzzy
 msgid "Hide panel"
 msgstr "패널 숨기기"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
+msgstr "레일 숨기기"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -118,7 +161,7 @@ msgstr "패널 최대화"
 msgid "Move to its own window"
 msgstr "별도 창으로 이동"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Open folder"
 msgstr "폴더 열기"
@@ -132,6 +175,21 @@ msgstr "새 창에서 열기"
 #, fuzzy
 msgid "Open project folder"
 msgstr "프로젝트 폴더 열기"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "레일 너비"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "이름 바꾸기"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "터미널 이름 바꾸기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -159,10 +217,16 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "실행 중"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Show changes"
 msgstr "변경 내용 표시"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "레일 표시"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -179,6 +243,7 @@ msgstr "{name} 중지"
 msgid "Stop one of the four to add another"
 msgstr "추가하려면 4개 중 하나를 중지하세요"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Stop terminal"
@@ -189,15 +254,20 @@ msgstr "터미널 중지"
 msgid "Stopping terminal"
 msgstr "터미널 중지 중"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Stopping..."
 msgstr "중지 중..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Switch branch"
 msgstr "분기 전환"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "터미널 이름"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
@@ -218,8 +288,3 @@ msgstr "제목 없는 대화"
 #, fuzzy
 msgid "Wait for the terminals to start."
 msgstr "터미널이 시작될 때까지 기다리세요."
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#, fuzzy
-msgid "Widen the panel to restore the grid"
-msgstr "그리드를 복원하려면 패널을 넓히세요"

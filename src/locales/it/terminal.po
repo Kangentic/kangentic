@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} in cache (sistema) · {conversationTokenText} conversa
 msgid "{contextLabel} context window"
 msgstr "Finestra di contesto {contextLabel}"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {Mostra # altro} many {Mostra altri #} other {Mostra altri #}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "{remainingPercent}% rimanente"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} interrotto"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

@@ -151,6 +151,21 @@ describe('manager-resize gate', () => {
     expect(gate.isInProgress()).toBe(false);
   });
 
+  it('spares a gesture the same pointer opened after the release, when the look runs late', async () => {
+    // Input outranks the timer: under a fast drag it ran 61ms late, after the
+    // next press had opened its own gesture, and ended that drag at its first step.
+    const target = new EventTarget();
+    const gate = createManagerResizeGate(target);
+    const first = gate.begin('command-terminal-panel', MOUSE, () => {});
+    target.addEventListener('pointerup', () => first.end());
+    target.dispatchEvent(pointerEvent('pointerup', { buttons: 0 }));
+    const next = vi.fn();
+    gate.begin('command-terminal-panel', MOUSE, next);
+    await afterDispatch();
+    expect(next).not.toHaveBeenCalled();
+    expect(gate.isInProgress()).toBe(true);
+  });
+
   it('abandons every gesture when the window loses focus', () => {
     const target = new EventTarget();
     const gate = createManagerResizeGate(target);

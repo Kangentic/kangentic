@@ -2,10 +2,10 @@ import { useState, useCallback, useRef, useEffect, useLayoutEffect } from 'react
 import type { AppConfig } from '../../shared/types';
 import { startPanelDrag } from './panel-drag';
 import { SWITCH_SNAP_WINDOW_MS } from './useTerminalResize';
+import { resolveFoldingEdgeDrag } from '../utils/folding-edge-drag';
 
 const MIN_WIDTH = 200;
 const MAX_WIDTH = 400;
-const COLLAPSE_THRESHOLD = 200;
 const DEFAULT_WIDTH = MAX_WIDTH;
 export const COLLAPSED_STRIP_WIDTH = 36; // matches w-9 Tailwind class
 // Movement below this many px is treated as a click (a no-op); at/past it a resize drag
@@ -95,9 +95,8 @@ export function useSidebarResize(config: Pick<AppConfig, 'sidebarVisible' | 'sid
     if (typeof savedWidth === 'number' && savedWidth >= MIN_WIDTH && savedWidth <= MAX_WIDTH) setWidth(savedWidth);
   }
   // The ref half of that sync, which render cannot do. Keyed on the saved width
-  // and NOT mirrored from `width`: a collapsing drag sets the width to MIN_WIDTH
-  // and then 0 on purpose while the ref keeps the last real width for the
-  // toggle to restore.
+  // and NOT mirrored from `width`: a drag keeps the ref itself, so the toggle
+  // restores the last width the drag left open.
   useLayoutEffect(() => {
     if (typeof savedWidth === 'number' && savedWidth >= MIN_WIDTH && savedWidth <= MAX_WIDTH) latestWidthRef.current = savedWidth;
   }, [savedWidth]);
@@ -134,7 +133,9 @@ export function useSidebarResize(config: Pick<AppConfig, 'sidebarVisible' | 'sid
     const wasClosed = !openRef.current;
     const startWidth = wasClosed ? 0 : latestWidthRef.current;
     let isDragging = false;
-    let didCollapse = false;
+    // Whether the drag shows the strip now. A fold lands while the drag runs,
+    // so the release keeps what the screen shows.
+    let folded = wasClosed;
 
     startPanelDrag(event, {
       // Cursor is set lazily below, only once the drag clears the activation
@@ -150,18 +151,24 @@ export function useSidebarResize(config: Pick<AppConfig, 'sidebarVisible' | 'sid
           document.body.style.cursor = 'col-resize';
         }
 
-        const rawWidth = startWidth + (moveEvent.clientX - startX);
+        // The Command Terminal rail's rule too (`resolveFoldingEdgeDrag`): held at
+        // the minimum down to half of it, folded past that, open again on the way back.
+        const step = resolveFoldingEdgeDrag({
+          raw: startWidth + (moveEvent.clientX - startX),
+          minWidth: MIN_WIDTH,
+          maxWidth: MAX_WIDTH,
+        });
 
-        if (rawWidth < COLLAPSE_THRESHOLD) {
-          // Hold at min width during drag; collapse animates on mouseUp
-          setWidth(MIN_WIDTH);
-          didCollapse = true;
+        if (step.collapsed) {
+          if (!folded) {
+            folded = true;
+            setOpen(false);
+          }
         } else {
-          const newWidth = Math.max(MIN_WIDTH, Math.min(MAX_WIDTH, rawWidth));
-          setWidth(newWidth);
-          latestWidthRef.current = newWidth;
-          didCollapse = false;
-          if (!openRef.current) {
+          setWidth(step.width);
+          latestWidthRef.current = step.width;
+          if (folded || !openRef.current) {
+            folded = false;
             setViewFolded(false);
             setOpen(true);
           }
@@ -172,23 +179,19 @@ export function useSidebarResize(config: Pick<AppConfig, 'sidebarVisible' | 'sid
         if (!isDragging) {
           // A click (or a sub-threshold "dead drag") on the divider is intentionally
           // inert. Collapsing happens only via the PROJECTS-panel chevron or by dragging
-          // the divider closed past COLLAPSE_THRESHOLD, never an accidental click here.
+          // the divider past half the minimum width, never an accidental click here.
           return;
         }
 
         // End resize state first so CSS transition re-enables
         setIsResizing(false);
 
-        if (didCollapse) {
+        if (folded) {
+          // Already the strip on screen: the drag folded it.
           collapsedByDragRef.current = true;
           setViewFolded(false);
+          setOpen(false);
           window.electronAPI.config.set({ sidebarVisible: false });
-          // Animate closed: transition is now active, so setting width to 0
-          // triggers the CSS transition from MIN_WIDTH → 0
-          requestAnimationFrame(() => {
-            setWidth(0);
-            setOpen(false);
-          });
         } else {
           setOpen(true);
           window.electronAPI.config.set({

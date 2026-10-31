@@ -15,6 +15,11 @@ msgstr "{cachedTokenText} 已快取（系統）· {conversationTokenText} 對話
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} 上下文視窗"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, other {顯示其他 # 項}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{pct}% context"
 msgstr "上下文 {pct}%"
@@ -26,6 +31,11 @@ msgstr "剩餘 {remainingPercent}%"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "{toolName} interrupted"
 msgstr "{toolName} 已中斷"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Activity"

@@ -120,4 +120,96 @@ describe('SessionManager.setCommandTerminalLabel', () => {
 
     expect(announced).toEqual([{ id: 'term-1', label: 'Fix the parser' }]);
   });
+
+  it('refuses a terminal the user renamed, so a naming call in flight cannot override it', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-1' });
+    manager.renameCommandTerminal('term-1', 'Auth refactor');
+    expect(manager.setCommandTerminalLabel('term-1', 'Derived name')).toBe(false);
+    expect(labelOf(manager, 'term-1')).toBe('Auth refactor');
+  });
+
+  it('refuses a terminal whose name the user cleared, so the namer stays off', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-1' });
+    manager.renameCommandTerminal('term-1', '');
+    expect(manager.setCommandTerminalLabel('term-1', 'Derived name')).toBe(false);
+    expect(labelOf(manager, 'term-1')).toBeNull();
+  });
+});
+
+describe('SessionManager.renameCommandTerminal', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    manager = new SessionManager();
+  });
+
+  function namedByUser(sessionId: string): boolean | undefined {
+    return getRegistry(manager).get(sessionId)?.commandTerminalNamedByUser;
+  }
+
+  it('replaces a derived name, unlike the first-write-wins setter', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-2' });
+    manager.setCommandTerminalLabel('term-1', 'Derived name');
+    expect(manager.renameCommandTerminal('term-1', 'Auth refactor')).toBe(true);
+    expect(labelOf(manager, 'term-1')).toBe('Auth refactor');
+    expect(namedByUser('term-1')).toBe(true);
+    expect(manager.renameCommandTerminal('term-1', 'DB migration review')).toBe(true);
+    expect(labelOf(manager, 'term-1')).toBe('DB migration review');
+  });
+
+  it('puts the name on one line, trimmed, and cuts it to 64 characters', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-2' });
+    manager.renameCommandTerminal('term-1', '  Fix\n the   parser\t ');
+    expect(labelOf(manager, 'term-1')).toBe('Fix the parser');
+    manager.renameCommandTerminal('term-1', 'x'.repeat(80));
+    expect(labelOf(manager, 'term-1')).toBe('x'.repeat(64));
+  });
+
+  it('clears the name for an empty entry, null, or the slot\'s own title', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-2' });
+    manager.renameCommandTerminal('term-1', 'Auth refactor');
+    expect(manager.renameCommandTerminal('term-1', '   ')).toBe(true);
+    expect(labelOf(manager, 'term-1')).toBeNull();
+    expect(namedByUser('term-1')).toBe(true);
+
+    manager.renameCommandTerminal('term-1', 'Auth refactor');
+    manager.renameCommandTerminal('term-1', null);
+    expect(labelOf(manager, 'term-1')).toBeNull();
+
+    manager.renameCommandTerminal('term-1', 'Auth refactor');
+    manager.renameCommandTerminal('term-1', 'Command Terminal 2');
+    expect(labelOf(manager, 'term-1')).toBeNull();
+  });
+
+  it('announces once per change and nothing for a rename that changes nothing', () => {
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-1' });
+    const announced: Array<{ label: string | null | undefined; namedByUser: boolean | undefined }> = [];
+    manager.on('session-changed', (_id: string, session: { commandTerminalLabel?: string | null; commandTerminalNamedByUser?: boolean }) => {
+      announced.push({ label: session.commandTerminalLabel, namedByUser: session.commandTerminalNamedByUser });
+    });
+
+    expect(manager.renameCommandTerminal('term-1', 'Auth refactor')).toBe(true);
+    expect(manager.renameCommandTerminal('term-1', '  Auth refactor ')).toBe(false);
+
+    expect(announced).toEqual([{ label: 'Auth refactor', namedByUser: true }]);
+  });
+
+  it('marks an unnamed terminal named by the user even when the name stays the fallback', () => {
+    // Clearing a terminal that never had a name changes no text, but it is
+    // still the user's choice, and the namer must stand down after it.
+    register(manager, { id: 'term-1', commandTerminalSlot: 'slot-1' });
+    expect(manager.renameCommandTerminal('term-1', '')).toBe(false);
+    expect(namedByUser('term-1')).toBe(true);
+  });
+
+  it('refuses a task agent, a workflow agent and an unknown session', () => {
+    register(manager, { id: 'agent-1', transient: false });
+    register(manager, { id: 'workflow-1', workflowId: 'workflow-a' });
+    expect(manager.renameCommandTerminal('agent-1', 'Name')).toBe(false);
+    expect(manager.renameCommandTerminal('workflow-1', 'Name')).toBe(false);
+    expect(manager.renameCommandTerminal('gone', 'Name')).toBe(false);
+    expect(labelOf(manager, 'agent-1')).toBeUndefined();
+    expect(labelOf(manager, 'workflow-1')).toBeUndefined();
+  });
 });

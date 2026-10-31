@@ -40,6 +40,39 @@ export interface TileLayout {
 }
 
 /**
+ * A subtree's smallest extent along `axis` ('horizontal' = width): its panes at
+ * `minPane`, added up along a split that runs that way, the widest one across.
+ */
+function minimumExtent(node: TileNode, axis: 'horizontal' | 'vertical', minPane: ContainerSize): number {
+  if (node.kind === 'leaf') return axis === 'horizontal' ? minPane.width : minPane.height;
+  const childMinimums = node.children.map((child) => minimumExtent(child, axis, minPane));
+  return node.direction === axis
+    ? childMinimums.reduce((sum, value) => sum + value, 0)
+    : Math.max(...childMinimums);
+}
+
+/**
+ * Child extents from their fractions, each lifted to its minimum when the
+ * split has room for every minimum, the room taken from the children with the
+ * most to spare. A split too small for the minimums keeps its fractions.
+ */
+function holdMinimums(desired: number[], minimums: number[], extent: number): number[] {
+  if (minimums.reduce((sum, value) => sum + value, 0) > extent) return desired;
+  const extents = desired.slice();
+  let deficit = 0;
+  extents.forEach((value, index) => {
+    if (value < minimums[index]) {
+      deficit += minimums[index] - value;
+      extents[index] = minimums[index];
+    }
+  });
+  if (deficit <= 0) return extents;
+  const spare = extents.map((value, index) => Math.max(0, value - minimums[index]));
+  const totalSpare = spare.reduce((sum, value) => sum + value, 0);
+  return extents.map((value, index) => value - (totalSpare > 0 ? (deficit * spare[index]) / totalSpare : 0));
+}
+
+/**
  * Resolve `tree` against a region `container` pixels in size, placed at `origin`
  * (default the top-left, so the tree fills the whole container). A non-zero
  * `origin` plus a reduced `container` confines the tree to a SUB-REGION of the
@@ -51,6 +84,11 @@ export interface TileLayout {
  *  - `seamPx`: width/height of the draggable seam OVERLAY (also centered on the
  *    split line). Decoupled from the gap so the seam can be a comfortable hit
  *    target that sits ON TOP of flush panes, rather than a visible gutter.
+ *  - `minPane`: a host-arranged layer's pane floor (the Command Terminal's). A
+ *    split holds each child at its minimum while it has room for all of them, so
+ *    a seam dragged toward one side does not leave a pane under the floor when
+ *    the host shrinks to the grid's minimum. The seam's own ratio is kept, so
+ *    room coming back restores the dragged proportions.
  */
 export function resolveTileLayout(
   tree: TileNode,
@@ -58,6 +96,7 @@ export function resolveTileLayout(
   gapPx: number,
   seamPx: number,
   origin: { left: number; top: number } = { left: 0, top: 0 },
+  minPane?: ContainerSize,
 ): TileLayout {
   const rects = new Map<string, PixelRect>();
   const seams: TileSeam[] = [];
@@ -73,13 +112,17 @@ export function resolveTileLayout(
     const extent = horizontal ? rect.width : rect.height;
     const start = horizontal ? rect.left : rect.top;
     const total = node.sizes.reduce((sum, size) => sum + size, 0) || 1;
+    const desired = node.sizes.map((size) => (extent * size) / total);
+    const extents = minPane
+      ? holdMinimums(desired, node.children.map((child) => minimumExtent(child, node.direction, minPane)), extent)
+      : desired;
 
     // Boundaries[i] is the position of the start of child i along the axis;
     // boundaries[N] is the container's far edge. A seam sits on each interior
     // boundary (between child i and i+1).
     const boundaries: number[] = [start];
     for (let childIndex = 0; childIndex < node.children.length; childIndex += 1) {
-      boundaries.push(boundaries[childIndex] + (extent * node.sizes[childIndex]) / total);
+      boundaries.push(boundaries[childIndex] + extents[childIndex]);
     }
     const lastChild = node.children.length - 1;
 

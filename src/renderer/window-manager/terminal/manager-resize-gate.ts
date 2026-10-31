@@ -157,11 +157,18 @@ export function createManagerResizeGate(
     if (!primaryHeld(pointer) || pointer.button === 0) sweep(event.type, pointer.pointerId ?? null);
   };
   // A release normally closes its gesture in the owner's own handler. Look once
-  // the event has finished dispatching, and abandon whatever no handler closed.
+  // the event has finished dispatching, and abandon whatever no handler closed:
+  // only the gestures open at the release. Input outranks the timer, which ran
+  // 61ms late under a fast drag (measured), and by then the next press of the
+  // same pointer had opened a gesture this release never ended.
   const onPointerRelease = (event: Event): void => {
     const pointerId = (event as Event & PointerFields).pointerId ?? null;
     const reason = event.type;
-    setTimeout(() => sweep(reason, pointerId), 0);
+    const openAtRelease = Array.from(gestures).filter((gesture) => pointerId === null || gesture.pointerId === pointerId);
+    if (openAtRelease.length === 0) return;
+    setTimeout(() => {
+      for (const gesture of openAtRelease) abandon(gesture, reason);
+    }, 0);
   };
   const onBlur = (): void => sweep('blur', null);
 

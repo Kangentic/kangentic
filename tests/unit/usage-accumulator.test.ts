@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { UsageAccumulator } from '../../src/main/activity-engine/usage-accumulator';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude';
 import { EventType, IdleReason, RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
 import type { SessionUsage, SessionEvent } from '../../src/shared/types';
 
@@ -596,6 +597,47 @@ describe('UsageAccumulator - rate-limit reset generations', () => {
     expect(cachedWindow('sess-paused', 'seven-day')).toEqual({ usedPercentage: 1, generation: 1 });
     expect(cachedWindow('sess-paused', 'five-hour')).toEqual({ usedPercentage: 70, generation: 0 });
     expect(usage.takeSessionsCaughtUpToReset()).toEqual(['sess-paused']);
+  });
+
+  it('keeps the window a status leaves out, at its last value and in its place, so a reload still has it', () => {
+    // An idle Command Terminal's status.json carried only the seven-day window (measured);
+    // replacing outright emptied the cache the renderer rebuilds its snapshot from on a reload.
+    usage.replaceSessionUsage('sess-a', statusWithBothWindows(30, 40));
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(45));
+    const windows = usage.getUsageCache()['sess-a']?.rateLimits ?? [];
+    expect(windows.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day']);
+    expect(cachedWindow('sess-a', 'five-hour')).toEqual({ usedPercentage: 30, generation: 0 });
+    expect(cachedWindow('sess-a', 'seven-day')).toEqual({ usedPercentage: 45, generation: 0 });
+  });
+
+  it('keeps both windows from a real busy status through a real idle one, Claude parser and all', () => {
+    // The two rate_limits shapes a live Command Terminal wrote on 2026-10-30: after a turn, and idle.
+    const statusJson = (rateLimits: Record<string, unknown>): string => JSON.stringify({
+      context_window: { used_percentage: 11, context_window_size: 1_000_000 },
+      cost: { total_cost_usd: 0.07 },
+      model: { id: 'claude-haiku-5-5', display_name: 'Haiku 5.5' },
+      rate_limits: rateLimits,
+    });
+    const busy = ClaudeStatusParser.parseStatus(statusJson({
+      five_hour: { used_percentage: 11, resets_at: 1793419200 },
+      seven_day: { used_percentage: 38, resets_at: 1793718000 },
+    }));
+    const idle = ClaudeStatusParser.parseStatus(statusJson({ seven_day: { used_percentage: 33, resets_at: 1793718000 } }));
+    usage.replaceSessionUsage('sess-idle', busy!);
+    usage.replaceSessionUsage('sess-idle', idle!);
+    // What a renderer reload rebuilds its snapshot from: both windows, the five-hour one kept.
+    expect(usage.getUsageCache()['sess-idle']?.rateLimits?.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day']);
+    expect(cachedWindow('sess-idle', 'five-hour')?.usedPercentage).toBe(11);
+  });
+
+  it('keeps the last windows through a status that carries none, and has none for a session that never reported', () => {
+    usage.replaceSessionUsage('sess-a', statusWithBothWindows(30, 40));
+    usage.replaceSessionUsage('sess-a', { ...statusWithSevenDay(0), rateLimits: undefined });
+    expect(cachedWindow('sess-a', 'five-hour')).toEqual({ usedPercentage: 30, generation: 0 });
+    expect(cachedWindow('sess-a', 'seven-day')).toEqual({ usedPercentage: 40, generation: 0 });
+
+    usage.replaceSessionUsage('sess-api-key', { ...statusWithSevenDay(0), rateLimits: undefined });
+    expect(usage.getUsageCache()['sess-api-key']?.rateLimits).toBeUndefined();
   });
 
   it('holds a caught-up cache against a stale repeat whose resetsAt jitters within the epsilon', () => {

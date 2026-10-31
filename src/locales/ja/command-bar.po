@@ -7,10 +7,36 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: ja\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name} (要対応)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name} (待機中)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name} (起動中)"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name} (作業中)"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
 msgstr "ターミナルを追加"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "ターミナルの起動後に利用できます"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -22,7 +48,7 @@ msgstr "コマンドターミナル"
 msgid "Command Terminals"
 msgstr "コマンドターミナル"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Commands"
 msgstr "コマンド"
@@ -36,6 +62,11 @@ msgstr "ブランチをチェックアウトできませんでした"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "ウィンドウを開けませんでした"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "ターミナルの名前を変更できませんでした"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -72,11 +103,6 @@ msgstr "以前"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "ターミナルを終了します。使用済みの場合、会話は「以前」に残ります"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-#, fuzzy
-msgid "Expand {name}"
-msgstr "{name} を展開"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Expand terminal"
@@ -87,6 +113,18 @@ msgstr "ターミナルを展開"
 msgid "Failed to load the Changes panel"
 msgstr "変更パネルを読み込めませんでした"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "{name} へ移動"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "非表示"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Hide changes"
@@ -101,6 +139,11 @@ msgstr "コマンドターミナルを非表示"
 #, fuzzy
 msgid "Hide panel"
 msgstr "パネルを非表示"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
+msgstr "レールを非表示"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -118,7 +161,7 @@ msgstr "パネルを最大化"
 msgid "Move to its own window"
 msgstr "専用ウィンドウに移動"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Open folder"
 msgstr "フォルダーを開く"
@@ -132,6 +175,21 @@ msgstr "新しいウィンドウで開く"
 #, fuzzy
 msgid "Open project folder"
 msgstr "プロジェクト フォルダーを開く"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "レールの幅"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "名前の変更"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "ターミナルの名前を変更"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -159,10 +217,16 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "実行中"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Show changes"
 msgstr "変更を表示"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "レールを表示"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
@@ -179,6 +243,7 @@ msgstr "{name} を停止"
 msgid "Stop one of the four to add another"
 msgstr "追加するには 4 つのうち 1 つを停止してください"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
 msgid "Stop terminal"
@@ -189,15 +254,20 @@ msgstr "ターミナルを停止"
 msgid "Stopping terminal"
 msgstr "ターミナルを停止しています"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Stopping..."
 msgstr "停止しています..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
 msgid "Switch branch"
 msgstr "ブランチを切り替え"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "ターミナル名"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 #, fuzzy
@@ -218,8 +288,3 @@ msgstr "無題の会話"
 #, fuzzy
 msgid "Wait for the terminals to start."
 msgstr "ターミナルの起動をお待ちください。"
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#, fuzzy
-msgid "Widen the panel to restore the grid"
-msgstr "パネルを広げるとグリッドが復元されます"

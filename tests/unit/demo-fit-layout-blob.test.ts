@@ -13,8 +13,9 @@
  * has been evaluated by buildDemoPreConfig.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { buildDemoPreConfig } from '../captures/helpers/demo-dataset';
+import { buildDemoPreConfig, SAMPLE_INSTALL_RAIL_WIDTH_PX } from '../captures/helpers/demo-dataset';
 import { buildCellWidthTable, loadDemoScrollback } from '../captures/helpers/demo-scrollback';
+import { savedRailWidth } from '../../src/shared/command-terminal-rail';
 
 interface Geometry { x?: number; w?: number; h?: number; y?: number }
 interface ManagedWindow { id: string; fitToRecording?: string; geometry?: Geometry }
@@ -209,7 +210,7 @@ describe('fitLayoutBlob: a marked session the recordings index does carry', () =
 });
 
 interface Panel { x: number; y: number; w: number; h: number; maximized: boolean; fitToRecording?: string }
-type FitCommandTerminalPanel = (panel: Panel | null, measure: Measure) => Panel | null;
+type FitCommandTerminalPanel = (panel: Panel | null, measure: Measure, railWidth?: number) => Panel | null;
 
 const COMMAND_PANEL_BORDER_PX = extractConstant(script, 'COMMAND_PANEL_BORDER_PX');
 const COMMAND_RAIL_WIDTH_PX = extractConstant(script, 'COMMAND_RAIL_WIDTH_PX');
@@ -243,6 +244,29 @@ describe('fitCommandTerminalPanel', () => {
     expect(result).toMatchObject({ y: 0.14, h: 0.72, maximized: false });
     // The registry's own object is never edited.
     expect(panel.fitToRecording).toBe('sess-1');
+  });
+
+  it('falls back to the rail width the sample install seeds, a width the app keeps as saved', () => {
+    // The seed writes the rail into the sample install's config, and the fit falls
+    // back to the same width for a frame whose config carries none: two copies that
+    // drifted apart would mis-fit every Command Terminal scene by the difference.
+    const seeded = /commandTerminalRail = \{ width: (\d+), collapsed: false \}/.exec(script);
+    expect(seeded, 'the seed writes the rail into the sample install config').not.toBeNull();
+    expect(Number(seeded?.[1])).toBe(COMMAND_RAIL_WIDTH_PX);
+    expect(COMMAND_RAIL_WIDTH_PX).toBe(SAMPLE_INSTALL_RAIL_WIDTH_PX);
+    expect(savedRailWidth(COMMAND_RAIL_WIDTH_PX)).toBe(COMMAND_RAIL_WIDTH_PX);
+  });
+
+  it('widens the panel by the rail width the frame config gives, not the fallback', () => {
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
+    const fit = liftPanelFit(recordings, 1024);
+    const panel: Panel = { x: 0.1, y: 0.14, w: 0.5, h: 0.72, maximized: false, fitToRecording: 'sess-1' };
+    const measure = () => ({ width: 8, gutter: 15, padding: 8 });
+    const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
+    const fittedAt = (railWidth: number) =>
+      (COMMAND_PANEL_BORDER_PX + railWidth + WINDOW_FRAME_BORDER_PX + 15 + 8 + (120 + 0.5) * 8) / frameWidth;
+    expect(fit(panel, measure, 360)?.w).toBeCloseTo(fittedAt(360), 10);
+    expect(fit(panel, measure, 36)?.w).toBeCloseTo(fittedAt(36), 10);
   });
 
   it('passes an unmarked panel through as the same object, and null as null', () => {

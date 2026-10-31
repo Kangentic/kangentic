@@ -10,6 +10,7 @@ import type {
 } from './announcements';
 import type { AppLocale } from './i18n/locales';
 import { PREVIOUS_TERMINAL_DEFAULTS } from './terminal-native-defaults';
+import { COMMAND_RAIL_DEFAULT_WIDTH_PX, type CommandTerminalRailState } from './command-terminal-rail';
 
 // === Database Models ===
 
@@ -1362,14 +1363,18 @@ export interface Session {
    *  reason as the slot: recovery restores it, so a recovered terminal's header
    *  branch pill is not blank. */
   commandTerminalBranch?: string | null;
-  /** For a transient session, the name auto-derived from its first prompt. Null
-   *  until one is derived, and for task agents.
+  /** For a transient session, its name: the one the user gave it, else the one
+   *  auto-derived from its first prompt. Null until either exists, and for task
+   *  agents.
    *
    *  Derived in main (`command-terminal-namer.ts`), so a terminal started from a
    *  phone, or in a project the desktop does not have open, is named too. Main
    *  announces the name on `session-changed`, and the window title, the Agent
    *  Monitor and the phone all read it from this row. */
   commandTerminalLabel?: string | null;
+  /** The user renamed this Command Terminal (or cleared its name), so the namer
+   *  never names it: a manual name always wins over the auto-derived one. */
+  commandTerminalNamedByUser?: boolean;
   /**
    * Someone typed, pasted or sent something into this session's terminal
    * (`writeCarriesUserContent`, src/shared/terminal-input-content.ts), or it
@@ -4848,6 +4853,14 @@ export interface AppConfig {
    *  until the panel is first moved, resized or maximized. Renderer-authoritative,
    *  always written whole. See src/renderer/components/command-bar/. */
   commandTerminalPanel: CommandTerminalPanelGeometry | null;
+  /** GLOBAL width of the Command Terminal panel's rail, as the user dragged its
+   *  edge (200 to 400, 300 by default), and whether it is folded to its 36px
+   *  strip. Shared across all projects and the detached Command Terminal window,
+   *  and kept across restarts. A narrow window shows the rail narrower without
+   *  rewriting it. Written by both the panel and the detached window, so the
+   *  renderer re-reads it from disk rather than preserving its own copy. See
+   *  src/shared/command-terminal-rail.ts. */
+  commandTerminalRail: CommandTerminalRailState;
   /** GLOBAL in-app layout for the Agent Monitor's task-detail window layer: which
    *  details are open over the monitor and how they are arranged. One blob, not
    *  keyed by project, because the monitor is cross-project by design (its windows
@@ -5115,6 +5128,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   workspaceByProject: {},
   commandTerminalWorkspace: null,
   commandTerminalPanel: null,
+  commandTerminalRail: { width: COMMAND_RAIL_DEFAULT_WIDTH_PX, collapsed: false },
   monitorWorkspace: null,
   discoveredModelsByAgent: {},
   discoveredContextWindowsByAgent: {},
@@ -8061,8 +8075,12 @@ export interface ElectronAPI {
     /** Mirror where a Command Terminal's checkout actually sits, re-derived
      *  from live HEAD by the renderer, onto its live registry row so the
      *  Monitor row and a post-reload adopt agree with the pill. Last write
-     *  wins, unlike the label: HEAD moves, and the newest reading is true. */
+     *  wins: HEAD moves, and the newest reading is true. */
     setTransientBranch: (sessionId: string, branch: string) => Promise<void>;
+    /** Rename a Command Terminal. Null (or an empty or slot-title name) clears it
+     *  back to "Command Terminal N". Either way the namer stands down for good.
+     *  Resolves whether the name changed. */
+    renameTransient: (sessionId: string, name: string | null) => Promise<boolean>;
     /** A project's earlier Command Terminal conversations, newest first. */
     listCommandTerminalHistory: (projectId: string) => Promise<CommandTerminalHistoryEntry[]>;
     /** A project's earlier conversations changed: re-list them. */

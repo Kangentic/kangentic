@@ -4,6 +4,7 @@ import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
 import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
+import { normalizeCommandTerminalName } from '../../shared/command-terminal-name';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -3648,22 +3649,46 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
-   * Record a Command Terminal's auto-derived name (`CommandTerminalNamer`).
+   * Record a Command Terminal's auto-derived name (`CommandTerminalNamer`), or
+   * the name a resume seeds it with.
    *
    * First write wins, so a later re-derivation cannot silently rename a
-   * terminal the user already knows by name. An applied name is announced on
+   * terminal the user already knows by name, and a terminal the user named
+   * (or cleared) refuses it outright, which also covers a naming call still in
+   * flight when the user renamed. An applied name is announced on
    * 'session-changed', which carries it to the renderer's replica (the window
    * title reads it there), the Agent Monitor, and a phone's board feed.
    * Returns whether it applied; unknown or non-transient sessions are ignored.
    */
   setCommandTerminalLabel(sessionId: string, label: string): boolean {
     const session = this.registry.get(sessionId);
-    if (!session || !isCommandTerminalSession(session) || session.commandTerminalLabel) return false;
+    if (!session || !isCommandTerminalSession(session)) return false;
+    if (session.commandTerminalLabel || session.commandTerminalNamedByUser) return false;
     const trimmed = label.trim();
     if (!trimmed) return false;
     session.commandTerminalLabel = trimmed;
     this.emit('session-changed', sessionId, toSession(session));
     return true;
+  }
+
+  /**
+   * The user renames a Command Terminal. Unlike the derived name this replaces
+   * whatever the terminal is called, and a null, empty or slot-title name
+   * clears it back to "Command Terminal N" (`normalizeCommandTerminalName`).
+   * Either way the terminal is marked named by the user, so the namer never
+   * names it afterward. Announced once on 'session-changed'; returns whether
+   * the name changed. Unknown or non-Command-Terminal sessions are refused.
+   */
+  renameCommandTerminal(sessionId: string, name: string | null): boolean {
+    const session = this.registry.get(sessionId);
+    if (!session || !isCommandTerminalSession(session)) return false;
+    const label = normalizeCommandTerminalName(name, session.commandTerminalSlot);
+    const changed = (session.commandTerminalLabel ?? null) !== label;
+    if (!changed && session.commandTerminalNamedByUser) return false;
+    session.commandTerminalLabel = label;
+    session.commandTerminalNamedByUser = true;
+    this.emit('session-changed', sessionId, toSession(session));
+    return changed;
   }
 
   /**

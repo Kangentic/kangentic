@@ -25,6 +25,7 @@ import type {
 } from '../../../src/shared/types';
 import { boardEnds, routeSteps, taskPlace, type StepColumn } from '../../../src/shared/workflow-route';
 import { resolveEmbeddingModel } from '../../../src/shared/embedding-models';
+import { COMMAND_RAIL_COLLAPSED_WIDTH_PX } from '../../../src/shared/command-terminal-rail';
 import { NO_SOURCE, sourceStatusOf, sumIndexCounts, summaryStatusOf } from '../../../src/shared/index-summary';
 import archivedRunsFixture from '../fixtures/demo/archived/runs.json';
 import historyFixture from '../fixtures/demo/archived/history.json';
@@ -202,6 +203,17 @@ interface DemoBacklogItem {
   external_url: string | null;
   createdDaysAgo: number;
 }
+
+/**
+ * The sample install's Command Terminal rail width (`AppConfig.commandTerminalRail`): 248px, a
+ * width a person can drag the rail to, not the app's 300px default. The Command Terminal
+ * recordings were measured beside the rail when it was fixed at 248, and at 300 each pane of a
+ * tiled pair is a few columns short of its tiled recording, so the frame plays the single one
+ * instead. Recording the tiled Command Terminal runs and boots again at the default's grid lets
+ * this go back to the default; the spring-petclinic and online-boutique boots are Codex runs,
+ * which need Codex credits (demo/README.md, Live replay).
+ */
+export const SAMPLE_INSTALL_RAIL_WIDTH_PX = 248;
 
 // ---------------------------------------------------------------- ids
 export const PROJECT_CONTOSO = 'proj-contoso-web';
@@ -1597,6 +1609,9 @@ export function buildDemoPreConfig(options: {
         // Semantic search on, as it was when the maps were built, so Settings and the map's Index
         // panel describe the same index.
         state.config.knowledgeGraph = Object.assign({}, data.knowledgeGraphConfig);
+        // The Command Terminal rail at the width its recordings were measured beside
+        // (SAMPLE_INSTALL_RAIL_WIDTH_PX says why).
+        state.config.commandTerminalRail = { width: ${SAMPLE_INSTALL_RAIL_WIDTH_PX}, collapsed: false };
         mockState = state;
         // The maps themselves are answered by the Knowledge Graph section below, when asked.
         return {
@@ -1910,15 +1925,24 @@ export function buildDemoPreConfig(options: {
         return marked ? Object.assign({}, blob, { windows: windows }) : blob;
       }
       // The Command Terminal panel's 1px border on each side and its rail: what sits beside a lone
-      // terminal's window frame inside the panel (CommandTerminalPanel, CommandTerminalRail).
+      // terminal's window frame inside the panel (CommandTerminalPanel, CommandTerminalRail). The
+      // rail is the width the frame's config gives it; this is the sample install's
+      // (SAMPLE_INSTALL_RAIL_WIDTH_PX), for a config that carries none.
       var COMMAND_PANEL_BORDER_PX = 2;
-      var COMMAND_RAIL_WIDTH_PX = 248;
+      var COMMAND_RAIL_WIDTH_PX = ${SAMPLE_INSTALL_RAIL_WIDTH_PX};
+      var COMMAND_RAIL_COLLAPSED_WIDTH_PX = ${COMMAND_RAIL_COLLAPSED_WIDTH_PX};
+      /** The rail's width in a config: its strip when folded, its saved width when open. */
+      function commandRailWidthOf(rail) {
+        if (!rail) return COMMAND_RAIL_WIDTH_PX;
+        if (rail.collapsed === true) return COMMAND_RAIL_COLLAPSED_WIDTH_PX;
+        return typeof rail.width === 'number' ? rail.width : COMMAND_RAIL_WIDTH_PX;
+      }
       // The Command Terminal panel a scene marks with fitToRecording, sized so its one terminal is
       // exactly as wide as that session's recording, the way fitLayoutBlob sizes a floating window.
       // The panel lays its terminal out itself, so the width goes on the panel: the rail, the
       // panel's border, the window frame's border and the scrollbar gutter, then the columns. The
       // panel is copied, not edited, for the same reason as a layout blob.
-      function fitCommandTerminalPanel(panel, measure) {
+      function fitCommandTerminalPanel(panel, measure, railWidth) {
         if (!panel || typeof panel.fitToRecording !== 'string') return panel;
         var fitted = Object.assign({}, panel);
         var sessionId = fitted.fitToRecording;
@@ -1931,7 +1955,8 @@ export function buildDemoPreConfig(options: {
         var cell = measure();
         if (!cell) return fitted;
         var frameWidth = Math.max(document.documentElement.clientWidth || 0, FIT_REFERENCE_FRAME_WIDTH);
-        var chrome = COMMAND_PANEL_BORDER_PX + COMMAND_RAIL_WIDTH_PX + WINDOW_FRAME_BORDER_PX + cell.gutter + cell.padding;
+        var rail = typeof railWidth === 'number' ? railWidth : COMMAND_RAIL_WIDTH_PX;
+        var chrome = COMMAND_PANEL_BORDER_PX + rail + WINDOW_FRAME_BORDER_PX + cell.gutter + cell.padding;
         var width = Math.min(1, (chrome + (indexed.cols + 0.5) * cell.width) / frameWidth);
         fitted.x = (1 - width) / 2;
         fitted.w = width;
@@ -1961,7 +1986,9 @@ export function buildDemoPreConfig(options: {
         // layer; they are fitted here all the same, since this is the one config every later read
         // returns.
         if (config.commandTerminalWorkspace) config.commandTerminalWorkspace = fitLayoutBlob(config.commandTerminalWorkspace, measure);
-        if (config.commandTerminalPanel) config.commandTerminalPanel = fitCommandTerminalPanel(config.commandTerminalPanel, measure);
+        if (config.commandTerminalPanel) {
+          config.commandTerminalPanel = fitCommandTerminalPanel(config.commandTerminalPanel, measure, commandRailWidthOf(config.commandTerminalRail));
+        }
       }
       ['get', 'getGlobal'].forEach(function (method) {
         var original = window.electronAPI.config[method];

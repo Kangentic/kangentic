@@ -16,7 +16,7 @@
  */
 
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, FolderOpen, FolderGit, GitBranch, GitCompare, Loader2, Maximize2, Minimize2, SquareChevronRight } from 'lucide-react';
+import { FolderGit, GitCompare, Loader2, Maximize2, Minimize2, Pencil } from 'lucide-react';
 import { useShallow } from 'zustand/react/shallow';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -26,7 +26,7 @@ import { LaunchOverlay } from '../LaunchOverlay';
 import { HeaderActionButton } from '../HeaderActionButton';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
-import { KebabMenu, KebabMenuItem, KebabMenuDivider } from '../KebabMenu';
+import { KebabMenu } from '../KebabMenu';
 import { CommandPalettePopover } from '../dialogs/task-detail/CommandPalettePopover';
 import { useHeaderPillOverflow, type HeaderPillSpec } from '../dialogs/task-detail/useHeaderPillOverflow';
 import { resolveTerminalBackground } from '../../hooks/useTerminal';
@@ -40,16 +40,18 @@ import { useBoardStore } from '../../stores/board-store';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useToastStore } from '../../stores/toast-store';
-import { resolveShortcutCommand } from '../../../shared/template-vars';
-import { ShortcutGlyph, shortcutIcon } from '../../utils/swimlane-icons';
+import { shortcutIcon } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
-import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { useLayerStore, windowIdsInReadingOrder } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
+import { CommandTerminalMenuItems } from './CommandTerminalMenuItems';
+import { runCommandTerminalShortcut } from './command-terminal-shortcuts';
+import { CommandTerminalNameField } from './CommandTerminalNameField';
+import { useCommandTerminalRename } from './useCommandTerminalRename';
 import { StopButtonIcon } from './StopButtonIcon';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import { startCommandTerminalSwapDrag } from './swap-drag';
@@ -136,10 +138,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       terminalBackground: resolveTerminalBackground(useConfigStore.getState().config.terminal.colors),
     });
   }, [swapTargetIds, windowId, swapWindows]);
-  const { hideLayer, resumeBeside, gridFits } = useCommandTerminalLayer();
-  // While the panel is too small for the grid, the layer keeps one terminal
-  // expanded, so there is no grid to restore to.
-  const restoreDisabledReason = isExpanded && !gridFits ? t`Widen the panel to restore the grid` : null;
+  const { hideLayer, resumeBeside } = useCommandTerminalLayer();
 
   // What this window attaches to at mount, decided ONCE, before the first
   // paint, so the mount effect below only performs side effects and the two
@@ -199,7 +198,19 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   const leadingRef = useRef<HTMLDivElement>(null);
   const trailingRef = useRef<HTMLDivElement>(null);
   const titleSpanRef = useRef<HTMLSpanElement>(null);
+  // The rename pencil sits right after the title and never folds, so the
+  // overflow calc reserves it with the title.
+  const renamePencilRef = useRef<HTMLButtonElement>(null);
   const pillsRef = useRef<HTMLDivElement>(null);
+  // The terminal's name, and its name field. Main derives a name from the first
+  // prompt or takes the user's, and stamps it on the session row, so it is read
+  // from the replica, never held here. `commandTerminalDisplayName` (inside the
+  // hook) is shared with the Agent Monitor, a phone's snapshot and the push
+  // alert, so all four print the same name; until there is one, the slot number
+  // tells the terminals apart, since every other fact in this header (agent,
+  // model, branch, cwd) is the same for all of a project's terminals.
+  const rename = useCommandTerminalRename(sessionId, slot);
+  const renameDisabledReason = sessionId ? null : t`Available once the terminal starts`;
   // The Commands palette anchors to its pill when visible, else to the kebab (so
   // it still opens after the pill has folded into the overflow menu).
   const kebabWrapRef = useRef<HTMLDivElement>(null);
@@ -226,7 +237,12 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     return specs;
   }, [projectPath, headerShortcuts]);
 
-  const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs);
+  // Frozen while the name field is open: it replaces the title the calc
+  // measures, and nothing in the header may shift while the user types.
+  const hiddenPillIds = useHeaderPillOverflow(headerRef, leadingRef, trailingRef, titleSpanRef, pillsRef, pillSpecs, {
+    titleSuffixRef: renamePencilRef,
+    frozen: rename.editing,
+  });
   const showPill = (id: string) => !hiddenPillIds.has(id);
 
   // A header-only shortcut that folded must surface in the kebab so the overflow
@@ -246,18 +262,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   );
 
   const projectId = useProjectStore((s) => s.currentProject?.id ?? null);
-  // Main derives the terminal's name from its first prompt and stamps it on the
-  // session row, so it is read from the replica, not from window state.
-  const transientLabel = useSessionStore((state) => {
-    if (!sessionId) return null;
-    return state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null;
-  });
-  // The derived name wins when it exists; until then the slot number is what
-  // makes two terminals tellable apart, since every other fact in this header
-  // (agent, model, branch, cwd) is identical across a project's terminals by
-  // construction. `commandTerminalDisplayName` is shared with the Agent Monitor,
-  // a phone's snapshot and the push alert, so all four print the same name.
-  const windowTitle = commandTerminalDisplayName(transientLabel, slot);
+  const windowTitle = rename.displayName;
   // The branch is read from the pairing map, never held here: every path that
   // used to set it locally (spawn, adopt, a picker switch) already writes the
   // map entry, and the layer's HEAD tracker (`useTrackHeadBranch`) corrects
@@ -529,6 +534,35 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
     if (mountedRef.current) setStopping(false);
   }, [changeLayout, closeWindow, windowId, slot, stopping]);
 
+  // Enter or Escape in the name field hands the keyboard back to this terminal.
+  const focusThisTerminal = useCallback(() => {
+    // arrival-focus-ok: the user's own Enter or Escape in this terminal's name
+    // field, which they opened from its header; never an arriving terminal.
+    document.querySelector<HTMLElement>(`[data-testid="window-frame-${windowId}"] .xterm-helper-textarea`)?.focus();
+  }, [windowId]);
+
+  // What a rail row's menu (or a collapsed-rail chip's) asked of this terminal:
+  // the rail expanded it and left the request, and the window opens the thing
+  // where the user can see it. One frame later, so the expand that made this
+  // window the visible one has committed (it is `inert` until then).
+  const startRename = rename.startEditing;
+  const takeWindowAction = useCallback(() => {
+    const currentProjectId = useProjectStore.getState().currentProject?.id ?? null;
+    if (!currentProjectId) return;
+    const action = useSessionStore.getState().takeCommandTerminalWindowAction(currentProjectId, slot);
+    if (!action) return;
+    requestAnimationFrame(() => {
+      if (!mountedRef.current) return;
+      if (action === 'commands') setShowCommandPalette(true);
+      else if (action === 'switch-branch') setBranchMenuOpen(true);
+      else if (action === 'toggle-changes') handleToggleChanges();
+      else startRename();
+    });
+  }, [slot, handleToggleChanges, startRename]);
+  useEffect(() => useSessionStore.subscribe((state, previous) => {
+    if (state.pendingCommandTerminalWindowActions !== previous.pendingCommandTerminalWindowActions) takeWindowAction();
+  }), [takeWindowAction]);
+
   const handleCommandSelect = useCallback((command: AgentCommand) => {
     setShowCommandPalette(false);
     if (!sessionId) return;
@@ -536,14 +570,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   }, [sessionId]);
 
   const handleShortcutExecute = useCallback((action: { command: string }) => {
-    const cwd = projectPath ?? '';
-    const resolved = resolveShortcutCommand(action.command, {
-      cwd,
-      branchName: branch ?? '',
-      taskTitle: '',
-      projectPath: cwd,
-    });
-    window.electronAPI.shell.exec(resolved, cwd);
+    runCommandTerminalShortcut(action, projectPath, branch);
   }, [projectPath, branch]);
 
   return (
@@ -581,22 +608,58 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           </Tooltip>
         </div>
 
-        {/* Title - the overflow calc reserves only a ~50ch floor (not the full
-            width), so pills reclaim the space above it. The panel moves as a
-            whole by its own header, so a terminal's title drags nothing. */}
-        <div className="flex-1 min-w-[64px] truncate">
-          {/* Inline span so its scrollWidth measures the TEXT width (not the
-              flex-grown div); useHeaderPillOverflow reserves up to a ~50ch floor
-              of that width for the title and lets the pills reclaim the rest. */}
-          <Tooltip label={windowTitle}>
-            <span
-              ref={titleSpanRef}
-              className="text-base font-semibold text-fg truncate"
-              data-testid="command-bar-label"
-            >
-              {windowTitle}
-            </span>
-          </Tooltip>
+        {/* Title and its rename pencil - the overflow calc reserves only a ~50ch
+            floor of the title (not the full width) plus the pencil, so pills
+            reclaim the space above it. The panel moves as a whole by its own
+            header, so a terminal's title drags nothing. While the user renames,
+            the name field takes the place of both. */}
+        <div className="flex flex-1 min-w-[64px] items-center gap-1.5">
+          {rename.editing ? (
+            <CommandTerminalNameField
+              initialName={windowTitle}
+              slot={slot}
+              onCommit={(value, byKey) => {
+                rename.commit(value);
+                if (byKey) focusThisTerminal();
+              }}
+              onCancel={() => {
+                rename.cancel();
+                focusThisTerminal();
+              }}
+              className="text-base font-semibold leading-6"
+              data-testid="command-bar-name-field"
+            />
+          ) : (
+            <>
+              {/* Content-sized span so its scrollWidth measures the TEXT width;
+                  useHeaderPillOverflow reserves up to a ~50ch floor of it. A long
+                  name is cut short before the pencil, which never moves out. */}
+              <Tooltip label={windowTitle}>
+                <span
+                  ref={titleSpanRef}
+                  className="min-w-0 text-base font-semibold text-fg truncate"
+                  data-testid="command-bar-label"
+                >
+                  {windowTitle}
+                </span>
+              </Tooltip>
+              {/* The board column header's pattern: a small pencil right after the
+                  name it changes, faint at rest. */}
+              <Tooltip label={tipLabel({ disabled: sessionId === null, disabledReason: renameDisabledReason, tip: t`Rename terminal` })}>
+                <button
+                  ref={renamePencilRef}
+                  type="button"
+                  onClick={rename.startEditing}
+                  disabled={sessionId === null}
+                  className="inline-flex h-[22px] w-[22px] flex-shrink-0 items-center justify-center rounded text-fg-faint transition-colors hover:bg-surface-hover hover:text-fg-secondary disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-fg-faint"
+                  aria-label={t`Rename terminal`}
+                  data-testid="command-bar-rename"
+                >
+                  <Pencil size={14} />
+                </button>
+              </Tooltip>
+            </>
+          )}
         </div>
 
         {/* Quick-access pills - each wrapped with `data-pill-id` so the overflow
@@ -665,56 +728,23 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           <div ref={kebabWrapRef} className="flex-shrink-0">
             <KebabMenu>
               {(close) => (
-                <>
-                  {projectPath && (
-                    <KebabMenuItem
-                      icon={<FolderOpen size={14} />}
-                      label={t`Open folder`}
-                      onClick={() => { close(); window.electronAPI.shell.openPath(projectPath); }}
-                    />
-                  )}
-                  <KebabMenuItem
-                    icon={<SquareChevronRight size={14} />}
-                    label={t`Commands`}
-                    onClick={() => { close(); setShowCommandPalette(true); }}
-                  />
-                  <KebabMenuItem
-                    icon={<GitBranch size={14} />}
-                    label={t`Switch branch`}
-                    onClick={() => { close(); setBranchMenuOpen(true); }}
-                    data-testid="command-bar-kebab-switch-branch"
-                  />
-                  {projectPath && (
-                    <KebabMenuItem
-                      icon={<GitCompare size={14} />}
-                      label={changesOpen ? t`Hide changes` : t`Show changes`}
-                      onClick={() => { close(); handleToggleChanges(); }}
-                    />
-                  )}
-                  {overflowMenuShortcuts.length > 0 && (
-                    <>
-                      <KebabMenuDivider />
-                      {overflowMenuShortcuts.map((action) => (
-                        <KebabMenuItem
-                          key={action.id ?? action.label}
-                          icon={<ShortcutGlyph name={action.icon} size={14} />}
-                          label={action.label}
-                          onClick={() => { close(); handleShortcutExecute(action); }}
-                          data-testid={`command-bar-kebab-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                        />
-                      ))}
-                    </>
-                  )}
-                  <KebabMenuDivider />
-                  <KebabMenuItem
-                    icon={<CircleStop size={14} />}
-                    label={stopping ? t`Stopping...` : t`Stop terminal`}
-                    onClick={() => { close(); handleTerminate(); }}
-                    disabled={stopping}
-                    destructive
-                    data-testid="command-bar-kebab-stop"
-                  />
-                </>
+                // The same list a Running row's right-click shows.
+                <CommandTerminalMenuItems
+                  close={close}
+                  testIdPrefix="command-bar-kebab"
+                  onRename={rename.startEditing}
+                  renameDisabledReason={renameDisabledReason}
+                  projectPath={projectPath}
+                  onOpenFolder={() => { if (projectPath) window.electronAPI.shell.openPath(projectPath); }}
+                  onCommands={() => setShowCommandPalette(true)}
+                  onSwitchBranch={() => setBranchMenuOpen(true)}
+                  changesOpen={changesOpen}
+                  onToggleChanges={handleToggleChanges}
+                  shortcuts={overflowMenuShortcuts}
+                  onShortcut={handleShortcutExecute}
+                  stopping={stopping}
+                  onStop={() => { void handleTerminate(); }}
+                />
               )}
             </KebabMenu>
           </div>
@@ -734,20 +764,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
 
           {/* Expand fills the panel with this terminal; the others keep running
               behind it and list in the rail. Only beside another terminal: a
-              lone one already fills the panel. */}
+              lone one already fills the panel. Restore is never off: the panel
+              grows to fit the grid again. */}
           {canExpand && (
-            <Tooltip
-              label={tipLabel({
-                disabled: restoreDisabledReason !== null,
-                disabledReason: restoreDisabledReason,
-                tip: isExpanded ? t`Restore the grid` : t`Expand terminal`,
-              })}
-            >
+            <Tooltip label={isExpanded ? t`Restore the grid` : t`Expand terminal`}>
               <button
                 type="button"
                 onClick={handleToggleExpanded}
-                disabled={restoreDisabledReason !== null}
-                className={`p-1.5 rounded transition-colors flex-shrink-0 disabled:cursor-not-allowed disabled:opacity-40 ${
+                className={`p-1.5 rounded transition-colors flex-shrink-0 ${
                   isExpanded ? 'bg-surface-hover text-fg' : 'text-fg-faint hover:text-fg-tertiary hover:bg-surface-hover'
                 }`}
                 aria-label={isExpanded ? t`Restore the grid` : t`Expand terminal`}

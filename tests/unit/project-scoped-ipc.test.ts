@@ -71,6 +71,10 @@ const ALLOWLIST_CHANNELS = new Set([
   // re-derived by the renderer and mirrored onto the in-memory registry row.
   // A Command Terminal has no task and no project-scoped record.
   'SESSION_SET_TRANSIENT_BRANCH',
+  // By-session-id: the user's rename lands on the live registry row, and the
+  // history row it updates is found through the session's OWN projectId, never
+  // the ambient current project.
+  'SESSION_RENAME_TRANSIENT',
 ]);
 
 interface InvokeCall {

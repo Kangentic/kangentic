@@ -8,7 +8,7 @@
  */
 
 import { SquarePlus } from 'lucide-react';
-import { Trans } from '@lingui/react/macro';
+import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 
@@ -16,10 +16,29 @@ interface NewTerminalButtonProps {
   onNewTerminal: () => void;
   /** Why it is off right now (every slot taken), or null when it is on. */
   disabledReason: string | null;
+  /** The collapsed rail's form: the plus alone, centred on the open button's row. */
+  compact?: boolean;
 }
 
-export function NewTerminalButton({ onNewTerminal, disabledReason }: NewTerminalButtonProps) {
+export function NewTerminalButton({ onNewTerminal, disabledReason, compact = false }: NewTerminalButtonProps) {
+  const { t } = useLingui();
   const disabled = disabledReason !== null;
+  if (compact) {
+    return (
+      <Tooltip label={tipLabel({ disabled, disabledReason, tip: t`Add terminal` })}>
+        <button
+          type="button"
+          onClick={onNewTerminal}
+          disabled={disabled}
+          className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-accent/30 bg-accent/15 text-accent-fg transition-colors hover:bg-accent/25 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-accent/15"
+          aria-label={t`Add terminal`}
+          data-testid="command-terminal-new"
+        >
+          <SquarePlus size={16} strokeWidth={2.25} />
+        </button>
+      </Tooltip>
+    );
+  }
   return (
     <Tooltip label={tipLabel({ disabled, disabledReason })}>
       <button

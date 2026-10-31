@@ -17,6 +17,11 @@ msgstr "{cachedTokenText} в кеше (система) · {conversationTokenText
 msgid "{contextLabel} context window"
 msgstr "Контекстное окно {contextLabel}"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {Показать ещё #} few {Показать ещё #} many {Показать ещё #} other {Показать ещё #}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "Осталось {remainingPercent}%"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName}: прервано"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

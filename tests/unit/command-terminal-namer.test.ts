@@ -157,6 +157,19 @@ describe('CommandTerminalNamer', () => {
     expect(summarize).not.toHaveBeenCalled();
   });
 
+  it('leaves a terminal the user cleared alone, spending no agent resolve and no rate-limit slot', async () => {
+    // The user cleared the name before the first prompt: the label is empty,
+    // but the user's choice still wins over a derived name.
+    sessionManager.sessions.set('term-1', terminal({ commandTerminalLabel: null, commandTerminalNamedByUser: true }));
+
+    sessionManager.emit('event', 'term-1', prompt('hello'));
+    expect(resolveNamingAgent).not.toHaveBeenCalled();
+    await Promise.resolve();
+
+    expect(tryAcquireSlot).not.toHaveBeenCalled();
+    expect(summarize).not.toHaveBeenCalled();
+  });
+
   it('honors the shared rate limit', async () => {
     tryAcquireSlot.mockReturnValue(false);
 

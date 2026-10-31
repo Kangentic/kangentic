@@ -3863,9 +3863,10 @@ test('a held terminal reporting its conformed grid is not a resize, so a finishe
 });
 
 test('a display that fits another grid replays the task window on the grid it shows, and the session keeps streaming', async ({ browser }) => {
-  // A display at 125 percent scaling fits fewer columns and rows in the default-rect window than
-  // the recorded 154 by 37 (143 by 36 on Windows, 128 by 36 on CI's Linux fonts), and a
-  // recording's bytes address rows for their own grid. The pane is held at a smaller type, at the
+  // A display at 125 percent scaling fits fewer columns in the default-rect window than the
+  // recorded 154 by 37 (143 on Windows, 128 on CI's Linux fonts), and no more rows: the context
+  // bar is one row, so the window holds all 37 where a two-row bar left 36. A recording's bytes
+  // address rows for their own grid. The pane is held at a smaller type, at the
   // grid the WHOLE pane takes there, and the page's emulator plays the recording into it, so the
   // terminal fills the window where the recording held at its own grid left 56px beside it and
   // 23px below. The window is the default rect rather than the `task` scene's, which is fitted to
@@ -3881,7 +3882,8 @@ test('a display that fits another grid replays the task window on the grid it sh
   await SCENE_MARKERS.task(page);
   await expect.poll(() => sentGrids(page, 'sess-cw-middleware'), { timeout: 10_000 }).not.toHaveLength(0);
   const natural = (await sentGrids(page, 'sess-cw-middleware'))[0];
-  expect(natural.rows).toBeLessThan(MIDDLEWARE_RECORDED_GRID.rows);
+  expect(natural.cols).toBeLessThan(MIDDLEWARE_RECORDED_GRID.cols);
+  expect(natural.rows).toBeLessThanOrEqual(MIDDLEWARE_RECORDED_GRID.rows);
   await expectFaithfulReplay(page, 'sess-cw-middleware');
   await expectPanesFilled(page, 'the default window at 125 percent');
   expect(await firstStreamedSession(page, 10_000, 'sess-cw-middleware')).toBe('sess-cw-middleware');

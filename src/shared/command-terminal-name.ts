@@ -76,6 +76,22 @@ export function commandTerminalDisplayName(label: string | null | undefined, slo
   return trimmed ? trimmed : commandTerminalTitle(slot);
 }
 
+/** The longest name a user may give a terminal, as the mobile device name's cap. */
+export const COMMAND_TERMINAL_NAME_MAX_LENGTH = 64;
+
+/**
+ * The name a user's rename stores: on one line, trimmed, and cut to
+ * `COMMAND_TERMINAL_NAME_MAX_LENGTH`. Null clears the name, for an empty entry
+ * and for the slot's own title, so typing "Command Terminal 2" back in is the
+ * same as clearing it. Main applies it, and the name field applies it to decide
+ * whether a commit changed anything.
+ */
+export function normalizeCommandTerminalName(raw: string | null | undefined, slot: string | null | undefined): string | null {
+  const line = (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, COMMAND_TERMINAL_NAME_MAX_LENGTH).trim();
+  if (!line || line === commandTerminalTitle(slot)) return null;
+  return line;
+}
+
 /**
  * What an earlier conversation is called in the panel's Earlier list and on a
  * phone: the terminal's name, else the first thing typed into it (with no

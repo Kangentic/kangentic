@@ -12,7 +12,9 @@
  * the terminal's own agent (which ran on the project default, Opus here) nor
  * the project's instructions. With no Automation agent, naming is off and the
  * terminal keeps its "Command Terminal N" title, the same rule the task title
- * suggestion follows.
+ * suggestion follows. A terminal the user renamed (`renameCommandTerminal`) is
+ * never named here, and a name still being generated when the user renames is
+ * refused by `setCommandTerminalLabel`.
  */
 import { EventType, PromptReason, type Session, type SessionEvent } from '../../../shared/types';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
@@ -85,7 +87,9 @@ export class CommandTerminalNamer {
     if (!session || !isCommandTerminalSession(session)) return;
     // First prompt wins, and only once: a later prompt never renames it.
     this.attemptedSessionIds.add(sessionId);
-    if (session.commandTerminalLabel) return;
+    // A name the user set (or cleared) always wins: no agent is resolved and no
+    // rate-limit slot is spent on a terminal that will refuse the result.
+    if (session.commandTerminalLabel || session.commandTerminalNamedByUser) return;
     void this.nameFromPrompt(sessionId, session.projectId ?? null, promptText);
   };
 

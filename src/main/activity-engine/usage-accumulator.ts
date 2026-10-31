@@ -123,6 +123,26 @@ function baseModelId(modelId: string): string {
   return modelId.toLowerCase().replace(/\[[^\]]+\]$/, '');
 }
 
+/**
+ * A report's rate-limit windows over the session's last ones: each reported
+ * window takes its own place, a window the report leaves out keeps the last
+ * value it had, and the order stays the one the windows were first reported in.
+ */
+function keepUnreportedWindows(
+  reported: RateLimitWindow[] | undefined,
+  previous: RateLimitWindow[] | undefined,
+): RateLimitWindow[] | undefined {
+  if (!previous || previous.length === 0) return reported;
+  if (!reported || reported.length === 0) return previous;
+  const reportedById = new Map(reported.map((rateLimitWindow): [string, RateLimitWindow] => [rateLimitWindow.id, rateLimitWindow]));
+  const kept = previous.map((previousWindow) => {
+    const reportedWindow = reportedById.get(previousWindow.id);
+    reportedById.delete(previousWindow.id);
+    return reportedWindow ?? previousWindow;
+  });
+  return [...kept, ...reportedById.values()];
+}
+
 export class UsageAccumulator {
   private usageCache = new Map<string, SessionUsage>();
   private toolStats = new Map<string, SessionToolState>();
@@ -302,7 +322,12 @@ export class UsageAccumulator {
    * Its rate-limit windows are stamped with their reset generation before the
    * cache write, so every reader of this usage sees the stamp. A reset in this
    * report also brings sibling sessions' cached windows up with it (see
-   * `takeSessionsCaughtUpToReset`).
+   * `takeSessionsCaughtUpToReset`). A window the report leaves out keeps the
+   * session's last value for it, as the renderer's shared snapshot does
+   * (`mergeRateLimitSnapshot`): an idle session's status carried only the
+   * seven-day window, and replacing outright emptied the cache the renderer
+   * rebuilds its snapshot from after a reload, so every bar lost its rate
+   * limits until an agent next reported.
    */
   replaceSessionUsage(sessionId: string, usage: SessionUsage): void {
     const context = usage.contextWindow;
@@ -313,9 +338,11 @@ export class UsageAccumulator {
         context.usedPercentage = (context.usedTokens / knownWindow) * 100;
       }
     }
+    const previousWindows = this.usageCache.get(sessionId)?.rateLimits;
     if (usage.rateLimits) {
-      usage.rateLimits = this.stampRateLimits(sessionId, usage.rateLimits, this.usageCache.get(sessionId)?.rateLimits);
+      usage.rateLimits = this.stampRateLimits(sessionId, usage.rateLimits, previousWindows);
     }
+    usage.rateLimits = keepUnreportedWindows(usage.rateLimits, previousWindows);
     // Recording the authoritative window for this model (and re-emitting any
     // sibling background sessions it back-fills) is done by the caller
     // (SessionTelemetry.processStatusUpdate) so it can push the re-emits.

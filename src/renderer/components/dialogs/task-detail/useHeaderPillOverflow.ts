@@ -39,6 +39,8 @@ const HEADER_PADDING_X_PX = 32;
 const OUTER_GAP_TOTAL_PX = GAP_PX * 3;
 /** A little breathing room past the title text before a pill may sit next to it. */
 const TITLE_RESERVE_BUFFER_PX = 8;
+/** gap-1.5 between the title and a control that sits right after it. */
+const TITLE_SUFFIX_GAP_PX = 6;
 /**
  * Title floor: reserve at most this many characters of the title before pills may
  * compete for the remaining width. Tuned to keep a legible leading portion of the
@@ -65,6 +67,9 @@ export interface HeaderOverflowMeasurements {
   titleNaturalWidth: number;
   /** The title's character count in code points (so an emoji counts once). */
   titleCharCount: number;
+  /** A protected control that sits right after the title (the Command Terminal's
+   *  rename pencil), reserved with it; 0 or absent when there is none. */
+  titleSuffixWidth?: number;
   /** Last-measured pill widths by id; an id absent from the map is unmeasured. */
   pillWidths: Map<string, number>;
 }
@@ -85,7 +90,7 @@ export function computeHiddenPills(
 ): Set<string> {
   const averageCharWidth = measurements.titleNaturalWidth / Math.max(measurements.titleCharCount, 1);
   const titleFloor = Math.min(measurements.titleNaturalWidth, TITLE_FLOOR_CHARS * averageCharWidth);
-  const titleReserve = titleFloor + TITLE_RESERVE_BUFFER_PX;
+  const titleReserve = titleFloor + TITLE_RESERVE_BUFFER_PX + (measurements.titleSuffixWidth ?? 0);
   const available =
     measurements.headerWidth
     - HEADER_PADDING_X_PX
@@ -111,6 +116,18 @@ export function computeHiddenPills(
   return hidden;
 }
 
+export interface HeaderPillOverflowOptions {
+  /** A protected control right after the title, reserved with it (`titleSuffixWidth`). */
+  titleSuffixRef?: RefObject<HTMLElement | null>;
+  /**
+   * Hold the folded set as it stands. The Command Terminal's name field takes
+   * the title's place while the user types, so there is no title to measure,
+   * and a recompute would let the pills reclaim its room and shift the header.
+   * Measuring starts again, against the remounted title, when this goes false.
+   */
+  frozen?: boolean;
+}
+
 export function useHeaderPillOverflow(
   headerRef: RefObject<HTMLElement | null>,
   leadingRef: RefObject<HTMLElement | null>,
@@ -118,17 +135,21 @@ export function useHeaderPillOverflow(
   titleRef: RefObject<HTMLElement | null>,
   pillsRef: RefObject<HTMLElement | null>,
   pills: HeaderPillSpec[],
+  options: HeaderPillOverflowOptions = {},
 ): Set<string> {
   const widthCacheRef = useRef<Map<string, number>>(new Map());
   const [hiddenIds, setHiddenIds] = useState<Set<string>>(() => new Set());
+  const { titleSuffixRef, frozen = false } = options;
 
   useLayoutEffect(() => {
+    if (frozen) return;
     const header = headerRef.current;
     const leading = leadingRef.current;
     const trailing = trailingRef.current;
     const title = titleRef.current;
     const pillsContainer = pillsRef.current;
     if (!header || !leading || !trailing || !title || !pillsContainer) return;
+    const titleSuffix = titleSuffixRef?.current ?? null;
 
     const recompute = () => {
       // Refresh the width cache from whatever pills are currently in the DOM.
@@ -147,6 +168,8 @@ export function useHeaderPillOverflow(
         // Count code points (spread), not UTF-16 units, so a surrogate-pair glyph
         // (e.g. an emoji) counts as one character and does not deflate the average.
         titleCharCount: [...(title.textContent ?? '')].length,
+        // The suffix sits in the title's box after a 6px gap (`gap-1.5`).
+        titleSuffixWidth: titleSuffix ? titleSuffix.offsetWidth + TITLE_SUFFIX_GAP_PX : 0,
         pillWidths: widthCacheRef.current,
       });
       setHiddenIds((previous) => (sameSet(previous, nextHidden) ? previous : nextHidden));
@@ -159,7 +182,7 @@ export function useHeaderPillOverflow(
     observer.observe(trailing);
     observer.observe(title);
     return () => observer.disconnect();
-  }, [headerRef, leadingRef, trailingRef, titleRef, pillsRef, pills]);
+  }, [headerRef, leadingRef, trailingRef, titleRef, pillsRef, pills, titleSuffixRef, frozen]);
 
   return hiddenIds;
 }

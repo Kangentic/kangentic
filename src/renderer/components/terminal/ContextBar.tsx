@@ -21,7 +21,20 @@ import { ProfilePicker } from './ProfilePicker';
 import { ElapsedTime } from './ElapsedTime';
 import { ToolBreakdownPopover } from './ToolBreakdownPopover';
 import { pill, pillForProvenance } from './context-bar-pill';
+import { ContextBarOverflow, type ContextBarOverflowItem } from './ContextBarOverflow';
+import { useContextBarFold } from './useContextBarFold';
+import type { ContextBarFoldId } from './context-bar-fold';
 import { Tooltip } from '../Tooltip';
+
+/** The +N list's order: the row's own, left to right. The agent's name lists with its version. */
+const OVERFLOW_LIST_ORDER: ContextBarFoldId[] = [
+  'shell', 'version', 'rate-limits', 'cost', 'tool-calls', 'agent-active', 'tokens', 'context-fraction', 'context', 'elapsed',
+];
+
+/** What a pill in the row carries for the fold: its id, and while folded, out of reach. */
+type ContextBarFoldAttributes =
+  | { 'data-fold-id': ContextBarFoldId }
+  | { 'data-fold-id': ContextBarFoldId; 'data-folded': string; 'aria-hidden': boolean; inert: boolean };
 
 interface ContextBarProps {
   sessionId: string;
@@ -53,7 +66,9 @@ function parseAgentVersion(version: string | null | undefined): string | null {
 // The picker triggers are unaffected: the marker opts out of light dismiss, never of their own
 // clicks. Harmless in the task-detail and command-terminal hosts, which are already excluded
 // wholesale by `data-window-layer-root`.
-const containerClass = 'min-h-8 bg-surface/80 border-t border-edge flex flex-wrap items-center px-3 py-1.5 gap-x-2 gap-y-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
+//
+// One row, inset 4px each side: what does not fit folds into the +N list (`useContextBarFold`).
+const containerClass = 'relative min-h-8 bg-surface/80 border-t border-edge flex flex-nowrap items-center overflow-hidden px-1 py-1.5 gap-x-2 text-xs flex-shrink-0 [transform:translateZ(0)]';
 
 function formatResetTime(epochSeconds: number): string {
   const ms = epochSeconds * 1000 - Date.now();
@@ -96,7 +111,7 @@ function RateLimitBar({ limitWindow, now }: { limitWindow: RateLimitWindow; now:
           few px above the track, is not clipped. The fill is width-capped at
           100%, so nothing overflows horizontally and the track still reads as a
           pill. */}
-      <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full">
+      <span className="relative flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full" data-meter-track="">
         {/* This one stays on `width` on purpose, unlike the context fill above and
             ContextUsageFooter's. The `minWidth: 2px` floor below keeps a barely
             started window visible, and that is a width-space idea with no
@@ -174,6 +189,11 @@ interface RateLimitsPillProps {
   capturedAt: number;
   /** The session this ContextBar reports for, the pulse's context identity. */
   sessionId: string;
+  /**
+   * The pill in the bar's row: a meter that shares the row's room and folds
+   * with it. Left out, the pill is the +N list's copy: a fixed width, no pulse.
+   */
+  rowFold?: { className: string; attributes: ContextBarFoldAttributes };
 }
 
 /**
@@ -190,7 +210,7 @@ interface RateLimitsPillProps {
  * is component-local and cleared on unmount, so it needs no HMR Pattern A
  * preservation (see .claude/rules/hmr-patterns.md).
  */
-function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId }: RateLimitsPillProps) {
+function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId, rowFold }: RateLimitsPillProps) {
   const { t } = useLingui();
   const [now, setNow] = useState(() => Date.now());
 
@@ -224,9 +244,13 @@ function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId }: 
       testId="rate-limits-tip"
     >
       <span
-        ref={rateLimitsRef}
-        className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
-        data-testid="rate-limits-pill"
+        ref={rowFold ? rateLimitsRef : undefined}
+        className={rowFold
+          ? `${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0${rowFold.className}`
+          : `${pill} text-fg-muted tabular-nums flex w-[220px] items-center gap-2`}
+        data-testid={rowFold ? 'rate-limits-pill' : undefined}
+        data-meter={rowFold ? '' : undefined}
+        {...rowFold?.attributes}
       >
         {rateLimits.map((limitWindow) => (
           <RateLimitBar key={limitWindow.id} limitWindow={limitWindow} now={now} />
@@ -318,11 +342,19 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   // child ModelEffortPicker).
   const [openToolBreakdown, setOpenToolBreakdown] = useState(false);
   const toolCallTriggerRef = useRef<HTMLButtonElement>(null);
+  // The +N pill, which the breakdown opens above when tool calls is folded into its list.
+  const overflowButtonRef = useRef<HTMLButtonElement>(null);
+  const [toolBreakdownFromOverflow, setToolBreakdownFromOverflow] = useState(false);
 
   // Model is "resolved" only when the CLI status line has reported a real
   // displayName. Until then we show a single spinner pill instead of flashing
   // through "Agent" -> "Claude" -> "Opus 4.6 (1M Context)" as data trickles in.
   const resolvedModelName = usage?.model.displayName || null;
+
+  // One row: what does not fit folds into the +N list, held while the list is open.
+  const barRef = useRef<HTMLDivElement>(null);
+  const [overflowOpen, setOverflowOpen] = useState(false);
+  const folded = useContextBarFold(barRef, { active: !!usage && !!resolvedModelName, frozen: overflowOpen });
 
   if (!usage || !resolvedModelName) {
     // Adapter-declared "no live telemetry" branch. The spinner would otherwise
@@ -444,8 +476,130 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
   // the picker trigger), so the bar always has at least one cell of content
   // by the time we reach this point.
 
+  // A folded pill stays mounted, out of the row and out of sight: its width is
+  // still its own, and its pulses and refs keep working (`useContextBarFold`).
+  const foldAttributes = (id: ContextBarFoldId): ContextBarFoldAttributes => (folded.has(id)
+    ? { 'data-fold-id': id, 'data-folded': '', 'aria-hidden': true, inert: true }
+    : { 'data-fold-id': id });
+  const foldClass = (id: ContextBarFoldId): string => (folded.has(id) ? ' absolute invisible pointer-events-none' : '');
+  const agentLabel = taskAgentDisplayName ?? agentDisplayName(taskAgent);
+  const fractionLabel = windowKnown ? `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowSize)}` : '';
+  const remainingPercent = 100 - pct;
+  const openToolBreakdownFrom = (fromOverflow: boolean): void => {
+    setToolBreakdownFromOverflow(fromOverflow);
+    setOpenToolBreakdown((previous) => !previous || fromOverflow !== toolBreakdownFromOverflow);
+  };
+
+  // What the +N list shows: copies of the folded pills, with their tips but no pulses.
+  const overflowCopies: Partial<Record<ContextBarFoldId, React.ReactNode>> = {
+    shell: showShell && (
+      <Tooltip label={sessionShell as string}>
+        <span className={`${pill} text-fg-faint`}>{shellDisplayName(sessionShell as string)}</span>
+      </Tooltip>
+    ),
+    // The version, or the agent's name with it once that folds too, under the floor.
+    version: showVersion && (
+      <span className={`${pill} text-fg-muted`}>
+        {agentLabel}
+        {taskAgentVersionNumber && <span className="text-fg-faint ml-1.5"><Trans>v{taskAgentVersionNumber}</Trans></span>}
+      </span>
+    ),
+    'rate-limits': showRateLimits && latestRateLimits && (
+      <RateLimitsPill
+        rateLimits={latestRateLimits.rateLimits}
+        capturedAt={latestRateLimits.capturedAt}
+        sessionId={sessionId}
+      />
+    ),
+    // The context under the floor, its counts with it.
+    context: windowKnown && (showProgressBar || showFraction) && (
+      <Tooltip label={barTooltip}>
+        <span className={`${pill} text-fg-muted tabular-nums flex w-[220px] items-center gap-2`}>
+          {showFraction && <span className="text-fg-faint whitespace-nowrap">{fractionLabel}</span>}
+          {showProgressBar && (
+            <span className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
+              <span
+                className="block h-full w-full origin-left rounded-full"
+                style={{ transform: `scaleX(${Math.min(pct, 100) / 100})`, backgroundColor: progressColor }}
+              />
+            </span>
+          )}
+          {showProgressBar && <span className="text-fg-faint whitespace-nowrap">{pct}%</span>}
+        </span>
+      </Tooltip>
+    ),
+    'agent-active': showAgentActive && usage.cost.totalDurationMs > 0 && (
+      <Tooltip label={t`Agent active time`}>
+        <span className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}>
+          <Hourglass size={11} className="text-fg-faint" />
+          {formatDuration(usage.cost.totalDurationMs)}
+        </span>
+      </Tooltip>
+    ),
+    elapsed: showElapsed && session?.startedAt && (
+      <Tooltip label={t`Elapsed session time`}>
+        <span className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}>
+          <Clock size={11} className="text-fg-faint" />
+          <ElapsedTime startedAt={session.startedAt} />
+        </span>
+      </Tooltip>
+    ),
+    tokens: showTokens && (
+      <Tooltip label={t`Input / output tokens`}>
+        <span className={`${pill} text-fg-muted tabular-nums flex items-center gap-3`}>
+          <span className="flex items-center gap-1">
+            <ArrowUp size={11} className="text-fg-faint" />
+            {formatTokenCount(usage.contextWindow.totalInputTokens)}
+          </span>
+          <span className="flex items-center gap-1">
+            <ArrowDown size={11} className="text-fg-faint" />
+            {formatTokenCount(usage.contextWindow.totalOutputTokens)}
+          </span>
+        </span>
+      </Tooltip>
+    ),
+    'tool-calls': showToolCalls && (
+      <Tooltip label={t`Tool calls across every run of this session`}>
+        <button
+          type="button"
+          onClick={() => {
+            setOverflowOpen(false);
+            openToolBreakdownFrom(true);
+          }}
+          className={`${pill} text-fg-muted tabular-nums inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover`}
+          aria-label={t`Tool calls: ${toolCallCountText}`}
+          data-testid="context-bar-tool-calls-overflow"
+        >
+          <Wrench size={11} className="text-fg-faint" />
+          <span>{usage.toolCallCount ?? 0}</span>
+          <ChevronDown size={11} className="text-fg-faint flex-shrink-0" />
+        </button>
+      </Tooltip>
+    ),
+    cost: showCost && (
+      <Tooltip label={t`Session API cost`}>
+        <span className={`${pill} text-fg-muted tabular-nums`}>{formatCost(usage.cost.totalCostUsd)}</span>
+      </Tooltip>
+    ),
+    'context-fraction': windowKnown && showFraction && (
+      <Tooltip label={t`Context tokens used / total window size`}>
+        <span className={`${pill} text-fg-muted tabular-nums`}>{fractionLabel}</span>
+      </Tooltip>
+    ),
+  };
+  const overflowItems: ContextBarOverflowItem[] = [];
+  for (const id of OVERFLOW_LIST_ORDER) {
+    const isFolded = id === 'version'
+      ? folded.has('version') || folded.has('agent')
+      // A folded context lists its counts with it.
+      : id === 'context-fraction' ? folded.has(id) && !folded.has('context') : folded.has(id);
+    const node = overflowCopies[id];
+    if (isFolded && node) overflowItems.push({ id, node });
+  }
+
   return (
     <div
+      ref={barRef}
       className={containerClass}
       data-testid="usage-bar"
       data-no-dismiss
@@ -456,16 +610,18 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       {task && <ProfilePicker taskId={task.id} />}
       {showShell && (
         <Tooltip label={sessionShell as string}>
-          <span className={`${pill} text-fg-faint`}>
+          <span className={`${pill} text-fg-faint${foldClass('shell')}`} {...foldAttributes('shell')}>
             {shellDisplayName(sessionShell as string)}
           </span>
         </Tooltip>
       )}
       {showVersion && (
-        <span className={`${pill} text-fg-muted`}>
-          {taskAgentDisplayName ?? agentDisplayName(taskAgent)}
+        <span className={`${pill} text-fg-muted${foldClass('agent')}`} {...foldAttributes('agent')}>
+          {agentLabel}
           {taskAgentVersionNumber && (
-            <span className="text-fg-faint ml-1.5"><Trans>v{taskAgentVersionNumber}</Trans></span>
+            <span className={`text-fg-faint ml-1.5${foldClass('version')}`} {...foldAttributes('version')}>
+              <Trans>v{taskAgentVersionNumber}</Trans>
+            </span>
           )}
         </span>
       )}
@@ -516,11 +672,14 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           rateLimits={latestRateLimits.rateLimits}
           capturedAt={latestRateLimits.capturedAt}
           sessionId={sessionId}
+          rowFold={{ className: foldClass('rate-limits'), attributes: foldAttributes('rate-limits') }}
         />
       )}
       {showCost && (
         <Tooltip label={t`Session API cost`}>
-          <span ref={costRef} className={`${pill} text-fg-muted tabular-nums`}>{formatCost(usage.cost.totalCostUsd)}</span>
+          <span ref={costRef} className={`${pill} text-fg-muted tabular-nums${foldClass('cost')}`} {...foldAttributes('cost')}>
+            {formatCost(usage.cost.totalCostUsd)}
+          </span>
         </Tooltip>
       )}
 
@@ -530,12 +689,15 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           is a new run (the renderer's own event cache is bounded, so it could
           not count past 500 events itself either). */}
       {showToolCalls && (
-        <span className="relative inline-flex">
+        <span
+          className={`inline-flex${folded.has('tool-calls') ? foldClass('tool-calls') : ' relative'}`}
+          {...foldAttributes('tool-calls')}
+        >
           <Tooltip label={t`Tool calls across every run of this session`} enabled={!openToolBreakdown}>
             <button
               ref={toolCallTriggerRef}
               type="button"
-              onClick={() => setOpenToolBreakdown((previous) => !previous)}
+              onClick={() => openToolBreakdownFrom(false)}
               className={`${pill} text-fg-muted tabular-nums inline-flex items-center gap-1 cursor-pointer hover:bg-surface-hover`}
               aria-label={t`Tool calls: ${toolCallCountText}`}
               aria-expanded={openToolBreakdown}
@@ -548,7 +710,8 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           </Tooltip>
           {openToolBreakdown && (
             <ToolBreakdownPopover
-              triggerRef={toolCallTriggerRef}
+              // Opened from the +N list, it sits above the +N pill: the trigger in the row is out of sight.
+              triggerRef={toolBreakdownFromOverflow ? overflowButtonRef : toolCallTriggerRef}
               sessionId={sessionId}
               refreshSignal={usage.toolCallCount ?? 0}
               onClose={() => setOpenToolBreakdown(false)}
@@ -561,8 +724,9 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       {showAgentActive && usage.cost.totalDurationMs > 0 && (
         <Tooltip label={t`Agent active time`}>
           <span
-            className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-1${foldClass('agent-active')}`}
             data-testid="context-agent-active"
+            {...foldAttributes('agent-active')}
           >
             <Hourglass size={11} className="text-fg-faint" />
             {formatDuration(usage.cost.totalDurationMs)}
@@ -572,7 +736,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
 
       {showTokens && (
         <Tooltip label={t`Input / output tokens`}>
-          <span ref={tokenRef} className={`${pill} text-fg-muted tabular-nums flex items-center gap-3`}>
+          <span
+            ref={tokenRef}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-3${foldClass('tokens')}`}
+            {...foldAttributes('tokens')}
+          >
             <span className="flex items-center gap-1">
               <ArrowUp size={11} className="text-fg-faint" />
               {formatTokenCount(usage.contextWindow.totalInputTokens)}
@@ -598,16 +766,23 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
         if (!windowKnown) {
           return <span data-context-window="unknown" className="hidden" />;
         }
-        // Shared so the bar-embedded fraction and the bare-fraction pill render
-        // the identical "used / total" string from one source.
-        const fractionLabel = `${formatTokenCount(usedTokens)} / ${formatTokenCount(contextWindowSize)}`;
-        const remainingPercent = 100 - pct;
+        // `fractionLabel` is shared, so the bar-embedded fraction and the
+        // bare-fraction pill render the identical "used / total" string. In the
+        // bar the counts fold on their own before the context itself does.
         if (showProgressBar) {
           return (
-            <div className={`${pill} text-fg-muted flex items-center gap-2 flex-1 basis-0 min-w-[160px]`}>
+            <div
+              className={`${pill} text-fg-muted flex items-center gap-2 flex-1 basis-0${foldClass('context')}`}
+              data-meter=""
+              {...foldAttributes('context')}
+            >
               {showFraction && (
                 <Tooltip label={t`Context tokens used / total window size`}>
-                  <span ref={fractionRef} className="tabular-nums text-fg-faint whitespace-nowrap">
+                  <span
+                    ref={fractionRef}
+                    className={`tabular-nums text-fg-faint whitespace-nowrap${foldClass('context-fraction')}`}
+                    {...foldAttributes('context-fraction')}
+                  >
                     {fractionLabel}
                   </span>
                 </Tooltip>
@@ -619,7 +794,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
                   no test asserts motion. See ContextUsageFooter.tsx, which carries
                   the same treatment for the board and monitor cards. */}
               <Tooltip label={barTooltip}>
-                <div className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
+                <div className="flex-1 min-w-[40px] h-1.5 bg-surface-hover rounded-full overflow-hidden" data-meter-track="">
                   <div
                     className="h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
                     data-percent={Math.min(pct, 100)}
@@ -636,7 +811,11 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
         if (showFraction) {
           return (
             <Tooltip label={t`Context tokens used / total window size`}>
-              <span ref={fractionRef} className={`${pill} text-fg-muted tabular-nums`}>
+              <span
+                ref={fractionRef}
+                className={`${pill} text-fg-muted tabular-nums${foldClass('context')}`}
+                {...foldAttributes('context')}
+              >
                 {fractionLabel}
               </span>
             </Tooltip>
@@ -652,14 +831,22 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
       {showElapsed && session?.startedAt && (
         <Tooltip label={t`Elapsed session time`}>
           <span
-            className={`${pill} text-fg-muted tabular-nums flex items-center gap-1`}
+            className={`${pill} text-fg-muted tabular-nums flex items-center gap-1${foldClass('elapsed')}`}
             data-testid="context-elapsed"
+            {...foldAttributes('elapsed')}
           >
             <Clock size={11} className="text-fg-faint" />
             <ElapsedTime startedAt={session.startedAt} />
           </span>
         </Tooltip>
       )}
+
+      <ContextBarOverflow
+        buttonRef={overflowButtonRef}
+        items={overflowItems}
+        open={overflowOpen}
+        onOpenChange={setOverflowOpen}
+      />
     </div>
   );
 }

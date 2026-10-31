@@ -370,6 +370,7 @@ const api: ElectronAPI = {
     spawnTransient: (input) => ipcRenderer.invoke(IPC.SESSION_SPAWN_TRANSIENT, input),
     killTransient: (id) => ipcRenderer.invoke(IPC.SESSION_KILL_TRANSIENT, id),
     setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
+    renameTransient: (sessionId: string, name: string | null) => ipcRenderer.invoke(IPC.SESSION_RENAME_TRANSIENT, sessionId, name),
     listCommandTerminalHistory: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_LIST, projectId),
     onCommandTerminalHistoryChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);

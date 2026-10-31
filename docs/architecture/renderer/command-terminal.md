@@ -11,6 +11,12 @@ sources:
   - resource: src/main/agent/shared/command-terminal-namer.ts
   - resource: src/main/ipc/helpers/command-terminal-leftovers.ts
   - resource: src/shared/command-terminal-name.ts
+  - resource: src/shared/command-terminal-rail.ts
+  - resource: src/renderer/utils/folding-edge-drag.ts
+  - resource: src/renderer/components/terminal/context-bar-fold.ts
+    title: The context bar's one-row fold, whose row sets the pane floor
+  - resource: src/renderer/components/terminal/useContextBarFold.ts
+  - resource: src/renderer/components/terminal/ContextBarOverflow.tsx
   - resource: src/renderer/stores/session-store/transient-session-slice.ts
   - resource: src/renderer/window-manager/tiling/host-arrangement.ts
   - resource: src/renderer/pop-out/roots/PopOutCommandTerminalRoot.tsx
@@ -31,9 +37,9 @@ The end-user walkthrough is in [Command Terminal](../../user-guide/command-termi
 ## One panel over a second window-manager layer
 
 The Command Terminal is one panel over a slight backdrop blur (`CommandTerminalPanel`): a header
-with Open in new window, Maximize and Hide; a 248px rail
-(`CommandTerminalRail`) with Add terminal at its top, the Earlier list, and a Running list while a
-terminal is expanded; and up to four terminals in the rest. The button says "Add", as "Add task"
+with Open in new window, Maximize and Hide; a rail (`CommandTerminalRail`, 300px by default,
+resizable and foldable, see [The rail](#the-rail)) with Add terminal at its top, the Earlier list,
+and a Running list of every terminal; and up to four terminals in the rest. The button says "Add", as "Add task"
 and "Add column" do, because "New terminal" read as replacing the terminal already open. The
 panel's Maximize keeps the corners icon (`Maximize`) on purpose: each terminal's Expand uses the
 diagonal arrows (`Maximize2`) a task window's maximize does, and the two sit one above the other. The panel moves by its header, resizes from its outer edges, and maximizes
@@ -48,7 +54,9 @@ terminal refits once on release instead of sending its agent a SIGWINCH per poin
 one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, fractions of that
 area, so it rescales with the window. A panel never moved opens centered at the size that gives a
 lone terminal what a Command Terminal window had before the panel (58% by 70% of the area, the
-window manager's first-window default), with the 248px rail and the 40px header added around it.
+window manager's first-window default), with the rail at its 300px default and the 40px header
+added around it. The default reads the rail's default width, never its live one, so dragging or
+folding the rail changes the terminals' share of the panel and never the panel.
 Every user meets that default on the first open after updating, because the panel's place is a new
 setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
 it.
@@ -86,15 +94,46 @@ seams that cross never reorder a grid). A dragged seam holds until the count cha
 persists globally in `AppConfig.commandTerminalWorkspace`, and a blob saved before the panel
 (floating windows) is re-tiled on load.
 
-The pane floor is 650 x 200 (`COMMAND_LAYER_OPTIONS.minSize`): a task window's width
-(`DEFAULT_MIN_WIDTH_PX`), about the 80 columns an agent's interface is laid out for. A terminal
-area too small for the preset at that floor (`commandTerminalGridFits`) shows the focused
-terminal expanded and lists the rest under Running (`useExpandWhileGridDoesNotFit`), and the grid
-comes back once the area fits it, unless the user had expanded that terminal themselves. The
-expanded terminal's Restore is off meanwhile, with "Widen the panel to restore the grid" as its
-reason. The panel's own minimum is one terminal beside the rail, whatever the count, which at
-the 900px window floor is the window's whole width. Two side by side need about 1550px of panel:
-a 2560px screen fits them at the panel's default place, a 1920px screen only maximized.
+The pane floor is 630 x 200 (`COMMAND_TERMINAL_FLOOR` in `command-terminal-grid-fit.ts`), about
+77 columns, the Command Terminal's own; task windows keep 650. It is the width at which the context
+bar's one row (below) still holds what it never folds. A resize never takes the grid away.
+The panel's minimum is the grid at that floor (`commandTerminalGridMinimum`: two columns from two
+terminals, two rows from three, one terminal while the user has one expanded) beside the open rail
+at its 200px drag minimum, whether the rail is folded or not: a panel sized down to a folded rail
+would leave the terminals under their floor the moment the rail opened. The minimum assumes even
+tiles, so the layout holds each pane at the floor whatever a dragged seam asks for, while the area
+has room for the grid (`resolveTileLayout`'s `minPane`); the seam keeps its ratio, and room coming
+back restores the dragged proportions. Without it, a seam dragged toward one side and a panel
+shrunk to its minimum left a terminal at 356px, found driving a live preview. So the panel's edge
+stops where the grid still fits. A terminal added, from the rail or the phone, and a Restore grow the
+panel to fit, because `toPixels` holds it above the minimum, and the panel saves the size it grew
+to, so the next Expand leaves it there. Only an Expand the user chose lets the panel shrink to one
+terminal. Two side by side need a 1462px panel, which a 1920 screen holds. An area smaller than
+the minimum (a small window, the detached window resized small) shows the panel at the area's
+size with every terminal tiled under the floor, and the panel's maximize is there for a screen
+that small.
+
+### The context bar's one row
+
+The context bar under every terminal (the Command Terminal's, a task window's and the bottom
+panel's: one component) is one row, inset 4px each side. The agent's name, the model and effort
+pickers, the rate limits and the context always show, and a task's profile picker with them; the
+rest folds into a +N pill in a fixed order (`CONTEXT_BAR_FOLD_ORDER`): the shell, the agent's
+version number, active time, elapsed, tokens, tool calls, cost, then the context counts. The +N
+pill's list shows copies of the folded pills with their tips, and tool calls opened there opens its
+table above the +N pill. A folded pill stays mounted in the row, out of flow and out of sight, so
+its width is its own and its pulses keep running. The fold is decided from widths it cannot change
+(`useContextBarFold`): each pill's own width, and each meter's (the rate limits, the context) with
+its tracks at their minimum, so a pill never flips in and out at the edge. It reruns on resize
+observers, not on the bar's renders, which come with every usage tick. Under the floor, in a window
+too small for the grid, the rate limits, then the context, then the agent's name fold too; the model
+and effort never do.
+
+The rate-limit tracks and the context bar keep a 40px minimum: at 20px they stopped reading as
+bars. Measured on a live Claude bar with them there, the row that never folds needs 589px of
+terminal for Haiku at low effort and 621 for Sonnet at medium, the widest 5.x pair, which is why
+the floor is 630 (550 and 560 were tried first, with 20px bars). A longer "(1M context)" model
+name needs more; at the floor its rate limits fold.
 
 ### Decision: a 650px floor instead of a one-row context bar (2026-10-25)
 
@@ -107,7 +146,78 @@ the board shares. The other gave Command Terminals the floor task windows alread
 caps the bar at two rows, as on the board, and fixes the narrow output too. The floor won: one
 behavior in every terminal and nothing new to maintain. What it costs is the four-terminal grid
 on small screens, where the fallback shows one terminal at a time with the others a click away
-under Running, the view Expand already had.
+under Running, the view Expand already had. Superseded on 2026-10-30, below.
+
+### Decision: a panel that never resizes under its grid, and a one-row context bar (2026-10-30)
+
+At 650 two terminals needed a 1502px panel even with the rail at its narrowest, so on a 1366 or
+1440 laptop, and at the panel's default place on a 1920 screen, a second terminal never tiled: the
+fallback expanded one, and shrinking a tiled panel past the line swapped the grid for one terminal
+without asking. The grid is what the user arranged, so a resize now stops where it still fits,
+and only an Expand the user chose lets the panel get smaller; Restore and a terminal added grow it
+back. Measured on a real Claude context bar, the bar is two rows from 632px, three from 404 to
+630, four from 402 and five from 342. A floor of 540 was built first, and its third bar row was the
+problem: more than two rows was not wanted, and more than one turned out not to be either. So the
+fold that lost on 2026-10-25 came back, as one row everywhere (two rows at most was drawn too),
+and the floor became the width that row needs with its bars at 40px, 630. 480 and 404 were drawn and passed over for the
+agent's wrapping. A window too small for the grid tiles every terminal under the floor rather than
+falling back, since the user can maximize the panel there; the fallback to one expanded was drawn
+as an option for that case and not picked.
+
+### The rail
+
+The rail opens at 300px, and its edge drags it from 200 to 400, the project sidebar's range. Below
+200 it holds there while the pointer goes on to 100, and past 100 it folds to its 37px strip while
+the drag still runs, so letting go keeps what the screen shows; dragged back past 100 it opens at
+200. The project sidebar's divider follows the same rule, one function for both
+(`resolveFoldingEdgeDrag`, `src/renderer/utils/folding-edge-drag.ts`). The rail's bottom row is its
+fold button, outlined at rest as the sidebar's "Add project" footer button is (`border-edge/60`):
+open, the full row with the icon and "Hide" (`PanelLeftClose`, named "Hide rail", no tooltip since
+it carries its word); folded, the strip's icon (`PanelLeftOpen`, "Show rail" in its tooltip). The
+icon is on the same pixel in both, so a second click undoes the first without moving the pointer. The rail is one element in
+both states, so the button keeps keyboard focus across the fold. It lives inside the rail, not in the panel header,
+because the detached window has no panel header. Folded, the strip keeps Add terminal as an icon on
+the open rail's Add row and lists the same terminals as Running, each as its agent's activity mark,
+the one a task card shows (`agentActivityMark`: the working ring, or the envelope, speech bubble or
+shield of what it waits for, muted while it starts or rests), the one in front with the sidebar's
+neutral selected-row fill (blue is Add terminal's alone). A mark's click brings that terminal to the front and its right-click
+is its row menu. The strip has no Stop and no Earlier.
+
+Width and fold are one global setting, `AppConfig.commandTerminalRail`, kept across projects and
+restarts (`src/shared/command-terminal-rail.ts`, `useCommandTerminalRail`). What the rail shows is
+resolved from it: in a row too narrow for the saved width beside the terminals' grid at its 630px
+floor, the rail shows narrower, down to 200, and the saved width comes back when there is room.
+Nothing writes the narrowed width back. The panel and
+the detached window both write the setting, so the rail reads it back from disk when it mounts
+rather than trusting the config this window loaded. The config store's refetch merge does not
+preserve it, for the same reason as `monitorWorkspace`.
+
+The drag is shaped like the panel's own edge drag. It writes the rail's width straight to its
+element on each move, so the terminals' tiles follow it without a render, and it holds the
+manager-resize gate for the gesture, so each terminal refits once on release. A fold or an open
+lands during the drag too, so the tiles have followed it by the release and it costs one refit as
+well; the fold button is a layout change with no gate and costs one. Escape cancels the drag in the
+capture phase.
+
+### Decision: a resizable, foldable rail (2026-10-30)
+
+The rail was a fixed 248px. Measured against one project's 18 real Earlier names at 13px, 248 fit
+4 whole, 300 fit 9, 336 fit 14 and 400 fit 16. A fixed wider rail takes room from the terminals on
+every screen, so the default moved to 300 and the user sets the rest. Folding came out of the same
+pass: the strip is the sidebar's compact pattern, and the chips keep the Running list's one-click
+switch. A cut Earlier name shows its full text in a tooltip. A toggle beside Add terminal was drawn
+first and dropped, because it turned the rail's top row into two rows.
+
+The first build folded on release anywhere below 200, the sidebar's rule then, so the narrowest open
+rail took a release within a pixel or two of the edge, and nothing on screen said the next pixel
+folded. The fold line moved to half the minimum, drawn live, for the rail and the sidebar both:
+VS Code's split views draw it there too. A fold made by a drag also stopped costing a second refit,
+since it now lands before the release. The fold button went from a 28px corner icon to the rail's
+full bottom row, icon only, for the larger target; a labelled footer like the sidebar's "Add
+project" was drawn and passed over at first. Borderless until hovered, the row read as an icon in
+an empty row, so it took that footer button's resting outline; outlined, it read as an empty box
+with an icon in its corner, so it took a word too: "Hide", beside the icon so the icon keeps its
+spot. A filled bar and a centered icon were drawn; centering moved the icon about 130px on a fold.
 
 ### Decision: one panel instead of floating windows (2026-10-24)
 
@@ -573,6 +683,30 @@ field too, but their hooks live in the project's shared settings file, where a t
 would leak onto every other session in the folder, so their terminals keep "Command Terminal N".
 Before this, the renderer namer read the same empty field and no Claude terminal was ever named.
 
+### Renaming by hand
+
+A pencil right after the header's title, and Rename first in the terminal's ... menu, open an
+inline name field in the title's place: the title's type, no box, an accent underline (the
+sidebar's rename look), the name selected. Enter or a click away saves, Escape cancels, and an empty
+name clears back to "Command Terminal N". One line, 64 characters (`normalizeCommandTerminalName`).
+Both are off with "Available once the terminal starts" while the terminal has no session. A Running
+row's right-click is the terminal's whole ... menu (`CommandTerminalRowMenu`, one item list with
+the kebab, `CommandTerminalMenuItems`); its Rename edits the row in place, and a strip mark's brings
+the terminal up and opens the header field. The save is `session:renameTransient`
+(`SessionManager.renameCommandTerminal`), which writes the label and marks the row
+`commandTerminalNamedByUser`. From then on a user name always wins: `setCommandTerminalLabel`, the
+namer's and the resume seed's setter, refuses that row, which also drops a naming call already in
+flight, and the namer skips the terminal before it spends an agent call or a rate-limit slot. A
+cleared name keeps the namer off for that terminal.
+
+The name reaches Earlier because `CommandTerminalHistory` writes the row's label on every change of
+the live label, a clear included (last write wins, `setLabel`), and an unchanged push writes
+nothing, so a `/resume` inside a renamed terminal into another conversation keeps that row's own
+name. A rename that lands before the agent reports its id, right after a resume's spawn, is held
+per session and written over the row once it exists. A resume brings the name back. The accepted
+limit: a cleared name is not remembered across a resume, since the row holds null either way.
+Renaming an Earlier row, and renaming from the phone or the Agent Monitor, are out of scope.
+
 ## Starting one from a phone
 
 The bridge's `command-terminal` verb (see [Capability verbs](../../integrations/mobile-bridge/capability-verbs.md#capability-verbs-1))
@@ -661,10 +795,12 @@ There is no per-terminal close button. It was removed to avoid the task-detail "
 window" confusion. A terminal's Stop destroys that terminal's session and closes its window;
 stopping the last terminal hides the panel.
 
-The header reads Stop, the title, the pills, the kebab, then Expand, which shows only beside
-another terminal since a lone one already fills the panel. It is responsive, priority-plus via
-`useHeaderPillOverflow`. Only Stop, the title, the kebab and Expand are protected; the pills and
-the branch picker fold into the kebab as the terminal narrows, down to the pane floor. The blue
+The header reads Stop, the title, the rename pencil, the pills, the kebab, then Expand, which
+shows only beside another terminal since a lone one already fills the panel. It is responsive,
+priority-plus via `useHeaderPillOverflow`. Only Stop, the title, the pencil, the kebab and Expand
+are protected (the pencil's width counts toward the title's reservation); the pills and the branch
+picker fold into the kebab as the terminal narrows, down to the pane floor. While the name field is
+open the folded set is frozen, so nothing in the header moves under it. The blue
 focus line, and the accent border with it, show only while two or more terminals are visible: a
 lone or expanded terminal has nothing to be told apart from.
 

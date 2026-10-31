@@ -13,7 +13,9 @@
  * - Someone uses the terminal (`Session.hasUserInput`): the row is marked
  *   touched. Only touched rows are listed, and an untouched one is deleted when
  *   it ends, so a terminal nobody used leaves nothing behind.
- * - The terminal is named: the row keeps the name.
+ * - The terminal is named, renamed or cleared: the row follows the change. A
+ *   status push that does not change the name writes nothing, so a
+ *   conversation `/resume`d into a renamed terminal keeps its own name.
  * - The first prompt reaches the agent: the row keeps it, on one line, so a
  *   conversation nothing named still reads as what it was about.
  * - The terminal ends: the row is stamped ended.
@@ -73,7 +75,8 @@ interface HeldConversation {
   projectId: string;
   agentSessionId: string;
   touched: boolean;
-  labeled: boolean;
+  /** The terminal's live name when last seen, so only a CHANGE of it is written. */
+  label: string | null;
   /** Its first prompt has been written. */
   prompted: boolean;
 }
@@ -85,6 +88,13 @@ export class CommandTerminalHistory {
    * by terminal, written to the row the id then records.
    */
   private readonly promptBeforeRow = new Map<string, string>();
+  /**
+   * A user's rename (or clear) that landed before the terminal's agent
+   * reported its id, by terminal. A resume seeds the terminal with the row's
+   * old name and the id arrives a second or two after the spawn, so a rename in
+   * that gap is held here and written over the row once the id records it.
+   */
+  private readonly labelBeforeRow = new Map<string, string | null>();
   /**
    * Conversations a resume is starting, by agent session id, with the terminal
    * that took each once it spawned (null while the start runs). A resumed
@@ -118,6 +128,7 @@ export class CommandTerminalHistory {
     }
     this.heldBySession.clear();
     this.promptBeforeRow.clear();
+    this.labelBeforeRow.clear();
     this.resumesInFlight.clear();
   }
 
@@ -250,6 +261,7 @@ export class CommandTerminalHistory {
     if (this.read(() => repository.isOwnedElsewhere(agentSessionId), false, 'owner')) {
       this.heldBySession.delete(sessionId);
       this.promptBeforeRow.delete(sessionId);
+      this.labelBeforeRow.delete(sessionId);
       this.deps.notifyChanged(projectId);
       return;
     }
@@ -264,7 +276,14 @@ export class CommandTerminalHistory {
       // A terminal whose CLI runs in a WSL distro: its transcript is there.
       cliTarget: serializeCliTarget(this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null),
     }), 'record');
-    const conversation: HeldConversation = { projectId, agentSessionId, touched, labeled: label !== null, prompted: false };
+    // A row that already existed (a resumed conversation) kept its own name;
+    // a rename made before the id arrived replaces it.
+    if (this.labelBeforeRow.has(sessionId)) {
+      const renamed = this.labelBeforeRow.get(sessionId) ?? null;
+      this.labelBeforeRow.delete(sessionId);
+      this.write(() => repository.setLabel(agentSessionId, renamed), 'label');
+    }
+    const conversation: HeldConversation = { projectId, agentSessionId, touched, label, prompted: false };
     this.heldBySession.set(sessionId, conversation);
     const earlyPrompt = this.promptBeforeRow.get(sessionId);
     if (earlyPrompt !== undefined) {
@@ -301,26 +320,34 @@ export class CommandTerminalHistory {
 
   private readonly onSessionChanged: SessionListener = (sessionId, session) => {
     if (this.disposed || !session) return;
+    const liveLabel = session.commandTerminalLabel ?? null;
     const held = this.heldBySession.get(sessionId);
-    if (!held) return;
+    if (!held) {
+      // No row yet: hold a user's rename for the row the id will record.
+      if (session.commandTerminalNamedByUser && isCommandTerminalSession(session)) {
+        this.labelBeforeRow.set(sessionId, liveLabel);
+      }
+      return;
+    }
     const markTouched = session.hasUserInput === true && !held.touched;
-    const label = !held.labeled ? session.commandTerminalLabel ?? null : null;
-    if (!markTouched && !label) return;
+    const relabel = liveLabel !== held.label;
+    if (!markTouched && !relabel) return;
     const repository = this.deps.getRepository(held.projectId);
     if (!repository) return;
     if (markTouched) {
       held.touched = true;
       this.write(() => repository.markTouched(held.agentSessionId), 'touch');
     }
-    if (label) {
-      held.labeled = true;
-      this.write(() => repository.setLabel(held.agentSessionId, label), 'label');
+    if (relabel) {
+      held.label = liveLabel;
+      this.write(() => repository.setLabel(held.agentSessionId, liveLabel), 'label');
     }
   };
 
   private readonly onSessionRemoved: SessionListener = (sessionId) => {
     this.releaseResumesOf(sessionId);
     this.promptBeforeRow.delete(sessionId);
+    this.labelBeforeRow.delete(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (!held) return;
     this.heldBySession.delete(sessionId);

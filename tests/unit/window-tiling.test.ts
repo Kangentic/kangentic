@@ -83,6 +83,46 @@ describe('resolveTileLayout', () => {
     expect(layout.rects.get('wc')).toEqual({ left: 503, top: 403, width: 497, height: 397 });
     expect(layout.seams.map((seam) => seam.splitId).sort()).toEqual(['s1', 's2']);
   });
+
+  describe('with a pane floor (a host-arranged layer)', () => {
+    const FLOOR = { width: 560, height: 200 };
+
+    it('holds a pane a dragged seam would put under the floor, taking the room from its neighbour', () => {
+      // The Command Terminal at its minimum: two floors wide, the seam dragged to 0.68.
+      const tree = hsplit('s1', [leaf('la', 'wa'), leaf('lb', 'wb')], [0.68, 0.32]);
+      const layout = resolveTileLayout(tree, { width: 1120, height: 800 }, 0, 0, { left: 0, top: 0 }, FLOOR);
+      expect(layout.rects.get('wa')!.width).toBeCloseTo(560, 6);
+      expect(layout.rects.get('wb')!.width).toBeCloseTo(560, 6);
+      expect(layout.seams[0].rect.left).toBeCloseTo(560, 6);
+    });
+
+    it('keeps the dragged proportions while every pane clears the floor', () => {
+      const tree = hsplit('s1', [leaf('la', 'wa'), leaf('lb', 'wb')], [0.68, 0.32]);
+      const layout = resolveTileLayout(tree, { width: 2000, height: 800 }, 0, 0, { left: 0, top: 0 }, FLOOR);
+      expect(layout.rects.get('wa')!.width).toBeCloseTo(1360, 6);
+      expect(layout.rects.get('wb')!.width).toBeCloseTo(640, 6);
+    });
+
+    it('holds a stacked column at its panes\' floors, both ways', () => {
+      // Three terminals: one tall beside two stacked, the stack squeezed by both seams.
+      const tree = hsplit(
+        's1',
+        [leaf('la', 'wa'), vsplit('s2', [leaf('lb', 'wb'), leaf('lc', 'wc')], [0.9, 0.1])],
+        [0.8, 0.2],
+      );
+      const layout = resolveTileLayout(tree, { width: 1120, height: 400 }, 0, 0, { left: 0, top: 0 }, FLOOR);
+      expect(layout.rects.get('wb')!.width).toBeCloseTo(560, 6);
+      expect(layout.rects.get('wb')!.height).toBeCloseTo(200, 6);
+      expect(layout.rects.get('wc')!.height).toBeCloseTo(200, 6);
+    });
+
+    it('keeps the fractions when the area cannot hold every floor (a window too small for the grid)', () => {
+      const tree = hsplit('s1', [leaf('la', 'wa'), leaf('lb', 'wb')], [0.68, 0.32]);
+      const layout = resolveTileLayout(tree, { width: 800, height: 600 }, 0, 0, { left: 0, top: 0 }, FLOOR);
+      expect(layout.rects.get('wa')!.width).toBeCloseTo(544, 6);
+      expect(layout.rects.get('wb')!.width).toBeCloseTo(256, 6);
+    });
+  });
 });
 
 describe('tile tree-ops', () => {

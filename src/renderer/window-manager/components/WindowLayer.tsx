@@ -153,12 +153,17 @@ function WindowManagerSurface({
   // window) + seam regions, WITHIN the tree's footprint. Windows stay flat
   // overlay children; only their position/size change, so a tiled terminal never
   // reparents.
+  // A host-arranged layer holds each pane at its floor while the host has room
+  // for the grid, whatever a dragged seam asks for.
   const tileLayout = useMemo(
     () =>
       tileTree && containerSize.width > 0
-        ? resolveTileLayout(tileTree, treeBounds.size, TILE_GAP_PX, TILE_SEAM_PX, treeBounds.origin)
+        ? resolveTileLayout(
+          tileTree, treeBounds.size, TILE_GAP_PX, TILE_SEAM_PX, treeBounds.origin,
+          layer.hostArranged ? layer.minSize : undefined,
+        )
         : null,
-    [tileTree, containerSize, treeBounds],
+    [tileTree, containerSize, treeBounds, layer.hostArranged, layer.minSize],
   );
 
   // Measure the overlay so fractional geometry projects to pixels, and reproject

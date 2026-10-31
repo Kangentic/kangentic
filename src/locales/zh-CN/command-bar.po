@@ -7,9 +7,35 @@ msgstr ""
 "X-Generator: @lingui/cli\n"
 "Language: zh-CN\n"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (needs you)"
+msgstr "{name}（需要你处理）"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (resting)"
+msgstr "{name}（空闲）"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (starting)"
+msgstr "{name}（启动中）"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "{name} (working)"
+msgstr "{name}（工作中）"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 msgid "Add terminal"
 msgstr "添加终端"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#, fuzzy
+msgid "Available once the terminal starts"
+msgstr "终端启动后可用"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -19,7 +45,7 @@ msgstr "命令终端"
 msgid "Command Terminals"
 msgstr "命令终端"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Commands"
 msgstr "命令"
 
@@ -30,6 +56,11 @@ msgstr "无法检出分支"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Couldn't open the window"
 msgstr "无法打开窗口"
+
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
+#, fuzzy
+msgid "Couldn't rename terminal"
+msgstr "无法重命名终端"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Couldn't resume conversation"
@@ -59,10 +90,6 @@ msgstr "更早的对话"
 msgid "Ends the terminal, and Earlier keeps its conversation if it was used"
 msgstr "结束终端，用过的对话会保留在「更早的对话」中"
 
-#: src/renderer/components/command-bar/CommandTerminalRail.tsx
-msgid "Expand {name}"
-msgstr "展开 {name}"
-
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Expand terminal"
 msgstr "展开终端"
@@ -71,6 +98,18 @@ msgstr "展开终端"
 msgid "Failed to load the Changes panel"
 msgstr "无法加载「更改」面板"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Go to {name}"
+msgstr "转到 {name}"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgctxt "Command Terminal rail fold button"
+msgid "Hide"
+msgstr "隐藏"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Hide changes"
 msgstr "隐藏更改"
@@ -82,6 +121,11 @@ msgstr "隐藏命令终端"
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Hide panel"
 msgstr "隐藏面板"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Hide rail"
+msgstr "隐藏侧栏"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -96,7 +140,7 @@ msgstr "最大化面板"
 msgid "Move to its own window"
 msgstr "移至独立窗口"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Open folder"
 msgstr "打开文件夹"
 
@@ -107,6 +151,20 @@ msgstr "在新窗口中打开"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Open project folder"
 msgstr "打开项目文件夹"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Rail width"
+msgstr "侧栏宽度"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Rename"
+msgstr "重命名"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename terminal"
+msgstr "重命名终端"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Restore panel"
@@ -129,9 +187,15 @@ msgctxt "Agent status"
 msgid "Running"
 msgstr "运行中"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Show changes"
 msgstr "显示更改"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Show rail"
+msgstr "显示侧栏"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Starting Command Terminal..."
@@ -145,6 +209,7 @@ msgstr "停止 {name}"
 msgid "Stop one of the four to add another"
 msgstr "先停止一个终端才能再添加新的"
 
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Stop terminal"
 msgstr "停止终端"
@@ -153,13 +218,18 @@ msgstr "停止终端"
 msgid "Stopping terminal"
 msgstr "正在停止终端"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Stopping..."
 msgstr "正在停止..."
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Switch branch"
 msgstr "切换分支"
+
+#: src/renderer/components/command-bar/CommandTerminalNameField.tsx
+#, fuzzy
+msgid "Terminal name"
+msgstr "终端名称"
 
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
@@ -176,7 +246,3 @@ msgstr "未命名对话"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Wait for the terminals to start."
 msgstr "请等待终端启动。"
-
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-msgid "Widen the panel to restore the grid"
-msgstr "加宽面板以恢复网格"

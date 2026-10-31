@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { AppConfig, CommandTerminalPanelGeometry, ConfigSetResult, DeepPartial, AgentDetectionInfo, OnboardingBaseline, OnboardingStepKey, SerializedWorkspace, ThemeMode } from '../../shared/types';
+import type { CommandTerminalRailState } from '../../shared/command-terminal-rail';
 import { DEFAULT_CONFIG, resolveTheme } from '../../shared/types';
 import { deepMergeConfig } from '../../shared/object-utils';
 import { computeDismissedIdsAfterDismiss } from '../../shared/announcements';
@@ -86,6 +87,15 @@ interface ConfigStore {
   /** Persist where the Command Terminal panel sits (global, written whole). Applied
    *  to the store first, so the panel reads back what it just wrote. */
   saveCommandTerminalPanel: (geometry: CommandTerminalPanelGeometry) => void;
+  /** Persist the Command Terminal rail's width and whether it is folded (global,
+   *  written whole). Applied to the store first, so the rail reads back what it
+   *  just wrote. Not preserved across a refetch: the detached window writes it
+   *  too, and the panel must read that write back. */
+  saveCommandTerminalRail: (rail: CommandTerminalRailState) => void;
+  /** Take the rail's state as read from disk, without writing it back: the
+   *  panel re-reads it when it mounts, since the detached window may have
+   *  changed it since this window last loaded config. */
+  adoptCommandTerminalRail: (rail: CommandTerminalRailState) => void;
   /** Persist the GLOBAL Agent Monitor detail layout. Same shape as the command-terminal
    *  pair; written by whichever host currently has the monitor's layer mounted (the
    *  in-app overlay or the pop-out - never both, they are mutually exclusive), which is
@@ -232,6 +242,9 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
     const workspaceByProject = get().globalConfig.workspaceByProject ?? {};
     const commandTerminalWorkspace = get().globalConfig.commandTerminalWorkspace ?? null;
     const commandTerminalPanel = get().globalConfig.commandTerminalPanel ?? null;
+    // `commandTerminalRail` is not preserved either, for the same reason as
+    // `monitorWorkspace` below: the detached Command Terminal window writes it,
+    // and the panel must read that write back.
     // `monitorWorkspace` is deliberately NOT preserved here, unlike its two siblings.
     // It is the only layout blob with a writer in ANOTHER renderer: the monitor's
     // pop-out saves it, and the main window then has to READ that write back. Treating
@@ -429,6 +442,21 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
         globalConfig: { ...state.globalConfig, commandTerminalPanel: geometry },
       }));
       window.electronAPI.config.set({ commandTerminalPanel: geometry });
+    },
+
+    saveCommandTerminalRail: (rail) => {
+      set((state) => ({
+        config: { ...state.config, commandTerminalRail: rail },
+        globalConfig: { ...state.globalConfig, commandTerminalRail: rail },
+      }));
+      window.electronAPI.config.set({ commandTerminalRail: rail });
+    },
+
+    adoptCommandTerminalRail: (rail) => {
+      set((state) => ({
+        config: { ...state.config, commandTerminalRail: rail },
+        globalConfig: { ...state.globalConfig, commandTerminalRail: rail },
+      }));
     },
 
     flushCommandTerminalWorkspace: (workspace) => {

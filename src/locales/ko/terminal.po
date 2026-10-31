@@ -17,6 +17,11 @@ msgstr "캐시됨(시스템) {cachedTokenText} · 대화 {conversationTokenText}
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} 컨텍스트 창"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, other {#개 더 보기}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 #, fuzzy
 msgid "{pct}% context"
@@ -31,6 +36,11 @@ msgstr "{remainingPercent}% 남음"
 #, fuzzy
 msgid "{toolName} interrupted"
 msgstr "{toolName} 중단됨"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+#, fuzzy
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy

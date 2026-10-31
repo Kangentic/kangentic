@@ -15,6 +15,10 @@ msgstr "{cachedTokenText} cached (system) · {conversationTokenText} conversatio
 msgid "{contextLabel} context window"
 msgstr "{contextLabel} context window"
 
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+msgid "{count, plural, one {Show # more} other {Show # more}}"
+msgstr "{count, plural, one {Show # more} other {Show # more}}"
+
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "{pct}% context"
 msgstr "{pct}% context"
@@ -26,6 +30,10 @@ msgstr "{remainingPercent}% remaining"
 #: src/renderer/components/terminal/ActivityLog.tsx
 msgid "{toolName} interrupted"
 msgstr "{toolName} interrupted"
+
+#: src/renderer/components/terminal/ContextBarOverflow.tsx
+msgid "+{count}"
+msgstr "+{count}"
 
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Activity"

@@ -66,6 +66,8 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
   // The layer's pixel min-size: a seam can't shrink either pane of the pair below
   // it (so a tiled pane never goes narrower/shorter than a floating one's floor).
   const { layer } = useWindowManager();
+  // The panes a host-arranged layer holds at its floor, as WindowLayer lays them out.
+  const heldMinimum = layer.hostArranged ? layer.minSize : undefined;
   const dragRef = useRef<SeamDrag | null>(null);
   // Keeps the accent line lit through the whole drag (CSS :hover drops out when
   // the captured pointer travels off the thin overlay).
@@ -111,7 +113,7 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     if (!overlay) return;
     const overlayRect = overlay.getBoundingClientRect();
     // Cache every frame + seam node once so pointermove is pure DOM writes.
-    const layout = resolveTileLayout(tileTree, treeSize, gapPx, seamPx, treeOrigin);
+    const layout = resolveTileLayout(tileTree, treeSize, gapPx, seamPx, treeOrigin, heldMinimum);
     const frameNodes = new Map<string, HTMLElement>();
     for (const windowId of layout.rects.keys()) {
       const node = document.querySelector<HTMLElement>(`[data-testid="window-frame-${windowId}"]`);
@@ -159,7 +161,7 @@ export function TileSplitter({ seam, tileTree, treeSize, treeOrigin, gapPx, seam
     // Re-resolve at the proposed pair ratio and write rects imperatively. No store
     // write -> no React render -> no terminal fit until release.
     const proposed = resizeSeamInTree(tileTree, seam.splitId, seam.index, ratio);
-    const layout = resolveTileLayout(proposed, treeSize, gapPx, seamPx, treeOrigin);
+    const layout = resolveTileLayout(proposed, treeSize, gapPx, seamPx, treeOrigin, heldMinimum);
     for (const [windowId, rect] of layout.rects) {
       const node = drag.frameNodes.get(windowId);
       if (node) applyRect(node, rect);

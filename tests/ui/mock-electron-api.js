@@ -418,6 +418,8 @@
     workspaceByProject: {},
     commandTerminalWorkspace: null,
     commandTerminalPanel: null,
+    // Mirrors DEFAULT_CONFIG.commandTerminalRail.
+    commandTerminalRail: { width: 300, collapsed: false },
     monitorWorkspace: null,
     // Mirrors DEFAULT_CONFIG.monitor. Required on AppConfig, and this file is .js
     // so tsc cannot catch its absence; without it a UI test has no way to seed a
@@ -2949,6 +2951,31 @@
         if (trimmed && session && session.transient) {
           session.commandTerminalBranch = trimmed;
         }
+      },
+      // Mirrors SessionManager.renameCommandTerminal: the name on one line,
+      // trimmed and cut to 64; empty or the slot's own title clears it. The
+      // terminal is marked named by the user either way, and the row goes out
+      // on the status push, as main's session-changed does.
+      // Call log for assertions: window.__mockRenameTransientCalls.
+      renameTransient: async function (sessionId, name) {
+        if (typeof window !== 'undefined') {
+          window.__mockRenameTransientCalls = window.__mockRenameTransientCalls || [];
+          window.__mockRenameTransientCalls.push({ sessionId: sessionId, name: name });
+        }
+        var session = sessions.find(function (candidate) { return candidate.id === sessionId; });
+        if (!session || !session.transient || session.workflowId) return false;
+        var line = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+        var slotMatch = /^slot-(\d+)$/.exec(session.commandTerminalSlot || '');
+        var slotTitle = slotMatch ? 'Command Terminal ' + slotMatch[1] : 'Command Terminal';
+        var label = !line || line === slotTitle ? null : line;
+        var changed = (session.commandTerminalLabel || null) !== label;
+        if (!changed && session.commandTerminalNamedByUser) return false;
+        session.commandTerminalLabel = label;
+        session.commandTerminalNamedByUser = true;
+        if (typeof window !== 'undefined' && window.__mockFireStatus) {
+          window.__mockFireStatus(sessionId, Object.assign({}, session));
+        }
+        return changed;
       },
       // A project's earlier Command Terminal conversations. Seed with
       // window.__mockCommandTerminalHistory = { [projectId]: CommandTerminalHistoryEntry[] };

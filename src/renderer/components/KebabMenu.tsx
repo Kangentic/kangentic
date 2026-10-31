@@ -121,11 +121,13 @@ interface MenuItemProps {
   onClick: () => void;
   destructive?: boolean;
   disabled?: boolean;
+  /** Why a disabled item does nothing, as its tip and its description. */
+  disabledReason?: string | null;
   'data-testid'?: string;
 }
 
-export function KebabMenuItem({ icon, label, onClick, destructive, disabled, ...rest }: MenuItemProps) {
-  return (
+export function KebabMenuItem({ icon, label, onClick, destructive, disabled, disabledReason, ...rest }: MenuItemProps) {
+  const button = (
     <button
       onClick={onClick}
       disabled={disabled}
@@ -136,6 +138,8 @@ export function KebabMenuItem({ icon, label, onClick, destructive, disabled, ...
       {label}
     </button>
   );
+  if (disabledReason === undefined) return button;
+  return <Tooltip label={tipLabel({ disabled, disabledReason })}>{button}</Tooltip>;
 }
 
 export function KebabMenuDivider() {

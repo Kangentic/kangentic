@@ -1,21 +1,37 @@
 /**
- * Whether the panel can show its terminals as a grid. The preset for a count
- * (`tiling/host-arrangement.ts`) is one terminal filling the area, two side by
- * side, three as one tall beside two stacked, and four as a two by two grid, so
- * two or more need two columns and three or more need two rows. Every terminal
- * keeps the pane floor, a task window's 650px width, which is about the 80
- * columns an agent's interface is laid out for; an area too small for the
- * preset at that floor shows one terminal expanded and lists the others under
- * Running instead (`CommandTerminalLayer`).
+ * The smallest terminal area the panel's terminals fit in. The preset for a
+ * count (`tiling/host-arrangement.ts`) is one terminal filling the area, two
+ * side by side, three as one tall beside two stacked, and four as a two by two
+ * grid, so two or more need two columns and three or more need two rows. One
+ * the user expanded needs only its own. The panel never resizes under this
+ * (`CommandTerminalLayer`): a resize stops where the grid still fits, and a
+ * terminal added or the grid restored grows the panel to fit. Only a window too
+ * small for the grid tiles the terminals under the floor; nothing falls back to
+ * one terminal expanded.
  */
 
 import type { ContainerSize } from '../../window-manager/store/geometry';
 
 export type AreaSize = ContainerSize;
 
-export function commandTerminalGridFits(terminalCount: number, area: AreaSize, floor: AreaSize): boolean {
-  if (terminalCount <= 1) return true;
-  const columns = 2;
-  const rows = terminalCount >= 3 ? 2 : 1;
-  return area.width >= columns * floor.width && area.height >= rows * floor.height;
+/**
+ * Each terminal's floor: 630px, about 77 columns, where the context bar's one
+ * row still holds the agent, model, effort, rate limits and context beside its
+ * +N pill (`useContextBarFold`) with every bar at its 40px minimum. Measured on
+ * a live Claude bar, that row needs 589px of terminal for Haiku at low effort
+ * and 621 for Sonnet at medium, the widest 5.x pair; a longer "(1M context)"
+ * model name needs more, and at the floor its rate limits fold. Two terminals
+ * tile in a 1462px panel with the rail at its narrowest; a smaller screen tiles
+ * them under the floor. The height floor keeps two rows on a 1080p screen.
+ */
+export const COMMAND_TERMINAL_FLOOR: AreaSize = { width: 630, height: 200 };
+
+export function commandTerminalGridMinimum(
+  terminalCount: number,
+  expanded: boolean,
+  floor: AreaSize = COMMAND_TERMINAL_FLOOR,
+): AreaSize {
+  const columns = !expanded && terminalCount >= 2 ? 2 : 1;
+  const rows = !expanded && terminalCount >= 3 ? 2 : 1;
+  return { width: columns * floor.width, height: rows * floor.height };
 }
