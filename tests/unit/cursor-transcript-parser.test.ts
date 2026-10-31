@@ -107,10 +107,11 @@ describe('parseCursorTranscript', () => {
   });
 
   it('replays the shape of a real Cursor transcript', async () => {
-    // tests/fixtures/cursor-agent-transcript.jsonl keeps a cursor-agent
-    // 2026.10 transcript's records as written (keys, nesting, the clock tag
-    // and user_query wrapper, tool_use with no id, the turn_ended marker)
-    // with every text value replaced.
+    // tests/fixtures/cursor-agent-transcript.jsonl is written in the record
+    // shape a local cursor-agent transcript showed (keys, nesting, the clock
+    // tag and user_query wrapper, tool_use with no id, the turn_ended marker),
+    // with every value its own. Replace it with a sanitized capture when one
+    // is recorded.
     const fixturePath = path.join(__dirname, '..', 'fixtures', 'cursor-agent-transcript.jsonl');
     const parsed = await parseCursorTranscript(SESSION_ID, fixturePath);
     expect(parsed.sourcePath).toBe(fixturePath);
