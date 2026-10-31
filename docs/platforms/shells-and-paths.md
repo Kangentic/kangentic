@@ -102,6 +102,16 @@ dead shims cannot push the real install out of it. npm's third shim file is exte
 what `which` returns on macOS and Linux, so there the skip does not apply and a dead shim costs
 one probe before the search moves on.
 
+A detection result is cached until a re-detect, except a NOT FOUND that rests on a probe failure
+that says nothing about the install. Two failures count: a `--version` that exits 0 having printed
+nothing, and a pty host that never answered the exec. Both turned up at a preview's boot, with
+every agent probed at once. Claude, Qwen, Grok, Agy and Oz came back empty in the same
+millisecond, and the same Grok and Agy binaries printed their versions 4.6 s later. Kept, that
+NOT FOUND failed the next spawn with "Claude Code not found on PATH". Now the next detection, the
+one a spawn runs, probes again. The renderer's agent list is not pushed a correction, so the
+status bar and Settings show the miss until the list next loads. A NOT FOUND from another tool's
+output, a missing file, or a failed exit is still cached.
+
 `resolveShimLaunch` (`src/main/agent/shared/shim-launch.ts`) runs at every spawn chokepoint after
 `ensureTrust` and before `buildCommand` (see `.claude/rules/spawn-entry-point-parity.md`). On
 Windows with a `.cmd` or `.bat` head it launches the sibling shim native to the host shell

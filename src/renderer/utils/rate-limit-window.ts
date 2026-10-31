@@ -15,6 +15,46 @@ export interface RateLimitSnapshot {
 }
 
 /**
+ * Whether a window's reset time has passed. Claude Code drops a window from its
+ * status line once its `resets_at` passes, so a lapsed window is no longer part
+ * of the account's limits and must not be shown. A `resetsAt` of 0 (or below)
+ * means the reset time is unknown, not that it passed, so such a window never
+ * expires here.
+ */
+export function isRateLimitWindowExpired(rateLimitWindow: RateLimitWindow, nowMs: number): boolean {
+  return rateLimitWindow.resetsAt > 0 && rateLimitWindow.resetsAt * 1000 <= nowMs;
+}
+
+/**
+ * The windows still open at `nowMs`. Returns the SAME array when none has
+ * lapsed, so a caller can tell a prune from a no-op by reference.
+ */
+export function liveRateLimitWindows(rateLimitWindows: RateLimitWindow[], nowMs: number): RateLimitWindow[] {
+  const anyExpired = rateLimitWindows.some((rateLimitWindow) => isRateLimitWindowExpired(rateLimitWindow, nowMs));
+  if (!anyExpired) {
+    return rateLimitWindows;
+  }
+  return rateLimitWindows.filter((rateLimitWindow) => !isRateLimitWindowExpired(rateLimitWindow, nowMs));
+}
+
+/**
+ * The windows in the order the pill draws them: shortest `windowDurationSeconds`
+ * first, then the windows with no fixed duration in their snapshot order. The
+ * merge keeps a held window's position and appends a new id, so a 5h window that
+ * lapsed and came back would otherwise draw after the 7d one. Never mutates its
+ * input.
+ */
+export function rateLimitWindowsShortestFirst(rateLimitWindows: RateLimitWindow[]): RateLimitWindow[] {
+  const durationOf = (rateLimitWindow: RateLimitWindow): number => rateLimitWindow.windowDurationSeconds ?? Number.POSITIVE_INFINITY;
+  return [...rateLimitWindows].sort((first, second) => {
+    const firstDuration = durationOf(first);
+    const secondDuration = durationOf(second);
+    if (firstDuration === secondDuration) return 0;
+    return firstDuration < secondDuration ? -1 : 1;
+  });
+}
+
+/**
  * Merge an incoming rate-limit snapshot into the shared one, per window id.
  * Rate-limit windows are FIXED windows anchored by a `resetsAt` epoch, so within
  * one window `usedPercentage` normally only rises. Each Claude CLI process
@@ -33,6 +73,12 @@ export interface RateLimitSnapshot {
  * stale sibling's pre-reset number carries a lower one. Windows without a stamp
  * (demo data, UI fixtures) read as generation 0 and merge exactly as before.
  *
+ * Before any comparison, a window whose `resetsAt` has passed at `nowMs` is
+ * dropped from both sides (`isRateLimitWindowExpired`; a `resetsAt` of 0 is
+ * unknown and kept). Claude Code reports only the windows that apply, and stops
+ * sending one once it resets, so without this a sibling session's last report
+ * of a lapsed window would bring back a bar that no later report removes.
+ *
  * Per window id, comparing the incoming window to the one we already hold:
  * - id not present in current   -> add the incoming window.
  * - resetsAt advanced past the epsilon (rollover) -> take incoming wholesale,
@@ -46,31 +92,41 @@ export interface RateLimitSnapshot {
  *   or equal report is stale and is dropped.
  * - In every same-window case the current window's `resetsAt` stays the anchor,
  *   so the anchor cannot drift within a window.
- * - id present in current but absent from incoming -> keep the current window.
+ * - id present in current but absent from incoming -> keep the current window
+ *   while it has not lapsed.
  *
  * Returns the EXACT `current` reference when nothing changed, so Zustand
  * subscribers do not re-render and `useValuePulse` does not fire on a no-op
- * report. Never mutates either input. A `null` current returns `incoming`
- * unchanged (the first snapshot, including the empty-array case).
+ * report. That includes a sibling that keeps re-sending a window that already
+ * lapsed. Never mutates either input. A `null` current returns `incoming`
+ * unchanged (the first snapshot, including the empty-array case), or a copy
+ * without its lapsed windows. When the only change is a lapsed window dropped
+ * from `current`, the result keeps the current provenance, since none of the
+ * remaining numbers was refreshed.
  *
  * Per window the result is a maximum of (window, then generation, then value),
  * so folding many reports stays order-independent for realistic inputs, as the
- * `resetsAt` rules alone already were.
+ * `resetsAt` rules alone already were. The comparison between two reports never
+ * reads a clock; only the expiry above uses `nowMs` (epoch ms).
  */
 export function mergeRateLimitSnapshot(
   current: RateLimitSnapshot | null,
   incoming: RateLimitSnapshot,
+  nowMs: number,
 ): RateLimitSnapshot {
+  const incomingWindows = liveRateLimitWindows(incoming.rateLimits, nowMs);
   if (current === null) {
-    return incoming;
+    return incomingWindows === incoming.rateLimits ? incoming : { ...incoming, rateLimits: incomingWindows };
   }
 
+  const currentWindows = liveRateLimitWindows(current.rateLimits, nowMs);
+  const pruned = currentWindows !== current.rateLimits;
   const incomingById = new Map<string, RateLimitWindow>(
-    incoming.rateLimits.map((rateLimitWindow): [string, RateLimitWindow] => [rateLimitWindow.id, rateLimitWindow]),
+    incomingWindows.map((rateLimitWindow): [string, RateLimitWindow] => [rateLimitWindow.id, rateLimitWindow]),
   );
   let changed = false;
 
-  const mergedWindows = current.rateLimits.map((currentWindow) => {
+  const mergedWindows = currentWindows.map((currentWindow) => {
     const incomingWindow = incomingById.get(currentWindow.id);
     if (incomingWindow === undefined) {
       // Window absent from the incoming report: keep the one we already hold.
@@ -131,14 +187,17 @@ export function mergeRateLimitSnapshot(
     changed = true;
   }
 
-  if (!changed) {
-    return current;
+  if (changed) {
+    return {
+      rateLimits: mergedWindows,
+      capturedAt: incoming.capturedAt,
+      sourceSessionId: incoming.sourceSessionId,
+    };
   }
-  return {
-    rateLimits: mergedWindows,
-    capturedAt: incoming.capturedAt,
-    sourceSessionId: incoming.sourceSessionId,
-  };
+  if (pruned) {
+    return { ...current, rateLimits: mergedWindows };
+  }
+  return current;
 }
 
 /**

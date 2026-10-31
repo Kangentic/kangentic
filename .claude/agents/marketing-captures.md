@@ -156,7 +156,9 @@ Override `window.electronAPI.sessions.getUsage()` to return `Record<sessionId, S
     contextWindowSize: 200000,
   },
   cost: { totalCostUsd: 2.47, totalDurationMs: 180000 },
-  rateLimits: [  // Optional. Adapter-declared windows; renderer maps iconKind ('session'|'period') to a Lucide icon.
+  // Optional. Adapter-declared windows; renderer maps iconKind ('session'|'period') to a Lucide icon.
+  // Derive each resetsAt from the page's Date.now() and keep it in the future. A lapsed window is hidden.
+  rateLimits: [
     { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 20, resetsAt: epochSeconds },
     { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 8, resetsAt: epochSeconds },
   ],

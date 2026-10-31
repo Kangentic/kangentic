@@ -17,6 +17,20 @@ export interface StatusContextWindow {
   used_percentage?: number;
 }
 
+/** Each `rate_limits` key Claude Code sends and the window it becomes, shortest window first. */
+const RATE_LIMIT_WINDOWS: ReadonlyArray<{ key: string } & Pick<RateLimitWindow, 'id' | 'label' | 'iconKind' | 'windowDurationSeconds'>> = [
+  { key: 'five_hour', id: 'five-hour', label: '5h session', iconKind: 'session', windowDurationSeconds: 5 * 60 * 60 },
+  { key: 'seven_day', id: 'seven-day', label: '7d weekly', iconKind: 'period', windowDurationSeconds: 7 * 24 * 60 * 60 },
+];
+
+function isWindowObject(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function finiteOrZero(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0;
+}
+
 export class ClaudeStatusParser {
   /**
    * Context window usage as a percentage, taken directly from Claude Code's
@@ -105,32 +119,22 @@ export class ClaudeStatusParser {
       const effortLevel = typeof effortObject?.level === 'string' ? effortObject.level : undefined;
 
       // Claude Code emits session (5h) and weekly (7d) plan-usage countdowns
-      // alongside context_window. resets_at is Unix epoch seconds.
+      // alongside context_window. resets_at is Unix epoch seconds. Each window
+      // is sent only when it applies, so either may be absent on its own: Ultra
+      // has no 5h window, and Claude drops a window once its resets_at passes.
+      // Emit each window that is present (`RATE_LIMIT_WINDOWS`).
       const rateLimitsRaw = data.rate_limits as Record<string, unknown> | undefined;
-      const fiveHourRaw = rateLimitsRaw?.five_hour as Record<string, unknown> | undefined;
-      const sevenDayRaw = rateLimitsRaw?.seven_day as Record<string, unknown> | undefined;
-      const finiteOrZero = (value: unknown): number => (typeof value === 'number' && Number.isFinite(value) ? value : 0);
-      const clampPercentage = (value: unknown): number => Math.min(100, Math.max(0, finiteOrZero(value)));
-      const rateLimits: RateLimitWindow[] | undefined = (fiveHourRaw && sevenDayRaw)
-        ? [
-            {
-              id: 'five-hour',
-              label: '5h session',
-              iconKind: 'session',
-              usedPercentage: clampPercentage(fiveHourRaw.used_percentage),
-              resetsAt: finiteOrZero(fiveHourRaw.resets_at),
-              windowDurationSeconds: 5 * 60 * 60,
-            },
-            {
-              id: 'seven-day',
-              label: '7d weekly',
-              iconKind: 'period',
-              usedPercentage: clampPercentage(sevenDayRaw.used_percentage),
-              resetsAt: finiteOrZero(sevenDayRaw.resets_at),
-              windowDurationSeconds: 7 * 24 * 60 * 60,
-            },
-          ]
-        : undefined;
+      const reportedWindows: RateLimitWindow[] = [];
+      for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
+        const windowRaw = rateLimitsRaw?.[key];
+        if (!isWindowObject(windowRaw)) continue;
+        reportedWindows.push({
+          ...windowShape,
+          usedPercentage: Math.min(100, Math.max(0, finiteOrZero(windowRaw.used_percentage))),
+          resetsAt: finiteOrZero(windowRaw.resets_at),
+        });
+      }
+      const rateLimits: RateLimitWindow[] | undefined = reportedWindows.length > 0 ? reportedWindows : undefined;
 
       return {
         usage: {

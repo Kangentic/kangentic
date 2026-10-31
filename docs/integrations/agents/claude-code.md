@@ -35,9 +35,14 @@ On first use, `ClaudeDetector` locates the Claude CLI:
 3. If no `PATH` match answered, probe the well-known fallback paths (`~/.claude/local/claude`,
    then the standard Unix install locations). This is the macOS Finder/Dock launch case, where
    Electron did not inherit the shell `PATH`
-4. Cache the result for the app lifetime (`invalidateCache()` resets)
+4. Cache the result for the app lifetime (`invalidateCache()` resets). A NOT FOUND that rests on a
+   probe failure saying nothing about the install is returned but not kept, so the next detection
+   probes again. Two failures count: a `--version` that exits 0 having printed nothing, and a pty
+   host that never answered the exec. A NOT FOUND from another tool's output, a missing file, or
+   a non-zero exit is still cached
 
-Every probe runs `claude --version` with a 5s timeout. A candidate whose output does not parse as
+Every probe runs `claude --version` with a 5s timeout, and a probe that times out is tried once
+more with 15s. A candidate whose output does not parse as
 this agent's version format is passed over and the search continues, so another vendor's binary
 publishing the same name cannot be reported as Claude.
 

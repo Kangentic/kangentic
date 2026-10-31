@@ -25,7 +25,7 @@
  * the Node test environment. Only sessions.* and config.* methods that the
  * targeted code paths touch are stubbed.
  */
-import { describe, it, expect, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { DEFAULT_CONFIG } from '../../src/shared/types';
 import type { SessionUsage } from '../../src/shared/types';
 
@@ -78,6 +78,21 @@ const FIVE_HOUR_SECONDS = 5 * 60 * 60;
 const SEVEN_DAY_SECONDS = 7 * 24 * 60 * 60;
 const FIVE_HOUR_RESET = 2_000_000 + 3600;
 const SEVEN_DAY_RESET = 2_000_000 + 86400 * 5;
+
+// The store drops a window whose resetsAt has passed at Date.now(). Pin Date
+// to just before the fixed reset epochs above, so a window lapses only when a
+// case moves the clock. Only Date is faked: timers stay real, so the awaits in
+// syncSessions still resolve.
+const PINNED_NOW_MS = 2_000_000 * 1000;
+
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime(PINNED_NOW_MS);
+});
+
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function makeRateLimits(
   fiveHourPct: number,
@@ -640,5 +655,87 @@ describe('free usage reset end to end (main stamps the generation, the store mer
 
     updateUsage('sess-here', accumulator.getSessionUsage('sess-here')!);
     expect(shownSevenDay()).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Lapsed windows - Claude reports only the windows that apply
+// ---------------------------------------------------------------------------
+
+describe('lapsed windows are dropped from the shared snapshot', () => {
+  beforeEach(resetStore);
+
+  /** Past the 5h window's reset, well before the 7d window's. */
+  const AFTER_FIVE_HOUR_RESET_MS = (FIVE_HOUR_RESET + 60) * 1000;
+
+  /** An Ultra plan's report: no 5h window at all. */
+  function sevenDayOnly(sevenDayPct: number): NonNullable<SessionUsage['rateLimits']> {
+    return makeRateLimits(0, sevenDayPct).filter((rateLimitWindow) => rateLimitWindow.id === 'seven-day');
+  }
+
+  function shownWindowIds(): string[] | undefined {
+    return useSessionStore.getState().latestRateLimits?.rateLimits.map((rateLimitWindow) => rateLimitWindow.id);
+  }
+
+  function stubGetUsage(cache: Record<string, SessionUsage>): void {
+    (window as Record<string, unknown> & {
+      electronAPI: { sessions: { getUsage: (projectId?: string) => Promise<Record<string, SessionUsage>> } }
+    }).electronAPI.sessions.getUsage = async () => cache;
+  }
+
+  it('updateUsage: a held 5h window that lapsed drops out when the next report carries only 7d', () => {
+    const { updateUsage } = useSessionStore.getState();
+    updateUsage('sess-a', makeUsage(makeRateLimits(57, 50)));
+    expect(shownWindowIds()).toEqual(['five-hour', 'seven-day']);
+
+    vi.setSystemTime(AFTER_FIVE_HOUR_RESET_MS);
+    updateUsage('sess-a', makeUsage(sevenDayOnly(56)));
+
+    expect(shownWindowIds()).toEqual(['seven-day']);
+    expect(useSessionStore.getState().latestRateLimits!.rateLimits[0].usedPercentage).toBe(56);
+  });
+
+  it('updateUsage: a sibling re-sending its lapsed 5h window keeps the snapshot reference', () => {
+    vi.setSystemTime(AFTER_FIVE_HOUR_RESET_MS);
+    const { updateUsage } = useSessionStore.getState();
+    updateUsage('sess-ultra', makeUsage(sevenDayOnly(56)));
+    const snapshotBefore = useSessionStore.getState().latestRateLimits;
+
+    updateUsage('sess-sibling', makeUsage(makeRateLimits(57, 50)));
+    updateUsage('sess-sibling', makeUsage(makeRateLimits(57, 50)));
+
+    expect(useSessionStore.getState().latestRateLimits).toBe(snapshotBefore);
+    expect(shownWindowIds()).toEqual(['seven-day']);
+  });
+
+  it('batchUpdateUsage: a sibling with a lapsed 5h window cannot add it, in either order', () => {
+    vi.setSystemTime(AFTER_FIVE_HOUR_RESET_MS);
+    const ultra = makeUsage(sevenDayOnly(56));
+    const sibling = makeUsage(makeRateLimits(57, 50));
+
+    for (const order of [[['sess-ultra', ultra], ['sess-sibling', sibling]], [['sess-sibling', sibling], ['sess-ultra', ultra]]] as const) {
+      resetStore();
+      useSessionStore.getState().batchUpdateUsage(new Map<string, SessionUsage>(order));
+      expect(shownWindowIds()).toEqual(['seven-day']);
+      expect(useSessionStore.getState().latestRateLimits!.rateLimits[0].usedPercentage).toBe(56);
+    }
+  });
+
+  it('syncSessions: yesterday\'s cached 5h window does not come back beside a 7d-only session', async () => {
+    // The reported case: a session from 10/30 whose last payload had both
+    // windows, and a 10/31 Ultra session whose payload has only seven_day.
+    vi.setSystemTime(AFTER_FIVE_HOUR_RESET_MS);
+    try {
+      stubGetUsage({
+        'sess-yesterday': makeUsage(makeRateLimits(57, 50)),
+        'sess-ultra': makeUsage(sevenDayOnly(56)),
+      });
+      await useSessionStore.getState().syncSessions();
+    } finally {
+      stubGetUsage({});
+    }
+
+    expect(shownWindowIds()).toEqual(['seven-day']);
+    expect(useSessionStore.getState().latestRateLimits!.rateLimits[0].usedPercentage).toBe(56);
   });
 });
