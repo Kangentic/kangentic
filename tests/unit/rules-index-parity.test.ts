@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { CLAUDE_CODE_ONLY_RULES } from '../../scripts/cursor-rules.js';
 
 // Keeps the rules index in sync with the actual rule files. AGENTS.md is the always-loaded index
 // of .claude/rules/ for every agent, and CLAUDE.md (which imports it) indexes the rules that bind
@@ -173,6 +174,13 @@ describe('rules index parity: always-on rules and path-scoped rules agree with t
     expect(claudeOnlyAlwaysOnBasenames).toContain('bash-single-command.md');
     expect(pathScopedBasenames.length).toBeGreaterThan(0);
     expect(pathScopedBasenames).toContain('dependency-block-parity.md');
+  });
+
+  it('lists exactly the rules scripts/cursor-rules.js leaves out of Cursor as Claude Code only', () => {
+    // A rule under CLAUDE.md's Claude Code only heading gets no Cursor copy, and a rule the
+    // generator skips is invisible to Cursor. If the two lists drift, Cursor either loses a rule
+    // that binds it or gets one about Claude Code's own tools.
+    expect([...claudeOnlyAlwaysOnBasenames].sort()).toEqual([...CLAUDE_CODE_ONLY_RULES].sort());
   });
 
   it('detects paths: frontmatter the way this test needs to, on known files', () => {

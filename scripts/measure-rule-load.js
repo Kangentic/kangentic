@@ -29,6 +29,7 @@
 
 const fs = require('node:fs');
 const path = require('node:path');
+const { collectRuleFiles, parsePathGlobs } = require('./lib/claude-rules');
 
 const REPO_ROOT = path.resolve(__dirname, '..');
 const RULES_DIR = path.join(REPO_ROOT, '.claude', 'rules');
@@ -50,38 +51,12 @@ const PROBE_PATHS = [
   'package.json',
 ];
 
-function collectRuleFiles(directory) {
-  const ruleFiles = [];
-  for (const entry of fs.readdirSync(directory, { withFileTypes: true })) {
-    const entryPath = path.join(directory, entry.name);
-    if (entry.isDirectory()) {
-      ruleFiles.push(...collectRuleFiles(entryPath));
-    } else if (entry.name.endsWith('.md')) {
-      const source = fs.readFileSync(entryPath, 'utf-8');
-      ruleFiles.push({ name: entry.name, size: source.length, globs: parsePathGlobs(source) });
-    }
-  }
-  return ruleFiles;
-}
-
-/**
- * Reads the `paths:` list out of a rule's frontmatter. Entries are written both
- * quoted and unquoted across the corpus, so both forms are accepted.
- */
-function parsePathGlobs(source) {
-  const frontmatter = source.match(/^---\r?\n([\s\S]*?)\r?\n---/);
-  if (frontmatter === null) {
-    return [];
-  }
-  const pathsBlock = frontmatter[1].match(/paths:\s*\n((?:\s*-\s.+\n?)*)/);
-  if (pathsBlock === null) {
-    return [];
-  }
-  return pathsBlock[1]
-    .split('\n')
-    .map((line) => line.trim())
-    .filter((line) => line.startsWith('- '))
-    .map((line) => line.slice(2).trim().replace(/^"(.*)"$/, '$1'));
+function measureRuleFiles(directory) {
+  return collectRuleFiles(directory).map((rule) => ({
+    name: rule.name,
+    size: rule.source.length,
+    globs: parsePathGlobs(rule.source),
+  }));
 }
 
 /**
@@ -104,7 +79,7 @@ function totalSize(ruleFiles) {
 
 function main() {
   const verbose = process.argv.includes('--verbose');
-  const allRules = collectRuleFiles(RULES_DIR);
+  const allRules = measureRuleFiles(RULES_DIR);
   const alwaysOnRules = allRules.filter((rule) => rule.globs.length === 0);
   const instructionsSize = INSTRUCTION_FILES.reduce(
     (sum, filePath) => sum + fs.readFileSync(filePath, 'utf-8').length,
