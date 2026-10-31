@@ -85,11 +85,9 @@ export function TaskPriorWork({ taskId, projectId }: TaskPriorWorkProps) {
                   was first worked out, filed under another one), so the title
                   alone looked like noise. The passage is prose, since prior
                   work never matches on tool output, and stays in the tip so a
-                  row is one line. */}
-              <Tooltip
-                label={hit.snippet || t`Open this conversation`}
-                detail={hit.snippet ? t`Open this conversation` : undefined}
-              >
+                  row is one line. A row with no passage has no tip: that a
+                  click opens the conversation needs no words. */}
+              <Tooltip label={hit.snippet || ''}>
                 <button
                   type="button"
                   onClick={() => useSessionStore.getState().setConversationSessionId(hit.sessionId)}

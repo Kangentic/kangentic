@@ -28,8 +28,12 @@ export interface AutomationsSlice {
    * whole answer: nothing in the renderer holds run history any more (the
    * Column Manager row used to print its last run, and no longer does), so
    * there is nothing to re-read afterwards.
+   *
+   * `projectId` is the failure's project, never the one open at the click: the
+   * failure toast is persistent and outlives a project switch, and the open
+   * project's board does not hold the automation.
    */
-  runAutomationAgain: (automationId: string, taskId: string) => Promise<AutomationRunAgainResult>;
+  runAutomationAgain: (automationId: string, taskId: string, projectId: string | null) => Promise<AutomationRunAgainResult>;
 }
 
 export const createAutomationsSlice: StateCreator<BoardStore, [], [], AutomationsSlice> = (set, get) => ({
@@ -61,8 +65,7 @@ export const createAutomationsSlice: StateCreator<BoardStore, [], [], Automation
     await get().loadAutomations();
   },
 
-  runAutomationAgain: async (automationId, taskId) => {
-    const projectId = useProjectStore.getState().currentProject?.id ?? null;
+  runAutomationAgain: async (automationId, taskId, projectId) => {
     return window.electronAPI.automations.runAgain(automationId, taskId, projectId);
   },
 });

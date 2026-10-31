@@ -191,11 +191,6 @@ msgstr "열기"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
-msgid "Open {pickUrl}"
-msgstr "{pickUrl} 열기"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open a URL to preview"
 msgstr "미리 볼 URL 열기"
 

@@ -468,15 +468,19 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     // fold the global snapshot would stay null until the next status update,
     // leaving a noticeable gap on app start. Reference identity is preserved
     // when nothing changed, so a no-op re-sync does not re-render ContextBars.
+    // The merge also drops every window whose resetsAt has passed, so a
+    // suspended session whose last report still carries a lapsed 5h window
+    // cannot bring that bar back beside a session that reports only 7d.
     let nextLatestRateLimits = currentState.latestRateLimits;
     if (cachedUsage) {
+      const nowMs = Date.now();
       for (const [sessionId, usage] of Object.entries(cachedUsage)) {
         if (usage.rateLimits) {
           nextLatestRateLimits = mergeRateLimitSnapshot(nextLatestRateLimits, {
             rateLimits: usage.rateLimits,
-            capturedAt: Date.now(),
+            capturedAt: nowMs,
             sourceSessionId: sessionId,
-          });
+          }, nowMs);
         }
       }
     }
@@ -768,12 +772,13 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
         // Merge per window rather than overwriting: a sibling session carrying
         // a stale cached report must not clobber a fresher one, which is what
         // made the pill flip-flop every ~5s. A free usage reset still lands,
-        // because main stamps it as a higher generation.
+        // because main stamps it as a higher generation. Lapsed windows drop out.
+        const nowMs = Date.now();
         const merged = mergeRateLimitSnapshot(s.latestRateLimits, {
           rateLimits: data.rateLimits,
-          capturedAt: Date.now(),
+          capturedAt: nowMs,
           sourceSessionId: sessionId,
-        });
+        }, nowMs);
         if (merged !== s.latestRateLimits) {
           next.latestRateLimits = merged;
         }
@@ -826,6 +831,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
     set((s) => {
       const merged = { ...s.sessionUsage };
       let latestRateLimits = s.latestRateLimits;
+      const nowMs = Date.now();
       for (const [sessionId, data] of entries) {
         merged[sessionId] = data;
         if (data.rateLimits) {
@@ -833,12 +839,12 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
           // result is order-independent for realistic inputs (a genuine rollover
           // advances resetsAt by a whole window, far past the merge epsilon): a
           // stale entry iterated last cannot clobber a fresher one from earlier
-          // in the batch.
+          // in the batch. Lapsed windows drop out.
           latestRateLimits = mergeRateLimitSnapshot(latestRateLimits, {
             rateLimits: data.rateLimits,
-            capturedAt: Date.now(),
+            capturedAt: nowMs,
             sourceSessionId: sessionId,
-          });
+          }, nowMs);
         }
       }
       const next: Partial<SessionStore> = { sessionUsage: merged };

@@ -8,7 +8,8 @@
  *   a click-through card: the hold comes from the container tracking the
  *   pointer, never from the card taking it.
  * - A card about one thing (a task, a list, a workflow, a folder) opens it on
- *   a click and closes. A card that opens nothing stays click-through.
+ *   a click and closes, unless it also has a button: then it stays, so the
+ *   button is still there. A card that opens nothing stays click-through.
  * - While a dialog or the settings panel is open, no toast takes a click,
  *   including one opened by keyboard with the pointer resting on a toast.
  * - With Animations off the line steps once a second instead of moving.
@@ -168,6 +169,40 @@ test.describe('toast behavior', () => {
 
       await expect.poll(() => readFlag(page, '__opened')).toBe(true);
       await expect.poll(() => toastCountRightNow(page), { timeout: 5000 }).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a card that opens something and has a button opens on a click and stays, so the button is still there', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await page.evaluate(() => {
+        const store = (window as unknown as { __zustandStores: { toast: ToastStoreHandle } }).__zustandStores.toast;
+        const flags = window as unknown as Record<string, boolean>;
+        store.getState().addToast({
+          title: 'Automation failed',
+          message: '"Fix login redirect": "Notify the channel" failed on Code Review.',
+          persistent: true,
+          onOpen: () => { flags.__opened = true; },
+          action: { label: 'Run again', icon: 'retry', onClick: () => { flags.__ranAgain = true; } },
+        });
+      });
+      await expect(page.getByTestId('toast')).toHaveCount(1);
+
+      await page.getByTestId('toast-body').click();
+      await expect.poll(() => readFlag(page, '__opened')).toBe(true);
+
+      // Longer than the card's exit fallback (1s): a card that started to close
+      // on the click would be gone by now. A fixed wait, because what is
+      // asserted is that nothing happens.
+      await page.waitForTimeout(1500);
+      expect(await toastCountRightNow(page)).toBe(1);
+      expect(await readFlag(page, '__ranAgain')).toBe(false);
+
+      // The button still works after the card opened its subject.
+      await page.getByTestId('toast-action').click();
+      await expect.poll(() => readFlag(page, '__ranAgain')).toBe(true);
     } finally {
       await browser.close();
     }

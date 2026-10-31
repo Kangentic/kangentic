@@ -411,7 +411,9 @@ test.describe('Completed task: Changes tab over a landed range', () => {
       await expect(files.nth(0)).toContainText('+410');
       await expect(files.nth(1)).toContainText('+120');
       await expect(files.nth(1)).toContainText('-80');
-      await expect(files.nth(0)).toHaveAccessibleDescription(/Show task-changes\.ts in Changes/);
+      // The row cuts its path short, so its tip is the whole path, with no
+      // instruction: a click on a file row opening it needs no words.
+      await expect(files.nth(0)).toHaveAccessibleDescription('src/main/git/task-changes.ts');
 
       // A file row opens the tab on that file, in the whole change.
       await files.nth(1).click();
@@ -422,7 +424,9 @@ test.describe('Completed task: Changes tab over a landed range', () => {
       // A commit row opens the tab on that commit.
       await page.getByRole('tab', { name: 'Summary' }).click();
       const commitRow = page.locator('[data-testid="completed-commits"] [data-testid="completed-commit-row"]').filter({ hasText: 'feat: read a completed task from git' });
-      await expect(commitRow).toHaveAccessibleDescription(/Show 4f6fb55 in Changes/);
+      // Its tip is the subject and the exact time, as on a row that cannot open.
+      await expect(commitRow).toHaveAccessibleDescription(/^feat: read a completed task from git\b/);
+      await expect(commitRow).not.toHaveAccessibleDescription(/in Changes/);
       await commitRow.click();
       await expect(page.getByRole('tab', { name: 'Changes' })).toHaveAttribute('aria-selected', 'true');
       await expect(page.locator('[data-testid="commit-selection-hash"]')).toHaveText('4f6fb55', { timeout: 10000 });

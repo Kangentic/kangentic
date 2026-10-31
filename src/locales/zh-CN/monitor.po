@@ -193,10 +193,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "开启"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "Open {taskTitle}"
-msgstr "打开 {taskTitle}"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 msgid "Open on board"
 msgstr "在看板上打开"
@@ -288,10 +284,6 @@ msgstr "表格"
 #: src/renderer/components/monitor/useMonitorDetailOwnership.ts
 msgid "Task"
 msgstr "任务"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "The workflow the task belongs to"
-msgstr "任务所属的工作流"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy

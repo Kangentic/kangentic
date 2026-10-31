@@ -445,11 +445,6 @@ msgstr "세밀"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "초기 보기로 돌아가기"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "앞뒤 및 좌우 이동"
 
@@ -681,11 +676,6 @@ msgstr "설정 열기"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "전체 대화 기록 열기"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "이 대화 열기"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

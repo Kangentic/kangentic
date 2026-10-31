@@ -14,11 +14,6 @@ msgstr "\"{automationName}\" falló con el estado actual de la tarea."
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\" falló en {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "\"{automationName}\" aún se está ejecutando con el estado actual de la tarea."
 
@@ -157,6 +152,10 @@ msgstr "\"{taskTitle}\" se inició desde cero porque su última conversación ex
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" estuvo inactiva durante # minuto.} many {\"{taskTitle}\" estuvo inactiva durante # minutos.} other {\"{taskTitle}\" estuvo inactiva durante # minutos.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Borrar todos los filtros"
 #, fuzzy
 msgid "Clear search"
 msgstr "Borrar búsqueda"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Haga clic para ordenar - Mayús+clic agrega un orden secundario"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Sesión finalizada"
 #, fuzzy
 msgid "Settings"
 msgstr "Configuración"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Mayús+clic agrega un orden secundario"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

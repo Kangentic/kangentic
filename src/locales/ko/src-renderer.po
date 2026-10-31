@@ -14,11 +14,6 @@ msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 실패했습�
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\"이(가) {columnName}에서 실패했습니다."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "작업의 현재 상태에서 \"{automationName}\"이(가) 아직 실행 중입니다."
 
@@ -157,6 +152,10 @@ msgstr "\"{taskTitle}\"의 마지막 대화가 만료되어 새로 시작되었�
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, other {\"{taskTitle}\"이(가) #분 동안 유휴 상태였습니다.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "모든 필터 지우기"
 #, fuzzy
 msgid "Clear search"
 msgstr "검색 지우기"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "클릭하여 정렬 - Shift+클릭으로 보조 정렬 추가"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "세션 종료됨"
 #, fuzzy
 msgid "Settings"
 msgstr "설정"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+클릭으로 보조 정렬 추가"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

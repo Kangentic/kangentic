@@ -340,11 +340,6 @@ msgstr "Chiamate terminate con errore o timeout. Hanno comunque il costo riporta
 msgid "Chart metric"
 msgstr "Metrica del grafico"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-#, fuzzy
-msgid "Choose which project's usage to view"
-msgstr "Scegli il progetto di cui visualizzare l'utilizzo"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 #, fuzzy
 msgid "Clear custom range"
@@ -433,11 +428,6 @@ msgstr "Personalizzato"
 #, fuzzy
 msgid "Day"
 msgstr "Giorno"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-#, fuzzy
-msgid "Edit the custom range"
-msgstr "Modifica l'intervallo personalizzato"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #, fuzzy
@@ -638,11 +628,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "Output"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Output tokens across the turns in this range"
-msgstr "Token di output nei turni di questo periodo"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 #, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
@@ -815,11 +800,6 @@ msgstr "Agente principale"
 #, fuzzy
 msgid "Total"
 msgstr "Totale"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Total tool calls across sessions in the range"
-msgstr "Chiamate totali agli strumenti nelle sessioni del periodo"
 
 #: src/renderer/components/stats/StatsPage.tsx
 #, fuzzy

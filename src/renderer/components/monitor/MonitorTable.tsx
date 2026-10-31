@@ -189,7 +189,6 @@ export function MonitorTable({
           </span>
         )
         : <span className="text-fg-faint">-</span>),
-      headerTip: t`The workflow the task belongs to`,
     },
     {
       // Paused is the non-default value, so it gets the Column Manager's chip

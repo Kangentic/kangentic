@@ -737,11 +737,6 @@ msgstr "Zavřením nyní zahodíte své změny v tomto úkolu."
 msgid "Collapse all"
 msgstr "Sbalit vše"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "Sbalit historii"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "Commity"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "Komprimace"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "Porovnat nastavení všech sloupců vedle sebe"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "Rozbalit vše"
 #, fuzzy
 msgid "Expand changes"
 msgstr "Rozbalit změny"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "Rozbalit historii"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "Nastavit agenta automatizace"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "Sdílet konverzaci úkolu s ostatními sloupci."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "Zobrazit {fileName} v části Změny"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "Zobrazit {shortSha} v části Změny"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

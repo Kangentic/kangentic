@@ -191,11 +191,6 @@ msgstr "Aç"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
-msgid "Open {pickUrl}"
-msgstr "{pickUrl} adresini aç"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open a URL to preview"
 msgstr "Önizlemek için bir URL açın"
 

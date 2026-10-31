@@ -14,11 +14,6 @@ msgstr "\"{automationName}\" a échoué sur l'état actuel de la tâche."
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\" a échoué dans {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "\"{automationName}\" est toujours en cours d'exécution sur l'état actuel de la tâche."
 
@@ -157,6 +152,10 @@ msgstr "« {taskTitle} » a redémarré à zéro car sa dernière conversation a
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" est resté inactif pendant # minute.} many {\"{taskTitle}\" est resté inactif pendant # de minutes.} other {\"{taskTitle}\" est resté inactif pendant # minutes.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Effacer tous les filtres"
 #, fuzzy
 msgid "Clear search"
 msgstr "Effacer la recherche"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Cliquer pour trier - Maj+Clic ajoute un tri secondaire"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Session terminée"
 #, fuzzy
 msgid "Settings"
 msgstr "Paramètres"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Maj+Clic ajoute un tri secondaire"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

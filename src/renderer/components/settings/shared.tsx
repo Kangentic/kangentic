@@ -28,8 +28,6 @@ export interface SettingsTabDefinition {
    *  shared across all projects and must render with no project open. See
    *  settings-tabs.ts and .claude/rules/settings-tab-scope.md. */
   category: 'project' | 'system';
-  /** Tooltip shown on hover (e.g. "Applies to all projects"). */
-  tooltip?: LocalizedText;
   /** Sidebar sub-grouping within the System group. See SettingsTabTier. */
   tier?: SettingsTabTier;
 }
@@ -198,32 +196,32 @@ export function SettingsPanelShell({ onClose, children, projectSwitcher, tabs, a
                     {isNewTier && (
                       <div className={`${sectionHeaderClass} pt-3 pb-1`}>{translateText(TIER_LABELS[tab.tier as Exclude<SettingsTabTier, 'core'>])}</div>
                     )}
-                    <Tooltip label={translateText(tab.tooltip ?? '')}>
-                      <button
-                        data-testid={`settings-tab-${tab.id}`}
-                        onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
-                        className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
-                          hasNoMatches
-                            ? 'opacity-40 cursor-default text-fg-muted'
-                            : isActive
-                              ? 'text-fg bg-surface-hover font-medium'
-                              : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
-                        }`}
-                      >
-                        <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
-                        {/* The match count sits right after the label, tinted
-                            from the tab's own tone so it follows hover and the
-                            selection. The pair takes the free width. */}
-                        <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
-                          {/* Wraps, at a word or inside one too long for the rail
-                              ("Производительность"), rather than running past it. */}
-                          <span className="min-w-0 [overflow-wrap:anywhere]">{translateText(tab.label)}</span>
-                          {isSearching && matchCount !== undefined && matchCount > 0 && (
-                            <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
-                          )}
-                        </span>
-                      </button>
-                    </Tooltip>
+                    {/* No tip: the label names the tab, and the group header
+                        above it says whether it saves per project or for all. */}
+                    <button
+                      data-testid={`settings-tab-${tab.id}`}
+                      onClick={() => { if (!hasNoMatches) onTabChange(tab.id); }}
+                      className={`w-full flex items-center gap-2.5 px-4 py-2 text-sm transition-colors ${
+                        hasNoMatches
+                          ? 'opacity-40 cursor-default text-fg-muted'
+                          : isActive
+                            ? 'text-fg bg-surface-hover font-medium'
+                            : 'text-fg-muted hover:text-fg-secondary hover:bg-surface-hover/50'
+                      }`}
+                    >
+                      <Icon size={16} className={isActive && !hasNoMatches ? 'text-accent' : ''} />
+                      {/* The match count sits right after the label, tinted
+                          from the tab's own tone so it follows hover and the
+                          selection. The pair takes the free width. */}
+                      <span className="flex flex-1 min-w-0 items-center gap-1.5 text-left">
+                        {/* Wraps, at a word or inside one too long for the rail
+                            ("Производительность"), rather than running past it. */}
+                        <span className="min-w-0 [overflow-wrap:anywhere]">{translateText(tab.label)}</span>
+                        {isSearching && matchCount !== undefined && matchCount > 0 && (
+                          <CountBadge count={matchCount} variant="tinted" size="pill" testId={`settings-search-count-${tab.id}`} />
+                        )}
+                      </span>
+                    </button>
                   </React.Fragment>
                 );
               })}

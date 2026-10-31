@@ -154,10 +154,6 @@ msgid "Open"
 msgstr "打开"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-msgid "Open {pickUrl}"
-msgstr "打开 {pickUrl}"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Open a URL to preview"
 msgstr "打开 URL 进行预览"
 

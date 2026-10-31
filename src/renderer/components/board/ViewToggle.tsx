@@ -21,6 +21,9 @@ import {
   TOOLBAR_COLLAPSE,
   TOOLBAR_ROW_CLASS,
   collapseStepAttributes,
+  filtersCollapsed,
+  primaryCollapsed,
+  switcherCollapsed,
   useToolbarCollapseStep,
 } from './toolbar-collapse';
 
@@ -73,9 +76,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
   ));
   // "Workflows, 2 running" while any runs. The tip and the spoken name both say
   // it, each as one whole message per shape (running implies a count above zero).
-  const workflowsTip = runningWorkflowCount > 0
+  // It is live state, so it shows at every step. With nothing running the tip
+  // would only be the name, which the switcher gates below like Board's.
+  const workflowsRunningTip = runningWorkflowCount > 0
     ? plural(runningWorkflowCount, { one: 'Workflows, # running', other: 'Workflows, # running' })
-    : t`Workflows`;
+    : undefined;
   let workflowsAriaLabel: string;
   if (runningWorkflowCount > 0) {
     workflowsAriaLabel = t`Workflows, ${plural(workflowCount, { one: '# workflow', other: '# workflows' })}, ${plural(runningWorkflowCount, { one: '# running', other: '# running' })}`;
@@ -114,6 +119,11 @@ export const ViewToggle = React.memo(function ViewToggle() {
   // its content and its language. The ladder is in toolbar-collapse.ts.
   const collapseStep = useToolbarCollapseStep(rowRef);
   const collapse = activeView === 'backlog' ? BACKLOG_TOOLBAR_COLLAPSE : TOOLBAR_COLLAPSE;
+  // A control's tip is its label, so it shows only while the step hides the
+  // label, as Tabs.tsx does for an icon-alone tab.
+  const switcherLabelsHidden = switcherCollapsed(collapseStep);
+  const filterLabelsHidden = filtersCollapsed(collapseStep);
+  const primaryLabelHidden = primaryCollapsed(collapseStep);
   // Workflows shares the board's search and filter: its cards are board tasks.
   const boardSearch = activeView !== 'backlog';
 
@@ -184,8 +194,9 @@ export const ViewToggle = React.memo(function ViewToggle() {
             label: t`Board`,
             testId: 'view-toggle-board',
             // Columns-against-list is the least self-evident glyph pair on this
-            // row, and at the last step it is all that is left of the switcher.
-            tip: t`Board`,
+            // row, and once the step hides the label it is all that is left of
+            // the switcher. While the label shows, a tip would only repeat it.
+            tip: switcherLabelsHidden ? t`Board` : undefined,
             // The icon is the label's replacement, not an addition, so it shows
             // only once the collapse step hides the label. Its `h-5` restores the
             // 20px content height the label's line box had, so the option keeps
@@ -197,7 +208,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
             value: 'backlog' as const,
             label: t`Backlog`,
             testId: 'view-toggle-backlog',
-            tip: t`Backlog`,
+            tip: switcherLabelsHidden ? t`Backlog` : undefined,
             // The option's accessible name is set from `ariaLabel`, so the badge
             // below contributes nothing to it. Spell the count out here or it is
             // lost to a screen reader at every width, not just the collapsed one.
@@ -218,8 +229,8 @@ export const ViewToggle = React.memo(function ViewToggle() {
             // tip of its own, and the option's tip says what runs. The tip keeps the
             // tab's name, the SegmentedControl exception one-tooltip.md records. At
             // the icon-only steps it is the only label the option has left, as
-            // Board's and Backlog's are.
-            tip: workflowsTip,
+            // Board's and Backlog's are, so with nothing running it shows only then.
+            tip: workflowsRunningTip ?? (switcherLabelsHidden ? t`Workflows` : undefined),
             // The count is spoken while the ring hides it from view.
             ariaLabel: workflowsAriaLabel,
             icon: <span className={collapse.viewSwitcherIcon}><WorkflowIcon size={16} /></span>,
@@ -248,8 +259,8 @@ export const ViewToggle = React.memo(function ViewToggle() {
       <div className={collapse.divider} />
 
       <div className="flex items-center gap-1.5 shrink-0">
-        <LabelsPopover collapse={collapse.filterControl} />
-        <PrioritiesPopover collapse={collapse.filterControl} />
+        <LabelsPopover collapse={collapse.filterControl} labelHidden={filterLabelsHidden} />
+        <PrioritiesPopover collapse={collapse.filterControl} labelHidden={filterLabelsHidden} />
       </div>
 
       <div className={collapse.divider} />
@@ -279,6 +290,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           onToggleLabel={toggleBoardLabel}
           onClearFilters={clearBoardFilters}
           filterCollapse={collapse.filterControl}
+          filterLabelHidden={filterLabelsHidden}
         />
       ) : (
         <ToolbarSearchFilter
@@ -298,6 +310,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           onToggleLabel={toggleBacklogLabel}
           onClearFilters={clearBacklogFilters}
           filterCollapse={collapse.filterControl}
+          filterLabelHidden={filterLabelsHidden}
         />
       )}
 
@@ -310,7 +323,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
           cluster to the right now. */}
       {activeView === 'board' ? (
         <div key="board-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <Tooltip label={t`Add column`}>
+          <Tooltip label={primaryLabelHidden ? t`Add column` : ''}>
             <button
               type="button"
               onClick={() => openBoardManager(null, true)}
@@ -325,7 +338,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
         </div>
       ) : activeView === 'workflows' ? null : (
         <div key="backlog-actions" className="ml-2 flex items-center gap-2 shrink-0">
-          <Tooltip label={t`New Task`}>
+          <Tooltip label={primaryLabelHidden ? t`New Task` : ''}>
             <button
               type="button"
               onClick={openNewDialog}
@@ -337,7 +350,7 @@ export const ViewToggle = React.memo(function ViewToggle() {
               <span className={collapse.primaryAction.label}><Trans>New Task</Trans></span>
             </button>
           </Tooltip>
-          <ImportPopover onOpenImportDialog={setImportSource} collapse={collapse.filterControl} />
+          <ImportPopover onOpenImportDialog={setImportSource} collapse={collapse.filterControl} labelHidden={filterLabelsHidden} />
         </div>
       )}
     </div>

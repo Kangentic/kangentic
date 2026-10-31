@@ -191,11 +191,6 @@ msgstr "Megnyitás"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
 #, fuzzy
-msgid "Open {pickUrl}"
-msgstr "{pickUrl} megnyitása"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
-#, fuzzy
 msgid "Open a URL to preview"
 msgstr "Nyisson meg egy URL-t az előnézethez"
 

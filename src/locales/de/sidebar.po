@@ -88,11 +88,6 @@ msgstr "Möchten Sie <0>„{projectName}“</0> wirklich löschen?"
 msgid "Clear search"
 msgstr "Suche löschen"
 
-#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
-#, fuzzy
-msgid "Click to open"
-msgstr "Zum Öffnen klicken"
-
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -175,11 +170,6 @@ msgstr "Keine passenden Projekte"
 #, fuzzy
 msgid "No projects yet"
 msgstr "Noch keine Projekte"
-
-#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
-#, fuzzy
-msgid "Open folder as project"
-msgstr "Ordner als Projekt öffnen"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy

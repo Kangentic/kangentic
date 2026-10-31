@@ -445,11 +445,6 @@ msgstr "Finom"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "Visszarepülés a kezdőnézethez"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "Repülés előre és oldalra"
 
@@ -681,11 +676,6 @@ msgstr "Beállítások megnyitása"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "A teljes átirat megnyitása"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "Beszélgetés megnyitása"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

@@ -14,11 +14,6 @@ msgstr "„{automationName}” sikertelen volt a feladat jelenlegi állapotán."
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "„{automationName}” sikertelen volt itt: {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "„{automationName}” még fut a feladat jelenlegi állapotán."
 
@@ -157,6 +152,10 @@ msgstr "„{taskTitle}” tiszta lappal indult, mert a legutóbbi beszélgetése
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {„{taskTitle}” # percig tétlen volt.} other {„{taskTitle}” # percig tétlen volt.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Összes szűrő törlése"
 #, fuzzy
 msgid "Clear search"
 msgstr "Keresés törlése"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Kattintson a rendezéshez – Shift+kattintás: másodlagos rendezés"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Munkamenet befejeződött"
 #, fuzzy
 msgid "Settings"
 msgstr "Beállítások"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "A Shift+kattintás másodlagos rendezést ad hozzá"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

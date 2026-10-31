@@ -236,11 +236,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "Zapnuto"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-#, fuzzy
-msgid "Open {taskTitle}"
-msgstr "Otevřít {taskTitle}"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 #, fuzzy
 msgid "Open on board"
@@ -353,11 +348,6 @@ msgstr "Tabulka"
 #, fuzzy
 msgid "Task"
 msgstr "Úkol"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-#, fuzzy
-msgid "The workflow the task belongs to"
-msgstr "Pracovní postup, do kterého úloha patří"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy

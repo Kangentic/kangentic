@@ -52,16 +52,6 @@ msgstr "Összes"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Táblaprofil - az oszloponkénti ügynök, modell és erőfeszítés, amelyet ez a feladat követ"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "Kattintson az erőfeszítés módosításához"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "Kattintson a modell módosításához"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "Tétlen (bemenetre vár)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "Bemeneti / kimeneti tokenek"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "Elkülönített munkamenet"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

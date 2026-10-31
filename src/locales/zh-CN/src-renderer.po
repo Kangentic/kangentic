@@ -12,10 +12,6 @@ msgid "\"{automationName}\" failed against the task's current state."
 msgstr "「{automationName}」针对任务当前状态运行失败。"
 
 #: src/renderer/App.tsx
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "「{automationName}」在 {columnName} 上运行失败。"
-
-#: src/renderer/App.tsx
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "「{automationName}」仍在针对任务当前状态运行。"
 
@@ -129,6 +125,10 @@ msgstr "「{taskTitle}」已重新开始，因为上次对话已过期。"
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, other {「{taskTitle}」已空闲 # 分钟。}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
@@ -434,10 +434,6 @@ msgstr "清除所有筛选"
 #: src/renderer/components/ToolbarSearchFilter.tsx
 msgid "Clear search"
 msgstr "清除搜索"
-
-#: src/renderer/components/DataTable.tsx
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "单击排序 - Shift+单击添加次要排序"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
@@ -1275,6 +1271,11 @@ msgstr "会话已结束"
 #: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "设置"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+单击添加次要排序"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"

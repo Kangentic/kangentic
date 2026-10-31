@@ -236,7 +236,8 @@ test.describe('Workflows header', () => {
       await expect(mark).toHaveCount(0);
       await expect(count).toHaveText('1');
       await expect(segment).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
-      await expect(segment).toHaveAccessibleDescription('Workflows');
+      // With nothing running the tip would only be the label the segment shows, so it has none.
+      await expect(segment).toHaveAccessibleDescription('');
       // The slot holds the pill's width, so the swap moves nothing in the row.
       const pausedWidth = await segment.evaluate((element) => element.getBoundingClientRect().width);
       expect(Math.abs(pausedWidth - runningWidth)).toBeLessThanOrEqual(0.5);
@@ -1019,6 +1020,17 @@ test.describe('Workflows inspector wait marks', () => {
       await expect(page.locator('[data-testid="workflow-run-order-row"]')).toHaveCount(9);
       const row = page.locator('[data-testid="workflow-run-order-row"][data-task-key="t414"]');
       const mark = row.locator('svg[data-mark]');
+
+      // The row's title truncates, so hovering it opens a tip with the whole title. The tip is read
+      // off the tip element: one that repeats the title's own text is not exposed as a description.
+      const taskTitle = RUNNING_TASKS.find(([ticketNumber]) => ticketNumber === 414)?.[1] ?? '';
+      expect(taskTitle, 'ticket 414 is missing from the fixture').not.toBe('');
+      await row.getByText(taskTitle, { exact: true }).hover();
+      await expect(page.locator('[data-tooltip]')).toHaveText(taskTitle);
+      // Off the title, and wait for its tip to go, so the wait marks below start with none open.
+      await page.mouse.move(0, 0);
+      await expect(page.locator('[data-tooltip]')).toHaveCount(0);
+
       // A session nothing has pushed activity for rests as a finished turn, so every wait below is the push's.
       await expect(mark).toHaveAttribute('data-mark', 'agent-idle');
 

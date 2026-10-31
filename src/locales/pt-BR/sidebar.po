@@ -88,11 +88,6 @@ msgstr "Tem certeza de que deseja excluir <0>\"{projectName}\"</0>?"
 msgid "Clear search"
 msgstr "Limpar pesquisa"
 
-#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
-#, fuzzy
-msgid "Click to open"
-msgstr "Clique para abrir"
-
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -175,11 +170,6 @@ msgstr "Nenhum projeto corresponde"
 #, fuzzy
 msgid "No projects yet"
 msgstr "Nenhum projeto ainda"
-
-#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
-#, fuzzy
-msgid "Open folder as project"
-msgstr "Abrir pasta como projeto"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy

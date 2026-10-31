@@ -12,10 +12,6 @@ msgid "\"{automationName}\" failed against the task's current state."
 msgstr "\"{automationName}\" failed against the task's current state."
 
 #: src/renderer/App.tsx
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\" failed on {columnName}."
-
-#: src/renderer/App.tsx
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "\"{automationName}\" is still running against the task's current state."
 
@@ -127,6 +123,10 @@ msgstr "\"{taskTitle}\" started fresh because its last conversation expired."
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 
 #: src/renderer/lib/paused-for-memory.ts
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
@@ -426,10 +426,6 @@ msgstr "Clear all filters"
 #: src/renderer/components/ToolbarSearchFilter.tsx
 msgid "Clear search"
 msgstr "Clear search"
-
-#: src/renderer/components/DataTable.tsx
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Click to sort - Shift+Click adds a secondary sort"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 msgid "Close"
@@ -1267,6 +1263,10 @@ msgstr "Session ended"
 #: src/renderer/stores/host-memory-store.ts
 msgid "Settings"
 msgstr "Settings"
+
+#: src/renderer/components/DataTable.tsx
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+Click adds a secondary sort"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 msgid "Show workflow"

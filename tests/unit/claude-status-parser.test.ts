@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
@@ -291,9 +293,9 @@ describe('ClaudeStatusParser', () => {
       expect(usage!.rateLimits![1].usedPercentage).toBe(0);
     });
 
-    it('omits rateLimits when only five_hour is present (both required)', () => {
-      // The parser requires BOTH five_hour AND seven_day to build the array.
-      // A status.json with only one bucket should fall back to undefined.
+    it('emits the five_hour window alone when only five_hour is present', () => {
+      // Claude sends each window only while it applies: a lapsed weekly window is
+      // dropped from the payload until the next response. One window still shows.
       const raw = JSON.stringify({
         context_window: { used_percentage: 5 },
         cost: { total_cost_usd: 0 },
@@ -304,21 +306,77 @@ describe('ClaudeStatusParser', () => {
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      expect(usage!.rateLimits).toBeUndefined();
+      expect(usage!.rateLimits).toEqual([
+        { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 30, resetsAt: 1775883600, windowDurationSeconds: 5 * 60 * 60 },
+      ]);
     });
 
-    it('omits rateLimits when only seven_day is present (both required)', () => {
+    it('emits the seven_day window alone when only seven_day is present (Ultra has no 5h limit)', () => {
+      // The payload an Ultra plan sends: no five_hour window at all.
       const raw = JSON.stringify({
         context_window: { used_percentage: 5 },
         cost: { total_cost_usd: 0 },
         model: { id: 'claude-opus-4-6' },
         rate_limits: {
+          seven_day: { used_percentage: 56, resets_at: 1793718000 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toEqual([
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 56, resetsAt: 1793718000, windowDurationSeconds: 7 * 24 * 60 * 60 },
+      ]);
+    });
+
+    it('omits rateLimits when rate_limits carries no window', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+        rate_limits: {},
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toBeUndefined();
+    });
+
+    it('skips a window that is not an object and keeps the other', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+        rate_limits: {
+          five_hour: null,
           seven_day: { used_percentage: 10, resets_at: 1776452400 },
         },
       });
       const usage = ClaudeStatusParser.parseStatus(raw);
       expect(usage).not.toBeNull();
-      expect(usage!.rateLimits).toBeUndefined();
+      expect(usage!.rateLimits!.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day']);
+    });
+
+    it('skips a window that arrives as an array', () => {
+      const raw = JSON.stringify({
+        context_window: { used_percentage: 5 },
+        cost: { total_cost_usd: 0 },
+        model: { id: 'claude-opus-4-6' },
+        rate_limits: {
+          five_hour: [],
+          seven_day: { used_percentage: 10, resets_at: 1776452400 },
+        },
+      });
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage!.rateLimits!.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day']);
+    });
+
+    it('real payload: a 2.1.316 status.json that carries only seven_day yields one window', () => {
+      // Captured from Claude Code 2.1.316 and sanitized (paths, ids, session name).
+      const raw = fs.readFileSync(path.join(__dirname, '..', 'fixtures', 'claude-status-seven-day-only.json'), 'utf8');
+      const usage = ClaudeStatusParser.parseStatus(raw);
+      expect(usage).not.toBeNull();
+      expect(usage!.rateLimits).toEqual([
+        { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 60, resetsAt: 1793718000, windowDurationSeconds: 7 * 24 * 60 * 60 },
+      ]);
     });
 
     it('real-world: 14% raw shows 14% on bar (not inflated)', () => {

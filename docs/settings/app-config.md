@@ -225,7 +225,7 @@ something is listening on.
 | `contextBar.showTokens` | boolean | `true` | Show token usage (input + output) |
 | `contextBar.showContextFraction` | boolean | `true` | Show the context window usage percentage |
 | `contextBar.showProgressBar` | boolean | `true` | Show the context window progress bar |
-| `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window). Hidden for adapters that do not report rate limits. |
+| `contextBar.showRateLimits` | boolean | `true` | Show adapter-reported plan-usage quota bars. Each window is self-described by the agent adapter (e.g. Claude reports a 5-hour session and 7-day weekly window, and only the windows its plan has). A window disappears once its reset time passes, and the bars hide when none is left. Hidden for adapters that do not report rate limits. |
 
 The model and effort pills are intentionally NOT toggleable. They double as in-place picker triggers (clicking them opens a popover whose pick restarts the task's session with the new model or effort; a Command Terminal switches live), so a "hide" toggle would silently disable that feature. They render whenever a session reports a model.
 

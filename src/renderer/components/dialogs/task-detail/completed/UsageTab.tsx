@@ -14,7 +14,7 @@ import { AUTOMATION_MANIFEST } from '../../../../../shared/automation-manifest';
 import { DEFAULT_PERMISSIONS, getPermissionLabel } from '../../../../../shared/types';
 import { ColumnLabel, LinkButton, ReportCard, SessionPill, ToolCallsPill, ValuePill } from './report-parts';
 import { Tooltip } from '../../../Tooltip';
-import { computeNextSorts, SORT_HINT, SortIndicator, sortRows, sortStateOf, type SortableColumn, type SortLevel } from '../../../DataTable';
+import { computeNextSorts, sortHint, SortIndicator, sortRows, sortStateOf, type SortableColumn, type SortLevel } from '../../../DataTable';
 import type {
   BackgroundCallJob,
   PermissionMode,
@@ -100,8 +100,8 @@ function useSortedRows<TRow, TKey extends string>(rows: TRow[], columns: Array<S
 }
 
 /**
- * A sortable header: a button, so the keyboard reaches it, with the Completed
- * Tasks table's own hint and indicator (`SortIndicator`). On a right-aligned
+ * A sortable header: a button, so the keyboard reaches it, with the shared
+ * Shift+Click hint (`sortHint()`) and indicator (`SortIndicator`). On a right-aligned
  * number column the arrow sits left of the label, so the label stays flush with
  * the numbers under it.
  */
@@ -115,7 +115,7 @@ function SortHeader<TRow, TKey extends string>({ column, sorts, onSort, first = 
   const sortIndex = sorts.findIndex((level) => level.key === column.key);
   return (
     <th className={cellClass('header', column.align, first)} aria-sort={sortStateOf(sortIndex === 0 ? sorts[0].direction : null)}>
-      <Tooltip label={SORT_HINT}>
+      <Tooltip label={sortHint()}>
         <button
           type="button"
           onClick={(event) => onSort(column, event.shiftKey)}

@@ -52,16 +52,6 @@ msgstr "Tutti"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Profilo della board: agente, modello e impegno per colonna seguiti da questa attività"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "Fai clic per cambiare l'impegno"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "Fai clic per cambiare il modello"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "Inattivo (in attesa di input)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "Token di input / output"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "Sessione isolata"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

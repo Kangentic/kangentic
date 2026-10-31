@@ -737,11 +737,6 @@ msgstr "今閉じると、このタスクへの変更は破棄されます。"
 msgid "Collapse all"
 msgstr "すべて折りたたむ"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "履歴を折りたたむ"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "コミット"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "圧縮"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "すべての列の設定を並べて比較"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "すべて展開"
 #, fuzzy
 msgid "Expand changes"
 msgstr "変更を展開"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "履歴を展開"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "オートメーション エージェントを設定"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "タスクの会話を他の列と共有します。"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "{fileName} を変更内容で表示"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "{shortSha} を変更内容で表示"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

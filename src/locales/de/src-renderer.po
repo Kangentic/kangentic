@@ -14,11 +14,6 @@ msgstr "„{automationName}“ ist für den aktuellen Stand der Aufgabe fehlgesc
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "„{automationName}“ ist in {columnName} fehlgeschlagen."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "„{automationName}“ läuft noch für den aktuellen Stand der Aufgabe."
 
@@ -157,6 +152,10 @@ msgstr "„{taskTitle}“ wurde neu gestartet, da die letzte Unterhaltung abgela
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {„{taskTitle}“ war # Minute lang inaktiv.} other {„{taskTitle}“ war # Minuten lang inaktiv.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Alle Filter löschen"
 #, fuzzy
 msgid "Clear search"
 msgstr "Suche löschen"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Zum Sortieren klicken – Umschalt+Klick fügt eine sekundäre Sortierung hinzu"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Sitzung beendet"
 #, fuzzy
 msgid "Settings"
 msgstr "Einstellungen"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Umschalt+Klick fügt eine sekundäre Sortierung hinzu"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

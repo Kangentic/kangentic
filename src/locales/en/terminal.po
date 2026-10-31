@@ -43,14 +43,6 @@ msgstr "All"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Board Profile - the per-column agent, model, and effort this task follows"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-msgid "Click to change effort"
-msgstr "Click to change effort"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-msgid "Click to change model"
-msgstr "Click to change model"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
 msgstr "Collapse terminal panel"
@@ -108,10 +100,6 @@ msgstr "Idle (waiting for input)"
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "Input / output tokens"
 msgstr "Input / output tokens"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-msgid "Isolated session"
-msgstr "Isolated session"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

@@ -464,11 +464,10 @@ test.describe('DescriptionEditor file mentions', () => {
     // than the Cancel button, which the textarea's own click helpers assume
     // is reachable the same way) closes this one; the description is
     // non-empty, so this is the dirty-form discard path. Tab landed on the
-    // Preview button, whose tip opens at once and takes the first Escape.
-    const tip = page.locator('[data-tooltip]');
-    await expect(tip).toBeVisible();
-    await page.keyboard.press('Escape');
-    await expect(tip).toHaveCount(0);
+    // Preview toggle, which carries no tip (its label already says what it
+    // does), so nothing takes the Escape before the dialog does.
+    await expect(page.locator('[data-testid="description-preview-toggle"]')).toBeFocused();
+    await expect(page.locator('[data-tooltip]')).toHaveCount(0);
     await page.keyboard.press('Escape');
     await page.locator('button:has-text("Discard")').click();
   });

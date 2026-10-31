@@ -6,6 +6,7 @@ import { isNpmShimCandidate, missingNpmShimTarget } from './npm-shim-target';
 import { cliInvocationForTarget, parseWslCliPath, type CliTarget } from './cli-target';
 import { describeWslFailure, resolveWslDistroFacts, type WslDistroFacts } from './wsl-distro';
 import { execFileAsync, type ExecOutput, type OffMainExecOptions } from '../../utility-process/off-main-exec';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../pty/host/pty-host-request-errors';
 import { childProcessEnv } from '../../shared/child-env';
 import type { AgentInfo } from '../agent-adapter';
 import type { StoredCliTarget } from '../../../shared/types';
@@ -30,9 +31,29 @@ const MAX_PATH_MATCHES_PER_CANDIDATE = 4;
 /** Longest slice of a probe's output or error carried into a log line. */
 const PROBE_DETAIL_MAX_LENGTH = 200;
 
+/**
+ * A failed probe is `transient` when it says nothing about whether the CLI is
+ * installed: it exited 0 having printed nothing, or the pty host never answered
+ * the exec. A NOT FOUND built on one is answered but never cached, so the next
+ * detection probes again (docs/platforms/shells-and-paths.md has the boot race
+ * that showed both).
+ */
 type VersionProbe =
   | { ok: true; version: string }
-  | { ok: false; reason: 'missing' | 'probe-failed' | 'unrecognized-output'; detail: string };
+  | { ok: false; reason: 'missing' | 'probe-failed' | 'empty-output' | 'unrecognized-output'; detail: string; transient: boolean };
+
+/** Appended to a NOT FOUND line that rests on a transient probe failure. */
+const NOT_CACHED_NOTE = 'A probe failed for a reason that says nothing about the install, so this result is not kept and the next detection probes again.';
+
+/** Whether the probe never reached the CLI: the pty host timed out or was gone. */
+function isHostUnanswered(error: unknown): boolean {
+  return error instanceof PtyHostTimeoutError || error instanceof PtyHostExitedError;
+}
+
+/** The failure for a `--version` exec that rejected. */
+function probeFailed(error: unknown): Extract<VersionProbe, { ok: false }> {
+  return { ok: false, reason: 'probe-failed', detail: describeProbeError(error), transient: isHostUnanswered(error) };
+}
 
 /**
  * Configuration for a per-agent detector. Each CLI has a different
@@ -143,7 +164,11 @@ export class AgentDetector {
   private latest: AgentInfo | null = null;
   /** Bumped by `invalidateCache`, so a detection that was running then caches nothing. */
   private generation = 0;
-  /** Results `detect()` answers with but never caches (a WSL distro whose facts could not be read). */
+  /**
+   * Results `detect()` answers with but never caches: a WSL distro whose facts
+   * could not be read, and a NOT FOUND that rests on a transient probe failure
+   * (`VersionProbe`).
+   */
   private readonly uncacheable = new WeakSet<AgentInfo>();
   private readonly platform: NodeJS.Platform;
   private readonly resolveFacts: (distro: string) => Promise<WslDistroFacts>;
@@ -227,8 +252,13 @@ export class AgentDetector {
         console.log(`[agent-detect] ${name}: found via override ${overridePath} (${probe.version})`);
         return { found: true, path: overridePath, version: probe.version };
       }
-      console.warn(`[agent-detect] ${name}: override ${overridePath} did not produce a version (${probe.detail})`);
-      return { found: false, path: overridePath, version: null, detectionError: probe.detail };
+      console.warn(
+        `[agent-detect] ${name}: override ${overridePath} did not produce a version (${probe.detail})`
+        + (probe.transient ? `. ${NOT_CACHED_NOTE}` : ''),
+      );
+      const result: AgentInfo = { found: false, path: overridePath, version: null, detectionError: probe.detail };
+      if (probe.transient) this.uncacheable.add(result);
+      return result;
     }
 
     // 2. PATH-based discovery via `which()`. Works when Electron is
@@ -245,6 +275,7 @@ export class AgentDetector {
     //    looking rather than conclude the agent is missing. A dead npm shim is
     //    recognized from its content and skipped without a spawn.
     const pathMatchSummaries: string[] = [];
+    let sawTransientFailure = false;
     for (const candidate of [name, ...(this.config.binaryAliases ?? [])]) {
       const matches = await this.resolvePathMatches(candidate);
       let probedCount = 0;
@@ -275,6 +306,7 @@ export class AgentDetector {
           console.log(`[agent-detect] ${name}: found via PATH at ${matchPath} (${probe.version})`);
           return { found: true, path: matchPath, version: probe.version };
         }
+        if (probe.transient) sawTransientFailure = true;
         console.warn(
           `[agent-detect] ${name}: "${candidate}" resolved to ${matchPath} but ${describeProbeFailure(probe)}; `
           + 'trying the next match.',
@@ -303,6 +335,7 @@ export class AgentDetector {
         console.log(`[agent-detect] ${name}: found via fallback ${fallbackPath} (${probe.version})`);
         return { found: true, path: fallbackPath, version: probe.version };
       }
+      if (probe.transient) sawTransientFailure = true;
     }
 
     // Not found anywhere. Log enough to diagnose bug reports - which PATH
@@ -316,9 +349,12 @@ export class AgentDetector {
       `[agent-detect] ${name}: NOT FOUND. PATH had ${pathSegmentCount} segments; ` +
       `PATH matches tried: ${pathMatchSummaries.length > 0 ? pathMatchSummaries.join('; ') : 'none'}; ` +
       `${existingFallbacks.length}/${fallbackPaths.length} fallback paths existed but failed version probe; ` +
-      `${missingCount} did not exist on disk. Configure cliPath in Settings if installed elsewhere.`,
+      `${missingCount} did not exist on disk. Configure cliPath in Settings if installed elsewhere.` +
+      (sawTransientFailure ? ` ${NOT_CACHED_NOTE}` : ''),
     );
-    return { found: false, path: null, version: null };
+    const notFound: AgentInfo = { found: false, path: null, version: null };
+    if (sawTransientFailure) this.uncacheable.add(notFound);
+    return notFound;
   }
 
   /**
@@ -397,20 +433,34 @@ export class AgentDetector {
         console.log(`[agent-detect] ${name}: found in WSL ${wslCli.distro} at ${wslCli.linuxCliPath} (${parsed})`);
         return { found: true, path: overridePath, version: parsed, cliTarget };
       }
+      // Empty output is transient here as it is for a Windows path (`VersionProbe`).
       const detectionError = raw ? firstLine(raw) : 'empty output';
-      console.warn(`[agent-detect] ${name}: ${overridePath} did not produce a version (${detectionError})`);
-      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+      return this.wslOverrideNotFound(
+        `${overridePath} did not produce a version (${detectionError})`,
+        { found: false, path: overridePath, version: null, cliTarget, detectionError },
+        !raw,
+      );
     } catch (error) {
       const detectionError = truncate(describeWslFailure(error));
-      console.warn(`[agent-detect] ${name}: ${overridePath} failed its version probe in WSL (${detectionError})`);
-      return { found: false, path: overridePath, version: null, cliTarget, detectionError };
+      return this.wslOverrideNotFound(
+        `${overridePath} failed its version probe in WSL (${detectionError})`,
+        { found: false, path: overridePath, version: null, cliTarget, detectionError },
+        isHostUnanswered(error),
+      );
     }
+  }
+
+  /** Log a WSL override's NOT FOUND, and keep it out of the cache when it rests on a transient failure. */
+  private wslOverrideNotFound(description: string, result: AgentInfo, transient: boolean): AgentInfo {
+    console.warn(`[agent-detect] ${this.config.binaryName}: ${description}` + (transient ? `. ${NOT_CACHED_NOTE}` : ''));
+    if (transient) this.uncacheable.add(result);
+    return result;
   }
 
   private async probeVersion(candidatePath: string): Promise<VersionProbe> {
     try {
       if (!fs.existsSync(candidatePath)) {
-        return { ok: false, reason: 'missing', detail: 'the file does not exist on disk' };
+        return { ok: false, reason: 'missing', detail: 'the file does not exist on disk', transient: false };
       }
       const versionArgs = this.config.versionArgs;
       let output: { stdout: string; stderr: string };
@@ -421,25 +471,25 @@ export class AgentDetector {
         // every agent is probed at once at boot: a CLI answering in 1.3 s alone
         // timed out at 5 s among the rest and vanished from the agent list.
         // So once more with room, by which point the rest have mostly finished.
-        if (!isProbeTimeout(error)) {
-          return { ok: false, reason: 'probe-failed', detail: describeProbeError(error) };
-        }
+        if (!isProbeTimeout(error)) return probeFailed(error);
         try {
           output = versionArgs
             ? await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS, versionArgs)
             : await execVersion(candidatePath, SLOW_PROBE_TIMEOUT_MS);
         } catch (retryError) {
-          return { ok: false, reason: 'probe-failed', detail: describeProbeError(retryError) };
+          return probeFailed(retryError);
         }
       }
       const raw = output.stdout.trim() || output.stderr.trim();
-      if (!raw) return { ok: false, reason: 'unrecognized-output', detail: 'empty output' };
+      // Exit 0 with nothing on either stream names no tool at all, so it is
+      // not evidence of a different one (see `VersionProbe`).
+      if (!raw) return { ok: false, reason: 'empty-output', detail: 'empty output', transient: true };
       const parsed = this.config.parseVersion(raw);
       return parsed && parsed.length > 0
         ? { ok: true, version: parsed }
-        : { ok: false, reason: 'unrecognized-output', detail: firstLine(raw) };
+        : { ok: false, reason: 'unrecognized-output', detail: firstLine(raw), transient: false };
     } catch (error) {
-      return { ok: false, reason: 'probe-failed', detail: describeProbeError(error) };
+      return probeFailed(error);
     }
   }
 }
@@ -463,8 +513,10 @@ function describeProbeFailure(probe: Extract<VersionProbe, { ok: false }>): stri
       return 'the file does not exist on disk';
     case 'probe-failed':
       return `its --version probe failed (${probe.detail})`;
+    case 'empty-output':
+      return 'its --version exited without printing anything';
     case 'unrecognized-output':
-      return 'its --version output did not match this agent (likely a different tool publishing the same name)';
+      return `its --version output did not match this agent (likely a different tool publishing the same name): "${probe.detail}"`;
   }
 }
 

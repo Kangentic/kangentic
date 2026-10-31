@@ -194,7 +194,6 @@ export function ColumnRail({
   rows, activeId, onSelect, onSelectOverview, onReorder, onAddColumn, profileBar,
   structureLocked = false,
 }: ColumnRailProps) {
-  const { t } = useLingui();
   // Re-key DndContext on HMR; see src/renderer/utils/hmr-generation.ts (Pattern C).
   const hmrGeneration = useHmrGeneration();
   // Never the stock KeyboardSensor: a click on the grip focuses it, Enter would
@@ -256,23 +255,21 @@ export function ColumnRail({
           so it sits below the selector and above the list. */}
       <div className="flex-shrink-0 border-b border-edge/50 px-2 pt-3 pb-2">
         <div className="px-2 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint"><Trans>Overview</Trans></div>
-        <Tooltip label={t`Compare every column's settings side by side`}>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={overviewSelected}
-            onClick={onSelectOverview}
-            data-testid="board-manager-tab-all"
-            className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs transition-colors ${
-              overviewSelected
-                ? 'bg-surface-hover text-fg'
-                : 'text-fg-muted hover:text-fg hover:bg-surface-hover/60'
-            }`}
-          >
-            <LayoutGrid size={14} className="flex-shrink-0" />
-            <Trans>All columns</Trans>
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={overviewSelected}
+          onClick={onSelectOverview}
+          data-testid="board-manager-tab-all"
+          className={`flex items-center gap-2 w-full px-2 py-1.5 rounded text-xs transition-colors ${
+            overviewSelected
+              ? 'bg-surface-hover text-fg'
+              : 'text-fg-muted hover:text-fg hover:bg-surface-hover/60'
+          }`}
+        >
+          <LayoutGrid size={14} className="flex-shrink-0" />
+          <Trans>All columns</Trans>
+        </button>
       </div>
 
       <div className="pl-4 pr-2 pt-3 pb-1.5 text-[11px] uppercase tracking-wide text-fg-faint flex-shrink-0">

@@ -14,11 +14,6 @@ msgstr "Автоматизация «{automationName}» завершилась �
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "Автоматизация «{automationName}» завершилась с ошибкой в столбце {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "Автоматизация «{automationName}» ещё выполняется для текущего состояния задачи."
 
@@ -157,6 +152,10 @@ msgstr "«{taskTitle}» запущена заново, так как срок е
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {Задача «{taskTitle}» простаивала # минуту.} few {Задача «{taskTitle}» простаивала # минуты.} many {Задача «{taskTitle}» простаивала # минут.} other {Задача «{taskTitle}» простаивала # минуты.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Сбросить все фильтры"
 #, fuzzy
 msgid "Clear search"
 msgstr "Очистить поиск"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Нажмите для сортировки, Shift+щелчок — дополнительная сортировка"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Сеанс завершен"
 #, fuzzy
 msgid "Settings"
 msgstr "Настройки"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+щелчок добавляет дополнительную сортировку"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

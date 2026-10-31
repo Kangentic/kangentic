@@ -340,11 +340,6 @@ msgstr "Volání, která skončila chybou nebo vypršela. I tak stojí to, co na
 msgid "Chart metric"
 msgstr "Metrika grafu"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-#, fuzzy
-msgid "Choose which project's usage to view"
-msgstr "Vyberte projekt, jehož využití chcete zobrazit"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 #, fuzzy
 msgid "Clear custom range"
@@ -433,11 +428,6 @@ msgstr "Vlastní"
 #, fuzzy
 msgid "Day"
 msgstr "Den"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-#, fuzzy
-msgid "Edit the custom range"
-msgstr "Upravit vlastní rozsah"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #, fuzzy
@@ -638,11 +628,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "Výstup"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Output tokens across the turns in this range"
-msgstr "Výstupní tokeny napříč tahy v tomto období"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 #, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
@@ -815,11 +800,6 @@ msgstr "Hlavní agent"
 #, fuzzy
 msgid "Total"
 msgstr "Celkem"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Total tool calls across sessions in the range"
-msgstr "Celkový počet volání nástrojů napříč relacemi v daném období"
 
 #: src/renderer/components/stats/StatsPage.tsx
 #, fuzzy

@@ -52,16 +52,6 @@ msgstr "Все"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "Профиль доски — агент, модель и уровень усилий для каждой колонки, которым следует эта задача"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "Нажмите, чтобы изменить уровень усилий"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "Нажмите, чтобы изменить модель"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "Простой (ожидание ввода)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "Входные / выходные токены"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "Изолированный сеанс"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

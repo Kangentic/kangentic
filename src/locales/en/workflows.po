@@ -519,10 +519,6 @@ msgstr "Running. Pause workflow"
 msgid "Save"
 msgstr "Save"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-msgid "Select this task"
-msgstr "Select this task"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 msgid "Show the workflow agent"
 msgstr "Show the workflow agent"

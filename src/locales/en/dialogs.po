@@ -598,10 +598,6 @@ msgstr "Closing now will discard your changes to this task."
 msgid "Collapse all"
 msgstr "Collapse all"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Collapse history"
-msgstr "Collapse history"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Collapse to split view"
 msgstr "Collapse to split view"
@@ -686,10 +682,6 @@ msgstr "Commits"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "Compactions"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-msgid "Compare every column's settings side by side"
-msgstr "Compare every column's settings side by side"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Comparing pixels"
@@ -1110,10 +1102,6 @@ msgstr "Expand all"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Expand changes"
 msgstr "Expand changes"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Expand history"
-msgstr "Expand history"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
@@ -2187,14 +2175,6 @@ msgstr "Set up an Automation agent"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
 msgstr "Share the task's conversation with the other columns."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {fileName} in Changes"
-msgstr "Show {fileName} in Changes"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {shortSha} in Changes"
-msgstr "Show {shortSha} in Changes"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Show all"

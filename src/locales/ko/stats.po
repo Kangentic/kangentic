@@ -340,11 +340,6 @@ msgstr "오류가 발생했거나 시간이 초과된 호출입니다. 이 호�
 msgid "Chart metric"
 msgstr "차트 지표"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-#, fuzzy
-msgid "Choose which project's usage to view"
-msgstr "사용량을 볼 프로젝트 선택"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 #, fuzzy
 msgid "Clear custom range"
@@ -433,11 +428,6 @@ msgstr "사용자 지정"
 #, fuzzy
 msgid "Day"
 msgstr "날짜"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-#, fuzzy
-msgid "Edit the custom range"
-msgstr "사용자 지정 범위 편집"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #, fuzzy
@@ -638,11 +628,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "출력"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Output tokens across the turns in this range"
-msgstr "기간 내 턴의 출력 토큰"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 #, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
@@ -815,11 +800,6 @@ msgstr "최다 사용 에이전트"
 #, fuzzy
 msgid "Total"
 msgstr "합계"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Total tool calls across sessions in the range"
-msgstr "기간 내 세션 전체의 총 도구 호출 수"
 
 #: src/renderer/components/stats/StatsPage.tsx
 #, fuzzy

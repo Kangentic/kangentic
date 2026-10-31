@@ -14,11 +14,6 @@ msgstr "Automatizace „{automationName}“ selhala vůči aktuálnímu stavu ú
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "Automatizace „{automationName}“ selhala ve sloupci {columnName}."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "Automatizace „{automationName}“ stále běží vůči aktuálnímu stavu úlohy."
 
@@ -157,6 +152,10 @@ msgstr "Úloha „{taskTitle}“ začala nanovo, protože platnost její posledn
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {Úloha „{taskTitle}“ byla nečinná # minutu.} few {Úloha „{taskTitle}“ byla nečinná # minuty.} many {Úloha „{taskTitle}“ byla nečinná # minuty.} other {Úloha „{taskTitle}“ byla nečinná # minut.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -530,11 +529,6 @@ msgstr "Vymazat všechny filtry"
 #, fuzzy
 msgid "Clear search"
 msgstr "Vymazat hledání"
-
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Kliknutím seřadíte – Shift+kliknutí přidá sekundární řazení"
 
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
@@ -1578,6 +1572,11 @@ msgstr "Relace ukončena"
 #, fuzzy
 msgid "Settings"
 msgstr "Nastavení"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+kliknutí přidá sekundární řazení"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

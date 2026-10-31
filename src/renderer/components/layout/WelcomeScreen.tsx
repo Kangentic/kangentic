@@ -85,17 +85,15 @@ function DetectionRow({ name, testId, found, version, installUrl, loading, authe
                 {loginCommand && (
                   <>
                     <span className="text-xs text-fg-faint">-</span>
-                    <Tooltip label={t`Copy "${loginCommand}" to clipboard`}>
-                      <button
-                        className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
-                        onClick={handleCopy}
-                        aria-label={t`Copy "${loginCommand}" to clipboard`}
-                        data-testid={testId ? `${testId}-copy-login` : undefined}
-                      >
-                        {copied ? <Trans>Copied!</Trans> : <Trans>Copy <code className="font-mono">{loginCommand}</code></Trans>}
-                        {!copied && <Copy size={10} />}
-                      </button>
-                    </Tooltip>
+                    <button
+                      className="inline-flex items-center gap-0.5 text-xs text-accent hover:underline cursor-pointer"
+                      onClick={handleCopy}
+                      aria-label={t`Copy "${loginCommand}" to clipboard`}
+                      data-testid={testId ? `${testId}-copy-login` : undefined}
+                    >
+                      {copied ? <Trans>Copied!</Trans> : <Trans>Copy <code className="font-mono">{loginCommand}</code></Trans>}
+                      {!copied && <Copy size={10} />}
+                    </button>
                   </>
                 )}
               </div>

@@ -1368,6 +1368,18 @@ test.describe('Settings Panel', () => {
     // render, fails here, and a newly-added tool is covered for free.
     await expect(page.getByTestId('mcp-tool-cell')).toHaveCount(MCP_TOOL_MANIFEST.length);
 
+    // A cell truncates a long label, so its tip leads with the whole label, and the detail under
+    // it is the manifest's blurb and where the click goes. The tip text is read off the tip
+    // element: a tip that opens with the cell's own text is not exposed as a description.
+    const createTaskBlurb = MCP_TOOL_MANIFEST.find((tool) => tool.name === 'kangentic_create_task')?.blurb;
+    expect(createTaskBlurb, 'kangentic_create_task is missing from the manifest').toBeTruthy();
+    const createTaskCell = page.getByTestId('mcp-tool-cell').filter({ hasText: 'Create Task' });
+    await createTaskCell.hover();
+    const toolTip = page.locator('[data-tooltip]');
+    await expect(toolTip).toHaveText(/^Create Task/);
+    await expect(toolTip).toContainText(createTaskBlurb ?? '');
+    await expect(toolTip).toContainText('Opens the docs page');
+
     // Each cell deep-links to its docs entry. Patch the mock's no-op
     // openExternal to record URLs, click one, and assert what it opened.
     await page.evaluate(() => {
@@ -1376,10 +1388,12 @@ test.describe('Settings Panel', () => {
         window.__openedExternalUrls?.push(url);
       };
     });
-    await page.getByTestId('mcp-tool-cell').filter({ hasText: 'Create Task' }).click();
+    await createTaskCell.click();
     await expect
       .poll(() => page.evaluate(() => window.__openedExternalUrls))
       .toEqual([mcpToolDocsUrl('kangentic_create_task')]);
+    // The press closed the tip, and nothing else opened one: the shared page leaves none behind.
+    await expect(toolTip).toHaveCount(0);
     // Restore the mock's default no-op so this patch does not leak into later tests
     // on the shared page (matches mock-electron-api.js shell.openExternal).
     await page.evaluate(() => {
@@ -1685,11 +1699,13 @@ test.describe('Project Settings via Sidebar', () => {
   });
 });
 
-test.describe('Shared Settings Tooltip', () => {
-  test('Behavior tab has tooltip "Applies to all projects"', async () => {
+test.describe('Settings Tab Tips', () => {
+  // The SYSTEM header above the tab already says it applies to all projects,
+  // so the tab carries no tip that repeats it.
+  test('a System tab has no tip', async () => {
     await openSettings();
     const behaviorTab = page.getByRole('button', { name: 'Behavior' });
-    await expect(behaviorTab).toHaveAccessibleDescription('Applies to all projects');
+    await expect(behaviorTab).toHaveAccessibleDescription('');
     await closeSettings();
   });
 });

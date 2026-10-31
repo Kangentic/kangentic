@@ -53,29 +53,27 @@ export function ChangesHistorySection({ open, onToggle, bodyHeight, commitCount,
         : t`${plural(commitCount, { one: '# commit on this branch', other: '# commits on this branch' })}`;
   return (
     <div className="flex flex-col min-h-0 flex-shrink border-t border-edge" data-testid="changes-history-section">
-      <Tooltip label={open ? t`Collapse history` : t`Expand history`}>
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={open}
-          className="flex w-full flex-shrink-0 items-center gap-1.5 px-2 text-left text-fg-secondary hover:bg-surface-hover hover:text-fg transition-colors"
-          style={{ height: HISTORY_SECTION_HEADER_PX }}
-          data-testid="changes-history-toggle"
-        >
-          <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
-          <span className="text-xs font-medium"><Trans>History</Trans></span>
-          {commitCount !== null && (
-            // The pill widens with each digit, so the graph's 200-commit cap
-            // renders without clipping. Tinted from the toggle's tone, so it
-            // brightens with the label on hover.
-            <Tooltip label={countTip}>
-              <span className="inline-flex">
-                <CountBadge count={commitCount} variant="tinted" size="pill" testId="changes-history-count" />
-              </span>
-            </Tooltip>
-          )}
-        </button>
-      </Tooltip>
+      <button
+        type="button"
+        onClick={onToggle}
+        aria-expanded={open}
+        className="flex w-full flex-shrink-0 items-center gap-1.5 px-2 text-left text-fg-secondary hover:bg-surface-hover hover:text-fg transition-colors"
+        style={{ height: HISTORY_SECTION_HEADER_PX }}
+        data-testid="changes-history-toggle"
+      >
+        <ChevronRight size={14} className={`flex-shrink-0 text-fg-muted transition-transform ${open ? 'rotate-90' : ''}`} />
+        <span className="text-xs font-medium"><Trans>History</Trans></span>
+        {commitCount !== null && (
+          // The pill widens with each digit, so the graph's 200-commit cap
+          // renders without clipping. Tinted from the toggle's tone, so it
+          // brightens with the label on hover.
+          <Tooltip label={countTip}>
+            <span className="inline-flex">
+              <CountBadge count={commitCount} variant="tinted" size="pill" testId="changes-history-count" />
+            </span>
+          </Tooltip>
+        )}
+      </button>
       {/* Mounted while collapsed, clipped to height 0 (see the children prop
           doc). The height transition fires only on the open/close CHANGE, so a
           hydrated-open restore paints at its final height with no replay, and

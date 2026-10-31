@@ -737,11 +737,6 @@ msgstr "Fermer maintenant supprimera vos modifications de cette tâche."
 msgid "Collapse all"
 msgstr "Tout réduire"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "Réduire l'historique"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "Commits"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "Compactages"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "Comparer les paramètres de toutes les colonnes côte à côte"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "Tout développer"
 #, fuzzy
 msgid "Expand changes"
 msgstr "Agrandir les modifications"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "Développer l'historique"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "Configurer un agent d'automatisation"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "Partager la conversation de la tâche avec les autres colonnes."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "Afficher {fileName} dans Modifications"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "Afficher {shortSha} dans Modifications"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

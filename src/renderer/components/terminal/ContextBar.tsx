@@ -9,7 +9,7 @@ import { useBoardStore } from '../../stores/board-store';
 import { useSessionStore } from '../../stores/session-store';
 import { useConfigStore } from '../../stores/config-store';
 import { getProgressColor } from '../../utils/progress-color';
-import { windowElapsedPercentage } from '../../utils/rate-limit-window';
+import { liveRateLimitWindows, rateLimitWindowsShortestFirst, windowElapsedPercentage } from '../../utils/rate-limit-window';
 import { formatTokenCount, isContextWindowKnown, isContextOccupancyKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { formatCost, formatDuration } from '../../utils/format-session';
 import { formatMonthDayTime, formatTimeAgo } from '../../lib/datetime';
@@ -77,23 +77,10 @@ const RATE_LIMIT_ICON: Record<RateLimitWindow['iconKind'], LucideIcon> = {
  * One rate-limit window row: icon + usage track + percent. The colored fill is
  * driven by `usedPercentage` (budget spent); a caret-topped vertical tick
  * marks how far through the time window we are (elapsed time, not budget),
- * creeping right as the reset time draws nearer.
- *
- * Isolated as a leaf with its own interval so the periodic re-render that advances
- * the time marker touches only this row, not the whole ContextBar (model picker,
- * context bar, rate-limit math). Same rationale as ElapsedTime. A 30s tick is
- * ample: the 5h marker moves ~0.0056%/s, imperceptible per second. The interval
- * is component-local and cleared on unmount, so it needs no HMR Pattern A
- * preservation (see .claude/rules/hmr-patterns.md).
+ * creeping right as the reset time draws nearer. `now` (epoch ms) comes from
+ * the pill's tick (`RateLimitsPill`).
  */
-function RateLimitBar({ limitWindow }: { limitWindow: RateLimitWindow }) {
-  const [now, setNow] = useState(() => Date.now());
-
-  useEffect(() => {
-    const intervalId = setInterval(() => setNow(Date.now()), 30_000);
-    return () => clearInterval(intervalId);
-  }, []);
-
+function RateLimitBar({ limitWindow, now }: { limitWindow: RateLimitWindow; now: number }) {
   const Icon = RATE_LIMIT_ICON[limitWindow.iconKind];
   const roundedUsedPercentage = Math.round(limitWindow.usedPercentage);
   // windowDurationSeconds is optional: a window with no fixed duration draws no
@@ -180,6 +167,75 @@ function RateLimitsUpdated({ capturedAt }: { capturedAt: number }) {
   return <span data-testid="rate-limits-tip-updated"><Trans>Updated {timeAgo}</Trans></span>;
 }
 
+interface RateLimitsPillProps {
+  /** The shared snapshot's windows, as merged by the session store. */
+  rateLimits: RateLimitWindow[];
+  /** When the snapshot arrived (epoch ms), for the tip's "Updated" footer. */
+  capturedAt: number;
+  /** The session this ContextBar reports for, the pulse's context identity. */
+  sessionId: string;
+}
+
+/**
+ * The rate-limits pill: one bar per window that is still open, with the rich
+ * tip. Renders nothing once every window has lapsed.
+ *
+ * It owns the 30s tick that advances each bar's time marker and expires a
+ * window whose `resetsAt` passes while it is on screen (the store's merge drops
+ * lapsed windows only when a report arrives). Isolated as a leaf so that
+ * periodic re-render touches only this pill, not the whole ContextBar (model
+ * picker, context bar, rate-limit math). Same rationale as ElapsedTime. A 30s
+ * tick is ample: the 5h marker moves ~0.0056%/s, imperceptible per second, and a
+ * lapsed window can linger at most one tick, reading "Resets now". The interval
+ * is component-local and cleared on unmount, so it needs no HMR Pattern A
+ * preservation (see .claude/rules/hmr-patterns.md).
+ */
+function RateLimitsPill({ rateLimits: reportedWindows, capturedAt, sessionId }: RateLimitsPillProps) {
+  const { t } = useLingui();
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const intervalId = setInterval(() => setNow(Date.now()), 30_000);
+    return () => clearInterval(intervalId);
+  }, []);
+
+  const rateLimits = rateLimitWindowsShortestFirst(liveRateLimitWindows(reportedWindows, now));
+  const rateLimitsKey = rateLimits
+    .map((limitWindow) => `${limitWindow.id}:${Math.round(limitWindow.usedPercentage)}`)
+    .join('|');
+  // Rebaselines on `sessionId`: switching the bar to another session is not a
+  // live tick and must not animate (.claude/rules/restore-no-animation-replay.md).
+  const rateLimitsRef = useValuePulse(rateLimitsKey, { resetKey: sessionId });
+
+  if (rateLimits.length === 0) {
+    return null;
+  }
+
+  // What a screen reader hears: each window's share and reset. The tip draws the same.
+  const spoken = rateLimits
+    .map((limitWindow) => `${limitWindow.label} ${Math.round(limitWindow.usedPercentage)}%. ${formatResetTime(limitWindow.resetsAt)}`)
+    .join('. ');
+  return (
+    <Tooltip
+      label={spoken}
+      header={{ icon: <Gauge />, title: t`Rate limits` }}
+      content={<RateLimitBlocks rateLimits={rateLimits} />}
+      footer={<RateLimitsUpdated capturedAt={capturedAt} />}
+      testId="rate-limits-tip"
+    >
+      <span
+        ref={rateLimitsRef}
+        className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
+        data-testid="rate-limits-pill"
+      >
+        {rateLimits.map((limitWindow) => (
+          <RateLimitBar key={limitWindow.id} limitWindow={limitWindow} now={now} />
+        ))}
+      </span>
+    </Tooltip>
+  );
+}
+
 /**
  * Visual context window usage bar displayed below terminal areas. Same
  * content in both surfaces (task detail dialog and bottom panel) -
@@ -256,10 +312,6 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
     { resetKey: sessionId },
   );
   const fractionRef = useValuePulse(usage?.contextWindow.usedTokens, { resetKey: sessionId });
-  const rateLimitsKey = latestRateLimits
-    ? latestRateLimits.rateLimits.map((limitWindow) => `${limitWindow.id}:${Math.round(limitWindow.usedPercentage)}`).join('|')
-    : '';
-  const rateLimitsRef = useValuePulse(rateLimitsKey, { resetKey: sessionId });
 
   // Tool-call breakdown popover. This pill lives directly in ContextBar, so it
   // owns its own open state (unlike the model/effort popovers, which live in the
@@ -463,32 +515,13 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           )}
         </>
       )}
-      {showRateLimits && latestRateLimits && (() => {
-        const rateLimits = latestRateLimits.rateLimits;
-        // What a screen reader hears: each window's share and reset. The tip draws the same.
-        const spoken = rateLimits
-          .map((limitWindow) => `${limitWindow.label} ${Math.round(limitWindow.usedPercentage)}%. ${formatResetTime(limitWindow.resetsAt)}`)
-          .join('. ');
-        return (
-          <Tooltip
-            label={spoken}
-            header={{ icon: <Gauge />, title: t`Rate limits` }}
-            content={<RateLimitBlocks rateLimits={rateLimits} />}
-            footer={<RateLimitsUpdated capturedAt={latestRateLimits.capturedAt} />}
-            testId="rate-limits-tip"
-          >
-            <span
-              ref={rateLimitsRef}
-              className={`${pill} text-fg-muted tabular-nums flex items-center gap-2 flex-1 basis-0 min-w-[220px]`}
-              data-testid="rate-limits-pill"
-            >
-              {rateLimits.map((limitWindow) => (
-                <RateLimitBar key={limitWindow.id} limitWindow={limitWindow} />
-              ))}
-            </span>
-          </Tooltip>
-        );
-      })()}
+      {showRateLimits && latestRateLimits && (
+        <RateLimitsPill
+          rateLimits={latestRateLimits.rateLimits}
+          capturedAt={latestRateLimits.capturedAt}
+          sessionId={sessionId}
+        />
+      )}
       {showCost && (
         <Tooltip label={t`Session API cost`}>
           <span ref={costRef} className={`${pill} text-fg-muted tabular-nums`}>{formatCost(usage.cost.totalCostUsd)}</span>

@@ -154,10 +154,6 @@ msgid "Open"
 msgstr "Open"
 
 #: src/renderer/components/browser/BrowserEmptyState.tsx
-msgid "Open {pickUrl}"
-msgstr "Open {pickUrl}"
-
-#: src/renderer/components/browser/BrowserEmptyState.tsx
 msgid "Open a URL to preview"
 msgstr "Open a URL to preview"
 

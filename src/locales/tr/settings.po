@@ -375,11 +375,6 @@ msgstr "Yalnızca görev ayrıntısı kebap menüsünde görünür"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Yeniden başlatmadan sonra uygulanır; ajan çıktısını veya terminal metnini değiştirmez."
 
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Applies to all projects"
-msgstr "Tüm projelere uygulanır"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -1175,11 +1170,6 @@ msgstr "Yürütme"
 #, fuzzy
 msgid "Expand"
 msgstr "Genişlet"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-#, fuzzy
-msgid "Expand the prompt"
-msgstr "İstemi genişlet"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2785,11 +2775,6 @@ msgstr "Yeni bir iş akışı için aldığı ilk mesaj."
 #, fuzzy
 msgid "The Kangentic relay"
 msgstr "Kangentic aktarıcısı"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "Bilgi grafiği ve okuduğu dizin. Tüm projelere uygulanır"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy

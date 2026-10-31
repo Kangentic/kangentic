@@ -598,10 +598,6 @@ msgstr "現在關閉會捨棄你對這個任務的變更。"
 msgid "Collapse all"
 msgstr "全部收合"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Collapse history"
-msgstr "收合歷程"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Collapse to split view"
 msgstr "收合為分割檢視"
@@ -686,10 +682,6 @@ msgstr "提交"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "壓縮次數"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-msgid "Compare every column's settings side by side"
-msgstr "並排比較各欄的設定"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Comparing pixels"
@@ -1110,10 +1102,6 @@ msgstr "全部展開"
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 msgid "Expand changes"
 msgstr "展開變更"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-msgid "Expand history"
-msgstr "展開歷程記錄"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "column header"
@@ -2187,14 +2175,6 @@ msgstr "設定自動化代理"
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Share the task's conversation with the other columns."
 msgstr "與其他欄共用此任務的對話。"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {fileName} in Changes"
-msgstr "在變更中顯示 {fileName}"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-msgid "Show {shortSha} in Changes"
-msgstr "在變更中顯示 {shortSha}"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 msgid "Show all"

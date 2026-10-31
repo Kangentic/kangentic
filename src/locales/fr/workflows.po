@@ -641,11 +641,6 @@ msgstr "En cours. Suspendre le workflow"
 msgid "Save"
 msgstr "Enregistrer"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "Sélectionner cette tâche"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

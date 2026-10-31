@@ -737,11 +737,6 @@ msgstr "Beim Schließen werden Ihre Änderungen an dieser Aufgabe verworfen."
 msgid "Collapse all"
 msgstr "Alle zuklappen"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "Verlauf einklappen"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "Commits"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "Komprimierungen"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "Einstellungen aller Spalten nebeneinander vergleichen"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "Alle aufklappen"
 #, fuzzy
 msgid "Expand changes"
 msgstr "Änderungen erweitern"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "Verlauf ausklappen"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "Automatisierungs-Agent einrichten"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "Die Unterhaltung der Aufgabe mit den anderen Spalten teilen."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "{fileName} in Änderungen anzeigen"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "{shortSha} in Änderungen anzeigen"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

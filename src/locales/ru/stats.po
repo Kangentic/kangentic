@@ -340,11 +340,6 @@ msgstr "Вызовы, завершившиеся ошибкой или по та
 msgid "Chart metric"
 msgstr "Метрика графика"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-#, fuzzy
-msgid "Choose which project's usage to view"
-msgstr "Выберите проект для просмотра использования"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 #, fuzzy
 msgid "Clear custom range"
@@ -433,11 +428,6 @@ msgstr "Другой"
 #, fuzzy
 msgid "Day"
 msgstr "День"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-#, fuzzy
-msgid "Edit the custom range"
-msgstr "Изменить пользовательский диапазон"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 #, fuzzy
@@ -638,11 +628,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "Вывод"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Output tokens across the turns in this range"
-msgstr "Выходные токены за ходы в этом периоде"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 #, fuzzy
 msgid "over {coveredSessionsCompact} sessions"
@@ -815,11 +800,6 @@ msgstr "Ведущий агент"
 #, fuzzy
 msgid "Total"
 msgstr "Всего"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-#, fuzzy
-msgid "Total tool calls across sessions in the range"
-msgstr "Общее число вызовов инструментов в сеансах за период"
 
 #: src/renderer/components/stats/StatsPage.tsx
 #, fuzzy

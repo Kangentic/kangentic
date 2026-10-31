@@ -375,11 +375,6 @@ msgstr "Csak a feladatrészletek kebabmenüjében jelenik meg"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Újraindítás után lép életbe, és nem módosítja az ágens kimenetét vagy a terminál szövegét."
 
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Applies to all projects"
-msgstr "Minden projektre vonatkozik"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -1175,11 +1170,6 @@ msgstr "Végrehajtás"
 #, fuzzy
 msgid "Expand"
 msgstr "Kibontás"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-#, fuzzy
-msgid "Expand the prompt"
-msgstr "Prompt kibontása"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2785,11 +2775,6 @@ msgstr "Az első üzenet, amelyet egy új munkafolyamathoz kap."
 #, fuzzy
 msgid "The Kangentic relay"
 msgstr "A Kangentic relay"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "A tudásgráf és az általa olvasott index. Minden projektre vonatkozik"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy

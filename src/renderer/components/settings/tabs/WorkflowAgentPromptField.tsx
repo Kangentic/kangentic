@@ -5,7 +5,6 @@ import { Trans, useLingui } from '@lingui/react/macro';
 import { TemplateTextField, type TemplateTextFieldInsert } from '../../TemplateTextField';
 import { TemplateVariablePicker } from '../../TemplateVariablePicker';
 import { Pill } from '../../Pill';
-import { Tooltip } from '../../Tooltip';
 import { BaseDialog, DialogFooterActions } from '../../dialogs/BaseDialog';
 import { ConfirmDialog } from '../../dialogs/ConfirmDialog';
 import { maximizedDialogLayout, MaximizeToggleButton } from '../../dialogs/dialog-maximize';
@@ -118,19 +117,16 @@ export function WorkflowAgentPromptSetting({ stored, onSave }: { stored: string;
 
 /** The card header's Expand: the same prompt, larger. */
 export function WorkflowAgentPromptExpandButton({ onClick }: { onClick: () => void }) {
-  const { t } = useLingui();
   return (
-    <Tooltip label={t`Expand the prompt`}>
-      <button
-        type="button"
-        onClick={onClick}
-        data-testid="workflow-agent-prompt-expand"
-        className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
-      >
-        <Maximize2 size={13} aria-hidden="true" />
-        <Trans>Expand</Trans>
-      </button>
-    </Tooltip>
+    <button
+      type="button"
+      onClick={onClick}
+      data-testid="workflow-agent-prompt-expand"
+      className="inline-flex cursor-pointer items-center gap-1.5 rounded border border-edge-input bg-surface-control px-2.5 py-1 text-xs text-fg-secondary transition-colors hover:border-accent/50 hover:text-fg"
+    >
+      <Maximize2 size={13} aria-hidden="true" />
+      <Trans>Expand</Trans>
+    </button>
   );
 }
 

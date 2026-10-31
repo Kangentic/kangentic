@@ -284,17 +284,15 @@ export function AgentTab({ config, globalConfig, agentList }: {
             {unauthenticated && loginCommand && (
               <div className="mt-1 text-xs text-amber-400/80 flex items-center gap-2">
                 <span><Trans>Run <code className="font-mono">{loginCommand}</code> in your terminal to authenticate.</Trans></span>
-                <Tooltip label={t`Copy "${loginCommand}" to clipboard`}>
-                  <button
-                    type="button"
-                    onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
-                    className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
-                    aria-label={t`Copy "${loginCommand}" to clipboard`}
-                    data-testid={`agent-tab-copy-login-${agent.name}`}
-                  >
-                    <Copy size={11} />{copiedAgent === agent.name ? t`Copied!` : t({ message: 'Copy', context: 'verb' })}
-                  </button>
-                </Tooltip>
+                <button
+                  type="button"
+                  onClick={() => handleCopyLoginCommand(agent.name, loginCommand)}
+                  className="inline-flex items-center gap-1 text-accent hover:underline cursor-pointer"
+                  aria-label={t`Copy "${loginCommand}" to clipboard`}
+                  data-testid={`agent-tab-copy-login-${agent.name}`}
+                >
+                  <Copy size={11} />{copiedAgent === agent.name ? t`Copied!` : t({ message: 'Copy', context: 'verb' })}
+                </button>
               </div>
             )}
           </CardRow>
