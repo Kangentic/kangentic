@@ -23,7 +23,7 @@
  */
 
 import type { Profiler } from 'node:inspector';
-import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsage } from '../../../shared/types';
+import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsagePatch } from '../../../shared/types';
 import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
@@ -388,7 +388,7 @@ export type PtyHostEvent =
   /** Output that is not a redraw: new activity. Coalesced like `outputSeen`. */
   | { type: 'ptyData'; sessionId: string }
   | { type: 'agentSessionId'; sessionId: string; capturedId: string }
-  | { type: 'streamTelemetry'; sessionId: string; usage?: Partial<SessionUsage>; events?: SessionEvent[] }
+  | { type: 'streamTelemetry'; sessionId: string; usage?: SessionUsagePatch; events?: SessionEvent[] }
   /** A terminal lifecycle trace entry (dev builds only). */
   | { type: 'trace'; sessionId: string; event: string; detail?: Record<string, unknown>; ts: number }
   /** Output of a raw PTY, every chunk as it arrives. */

@@ -577,7 +577,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
         <ContextUsageFooter
           modelName={resolvedModelName}
           percent={pct}
-          windowKnown={occupancyKnown}
+          occupancyKnown={occupancyKnown}
           divider={divider}
         />
       );

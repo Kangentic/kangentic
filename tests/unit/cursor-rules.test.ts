@@ -163,3 +163,55 @@ describe('writeCursorRules', () => {
     expect(fs.existsSync(handWritten)).toBe(true);
   });
 });
+
+// The generator only reaches Cursor if something runs it: `npm install` (the `prepare` script) and
+// every `npm start` (scripts/dev.js). The behavior tests above call writeCursorRules directly, so
+// deleting either call site would leave them all green while Cursor's copy of the rules silently
+// went stale. These are source scans, in the style of invariant (b) of external-scripts-parity.test.ts.
+describe('the generator is wired into install and dev start', () => {
+  /**
+   * Source with its comments removed, so a commented-out call does not count as a call. Block
+   * comments are matched only where one opens a line (a JSDoc block), which keeps a glob string
+   * holding a slash-star from swallowing the code up to the next close.
+   */
+  function readSourceWithoutComments(relativePath: string): string {
+    return fs.readFileSync(path.join(REPO_ROOT, relativePath), 'utf-8')
+      .replace(/^[ \t]*\/\*[\s\S]*?\*\//gm, '')
+      .replace(/^[ \t]*\/\/.*$/gm, '')
+      .replace(/[ \t]\/\/.*$/gm, '');
+  }
+
+  it('scripts/dev.js requires the generator and calls writeCursorRules(projectDir) inside a try', () => {
+    const source = readSourceWithoutComments('scripts/dev.js');
+    expect(
+      /require\(\s*['"]\.\/cursor-rules['"]\s*\)/.test(source),
+      "scripts/dev.js must require('./cursor-rules'). Without it `npm start` never refreshes .cursor/rules/.",
+    ).toBe(true);
+    // The try is what lets a rule the translator cannot carry warn instead of stopping the dev server.
+    expect(
+      /try\s*\{[^}]*\bwriteCursorRules\s*\(\s*projectDir\s*\)/.test(source),
+      'scripts/dev.js must call writeCursorRules(projectDir) inside a try block, so a failure only warns.',
+    ).toBe(true);
+  });
+
+  it('package.json prepare runs scripts/cursor-rules.js, so npm install refreshes the rules', () => {
+    const manifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf-8')) as {
+      scripts?: Record<string, string>;
+    };
+    const prepareSteps = (manifest.scripts?.prepare ?? '').split('&&').map((step) => step.trim());
+    expect(
+      prepareSteps,
+      `the prepare script must include "node scripts/cursor-rules.js" as a step (found "${manifest.scripts?.prepare}")`,
+    ).toContain('node scripts/cursor-rules.js');
+  });
+
+  it('scripts/cursor-rules.js runs the generator when executed directly, which is what prepare does', () => {
+    // The script exports writeCursorRules and, run as `node scripts/cursor-rules.js`, must also call
+    // it. Without the main-module block, `prepare` would load the file, write nothing and exit 0.
+    const source = readSourceWithoutComments('scripts/cursor-rules.js');
+    expect(
+      /if\s*\(\s*require\.main\s*===\s*module\s*\)\s*\{[\s\S]*?\bwriteCursorRules\s*\(/.test(source),
+      'scripts/cursor-rules.js must call writeCursorRules inside `if (require.main === module)`.',
+    ).toBe(true);
+  });
+});

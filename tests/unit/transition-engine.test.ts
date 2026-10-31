@@ -1978,3 +1978,193 @@ describe('TransitionEngine - a CLI installed in a WSL distro', () => {
     expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ cli_target: null }));
   });
 });
+
+describe('TransitionEngine - the id of a fresh agent session', () => {
+  // A fresh spawn asks resolveFreshAgentSessionId (agent/shared/fresh-agent-session-id.ts,
+  // unit-tested on its own) for the conversation id. A CLI that cannot take an
+  // id Kangentic chose but can create an empty chat (Cursor's session screen)
+  // is asked to create one first, and the launch opens it. This describe pins
+  // the CALL SITE in executeSpawnAgent: which arguments it hands the helper,
+  // and where the answer lands (the builder, the spawn, the session row).
+  //
+  // Red-green:
+  // - Reverting the id to `adapter.supportsCallerSessionId ? randomUUID() : null`
+  //   fails the first case (no chat is created, the id stays null), the
+  //   nonInteractive case and the abort case.
+  // - Dropping `nonInteractive: config.nonInteractive` from the helper call
+  //   fails the nonInteractive case.
+  // - Dropping `signal` from the helper call leaves the abort case waiting on
+  //   the never-settling chat, which its bounded race reports as a failure.
+  // - Dropping `signal?.throwIfAborted()` after the helper call fails the abort
+  //   case at its buildCommand assertion (the later abort check still rejects,
+  //   but only after the command was built).
+  // - Skipping the helper's reportsLaunchSessionId gate (calling
+  //   `adapter.createSessionId` directly) fails the print-launch cases.
+  const CLI_PATH = '/opt/chat-cli/bin/chat-cli';
+  const TASK_WORKTREE = '/some/project/.kangentic/worktrees/fix-login';
+
+  const createSessionId = vi.fn(async (_cliPath: string, _workingDirectory: string): Promise<string | null> => 'chat-created');
+  const reportsLaunchSessionId = vi.fn((_options: { permissionMode: string; nonInteractive?: boolean }): boolean => false);
+  // mockAdapter is shared module state typed by its literal, which declares
+  // neither optional method, so the cases set and clear them through this view.
+  const chatCapableAdapter = mockAdapter as unknown as {
+    supportsCallerSessionId: boolean;
+    createSessionId?: typeof createSessionId;
+    reportsLaunchSessionId?: typeof reportsLaunchSessionId;
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    createSessionId.mockImplementation(async () => 'chat-created');
+    reportsLaunchSessionId.mockImplementation(() => false);
+    mockAdapter.detect.mockResolvedValue({ found: true, path: CLI_PATH, version: '1.0.0' });
+    mockAdapter.buildCommand.mockImplementation((options: { prompt?: string }) => `claude ${options.prompt ?? ''}`);
+    // A CLI that does not accept an id Kangentic chose, but can create a chat.
+    chatCapableAdapter.supportsCallerSessionId = false;
+    chatCapableAdapter.createSessionId = createSessionId;
+    chatCapableAdapter.reportsLaunchSessionId = reportsLaunchSessionId;
+  });
+
+  afterEach(() => {
+    // Back to the stub every other describe in this file assumes.
+    chatCapableAdapter.supportsCallerSessionId = true;
+    delete chatCapableAdapter.createSessionId;
+    delete chatCapableAdapter.reportsLaunchSessionId;
+    mockAdapter.detect.mockResolvedValue({ found: true, path: '/usr/bin/claude', version: '1.0.0' });
+  });
+
+  function buildCommandOptions(): { sessionId?: string; resume?: boolean } {
+    return mockAdapter.buildCommand.mock.calls[0][0] as { sessionId?: string; resume?: boolean };
+  }
+
+  it('creates a chat in the task\'s directory with the detected CLI, then opens it fresh and records it as the agent session id', async () => {
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+
+    await runSpawn(makeTask({ worktree_path: TASK_WORKTREE }));
+
+    expect(createSessionId).toHaveBeenCalledTimes(1);
+    expect(createSessionId).toHaveBeenCalledWith(CLI_PATH, TASK_WORKTREE);
+    expect(mockAdapter.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'chat-created', resume: false }));
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: 'chat-created', resuming: false }));
+    expect(sessionRepo.insertedRecords).toHaveLength(1);
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: 'chat-created' }));
+    // The chat exists before the command that opens it is built.
+    expect(createSessionId.mock.invocationCallOrder[0]).toBeLessThan(mockAdapter.buildCommand.mock.invocationCallOrder[0]);
+  });
+
+  it('creates no chat when the launch reports its own id, and starts with no agent session id', async () => {
+    reportsLaunchSessionId.mockImplementation(() => true);
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+
+    await runSpawn(makeTask());
+
+    expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+    expect(createSessionId).not.toHaveBeenCalled();
+    expect(buildCommandOptions().sessionId).toBeUndefined();
+    expect(buildCommandOptions().resume).toBe(false);
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null }));
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: null }));
+  });
+
+  it('starts with no agent session id when the chat could not be created', async () => {
+    createSessionId.mockImplementation(async () => null);
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+
+    await runSpawn(makeTask());
+
+    expect(createSessionId).toHaveBeenCalledTimes(1);
+    expect(buildCommandOptions().sessionId).toBeUndefined();
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: null }));
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: null }));
+  });
+
+  // The print launch (config.nonInteractive) prints its conversation id, so it
+  // must not wait on a second, unused chat. The stub answers the way Cursor's
+  // adapter does: true for a print launch, false for the session screen.
+  it.each([
+    { nonInteractive: true, chatCreated: false },
+    { nonInteractive: false, chatCreated: true },
+  ])('hands config.nonInteractive=$nonInteractive and the resolved permission mode to reportsLaunchSessionId (chat created: $chatCreated)', async ({ nonInteractive, chatCreated }) => {
+    reportsLaunchSessionId.mockImplementation((options) => options.nonInteractive === true);
+    const action = makeAction({ config_json: JSON.stringify({ promptTemplate: '{{task_xml}}', nonInteractive }) });
+    const { runSpawn } = makeEngine({ action });
+
+    await runSpawn(makeTask(), 'acceptEdits');
+
+    expect(reportsLaunchSessionId).toHaveBeenCalledTimes(1);
+    expect(reportsLaunchSessionId).toHaveBeenCalledWith({ permissionMode: 'acceptEdits', nonInteractive });
+    expect(createSessionId).toHaveBeenCalledTimes(chatCreated ? 1 : 0);
+    expect(buildCommandOptions().sessionId).toBe(chatCreated ? 'chat-created' : undefined);
+  });
+
+  it('hands a CLI that accepts a chosen id a fresh UUID and never asks it to create a chat', async () => {
+    chatCapableAdapter.supportsCallerSessionId = true;
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+
+    await runSpawn(makeTask());
+
+    expect(createSessionId).not.toHaveBeenCalled();
+    expect(reportsLaunchSessionId).not.toHaveBeenCalled();
+    const chosenId = buildCommandOptions().sessionId;
+    expect(chosenId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/);
+    expect(buildCommandOptions().resume).toBe(false);
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ agentSessionId: chosenId }));
+    expect(sessionRepo.insertedRecords[0]).toEqual(expect.objectContaining({ agent_session_id: chosenId }));
+  });
+
+  // Creating a chat runs the CLI inside the task lock (Cursor's create-chat
+  // waits up to 20 s on its server), so a move that aborts the spawn must not
+  // wait it out. The chat below never settles: only the abort can end the wait.
+  it('stops at once when the move aborts the spawn during the chat creation, before the command is built or a session started', async () => {
+    const controller = new AbortController();
+    let signalChatRequested!: () => void;
+    const chatRequested = new Promise<void>((resolve) => { signalChatRequested = resolve; });
+    createSessionId.mockImplementation(() => {
+      signalChatRequested();
+      return new Promise<string | null>(() => {});
+    });
+    const sessionManager = makeSessionManager();
+    const sessionRepo = makeSessionRepo();
+    const { runSpawn } = makeEngine({ sessionManager, sessionRepo });
+
+    // Both waits are bounded, so a spawn that never asks for the chat, or one
+    // that ignores the signal, fails here instead of hanging on a chat that
+    // never settles.
+    const boundedWait = async <Value>(pending: Promise<Value>, timeoutResult: string): Promise<Value | string> => {
+      let giveUp: ReturnType<typeof setTimeout> | undefined;
+      try {
+        return await Promise.race([
+          pending,
+          new Promise<string>((resolve) => { giveUp = setTimeout(() => resolve(timeoutResult), 1500); }),
+        ]);
+      } finally {
+        clearTimeout(giveUp);
+      }
+    };
+
+    const outcome = runSpawn(makeTask(), undefined, controller.signal).then(
+      () => 'spawn resolved',
+      (error: unknown) => error,
+    );
+    expect(await boundedWait(chatRequested, 'no chat was requested')).not.toBe('no chat was requested');
+    controller.abort();
+    const settled = await boundedWait(outcome, 'still waiting on the chat');
+
+    expect(settled).not.toBe('still waiting on the chat');
+    expect(settled).not.toBe('spawn resolved');
+    expect((settled as { name?: unknown }).name).toBe('AbortError');
+    expect(mockAdapter.buildCommand).not.toHaveBeenCalled();
+    expect(sessionManager.spawn).not.toHaveBeenCalled();
+    expect(sessionRepo.insert).not.toHaveBeenCalled();
+    // The per-session directory is created after the check, so it is never made.
+    expect(fs.mkdirSync).not.toHaveBeenCalled();
+  });
+});

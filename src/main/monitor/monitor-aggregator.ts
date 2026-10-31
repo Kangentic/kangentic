@@ -33,6 +33,7 @@ import type {
   WorkflowBoardEnds,
 } from '../../shared/types';
 import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
+import { isContextOccupancyKnown } from '../../shared/context-occupancy';
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { boardEnds, routeSteps, taskPlace } from '../../shared/workflow-route';
 import { getProjectDb } from '../db/database';
@@ -127,12 +128,10 @@ function resolveContextPercent(usage: SessionUsage | undefined): number | null {
   if (!usage) return null;
   const { usedPercentage, usedTokens, contextWindowSize } = usage.contextWindow;
   if (!Number.isFinite(usedPercentage)) return null;
-  const clamped = Math.min(100, Math.max(0, Math.round(usedPercentage)));
-  if (contextWindowSize && contextWindowSize > 0) return clamped;
-  // Percentage-only occupancy (Cursor interactive TUI: a percent, no window,
-  // no token counts). Same rule as isContextOccupancyKnown in format-tokens.ts.
-  if ((!usedTokens || usedTokens <= 0) && usedPercentage > 0) return clamped;
-  return null;
+  // A known window, or percentage-only occupancy (Cursor's interactive TUI: a
+  // percent, no window, no token counts): the rule the board card draws by.
+  if (!isContextOccupancyKnown(contextWindowSize, usedTokens, usedPercentage)) return null;
+  return Math.min(100, Math.max(0, Math.round(usedPercentage)));
 }
 
 /**

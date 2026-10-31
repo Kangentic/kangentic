@@ -1,5 +1,5 @@
 import { EventType, IdleReason, rateLimitGeneration } from '../../shared/types';
-import type { SessionUsage, SessionEvent, PerToolStat, RateLimitWindow } from '../../shared/types';
+import type { SessionUsage, SessionUsagePatch, SessionEvent, PerToolStat, RateLimitWindow } from '../../shared/types';
 import { RateLimitLedger, isSameRateLimitWindow } from './rate-limit-ledger';
 
 /**
@@ -253,7 +253,7 @@ export class UsageAccumulator {
    * seeding a zeroed base if none exists. Returns the merged shape so
    * callers can forward it to the renderer.
    */
-  setSessionUsage(sessionId: string, partial: Partial<SessionUsage>): SessionUsage {
+  setSessionUsage(sessionId: string, partial: SessionUsagePatch): SessionUsage {
     const base: SessionUsage = this.usageCache.get(sessionId) ?? emptyUsage();
     const next: SessionUsage = {
       ...base,

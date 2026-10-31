@@ -1,6 +1,7 @@
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
+import { isContextOccupancyKnown, isContextWindowKnown } from '../../shared/context-occupancy';
 import type { ModelAliasOption } from '../../shared/types';
 
 /** Compact token units, smallest first. A cache-read total passes a billion on
@@ -172,34 +173,9 @@ export function modelAliasTitle(
   return i18n._(msg`Latest ${{ modelFamily }}, currently ${{ currentModel }}`);
 }
 
-/**
- * A context window is known (has a real denominator to draw a bar against)
- * only when the reported size is positive - 0 is the "unknown size" sentinel
- * used before any window has been learned for a session's model. The used/total
- * fraction still gates on this. The bar and percent gate on
- * isContextOccupancyKnown, which also accepts a percentage-only report.
- */
-export function isContextWindowKnown(contextWindowSize: number): boolean {
-  return contextWindowSize > 0;
-}
-
-/**
- * True when there is occupancy to paint, even if the window size is still
- * unknown. Cursor's interactive TUI reports `Composer 2.5 · 7.8%` with no
- * token counts and no window. That is a real percent, not the broken
- * denominator of leftover tokens paired with a missing window (the case
- * `contextWindowDisplayPercent` still zeros). TaskCard, ContextBar, and the
- * Agent Monitor all gate on this so a Skip Approvals card does not sit at 0%
- * while the open terminal already shows 7.8%.
- */
-export function isContextOccupancyKnown(
-  contextWindowSize: number,
-  usedTokens: number,
-  usedPercentage: number,
-): boolean {
-  if (isContextWindowKnown(contextWindowSize)) return true;
-  return usedTokens <= 0 && Number.isFinite(usedPercentage) && usedPercentage > 0;
-}
+// The occupancy predicates live in shared/ so the Agent Monitor's aggregator
+// in main reads the same rule. Re-exported for the renderer's call sites.
+export { isContextWindowKnown, isContextOccupancyKnown };
 
 /**
  * True when usedTokens exceeds a known window - occupancy at or past

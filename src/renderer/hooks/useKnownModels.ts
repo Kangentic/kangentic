@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useConfigStore } from '../stores/config-store';
 import type { ModelAliasOption } from '../../shared/types';
+import { hasModelIdShape } from '../../shared/model-id';
 
 /**
  * Single source of truth for "what models can this agent run".
@@ -42,11 +43,10 @@ export function unionKnownModels(
   const union = new Set<string>();
   if (capabilityModels) for (const value of capabilityModels) union.add(value);
   if (discoveredModels) for (const value of discoveredModels) union.add(value);
-  // Display names learned as ids (Cursor's init event, `agent about`) have
-  // spaces. A spawnable id never does, so drop them rather than offer a row
-  // `--model` will reject.
+  // Drop a display name learned as an id rather than offer a row `--model`
+  // will reject.
   return Array.from(union)
-    .filter((modelId) => !/\s/.test(modelId))
+    .filter(hasModelIdShape)
     .sort((first, second) => first.localeCompare(second));
 }
 

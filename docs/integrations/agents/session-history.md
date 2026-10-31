@@ -328,10 +328,11 @@ readonly runtime: AdapterRuntimeStrategy = {
 The sections above describe the **history file** each adapter reads for live telemetry and for
 the `get_transcript` MCP feature, located by `adapter.locateSessionHistoryFile(agentSessionId,
 cwd)`. That is a separate question from **what `--resume` actually reads** to restore a
-conversation. The two are usually the same file, but not always: Copilot and Cursor return `null`
-from `locateSessionHistoryFile` (no telemetry history file wired) yet still persist resumable
-session state elsewhere on disk. So do not assume "history file" equals "resume file" - this
-section records the resume side, audited separately.
+conversation. The two are usually the same file, but not always: Copilot returns `null` from
+`locateSessionHistoryFile` (no telemetry history file wired), and Cursor's locator returns the
+`agent-transcripts` JSONL its `--resume` never reads, yet both persist resumable session state
+elsewhere on disk. So do not assume "history file" equals "resume file" - this section records the
+resume side, audited separately.
 
 **How this was audited:** empirically, from (a) the on-disk session stores that real CLI runs
 left in this environment, (b) each adapter's command builder (the exact `--resume` form Kangentic
@@ -354,7 +355,7 @@ behavior below is the resume contract.
 | Droid | `droid --resume <id>` | `~/.factory/sessions/<slug(cwd)>/<id>.jsonl` | cwd slug + id | yes | yes | on the command line, positional |
 | OpenCode | `opencode --session <id>` | `~/.local/share/opencode/opencode.db` (+ `storage/session_diff/ses_<id>.json`) | session id (global DB) | no | yes (the DB) | typed once the TUI is ready |
 | Copilot | `copilot --session-id <id>` | `~/.copilot/session-state/<id>/` (+ `session-store.db`) | session id (global) | no | **no** (locator returns null) | typed once the TUI is ready |
-| Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (locator returns null) | typed once the CLI is ready |
+| Cursor | `agent --resume=<id>` | `~/.cursor/chats/<chat-id-hash>/` | chat id (global) | no | **no** (the locator returns the `agent-transcripts` JSONL under `~/.cursor/projects/<slug>/`, which resume itself does not read) | typed once the CLI is ready |
 | Aider | `aider --restore-chat-history` | `<cwd>/.aider.chat.history.md` | cwd file (no session id) | yes | n/a (no per-session file) | n/a: no id to resume by, so the engine never resumes it |
 | Warp | (no resume) | none | n/a | n/a | n/a | n/a |
 | Grok Build | `grok --resume <id>` | `~/.grok/sessions/<encodeURIComponent(cwd)>/<id>/` (updates.jsonl + chat_history.jsonl) | URL-encoded cwd + id | yes | yes | typed once the TUI is ready |
@@ -382,8 +383,9 @@ Reading the table by class:
   cwd only filters the interactive picker, which has an `--all` escape hatch). OpenCode keys the
   shared SQLite DB by session id. Copilot and Cursor attach by id; for Copilot the saved `cwd`
   only affects *where* the resumed session reopens, not whether it attaches, and Cursor's
-  per-cwd `~/.cursor/projects/<slug>/` directory holds only `repo.json` / trust metadata, not the
-  conversation, which lives in `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
+  per-cwd `~/.cursor/projects/<slug>/` directory holds trust metadata and the `agent-transcripts`
+  JSONL the conversation viewer reads, while the conversation `--resume` restores lives in
+  `~/.cursor/chats/<chat-id-hash>/`. Goose resolves by the
   caller-supplied `--name` against Goose's own session store, so resume is cwd-independent and
   Kangentic reads no transcript file (`locateSessionHistoryFile` returns null).
 - **project-wide reload, no session id:** Aider. `--restore-chat-history` reloads the cwd-local

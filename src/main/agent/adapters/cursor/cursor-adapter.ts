@@ -25,7 +25,7 @@ import {
   type CursorKangenticMcpEntry,
 } from './answer-workspace';
 import { cursorProjectMcpConfigProblem, removeCursorProjectMcpConfig, writeCursorProjectMcpConfig } from './project-mcp-config';
-import { cursorTranscriptFilePath, locateCursorTranscriptFile } from './session-paths';
+import { locateCursorTranscriptFile, resolveCursorTranscriptReadPath } from './session-paths';
 import { parseCursorTranscript, readCursorTranscriptPage } from './transcript-parser';
 import type { AgentAdapter, AgentInfo, AnswerFromContextOptions, ParsedTranscript, SpawnCommandOptions, SettingsChangeSpec, SummarizeOptions, TranscriptPageReadRequest, TranscriptPageReadResult } from '../../agent-adapter';
 import type {
@@ -336,25 +336,22 @@ export class CursorAdapter implements AgentAdapter {
         )
       : null;
 
+    // Per-column model override, the `--model` id for a picker value.
+    const modelId = options.model ? resolveCachedCursorModel(options.model, options.agentPath) : '';
+    const modelArgs = modelId ? ['--model', quoteArg(modelId, shell)] : [];
+
     if (!sessionUi) {
       // Non-interactive mode: agent --trust -p "prompt" --output-format stream-json
       // Has full write access. Uses stream-json (NDJSON) so the runtime
       // sessionId.fromOutput parser can capture the session_id from the
       // init event: {"type":"system","subtype":"init","session_id":"<uuid>",...}
       if (quotedPrompt) parts.push('-p', quotedPrompt);
-      // Per-column model override: apply before output format (flag order doesn't matter)
-      if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(resolveCachedCursorModel(options.model, options.agentPath), shell));
-      }
-      parts.push('--output-format', 'stream-json');
+      parts.push(...modelArgs, '--output-format', 'stream-json');
     } else {
       // Session screen: agent "prompt", or agent --trust --force "prompt".
       // Confirm-changes asks before each change. Skip-approvals does not.
       if (quotedPrompt) parts.push(quotedPrompt);
-      // Per-column model override in interactive mode
-      if (options.model && options.model.trim().length > 0) {
-        parts.push('--model', quoteArg(resolveCachedCursorModel(options.model, options.agentPath), shell));
-      }
+      parts.push(...modelArgs);
     }
 
     return parts.join(' ');
@@ -421,11 +418,12 @@ export class CursorAdapter implements AgentAdapter {
   }
 
   /**
-   * Runtime strategy: Cursor CLI has no hooks, no caller-owned session
-   * IDs, and no native session-history file format we can read. Every
-   * runtime signal we get comes from the NDJSON stream emitted by
-   * `--output-format stream-json` (active by default - see
-   * `defaultPermission`).
+   * Runtime strategy: Cursor CLI has no hooks and no caller-owned session
+   * IDs. Its `agent-transcripts` JSONL feeds the conversation viewer (the
+   * transcript methods below), not live telemetry. Every runtime signal
+   * comes from the PTY stream: the NDJSON of `--output-format stream-json`
+   * (active by default - see `defaultPermission`), or the TUI status bar of
+   * an interactive session.
    *
    * - Activity: tool_call started/completed events from streamOutput
    *   drive Thinking/Idle through the activity state machine, with PTY
@@ -549,8 +547,7 @@ export class CursorAdapter implements AgentAdapter {
     place?: CliPlace | null,
     reportedPath?: string | null,
   ): Promise<ParsedTranscript> {
-    const located = await locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
-    const filePath = located ?? cursorTranscriptFilePath(cwd, agentSessionId, place ?? null);
+    const filePath = await resolveCursorTranscriptReadPath(agentSessionId, cwd, place ?? null, reportedPath);
     return parseCursorTranscript(agentSessionId, filePath);
   }
 
@@ -561,8 +558,7 @@ export class CursorAdapter implements AgentAdapter {
     place?: CliPlace | null,
     reportedPath?: string | null,
   ): Promise<TranscriptPageReadResult> {
-    const located = await locateCursorTranscriptFile(agentSessionId, cwd, place ?? null, reportedPath);
-    const filePath = located ?? cursorTranscriptFilePath(cwd, agentSessionId, place ?? null);
+    const filePath = await resolveCursorTranscriptReadPath(agentSessionId, cwd, place ?? null, reportedPath);
     return readCursorTranscriptPage(agentSessionId, filePath, request);
   }
 

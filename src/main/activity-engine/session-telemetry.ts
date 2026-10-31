@@ -1,5 +1,5 @@
 import { EventType, AgentTool, IdleReason, PromptReason, Activity } from '../../shared/types';
-import type { SessionUsage, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../shared/types';
+import type { SessionUsage, SessionUsagePatch, ActivityState, ActivityReason, SessionEvent, AgentParser, PerToolStat } from '../../shared/types';
 import { PtyActivityTracker } from './pty-activity-tracker';
 import {
   ActivityEngine,
@@ -975,7 +975,7 @@ export class SessionTelemetry {
    * usage from native log files (Codex, Gemini). Merges with any
    * existing entry, seeding a zeroed base if none exists.
    */
-  setSessionUsage(sessionId: string, partial: Partial<SessionUsage>): void {
+  setSessionUsage(sessionId: string, partial: SessionUsagePatch): void {
     const merged = this.usage.setSessionUsage(sessionId, partial);
     // `merged` is the cached object, so stamping the live tool-call count here
     // keeps both the renderer push and snapshot reads consistent (see

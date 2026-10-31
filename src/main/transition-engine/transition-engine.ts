@@ -750,7 +750,11 @@ export class TransitionEngine {
           workingDirectory: cwd,
           permissionMode,
           nonInteractive: config.nonInteractive,
+          signal,
         });
+    // A move that aborted this spawn while the chat was being created stops
+    // here, before the session directory and the command exist.
+    signal?.throwIfAborted();
 
     let prompt = intent.prompt;
 

@@ -99,6 +99,13 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
   (`-p` and `stream-json`) still takes the id from the init event and does not create a chat first.
   A workflow's agent creates one on every fresh start, print included. Whether `--resume` of a chat
   made this way keeps the interactive session across a Pause has not been run live yet.
+- A task that leaves its column before that chat's first turn lands (a confirm-changes start
+  still at Cursor's workspace prompt, say) resumes the empty chat, and the task prompt is not sent
+  again. The resume guard starts over only on the agent's own report that nothing happened, and
+  Cursor reports nothing, so its verdict stays `unknown`. Reading the derived `agent-transcripts`
+  path as that report is the guard that #255 reverted.
+- The `create-chat` wait runs inside the task lock, so it races the spawn's abort signal: a move
+  that aborts the spawn stops waiting at once, and the CLI run ends on its own 20 s timeout.
 - No `transcript-cleanup.ts` (uses streaming text output, not a TUI alternate screen)
 - `locateSessionHistoryFile` returns
   `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` when that file

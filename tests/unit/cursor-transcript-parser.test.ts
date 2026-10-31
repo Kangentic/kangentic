@@ -12,9 +12,9 @@ import { expectPagesTile } from './helpers/history-page-tiling';
 
 describe('cursorProjectSlug', () => {
   it('matches the CLI rule on a Windows working directory', () => {
-    expect(cursorProjectSlug('E:\\Desktop\\kangentic')).toBe('E-Desktop-kangentic');
-    expect(cursorTranscriptFilePath('E:\\Desktop\\kangentic', 'session-1')).toBe(
-      path.join(os.homedir(), '.cursor', 'projects', 'E-Desktop-kangentic', 'agent-transcripts', 'session-1', 'session-1.jsonl'),
+    expect(cursorProjectSlug('C:\\Users\\dev\\project')).toBe('C-Users-dev-project');
+    expect(cursorTranscriptFilePath('C:\\Users\\dev\\project', 'session-1')).toBe(
+      path.join(os.homedir(), '.cursor', 'projects', 'C-Users-dev-project', 'agent-transcripts', 'session-1', 'session-1.jsonl'),
     );
   });
 
@@ -23,7 +23,7 @@ describe('cursorProjectSlug', () => {
   });
 
   it('slugs the path a WSL distro is given', () => {
-    expect(cursorProjectSlug('/mnt/e/Desktop/kangentic')).toBe('mnt-e-Desktop-kangentic');
+    expect(cursorProjectSlug('/mnt/c/Users/dev/project')).toBe('mnt-c-Users-dev-project');
   });
 });
 
@@ -104,6 +104,44 @@ describe('parseCursorTranscript', () => {
       { type: 'text', text: 'Looking now.' },
       { type: 'tool_use', id: `${SESSION_ID}:2:tool:0`, name: 'Glob', input: { pattern: '*' } },
     ]);
+  });
+
+  it('replays the shape of a real Cursor transcript', async () => {
+    // tests/fixtures/cursor-agent-transcript.jsonl keeps a cursor-agent
+    // 2026.10 transcript's records as written (keys, nesting, the clock tag
+    // and user_query wrapper, tool_use with no id, the turn_ended marker)
+    // with every text value replaced.
+    const fixturePath = path.join(__dirname, '..', 'fixtures', 'cursor-agent-transcript.jsonl');
+    const parsed = await parseCursorTranscript(SESSION_ID, fixturePath);
+    expect(parsed.sourcePath).toBe(fixturePath);
+    expect(parsed.entries.map((entry) => [entry.kind, entry.uuid, entry.ts])).toEqual([
+      ['user', `${SESSION_ID}:0`, 0],
+      ['assistant', `${SESSION_ID}:1`, 0],
+      ['assistant', `${SESSION_ID}:2`, 0],
+      ['assistant', `${SESSION_ID}:3`, 0],
+    ]);
+    const [user, schemaLookup, toolCall, answer] = parsed.entries;
+    if (user?.kind !== 'user') throw new Error('expected the user turn first');
+    expect(user.text).toBe('Call the kangentic_search tool once with mode "hybrid" and query "release checklist". Then reply in one sentence.');
+    if (schemaLookup?.kind !== 'assistant' || toolCall?.kind !== 'assistant' || answer?.kind !== 'assistant') {
+      throw new Error('expected three assistant entries after the user turn');
+    }
+    expect(schemaLookup.blocks).toEqual([
+      { type: 'text', text: "I'll look up the search tool's schema, then run that query once." },
+      { type: 'tool_use', id: `${SESSION_ID}:1:tool:0`, name: 'GetDynamicTools', input: { namespace: 'kangentic', toolName: 'kangentic_search' } },
+    ]);
+    expect(toolCall.blocks.map((block) => (block.type === 'tool_use' ? block.name : block.type))).toEqual(['CallDynamicTool']);
+    expect(answer.blocks).toEqual([{ type: 'text', text: 'The search found no task matching release checklist.' }]);
+
+    await expectPagesTile({
+      filePath: fixturePath,
+      conversationId: SESSION_ID,
+      parseTail: async () => (await parseCursorTranscript(SESSION_ID, fixturePath)).entries,
+      readPage: (request) => readCursorTranscriptPage(SESSION_ID, fixturePath, request),
+      // Smaller than the file, and each larger than its longest line.
+      tailBytes: 500,
+      pageBytes: 400,
+    });
   });
 
   it('pages the same entries a whole-file read produces', async () => {

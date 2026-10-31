@@ -47,6 +47,30 @@ describe('resolveFreshAgentSessionId', () => {
     expect(id).toBeNull();
   });
 
+  it('stops waiting on the chat when the spawn is aborted', async () => {
+    const controller = new AbortController();
+    // A create-chat that never answers: only the abort can end the wait.
+    const createSessionId = vi.fn(() => new Promise<string | null>(() => {}));
+    const pending = resolveFreshAgentSessionId(adapter({
+      supportsCallerSessionId: false,
+      createSessionId,
+      reportsLaunchSessionId: () => false,
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', signal: controller.signal });
+    controller.abort();
+    await expect(pending).resolves.toBeNull();
+    expect(createSessionId).toHaveBeenCalledOnce();
+  });
+
+  it('returns the created chat when the signal never aborts', async () => {
+    const controller = new AbortController();
+    const id = await resolveFreshAgentSessionId(adapter({
+      supportsCallerSessionId: false,
+      createSessionId: async () => 'chat-created',
+      reportsLaunchSessionId: () => false,
+    }), { cliPath: '/bin/cursor-agent', workingDirectory: '/work', permissionMode: 'default', signal: controller.signal });
+    expect(id).toBe('chat-created');
+  });
+
   it('returns null for a CLI that neither accepts nor creates an id', async () => {
     const id = await resolveFreshAgentSessionId(adapter({
       supportsCallerSessionId: false,

@@ -142,8 +142,17 @@ function writeCursorRules(projectDir) {
 
 if (require.main === module) {
   const projectDir = path.resolve(__dirname, '..');
-  const { total, written, removed } = writeCursorRules(projectDir);
-  console.log(`[cursor-rules] ${total} rules in .cursor/rules/ (${written} written, ${removed} stale removed)`);
+  // This runs from `prepare`, so a throw would fail every `npm install` and
+  // `npm ci`, CI's included, before a test runs. The copies are a Cursor
+  // convenience, so a failure only warns, as it does in scripts/dev.js, and
+  // tests/unit/cursor-rules.test.ts is the gate that fails on a rule the
+  // translator cannot carry.
+  try {
+    const { total, written, removed } = writeCursorRules(projectDir);
+    console.log(`[cursor-rules] ${total} rules in .cursor/rules/ (${written} written, ${removed} stale removed)`);
+  } catch (error) {
+    console.warn('[cursor-rules] could not refresh .cursor/rules/:', error instanceof Error ? error.message : error);
+  }
 }
 
 module.exports = { CLAUDE_CODE_ONLY_RULES, translateRuleToCursor, writeCursorRules };

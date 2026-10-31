@@ -222,10 +222,9 @@ export function resolveCursorModelId(input: string, catalog: CursorModelCatalog)
   );
   if (byCursorPrefix.length === 1) return byCursorPrefix[0];
 
-  const bySuffix = catalog.models.filter((modelId) => {
-    const normalizedId = normalizeCursorModelToken(modelId);
-    return normalizedId === normalized || normalizedId.endsWith(` ${normalized}`);
-  });
+  const bySuffix = catalog.models.filter(
+    (modelId) => normalizeCursorModelToken(modelId).endsWith(` ${normalized}`),
+  );
   if (bySuffix.length === 1) return bySuffix[0];
 
   return trimmed;
