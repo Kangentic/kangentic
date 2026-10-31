@@ -23,6 +23,10 @@ copied by hand.
 - **`CLAUDE.md`** holds the import and the notes that bind only Claude Code: the
   `bash-single-command.md` rule, which governs its Bash tool, and `CLAUDE.local.md` for local
   overrides. The Cursor CLI reads the root `CLAUDE.md` too, so each note there names Claude Code.
+  Cursor sends `AGENTS.md` and `CLAUDE.md` once only when they are identical, a symlink or a hard
+  link (release 3.26). Ours differ on purpose, so Cursor loads both. Its docs describe no `@` import
+  inside `CLAUDE.md`, so the `@AGENTS.md` line is read as text and `AGENTS.md` is not loaded twice.
+  The cost is the few hundred characters of `CLAUDE.md`.
 - **`.claude/skills/`** is read by both. Cursor loads it for compatibility and requires a `name` in
   each skill's frontmatter, so every `SKILL.md` names its directory.
 - **`.claude/agents/`** is read by both. Cursor documents `name`, `description`, `model`, `readonly`
@@ -95,5 +99,7 @@ whole session. A file the adapter creates itself, it keeps out of `git status`.
 - How Cursor treats `model: sonnet` and `model: haiku` in `.claude/agents/`. It documents only
   `inherit` and its own model ids.
 - Whether `readonly: true` holds the eight read-only agents to read-only in practice.
+- Whether the Cursor editor, not only its CLI, reads the root `CLAUDE.md`, and whether it expands
+  the `@AGENTS.md` line. Its docs state the CLI behavior only.
 - Whether Cursor picks up a rule generated after its session started, as when an agent runs
   `npm install` in a fresh worktree mid-session.

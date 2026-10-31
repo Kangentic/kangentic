@@ -105,7 +105,8 @@ function listMdcFiles(directory) {
 /**
  * Writes `<projectDir>/.cursor/rules/<name>.mdc` for every rule in `<projectDir>/.claude/rules/`
  * except the Claude Code only ones. A file is rewritten only when its text changed. A generated
- * file whose rule is gone is removed; a `.mdc` without the generated marker is left alone.
+ * file whose rule is gone is removed; a `.mdc` without the generated marker is left alone, even
+ * when it has the name a generated rule would take.
  *
  * @param {string} projectDir
  * @returns {{ total: number, written: number, removed: number }}
@@ -121,8 +122,13 @@ function writeCursorRules(projectDir) {
     }
     const outputPath = path.join(outputDir, ...rule.relativePath.replace(/\.md$/, '.mdc').split('/'));
     const text = translateRuleToCursor(rule.source, rule.relativePath);
-    expectedPaths.add(outputPath);
     const currentText = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, 'utf-8') : null;
+    // A file at this path that we did not write is the developer's own rule. Leave it, and leave
+    // it out of the stale sweep below, so a same-named rule of theirs is never replaced or removed.
+    if (currentText !== null && !isGeneratedRule(currentText)) {
+      continue;
+    }
+    expectedPaths.add(outputPath);
     if (currentText !== text) {
       fs.mkdirSync(path.dirname(outputPath), { recursive: true });
       fs.writeFileSync(outputPath, text);

@@ -162,6 +162,22 @@ describe('writeCursorRules', () => {
     expect(fs.existsSync(path.join(outputDir, 'always.mdc'))).toBe(false);
     expect(fs.existsSync(handWritten)).toBe(true);
   });
+
+  it('never overwrites or removes a hand-written rule that has the name of a generated one', () => {
+    const projectDir = makeProject();
+    const outputDir = path.join(projectDir, '.cursor', 'rules');
+    fs.mkdirSync(outputDir, { recursive: true });
+    const sameName = path.join(outputDir, 'always.mdc');
+    const ownText = '---\nalwaysApply: true\n---\nMy own always rule.\n';
+    fs.writeFileSync(sameName, ownText);
+
+    expect(writeCursorRules(projectDir)).toEqual({ total: 1, written: 1, removed: 0 });
+    expect(fs.readFileSync(sameName, 'utf-8')).toBe(ownText);
+
+    fs.rmSync(path.join(projectDir, '.claude', 'rules', 'always.md'), { force: true });
+    expect(writeCursorRules(projectDir)).toEqual({ total: 1, written: 0, removed: 0 });
+    expect(fs.readFileSync(sameName, 'utf-8')).toBe(ownText);
+  });
 });
 
 // The generator only reaches Cursor if something runs it: `npm install` (the `prepare` script) and
