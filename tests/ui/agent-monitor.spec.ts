@@ -289,6 +289,19 @@ async function setConfig(page: Page, partial: Record<string, string | boolean>):
   }, partial);
 }
 
+/**
+ * A card's title truncates, so hovering it opens a tip with the WHOLE title; the card around it
+ * has no tip of its own. The tip is read off `[data-tooltip]` because a tip that repeats its
+ * trigger's text is not exposed as a description, so the accessible description cannot see it.
+ */
+async function expectTitleTipOnHover(page: Page, title: Locator, fullTitle: string): Promise<void> {
+  await title.hover();
+  await expect(page.locator('[data-tooltip]'), `hovering the title of "${fullTitle}" opens no tip with the whole title`).toHaveText(fullTitle);
+  // Off the title, and wait for its tip to go, so the next hover starts with none open.
+  await page.mouse.move(0, 0);
+  await expect(page.locator('[data-tooltip]')).toHaveCount(0);
+}
+
 async function openMonitor(page: Page): Promise<void> {
   await page.locator('[data-testid="agent-monitor-button"]').click();
   await page.locator('[data-testid="monitor-page"]').waitFor({ state: 'visible', timeout: 10000 });
@@ -1334,6 +1347,12 @@ test.describe('agent monitor', () => {
       await expect(cards.first()).not.toHaveAttribute('data-dense', 'true');
       await expect.poll(lastWantedPeek).toHaveLength(4);
 
+      // The card as a whole has no tip (it used to say "Open <title>", which its own button
+      // role already says); only the title, which truncates, carries one with the full title.
+      const workingCard = page.locator('[data-testid="monitor-card"][data-session-id="sess-working"]');
+      await expect(workingCard).toHaveAccessibleDescription('');
+      await expectTitleTipOnHover(page, workingCard.locator('[data-testid="monitor-card-title"]'), 'Fix PTY capture race');
+
       // Table: real table rows, no cards. Grouping still applies - a <table>
       // cannot interleave section headers, so each group gets its own table
       // rather than grouping being silently disabled here.
@@ -1360,6 +1379,10 @@ test.describe('agent monitor', () => {
       await expect(page.locator('[data-testid="monitor-grid"]')).toHaveAttribute('data-columns', '1');
       // The dense list card has no peek/trail slot either.
       await expect.poll(lastWantedPeek).toEqual([]);
+      // The dense row follows the same rule: no tip on the row, the whole title on the title.
+      await expect(workingCard).toHaveAttribute('data-dense', 'true');
+      await expect(workingCard).toHaveAccessibleDescription('');
+      await expectTitleTipOnHover(page, workingCard.getByText('Fix PTY capture race', { exact: true }), 'Fix PTY capture race');
 
       // Back to cards: the column count must RECOVER. Switching layout does not
       // resize the container, so a resize-observer-only implementation stays
