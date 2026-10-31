@@ -435,6 +435,7 @@ Tip: use --model <id>
     expect(result?.usage?.model).toEqual({
       id: 'cursor-grok-4.6-high',
       displayName: 'Grok 4.6',
+      reportedByAgent: true,
     });
   });
 });
