@@ -55,8 +55,19 @@ one test drag without the hold). Its place is `AppConfig.commandTerminalPanel`, 
 area, so it rescales with the window. A panel never moved opens centered at the size that gives a
 lone terminal what a Command Terminal window had before the panel (58% by 70% of the area, the
 window manager's first-window default), with the rail at its 300px default and the 40px header
-added around it. The default reads the rail's default width, never its live one, so dragging or
-folding the rail changes the terminals' share of the panel and never the panel.
+added around it. The default reads the rail's default width, never its live one, so a panel
+nobody moved opens at one size whatever the rail was left at.
+
+The rail is part of the panel. Dragging its edge, folding it and opening it change the panel's
+width by the rail's change, the panel's left edge held, and the terminals keep their size and
+refit nothing (`panel-edge-push.ts`: the panel hands the rail a width change that starts from the
+box it had). The first cut kept the panel's box and gave the change to the terminals, which made
+seeing Earlier's names a two-step job at the panel's minimum (grow the panel, then the rail), and
+narrowed the terminals for a change that is only the rail's. The fold button has no pointer to
+follow, so an open the right edge cannot take grows the panel to the left. Where the panel cannot
+change (maximized, the detached window, or a drag whose right edge reaches the area's), the
+terminals give the rail its room, never under their floor. The rail's edge looks like a tile seam:
+a thin accent line on the boundary under the pointer and while it drags.
 Every user meets that default on the first open after updating, because the panel's place is a new
 setting; a first cut at 94% by 92% made that first open jump from about half the window to all of
 it.
@@ -103,9 +114,10 @@ The pane floor is 630 x 200 (`COMMAND_TERMINAL_FLOOR` in `command-terminal-grid-
 77 columns, the Command Terminal's own; task windows keep 650. It is the width at which the context
 bar's one row (below) still holds what it never folds. A resize never takes the grid away.
 The panel's minimum is the grid at that floor (`commandTerminalGridMinimum`: two columns from two
-terminals, two rows from three, one terminal while the user has one expanded) beside the open rail
-at its 200px drag minimum, whether the rail is folded or not: a panel sized down to a folded rail
-would leave the terminals under their floor the moment the rail opened. The minimum assumes even
+terminals, two rows from three, one terminal while the user has one expanded) beside the rail at
+its narrowest: the 37px strip folded, its 200px drag minimum open. It once held the open minimum
+while folded, because opening the rail took its room from the terminals and would have put them
+under their floor; opening now grows the panel instead. The minimum assumes even
 tiles, so the layout holds each pane at the floor whatever a dragged seam asks for, while the area
 has room for the grid (`resolveTileLayout`'s `minPane`). An edge resize or a maximize first adopts
 what the hold shows as the seams' own sizes (`heldSplitSizes`), so the terminals grow from the

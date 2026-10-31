@@ -26,6 +26,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import { useConfigStore } from '../../stores/config-store';
 import { beginManagerResize, type ManagerResizeGesture } from '../../window-manager/terminal/manager-resize-gate';
 import { resolveFoldingEdgeDrag } from '../../utils/folding-edge-drag';
+import { usePanelWidthChange, type PanelWidthSession } from './panel-edge-push';
 import {
   COMMAND_RAIL_COLLAPSED_WIDTH_PX,
   COMMAND_RAIL_DEFAULT_WIDTH_PX,
@@ -45,8 +46,12 @@ interface RailGesture {
   /** The width shown when the drag began (the strip's, when it began folded). */
   startWidth: number;
   startedCollapsed: boolean;
-  /** The widest the rail may go beside the terminals at their floor. */
+  /** The widest the rail may go: its own maximum beside a panel that resizes with it, else beside the terminals at their floor. */
   maxWidth: number;
+  /** How far the terminals can narrow for the rail, to their floor, where the panel cannot grow. */
+  spare: number;
+  /** The panel's width change (`panel-edge-push.ts`), or null where it cannot change (maximized, the detached window). */
+  panel: PanelWidthSession | null;
   /** Where the drag would leave the rail if it ended now. */
   width: number;
   collapsed: boolean;
@@ -75,6 +80,18 @@ export interface CommandTerminalRail {
 const shownWidthOf = (rail: DraggedRail): number => (rail.collapsed ? COMMAND_RAIL_COLLAPSED_WIDTH_PX : rail.width);
 
 /**
+ * Write a drag's rail straight to its element: the width and, with it, the
+ * minimum the open rail keeps (`CommandTerminalRail`). Writing the width alone
+ * left the open minimum on a strip the drag had just folded until React rendered,
+ * the rail laid out at 200 for those frames, and the terminals refit narrower.
+ */
+function applyRail(element: HTMLElement | null, rail: DraggedRail): void {
+  if (!element) return;
+  element.style.width = `${shownWidthOf(rail)}px`;
+  element.style.minWidth = rail.collapsed ? '' : `${COMMAND_RAIL_MIN_WIDTH_PX}px`;
+}
+
+/**
  * `railRef` is the rail's root element, whose parent is the row the rail shares
  * with the terminals. The caller owns it, so nothing this returns is a ref.
  * `terminalsMinWidth` is the width the terminals need beside it: the grid at the
@@ -90,6 +107,7 @@ export function useCommandTerminalRail(
   const [rowWidth, setRowWidth] = useState(0);
   const [dragged, setDragged] = useState<DraggedRail | null>(null);
   const gestureRef = useRef<RailGesture | null>(null);
+  const panelWidth = usePanelWidthChange();
 
   // The row the rail shares with the terminals, measured as it changes.
   useLayoutEffect(() => {
@@ -100,6 +118,16 @@ export function useCommandTerminalRail(
     const observer = new ResizeObserver(measure);
     observer.observe(row);
     return () => observer.disconnect();
+  }, [railRef]);
+
+  /**
+   * The row as it is now, for a change that resized the panel in the same step:
+   * its observer reports a frame late, and the rail would render narrowed beside
+   * the panel's old width for that frame.
+   */
+  const measureRowNow = useCallback((): void => {
+    const row = railRef.current?.parentElement;
+    if (row) setRowWidth(row.clientWidth);
   }, [railRef]);
 
   // The detached window writes this too, and the panel mounts on a config this
@@ -129,7 +157,7 @@ export function useCommandTerminalRail(
   // drag's live width goes back on before paint.
   useLayoutEffect(() => {
     const gesture = gestureRef.current;
-    if (gesture && railRef.current) railRef.current.style.width = `${shownWidthOf(gesture)}px`;
+    if (gesture) applyRail(railRef.current, gesture);
   }, [dragged, railRef]);
 
   const endGesture = useCallback((commit: boolean): void => {
@@ -140,9 +168,13 @@ export function useCommandTerminalRail(
     const endsCollapsed = commit ? gesture.collapsed : gesture.startedCollapsed;
     const endsWidth = commit ? gesture.width : gesture.startWidth;
     // On screen at once, as the render after it will draw it.
-    if (railRef.current) railRef.current.style.width = `${shownWidthOf({ collapsed: endsCollapsed, width: endsWidth })}px`;
+    applyRail(railRef.current, { collapsed: endsCollapsed, width: endsWidth });
     const finish = (): void => {
       setDragged(null);
+      // The panel keeps the width the rail gave it, or goes back with the rail.
+      if (commit) gesture.panel?.commit();
+      else gesture.panel?.cancel();
+      measureRowNow();
       if (commit && endsCollapsed !== gesture.startedCollapsed) {
         // Folded, the rail keeps the width it opens at again.
         saveRail(endsCollapsed
@@ -156,7 +188,7 @@ export function useCommandTerminalRail(
     };
     if (commit && gesture.resize) onLayoutChange(finish);
     else finish();
-  }, [railRef, saved.width, saveRail, onLayoutChange]);
+  }, [railRef, saved.width, saveRail, onLayoutChange, measureRowNow]);
 
   const onEdgePointerDown = useCallback((event: React.PointerEvent<HTMLElement>): void => {
     if (event.button !== 0 || gestureRef.current) return;
@@ -164,7 +196,13 @@ export function useCommandTerminalRail(
     event.stopPropagation();
     const pointerId = event.pointerId;
     const roomBesideTerminals = rowWidth > 0 ? rowWidth - terminalsMinWidth : COMMAND_RAIL_MAX_WIDTH_PX;
-    const maxWidth = Math.max(COMMAND_RAIL_MIN_WIDTH_PX, Math.min(COMMAND_RAIL_MAX_WIDTH_PX, roomBesideTerminals));
+    // The rail is the panel's: its width changes the panel's by the same amount
+    // and the terminals keep theirs. Where the panel cannot change (maximized,
+    // the detached window), the rail keeps to the room beside the terminals.
+    const panel = panelWidth?.begin() ?? null;
+    const maxWidth = panel
+      ? COMMAND_RAIL_MAX_WIDTH_PX
+      : Math.max(COMMAND_RAIL_MIN_WIDTH_PX, Math.min(COMMAND_RAIL_MAX_WIDTH_PX, roomBesideTerminals));
 
     const onMove = (moveEvent: PointerEvent): void => {
       const gesture = gestureRef.current;
@@ -178,8 +216,19 @@ export function useCommandTerminalRail(
       }
       const step = resolveFoldingEdgeDrag({ raw, minWidth: COMMAND_RAIL_MIN_WIDTH_PX, maxWidth: gesture.maxWidth });
       gesture.collapsed = step.collapsed;
-      gesture.width = step.width;
-      if (railRef.current) railRef.current.style.width = `${shownWidthOf(gesture)}px`;
+      if (gesture.panel) {
+        // The panel takes the rail's change, a fold or an open included; only
+        // growth the area stops is taken from the terminals, down to their floor.
+        const wanted = (step.collapsed ? COMMAND_RAIL_COLLAPSED_WIDTH_PX : step.width) - gesture.startWidth;
+        const granted = gesture.panel.resize(wanted);
+        const fromTerminals = wanted > granted ? Math.min(wanted - granted, gesture.spare) : 0;
+        gesture.width = step.collapsed
+          ? step.width
+          : Math.max(COMMAND_RAIL_MIN_WIDTH_PX, gesture.startWidth + granted + fromTerminals);
+      } else {
+        gesture.width = step.width;
+      }
+      applyRail(railRef.current, gesture);
       if (starting || gesture.collapsed !== wasCollapsed) setDragged({ collapsed: gesture.collapsed, width: gesture.width });
     };
     const onUp = (upEvent: PointerEvent): void => {
@@ -207,6 +256,8 @@ export function useCommandTerminalRail(
       startWidth: width,
       startedCollapsed: collapsed,
       maxWidth,
+      spare: Math.max(0, roomBesideTerminals - width),
+      panel,
       width,
       collapsed,
       resize: null,
@@ -218,7 +269,7 @@ export function useCommandTerminalRail(
         document.removeEventListener('keydown', onKeyDown, true);
       },
     };
-  }, [railRef, rowWidth, terminalsMinWidth, width, collapsed, endGesture]);
+  }, [railRef, rowWidth, terminalsMinWidth, width, collapsed, endGesture, panelWidth]);
 
   // An unmount mid-drag stops listening and closes the gate it held, which
   // would otherwise hold every terminal's refit in the app.
@@ -227,13 +278,27 @@ export function useCommandTerminalRail(
     if (!gesture) return;
     gestureRef.current = null;
     gesture.stopListening();
+    gesture.panel?.cancel();
     gesture.resize?.end();
   }, []);
 
+  // Folding or opening resizes the panel by the rail's change, so the terminals
+  // keep their size; with no pointer to follow, an open the right edge cannot take
+  // grows the panel to the left. Where the panel cannot change, the terminals take it.
   const toggle = useCallback((): void => {
     const next = { width: savedRailWidth(saved.width), collapsed: saved.collapsed !== true };
-    onLayoutChange(() => saveRail(next));
-  }, [saved.width, saved.collapsed, saveRail, onLayoutChange]);
+    const shownNow = railRef.current?.getBoundingClientRect().width ?? width;
+    const shownNext = next.collapsed ? COMMAND_RAIL_COLLAPSED_WIDTH_PX : next.width;
+    const panel = panelWidth?.begin({ spillLeft: true }) ?? null;
+    onLayoutChange(() => {
+      if (panel) {
+        panel.resize(shownNext - shownNow);
+        panel.commit();
+        measureRowNow();
+      }
+      saveRail(next);
+    });
+  }, [saved.width, saved.collapsed, saveRail, onLayoutChange, railRef, width, panelWidth, measureRowNow]);
 
   return { collapsed, width, resizing: dragged !== null, onEdgePointerDown, toggle };
 }

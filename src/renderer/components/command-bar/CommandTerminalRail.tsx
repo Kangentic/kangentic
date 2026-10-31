@@ -412,8 +412,9 @@ export function CommandTerminalRail({
     onResume(entry);
   };
 
-  // The edge drags the width, open or folded; it lights under the pointer and
-  // while it drags, as the Workflows agent pane's edge does.
+  // The edge drags the width, open or folded. It looks like the seam between two
+  // terminals (`TileSplitter`): a 10px hit area on the boundary that shows a thin
+  // accent line under the pointer and while it drags, and nothing at rest.
   const edge = (
     <div
       role="separator"
@@ -423,11 +424,16 @@ export function CommandTerminalRail({
       aria-valuemax={COMMAND_RAIL_MAX_WIDTH_PX}
       aria-valuenow={rail.width}
       onPointerDown={rail.onEdgePointerDown}
-      className={`absolute inset-y-0 -right-1 z-10 w-2 cursor-col-resize select-none transition-colors ${
-        rail.resizing ? 'bg-accent/50' : 'hover:bg-accent/30'
-      }`}
+      className="group absolute inset-y-0 -right-[5px] z-10 w-2.5 cursor-col-resize select-none"
       data-testid="command-terminal-rail-edge"
-    />
+    >
+      <div
+        className={`absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors ${
+          rail.resizing ? 'bg-accent' : 'bg-transparent group-hover:bg-accent'
+        }`}
+        aria-hidden
+      />
+    </div>
   );
 
   const folded = rail.collapsed;

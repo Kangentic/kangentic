@@ -12,8 +12,8 @@
  * inside keep their grid while the panel changes size and refit once, after.
  */
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { MutableRefObject, ReactNode } from 'react';
 import { Maximize, Minimize, SquareArrowOutUpRight, SquareTerminal, X } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
@@ -24,6 +24,7 @@ import { beginManagerResize, type ManagerResizeGesture } from '../../window-mana
 import { runTerminalLayoutChange } from '../../utils/terminal-layout-transition';
 import type { ContainerSize as PanelSize, PixelRect } from '../../window-manager/store/geometry';
 import type { CommandTerminalPanelGeometry } from '../../../shared/types';
+import type { PanelWidthChange } from './panel-edge-push';
 
 /** The panel header's height, which the terminals' area excludes. */
 export const COMMAND_PANEL_HEADER_HEIGHT_PX = 40;
@@ -153,6 +154,9 @@ interface PanelGesture {
   stopListening: () => void;
 }
 
+/** No floor, for a width change the terminals beside it already bound. */
+const NO_FLOOR: PanelSize = { width: 0, height: 0 };
+
 function applyBox(panel: HTMLElement | null, box: PixelRect): void {
   if (!panel) return;
   panel.style.left = `${box.left}px`;
@@ -182,6 +186,8 @@ interface CommandTerminalPanelProps {
   terminalAreaMinWidth: string;
   /** Runs as an edge resize or a maximize begins: the terminals adopt the layout on screen. */
   onResizeStart?: () => void;
+  /** Filled with the panel's width change (`panel-edge-push.ts`) while it is mounted, for the rail. */
+  widthChangeRef?: MutableRefObject<PanelWidthChange | null>;
   /** What the panel adds around its terminals: the rail and the header, with the border. */
   chrome: PanelSize;
   /** Move the panel into a window of its own. */
@@ -197,6 +203,7 @@ export function CommandTerminalPanel({
   minSize,
   terminalAreaMinWidth,
   onResizeStart,
+  widthChangeRef,
   chrome,
   onOpenInNewWindow,
   openInNewWindowDisabledReason,
@@ -256,6 +263,52 @@ export function CommandTerminalPanel({
   }, [geometry, saveGeometry, onResizeStart]);
 
   useKeybinding('panel.maximize', toggleMaximized, { capture: true });
+
+  // The rail's width changes the panel's (`panel-edge-push.ts`), from the box the
+  // change found, its left edge held. The values are read through a ref, so the
+  // change stays one object for the panel's life.
+  const widthStateRef = useRef({ rect, areaSize, maximized: geometry.maximized === true });
+  useLayoutEffect(() => {
+    widthStateRef.current = { rect, areaSize, maximized: geometry.maximized === true };
+  });
+  const widthChange = useMemo<PanelWidthChange>(() => ({
+    begin(options = {}) {
+      const { rect: startRect, areaSize: area, maximized } = widthStateRef.current;
+      if (maximized || gestureRef.current) return null;
+      let box = startRect;
+      let open = true;
+      return {
+        resize(delta) {
+          if (!open) return 0;
+          // No floor: the terminals keep their width, so the panel never goes
+          // under what the rail beside them needs.
+          let next = resizeRect(startRect, 'e', delta, 0, area, NO_FLOOR);
+          const short = delta - (next.width - startRect.width);
+          if (options.spillLeft && short > 0) next = resizeRect(next, 'w', -short, 0, area, NO_FLOOR);
+          box = next;
+          applyBox(panelRef.current, box);
+          return box.width - startRect.width;
+        },
+        commit() {
+          if (!open) return;
+          open = false;
+          if (box !== startRect) saveGeometry(toGeometry(box, area));
+        },
+        cancel() {
+          if (!open) return;
+          open = false;
+          applyBox(panelRef.current, startRect);
+        },
+      };
+    },
+  }), [saveGeometry]);
+  useLayoutEffect(() => {
+    if (!widthChangeRef) return;
+    widthChangeRef.current = widthChange;
+    return () => {
+      widthChangeRef.current = null;
+    };
+  }, [widthChangeRef, widthChange]);
 
   /** Where a move by `deltaX`/`deltaY` puts the panel, kept inside the area. */
   const movedBy = (gesture: { startRect: PixelRect; area: PanelSize }, deltaX: number, deltaY: number): { x: number; y: number } => ({

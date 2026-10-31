@@ -41,7 +41,7 @@ import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-mana
 import { heldSplitSizes, TILE_GAP_PX } from '../../window-manager/tiling/resolve-layout';
 import { COMMAND_PANEL_HEADER_HEIGHT_PX, CommandTerminalPanel } from './CommandTerminalPanel';
 import { CommandTerminalRail } from './CommandTerminalRail';
-import { COMMAND_RAIL_DEFAULT_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
+import { COMMAND_RAIL_COLLAPSED_WIDTH_PX, COMMAND_RAIL_DEFAULT_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
 import type { RunningCommandTerminal } from './CommandTerminalRail';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
@@ -54,6 +54,7 @@ import { getIsHmrReload } from '../../utils/hmr-flag';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
 import { COMMAND_TERMINAL_FLOOR, commandTerminalAreaMinWidth, commandTerminalGridMinimum } from './command-terminal-grid-fit';
+import { PanelWidthContext, type PanelWidthChange } from './panel-edge-push';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
 import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { resolveProjectRoot } from '../../../shared/git-utils';
@@ -515,24 +516,25 @@ function CommandBackdrop({ onHide }: { onHide: () => void }) {
 
 /** What the panel adds around its terminals: the rail beside them and the
  *  header above, plus the 1px border on each side. It sizes a panel nobody has
- *  moved, so it reads the rail's DEFAULT width, never its live one: dragging or
- *  folding the rail changes the terminals' share of the panel, not the panel. */
+ *  moved, so it reads the rail's DEFAULT width, never its live one: a panel
+ *  nobody moved opens at one size whatever the rail was left at. */
 const PANEL_CHROME = { width: COMMAND_RAIL_DEFAULT_WIDTH_PX + 2, height: COMMAND_PANEL_HEADER_HEIGHT_PX + 2 };
 
 /**
- * The smallest panel: the open rail at its narrowest (its drag minimum) beside
- * the grid at the pane floor, under the panel header, plus the 1px border. So a
- * resize stops where the grid still fits, and a terminal added or the grid
- * restored grows the panel to fit (`CommandTerminalPanel` keeps the size it grew
- * to). Only while one is expanded may the panel shrink to one terminal. Folded or
- * not: a panel sized down to a folded rail's minimum would leave the terminals
- * under their floor the moment the rail opened. An area smaller than this (a
- * small window) shows the panel at the area's size, its terminals tiled under
- * the floor.
+ * The smallest panel: the rail at its narrowest (its 200px drag minimum open,
+ * its strip folded) beside the grid at the pane floor, under the panel header,
+ * plus the 1px border. So a resize stops where the grid still fits, and a
+ * terminal added or the grid restored grows the panel to fit
+ * (`CommandTerminalPanel` keeps the size it grew to). Only while one is expanded
+ * may the panel shrink to one terminal. Opening the rail grows the panel by what
+ * the rail takes (`panel-edge-push.ts`), so a panel sized down to the strip
+ * leaves the terminals their floor when the rail opens. An area smaller than
+ * this (a small window) shows the panel at the area's size, its terminals tiled
+ * under the floor.
  */
-function panelMinSizeFor(gridMinimum: { width: number; height: number }): { width: number; height: number } {
+function panelMinSizeFor(gridMinimum: { width: number; height: number }, railMinimumWidth: number): { width: number; height: number } {
   return {
-    width: COMMAND_RAIL_MIN_WIDTH_PX + gridMinimum.width + 2,
+    width: railMinimumWidth + gridMinimum.width + 2,
     height: COMMAND_PANEL_HEADER_HEIGHT_PX + gridMinimum.height + 2,
   };
 }
@@ -556,10 +558,13 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const expanded = commandWindowManager.store((state) => state.expandedWindowId !== null);
   const gridMinimum = commandTerminalGridMinimum(terminalCount, expanded, COMMAND_LAYER_OPTIONS.minSize);
-  const terminalAreaMinWidth = commandTerminalAreaMinWidth(gridMinimum.width, COMMAND_RAIL_MIN_WIDTH_PX);
+  // The rail's narrowest: its strip folded, its drag minimum open.
+  const railFolded = useConfigStore((state) => state.config.commandTerminalRail?.collapsed === true);
+  const railMinimumWidth = railFolded ? COMMAND_RAIL_COLLAPSED_WIDTH_PX : COMMAND_RAIL_MIN_WIDTH_PX;
+  const terminalAreaMinWidth = commandTerminalAreaMinWidth(gridMinimum.width, railMinimumWidth);
   const panelMinSize = useMemo(
-    () => panelMinSizeFor({ width: gridMinimum.width, height: gridMinimum.height }),
-    [gridMinimum.width, gridMinimum.height],
+    () => panelMinSizeFor({ width: gridMinimum.width, height: gridMinimum.height }, railMinimumWidth),
+    [gridMinimum.width, gridMinimum.height, railMinimumWidth],
   );
   const atCap = useCommandTerminalAtCap(projectId);
   const terminalsStarting = useTerminalsStarting(projectId);
@@ -568,6 +573,13 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const changeLayout = useCallback((change: () => void) => {
     runTerminalLayoutChange(terminalLayoutScopeOf(terminalArea), change);
   }, [terminalArea]);
+  // The panel's width change (`panel-edge-push.ts`), which the rail drives,
+  // reached through the ref the panel fills: the detached window has no panel,
+  // so there the terminals give the rail its room.
+  const panelWidthRef = useRef<PanelWidthChange | null>(null);
+  const widthChange = useMemo<PanelWidthChange>(() => ({
+    begin: (options) => panelWidthRef.current?.begin(options) ?? null,
+  }), []);
   // Before the panel resizes, the terminals take the proportions on screen as
   // their own: two the floor holds even at the panel's minimum grow evenly, not
   // from a seam an earlier, wider panel left skewed. Nothing on screen moves.
@@ -645,6 +657,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   );
 
   return (
+    <PanelWidthContext.Provider value={widthChange}>
     <CommandTerminalLayerProvider hideLayer={onHide} resumeBeside={resumeCommandTerminalBeside}>
       {layerRoot === null ? (
         // The window's own title bar takes the place of the panel header.
@@ -662,6 +675,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
             minSize={panelMinSize}
             terminalAreaMinWidth={terminalAreaMinWidth}
             onResizeStart={adoptHeldLayout}
+            widthChangeRef={panelWidthRef}
             chrome={PANEL_CHROME}
             onTerminalAreaReady={setTerminalArea}
             onOpenInNewWindow={handleOpenInNewWindow}
@@ -683,5 +697,6 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
         />
       )}
     </CommandTerminalLayerProvider>
+    </PanelWidthContext.Provider>
   );
 }

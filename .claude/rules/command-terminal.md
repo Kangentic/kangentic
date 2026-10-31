@@ -54,9 +54,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   agent, model, effort, rate limits and context beside its +N pill for every 5.x model and effort;
   a terminal is never narrowed to fit that row any other way. A resize never takes the grid away. The panel's minimum is the grid at that
   floor (`commandTerminalGridMinimum`: two columns from two terminals, two rows from three, one
-  terminal while the user has one expanded) beside the open rail at its 200px drag minimum, folded
-  or not (a minimum that followed the fold let a panel shrink to the strip and then put the
-  terminals under their floor when the rail opened). A dragged seam keeps its ratio, but the
+  terminal while the user has one expanded) beside the rail at its narrowest: its 37px strip
+  folded, its 200px drag minimum open. Opening the rail grows the panel by what the rail takes
+  (below), so a panel sized down to the strip still leaves the terminals their floor. A dragged seam keeps its ratio, but the
   layout holds every pane at the floor while the area has room for the grid (`resolveTileLayout`'s
   `minPane`, which `WindowLayer` and `TileSplitter` pass for a host-arranged layer), so a seam
   skewed toward one side never leaves a terminal under the floor at the panel's minimum. An area
@@ -210,11 +210,19 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   written.** `AppConfig.commandTerminalRail` (`src/shared/command-terminal-rail.ts`) holds the
   width its edge drag set (200 to 400, 300 by default) and whether it is folded to its 37px strip.
   `resolveRailWidth` narrows the SHOWN rail, down to 200, so the grid keeps its floor in a narrow
-  row, and never saves the narrowed width. The panel's default size (`PANEL_CHROME`)
-  reads the rail's default width, never its live one, so a drag or fold changes the terminals'
-  share of the panel and never the panel. The edge drag writes the width to the rail's element and
-  holds the manager-resize gate, like the panel's own edges; its release commits, saves and closes
-  the gate as one layout change; Escape cancels it in the capture phase. Where it folds is
+  row, and never saves the narrowed width. **The rail is part of the panel:** its edge drag, a
+  fold and an open change the PANEL's width by the rail's change, its left edge held, and the
+  terminals keep their size and refit nothing (`panel-edge-push.ts`, a width change the panel
+  hands out). The fold button, with no pointer to follow, grows the panel to the left once the
+  right edge is at the area's. Only where the panel cannot change (maximized, the detached window,
+  the right edge at the area's during a drag) do the terminals give the rail its room, never under
+  their floor. The panel's default size (`PANEL_CHROME`) reads the rail's default width, never its
+  live one. The edge drag writes the width to the rail's element together with its open minimum
+  (`applyRail`: the width alone left a strip folded mid-drag laid out at 200 until React
+  rendered, and the terminals refit narrower), and holds the manager-resize gate, like the panel's
+  own edges; its release commits the rail and the panel, saves and closes the gate as one layout
+  change; Escape cancels both in the capture phase. The edge looks like a tile seam: a thin
+  accent line on the boundary under the pointer and while it drags. Where it folds is
   `resolveFoldingEdgeDrag`, the project sidebar's divider's rule too: held at 200 down to 100,
   folded past that WHILE the drag runs, never on release alone. Never give either edge a rule of
   its own. The fold button is the rail's bottom row (outlined at rest; open, full width with the icon and "Hide"), with its
@@ -371,9 +379,11 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   pencil, the kebab, the off state while starting, the Running row's menu).
 - **Test (rail):** `tests/unit/command-terminal-rail.test.ts` pins the resolved width (narrowed,
   never written, the strip) and `tests/ui/command-terminal-rail.spec.ts` the 300px default, a drag
-  saved on release with one refit per terminal, Escape, the hold at 200, the live fold past 100
-  with one refit and the open from the strip, the footer button keeping its spot and its focus,
-  the panel's box unchanged, the floor
+  that grows the panel by as much and refits no terminal, the panel at its minimum pushed out the
+  same way, the maximized panel where the terminals give the room, Escape putting the rail and the
+  panel back, the hold at 200, the live fold past 100 that shrinks the panel with no terminal
+  narrowing mid-fold and the open from the strip, the footer button keeping its spot and its
+  focus while the panel shrinks and grows with it, the edge's seam look, the floor
   after a fold, the strip's activity marks and the one in front, the narrowed rail at the window floor, and the cut-name tip.
   `tests/unit/demo-fit-layout-blob.test.ts` holds the web demo's panel fit to the rail width the
   frame's config gives, and the sample install's seeded rail to the fit's fallback.

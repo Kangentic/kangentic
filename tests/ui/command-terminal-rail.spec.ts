@@ -5,8 +5,10 @@
  * holds there down to 100 and folds to a 37px strip past that, while the drag
  * runs. Its bottom row folds and opens it from the same spot. Width and fold are one global setting
  * (`AppConfig.commandTerminalRail`). A narrow panel shows the rail narrower
- * without rewriting that setting. None of it moves or resizes the panel itself:
- * only the terminals' share of it changes, and each terminal refits once.
+ * without rewriting that setting. Within the room beside the terminals' floor a
+ * drag changes only the terminals' share of the panel, and each terminal refits
+ * once; past that room it pushes the panel's right edge out instead, and the
+ * terminals keep their size.
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
@@ -120,6 +122,20 @@ async function settledResizesPerSession(page: Page): Promise<Record<string, numb
   return counts;
 }
 
+/** The gate closed and some frames gone by, long enough for any refit a change would send: none reached a PTY. */
+async function expectNoResizes(page: Page): Promise<void> {
+  await expect.poll(() => isManagerResizeGateOpen(page), { timeout: 3000 }).toBe(false);
+  await page.evaluate(() => new Promise<void>((resolve) => {
+    let left = 20;
+    const step = () => { left -= 1; if (left <= 0) resolve(); else requestAnimationFrame(step); };
+    requestAnimationFrame(step);
+  }));
+  expect(await resizeCalls(page)).toHaveLength(0);
+}
+
+const terminalWidths = (page: Page) => page.locator('[data-testid^="window-frame-"]').evaluateAll(
+  (frames) => frames.map((frame) => Math.round(frame.getBoundingClientRect().width)));
+
 async function sessionIdsOf(page: Page, slots: readonly string[]): Promise<string[]> {
   const ids: string[] = [];
   for (const slot of slots) {
@@ -147,34 +163,127 @@ async function edgeGrab(page: Page): Promise<{ x: number; y: number }> {
 }
 
 test.describe('Command Terminal rail', () => {
-  test('opens at 300px; an edge drag widens it live, saves once on release, and refits each terminal once', async () => {
+  test('opens at 300px; an edge drag widens it live and the panel with it, saves once on release, and the terminals keep their size', async () => {
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
-      const sessions = await sessionIdsOf(page, ['slot-1', 'slot-2']);
+      await sessionIdsOf(page, ['slot-1', 'slot-2']);
       await settleResizes(page);
       expectNear(await railWidth(page), 300, 'rail width at open');
       expect(await savedRail(page)).toEqual({ width: 300, collapsed: false });
       const panelBefore = await boxOf(page, 'command-terminal-panel');
+      const terminalsBefore = await terminalWidths(page);
 
       const grab = await edgeGrab(page);
       await page.mouse.move(grab.x, grab.y);
       await page.mouse.down();
       await page.mouse.move(grab.x + 60, grab.y, { steps: 6 });
 
-      // Mid-drag the rail has the new width and the gate holds every refit.
+      // Mid-drag the rail has the new width, the panel grew by as much, and nothing refit.
       await expect.poll(() => railWidth(page), { timeout: 3000 }).toBeGreaterThan(355);
-      expect(await isManagerResizeGateOpen(page)).toBe(true);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelBefore.width + 60, 'panel width mid-drag');
       expect(await resizeCalls(page)).toHaveLength(0);
       expect(await savedRail(page)).toEqual({ width: 300, collapsed: false });
 
       await page.mouse.up();
       await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 360, collapsed: false });
       expectNear(await railWidth(page), 360, 'rail width after release');
-      const counts = await settledResizesPerSession(page);
-      expect(counts).toEqual({ [sessions[0]]: 1, [sessions[1]]: 1 });
-      // The panel itself never moved: only the terminals' share of it changed.
+      // The rail is the panel's: the panel took the change, its left edge held, and the terminals kept their size.
+      const panelAfter = await boxOf(page, 'command-terminal-panel');
+      expectNear(panelAfter.width, panelBefore.width + 60, 'panel width after release');
+      expectNear(panelAfter.x, panelBefore.x, 'panel left edge');
+      (await terminalWidths(page)).forEach((width, index) => expectNear(width, terminalsBefore[index], `terminal ${index + 1}`));
+      await expectNoResizes(page);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the edge looks like the seam between terminals: nothing at rest, a thin accent line under the pointer', async () => {
+    const { browser, page } = await launch(WIDE_VIEWPORT);
+    try {
+      await openTerminals(page, 2);
+      const lineOf = (testId: string) => page.getByTestId(testId).evaluate((element) => {
+        const line = element.firstElementChild as HTMLElement;
+        return { width: Math.round(line.getBoundingClientRect().width), color: getComputedStyle(line).backgroundColor };
+      });
+      const railEdge = 'command-terminal-rail-edge';
+      expect((await lineOf(railEdge)).color).toBe('rgba(0, 0, 0, 0)');
+
+      // Hovered, each line fades in (`transition-colors`), so the color is read once it has settled.
+      const settledLine = async (testId: string) => {
+        let previous = '';
+        await expect.poll(async () => {
+          const current = JSON.stringify(await lineOf(testId));
+          const settled = current === previous && !current.includes('rgba(0, 0, 0, 0)');
+          previous = current;
+          return settled;
+        }, { timeout: 3000, intervals: [100] }).toBe(true);
+        return lineOf(testId);
+      };
+      const edge = await boxOf(page, railEdge);
+      await page.mouse.move(edge.x + edge.width / 2, edge.y + edge.height / 2);
+      const railHovered = await settledLine(railEdge);
+      const seamTestId = await page.locator('[data-testid^="tile-splitter-"]').first().getAttribute('data-testid');
+      if (!seamTestId) throw new Error('no seam');
+      const seam = await boxOf(page, seamTestId);
+      await page.mouse.move(seam.x + seam.width / 2, seam.y + seam.height / 2);
+      const seamHovered = await settledLine(seamTestId);
+      expect(railHovered).toEqual(seamHovered);
+      expect(railHovered.width).toBe(2);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('the whole edge takes the drag, the half over the terminals too: a terminal focused since never covers it', async () => {
+    const { browser, page } = await launch(WIDE_VIEWPORT);
+    try {
+      await openTerminals(page, 2);
+      await sessionIdsOf(page, ['slot-1', 'slot-2']);
+      // Focusing the terminals raises their windows, whose z-index grows with each focus.
+      for (const slot of ['slot-1', 'slot-2', 'slot-1', 'slot-2']) {
+        await frameOf(page, slot).locator('.xterm-helper-textarea').focus();
+      }
+      await frameOf(page, 'slot-1').click({ position: { x: 200, y: 200 } });
+      await settleResizes(page);
+      // The right half of the edge lies over the first terminal's border: the line itself.
+      const edge = await boxOf(page, 'command-terminal-rail-edge');
+      const grabX = edge.x + edge.width - 2;
+      const grabY = edge.y + edge.height / 2;
+      const hit = await page.evaluate(({ x, y }) => document.elementFromPoint(x, y)?.closest('[data-testid="command-terminal-rail-edge"]') !== null, { x: grabX, y: grabY });
+      expect(hit).toBe(true);
+      await page.mouse.move(grabX, grabY);
+      await page.mouse.down();
+      await page.mouse.move(grabX + 60, grabY, { steps: 6 });
+      await page.mouse.up();
+      await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 360, collapsed: false });
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('in a maximized panel there is no edge to move, so the terminals give the rail its room', async () => {
+    const { browser, page } = await launch(WIDE_VIEWPORT);
+    try {
+      await openTerminals(page, 2);
+      const sessions = await sessionIdsOf(page, ['slot-1', 'slot-2']);
+      await page.getByTestId('command-terminal-panel-maximize').click();
+      await settleResizes(page);
+      const panelBefore = await boxOf(page, 'command-terminal-panel');
+      const terminalsBefore = await terminalWidths(page);
+
+      const grab = await edgeGrab(page);
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      await page.mouse.move(grab.x + 60, grab.y, { steps: 6 });
+      await page.mouse.up();
+
+      await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 360, collapsed: false });
       expect(await boxOf(page, 'command-terminal-panel')).toEqual(panelBefore);
+      const terminalsAfter = await terminalWidths(page);
+      expect(terminalsAfter[0] + terminalsAfter[1]).toBeLessThan(terminalsBefore[0] + terminalsBefore[1] - 50);
+      expect(await settledResizesPerSession(page)).toEqual({ [sessions[0]]: 1, [sessions[1]]: 1 });
     } finally {
       await browser.close();
     }
@@ -185,6 +294,7 @@ test.describe('Command Terminal rail', () => {
     try {
       await openTerminals(page, 1);
       await settleResizes(page);
+      const panelBefore = await boxOf(page, 'command-terminal-panel');
       const grab = await edgeGrab(page);
       await page.mouse.move(grab.x, grab.y);
       await page.mouse.down();
@@ -195,6 +305,8 @@ test.describe('Command Terminal rail', () => {
 
       await expect.poll(() => railWidth(page), { timeout: 3000 }).toBeLessThan(302);
       expect(await savedRail(page)).toEqual({ width: 300, collapsed: false });
+      // The panel went back with it.
+      expect(await boxOf(page, 'command-terminal-panel')).toEqual(panelBefore);
       // Escape went to the drag, not to the panel under it.
       await expect(page.getByTestId('command-terminal-panel')).toBeVisible();
       await expect.poll(() => isManagerResizeGateOpen(page), { timeout: 3000 }).toBe(false);
@@ -208,6 +320,7 @@ test.describe('Command Terminal rail', () => {
     try {
       await openTerminals(page, 1);
       await settleResizes(page);
+      const panelBefore = await boxOf(page, 'command-terminal-panel');
 
       const grab = await edgeGrab(page);
       await page.mouse.move(grab.x, grab.y);
@@ -222,17 +335,22 @@ test.describe('Command Terminal rail', () => {
       await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 200, collapsed: false });
       await expect(railOf(page)).toHaveAttribute('data-collapsed', 'false');
       expectNear(await railWidth(page), 200, 'rail width after release');
+      // The panel shrank by what the rail gave up.
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelBefore.width - 100, 'panel width');
+      await expectNoResizes(page);
     } finally {
       await browser.close();
     }
   });
 
-  test('a drag past half the minimum folds the rail while it runs, keeps its width, refits once; back out it opens at 200', async () => {
+  test('a drag past half the minimum folds the rail while it runs and the panel shrinks to it; back out it opens at 200 and grows the panel; the terminal never refits', async () => {
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 1);
-      const [sessionId] = await sessionIdsOf(page, ['slot-1']);
+      await sessionIdsOf(page, ['slot-1']);
       await settleResizes(page);
+      const panelOpen = await boxOf(page, 'command-terminal-panel');
+      const [terminalBefore] = await terminalWidths(page);
 
       const grab = await edgeGrab(page);
       await page.mouse.move(grab.x, grab.y);
@@ -242,21 +360,18 @@ test.describe('Command Terminal rail', () => {
       // Folded while the drag still runs, so the release keeps what the screen shows.
       await expect(railOf(page)).toHaveAttribute('data-collapsed', 'true');
       expectNear(await railWidth(page), 37, 'strip width mid-drag');
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelOpen.width - (300 - 37), 'panel width mid-fold');
       expect(await resizeCalls(page)).toHaveLength(0);
-      // The terminal's tile follows the strip under the drag, before the release.
-      await expect.poll(async () => {
-        const area = await boxOf(page, 'command-terminal-area');
-        const frame = await page.locator('[data-testid^="window-frame-"]').first().boundingBox();
-        return Math.abs((frame?.width ?? 0) - area.width) <= PIXEL_TOLERANCE;
-      }, { timeout: 3000 }).toBe(true);
 
+      // The terminal kept its width through the fold: the strip took its 37px at once.
+      expectNear((await terminalWidths(page))[0], terminalBefore, 'terminal width mid-fold');
       await page.mouse.up();
       // Folded, it keeps the width it opens at again.
       await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 300, collapsed: true });
-      // The fold landed during the drag, so the terminal refits once, at the strip's layout.
-      expect(await settledResizesPerSession(page)).toEqual({ [sessionId]: 1 });
-      const foldedGrid = (await resizeCalls(page)).at(-1);
-      await settleResizes(page);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelOpen.width - (300 - 37), 'panel width folded');
+      expectNear(await railWidth(page), 37, 'strip width after release');
+      expectNear((await terminalWidths(page))[0], terminalBefore, 'terminal width folded');
+      await expectNoResizes(page);
 
       // Out of the strip: short of the fold line it stays folded, past it it opens at 200.
       const stripGrab = await edgeGrab(page);
@@ -269,25 +384,28 @@ test.describe('Command Terminal rail', () => {
       expectNear(await railWidth(page), 200, 'opened at the minimum');
       await page.mouse.up();
       await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 200, collapsed: false });
-      await settleResizes(page);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelOpen.width - 100, 'panel width opened at 200');
+      expectNear((await terminalWidths(page))[0], terminalBefore, 'terminal width opened');
+      await expectNoResizes(page);
 
-      // The button folds to the same grid the drag did.
+      // The button folds it the same way the drag did.
       await page.getByTestId('command-terminal-rail-toggle').click();
       await expect(railOf(page)).toHaveAttribute('data-collapsed', 'true');
-      expect(await settledResizesPerSession(page)).toEqual({ [sessionId]: 1 });
-      expect((await resizeCalls(page)).at(-1)).toEqual(foldedGrid);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelOpen.width - (300 - 37), 'panel width folded by the button');
+      await expectNoResizes(page);
     } finally {
       await browser.close();
     }
   });
 
-  test('the footer button folds and opens the rail in place: Add terminal and the button keep their spots, and the panel keeps its box', async () => {
+  test('the footer button folds and opens the rail in place: Add terminal and the button keep their spots, and the panel shrinks and grows with it', async () => {
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
-      const sessions = await sessionIdsOf(page, ['slot-1', 'slot-2']);
+      await sessionIdsOf(page, ['slot-1', 'slot-2']);
       await settleResizes(page);
       const panelBefore = await boxOf(page, 'command-terminal-panel');
+      const terminalsBefore = await terminalWidths(page);
       const addOpen = await boxOf(page, 'command-terminal-new');
       const toggleOpen = await boxOf(page, 'command-terminal-rail-toggle');
       await expect(page.getByTestId('command-terminal-rail-toggle')).toHaveAccessibleName('Hide rail');
@@ -313,15 +431,23 @@ test.describe('Command Terminal rail', () => {
       const toggleFolded = await boxOf(page, 'command-terminal-rail-toggle');
       expectNear(toggleFolded.x, toggleOpen.x, 'toggle x');
       expectNear(toggleFolded.y, toggleOpen.y, 'toggle y');
-      expect(await boxOf(page, 'command-terminal-panel')).toEqual(panelBefore);
+      // The panel shrank by what the rail gave up, its left edge held; the terminals kept their size.
+      const panelFolded = await boxOf(page, 'command-terminal-panel');
+      expectNear(panelFolded.width, panelBefore.width - (300 - 37), 'panel width folded');
+      expectNear(panelFolded.x, panelBefore.x, 'panel left edge folded');
+      (await terminalWidths(page)).forEach((width, index) => expectNear(width, terminalsBefore[index], `terminal ${index + 1} folded`));
       expect(await savedRail(page)).toEqual({ width: 300, collapsed: true });
-      expect(await settledResizesPerSession(page)).toEqual({ [sessions[0]]: 1, [sessions[1]]: 1 });
+      await expectNoResizes(page);
 
       await page.getByTestId('command-terminal-rail-toggle').click();
       await expect(railOf(page)).toHaveAttribute('data-collapsed', 'false');
       expectNear(await railWidth(page), 300, 'rail width after opening');
       expect(await savedRail(page)).toEqual({ width: 300, collapsed: false });
-      expect(await boxOf(page, 'command-terminal-panel')).toEqual(panelBefore);
+      const panelOpened = await boxOf(page, 'command-terminal-panel');
+      expectNear(panelOpened.width, panelBefore.width, 'panel width opened');
+      expectNear(panelOpened.x, panelBefore.x, 'panel left edge opened');
+      (await terminalWidths(page)).forEach((width, index) => expectNear(width, terminalsBefore[index], `terminal ${index + 1} opened`));
+      await expectNoResizes(page);
 
       // From the keyboard, the button keeps focus, so the same key undoes it.
       await page.getByTestId('command-terminal-rail-toggle').focus();
@@ -331,6 +457,90 @@ test.describe('Command Terminal rail', () => {
       await page.keyboard.press('Enter');
       await expect(railOf(page)).toHaveAttribute('data-collapsed', 'false');
       await expect(page.getByTestId('command-terminal-rail-toggle')).toBeFocused();
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /** Drag the panel's right edge as far left as it goes: the panel at its minimum. */
+  async function shrinkPanelToMinimum(page: Page): Promise<void> {
+    const edge = await boxOf(page, 'command-terminal-panel-resize-e');
+    const startX = edge.x + edge.width / 2;
+    const startY = edge.y + edge.height / 2;
+    await page.mouse.move(startX, startY);
+    await page.mouse.down();
+    await page.mouse.move(startX - 2000, startY, { steps: 10 });
+    await page.mouse.up();
+    await expect.poll(() => isManagerResizeGateOpen(page), { timeout: 3000 }).toBe(false);
+  }
+
+  const savedPanel = (page: Page) => page.evaluate(async () =>
+    ((await window.electronAPI.config.getGlobal()) as unknown as { commandTerminalPanel?: { w: number } | null }).commandTerminalPanel ?? null);
+
+  test('past the room beside the terminals, an edge drag pushes the panel out: the terminals keep their size and refit nothing', async () => {
+    const { browser, page } = await launch(WIDE_VIEWPORT);
+    try {
+      await openTerminals(page, 2);
+      await sessionIdsOf(page, ['slot-1', 'slot-2']);
+      await shrinkPanelToMinimum(page);
+      // At the panel's minimum the rail shows narrowed to 200; its own width stays 300.
+      await expect.poll(() => railWidth(page), { timeout: 3000 }).toBeLessThanOrEqual(200 + PIXEL_TOLERANCE);
+      await settleResizes(page);
+      const panelBefore = await boxOf(page, 'command-terminal-panel');
+      const terminalsBefore = [(await frameOf(page, 'slot-1').boundingBox())?.width ?? 0, (await frameOf(page, 'slot-2').boundingBox())?.width ?? 0];
+      const savedPanelBefore = await savedPanel(page);
+
+      const grab = await edgeGrab(page);
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      await page.mouse.move(grab.x + 150, grab.y, { steps: 8 });
+      // Mid-drag: the rail is 350, the panel 150 wider, the terminals as they were, nothing refit.
+      await expect.poll(() => railWidth(page), { timeout: 3000 }).toBeGreaterThanOrEqual(350 - PIXEL_TOLERANCE);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelBefore.width + 150, 'panel width mid-push');
+      expectNear((await boxOf(page, 'command-terminal-panel')).x, panelBefore.x, 'panel left edge');
+      expect(await isManagerResizeGateOpen(page)).toBe(true);
+      // Back toward the start, the panel follows: it shrinks with the rail, never under where it began.
+      await page.mouse.move(grab.x + 60, grab.y, { steps: 4 });
+      await expect.poll(async () => (await boxOf(page, 'command-terminal-panel')).width, { timeout: 3000 })
+        .toBeLessThanOrEqual(panelBefore.width + 60 + PIXEL_TOLERANCE);
+      await page.mouse.move(grab.x + 150, grab.y, { steps: 4 });
+      await page.mouse.up();
+
+      await expect.poll(() => savedRail(page), { timeout: 3000 }).toEqual({ width: 350, collapsed: false });
+      await expect.poll(async () => (await savedPanel(page))?.w ?? 0, { timeout: 3000 }).toBeGreaterThan(savedPanelBefore?.w ?? 0);
+      expectNear((await boxOf(page, 'command-terminal-panel')).width, panelBefore.width + 150, 'panel width after release');
+      expectNear(await railWidth(page), 350, 'rail width after release');
+      expectNear((await frameOf(page, 'slot-1').boundingBox())?.width ?? 0, terminalsBefore[0], 'first terminal');
+      expectNear((await frameOf(page, 'slot-2').boundingBox())?.width ?? 0, terminalsBefore[1], 'second terminal');
+      await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 600)));
+      expect(await resizeCalls(page)).toHaveLength(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Escape during a push puts the rail and the panel back where the drag found them', async () => {
+    const { browser, page } = await launch(WIDE_VIEWPORT);
+    try {
+      await openTerminals(page, 2);
+      await shrinkPanelToMinimum(page);
+      await expect.poll(() => railWidth(page), { timeout: 3000 }).toBeLessThanOrEqual(200 + PIXEL_TOLERANCE);
+      const panelBefore = await boxOf(page, 'command-terminal-panel');
+      const railBefore = await railWidth(page);
+
+      const grab = await edgeGrab(page);
+      await page.mouse.move(grab.x, grab.y);
+      await page.mouse.down();
+      await page.mouse.move(grab.x + 120, grab.y, { steps: 6 });
+      await expect.poll(async () => (await boxOf(page, 'command-terminal-panel')).width, { timeout: 3000 })
+        .toBeGreaterThan(panelBefore.width + 100);
+      await page.keyboard.press('Escape');
+      await page.mouse.up();
+
+      await expect.poll(async () => (await boxOf(page, 'command-terminal-panel')).width, { timeout: 3000 })
+        .toBeLessThanOrEqual(panelBefore.width + PIXEL_TOLERANCE);
+      expectNear(await railWidth(page), railBefore, 'rail width after Escape');
+      expect(await savedRail(page)).toEqual({ width: 300, collapsed: false });
     } finally {
       await browser.close();
     }
