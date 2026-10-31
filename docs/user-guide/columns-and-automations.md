@@ -137,11 +137,13 @@ one, which today means a **Send message to agent** row. On exit there is no agen
 such a row is skipped with that reason recorded.
 
 **When something fails.** Every run is recorded, whatever happens. A failure raises one toast
-naming the automation and the column, with a **Run again** action that re-runs it against the
-task's current state. Run again on a **Move to column** row moves the card, but only while the task
-is still in that row's column; once it has left, drag the card instead. Nothing is retried
-automatically: a fired webhook and a half-run script are not safe to repeat blind. A run that was
-in flight when Kangentic quit is marked interrupted the next time the project opens.
+naming the task, the automation and the column, with a **Run again** action that re-runs it against
+the task's current state. Click the toast to open the task, in its own project if you have switched
+away. The toast stays up, so Run again is still there once you have looked. Run again on a
+**Move to column** row moves the card, but only while the task is still in that row's column; once
+it has left, drag the card instead. Nothing is retried automatically: a fired webhook and a half-run
+script are not safe to repeat blind. A run that was in flight when Kangentic quit is marked
+interrupted the next time the project opens.
 
 **To Do and Done** run exit automations only. Nothing runs when a task enters them.
 

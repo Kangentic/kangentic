@@ -26,6 +26,8 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
 - **A toast with a button is `persistent: true`.** Its `action` carries a label and an icon
   (`review`, `settings`, `retry`, `update`), drawn at the card's bottom right. A persistent toast
   may also have no button (its card opens its subject, or it closes when what it reports ends).
+  One with both `onOpen` and a button stays up after its card opens the subject, so the button is
+  still there once the user has looked: an automation failure opens its task beside Run again.
 - **Change a toast in place with `updateToast`**, never dismiss-and-add for a count that grows.
 - **Do not reintroduce a clickable card that opens nothing.** A card without `onOpen` is
   `pointer-events: none` and only its buttons take clicks. While a dialog, the settings panel or the
@@ -43,8 +45,9 @@ Manager's Save. `addToast` (`stores/toast-store.ts`) now takes one shape, and th
 - **Tests:** `tests/unit/toast-store-hmr.test.ts` pins the store (the countdown hold and release,
   `updateToast`, the stack limit that never evicts a persistent toast for a timed one);
   `tests/ui/toast-behavior.spec.ts` pins the card (title over body, the countdown line, the hover
-  hold on a click-through card, a card click that opens, the dialog gate including a panel opened by
-  keyboard, the stepped line with Animations off, a toast in a pop-out);
+  hold on a click-through card, a card click that opens, a card with a button that stays after it
+  opens, the dialog gate including a panel opened by keyboard, the stepped line with Animations
+  off, a toast in a pop-out);
   `tests/ui/toast-click-through.spec.ts` pins that a card that opens nothing never eats a click on
   what is under it.
 - **Review:** the copy (one sentence, one line, "Couldn't") is judgment; `/code-review` checks it

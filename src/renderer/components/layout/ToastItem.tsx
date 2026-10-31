@@ -169,12 +169,14 @@ export function ToastItem({ toast, onDismiss, interactive }: ToastItemProps) {
   }, [toast, exiting]);
 
   // A click anywhere on a card that opens something opens it, then closes the
-  // toast. The card's own buttons keep their clicks.
+  // toast. The card's own buttons keep their clicks. A card that also has a
+  // button stays: opening the subject is how the user decides whether to press
+  // it (an automation failure opens its task beside Run again).
   const handleCardClick = useCallback((event: React.MouseEvent<HTMLDivElement>) => {
     if (!toast.onOpen) return;
     if (event.target instanceof Element && event.target.closest('button')) return;
     toast.onOpen();
-    setExiting(true);
+    if (!toast.action) setExiting(true);
   }, [toast]);
 
   // Errors are the toasts people copy: a git or spawn failure arrives here as

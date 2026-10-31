@@ -1166,20 +1166,35 @@ export function App() {
       cleanups.push(automations.onRunFailed((failure) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (failure.projectId && failure.projectId !== activeProjectId) return;
+        // The toast outlives a project switch, so both of its actions carry the
+        // failure's project rather than reading the open one at the click. A
+        // push with no project (main sends '' when it had none) belongs to the
+        // open one, as the guard above already treats it.
+        const failureProjectId = failure.projectId || activeProjectId || null;
 
-        // The automation AND the column, because neither alone locates it:
-        // two columns can hold rows with the same name.
+        // The task first, as the "Agent didn't start" toast does: it is what the
+        // user acts on, and the toast can sit on a board that does not show it.
+        // Then the automation AND the column, because neither alone locates it:
+        // two columns can hold rows with the same name. A bulk move that fails
+        // many tasks raises one toast (main's rationing), naming the first task,
+        // which is the one Run again acts on; the run log holds the rest.
         // Main's detail is its own sentence and stays as main wrote it.
         const detail = failure.detail ? ` ${asSentence(failure.detail)}` : '';
+        const taskTitle = failure.taskTitle;
         const automationName = failure.automationName;
         const columnName = failure.columnName;
-        const failedSentence = i18n._(msg`"${automationName}" failed on ${columnName}.`);
+        const failedSentence = i18n._(msg`"${taskTitle}": "${automationName}" failed on ${columnName}.`);
         const failureToastId = useToastStore.getState().addToast({
           title: i18n._(msg`Automation failed`),
           message: `${failedSentence}${detail}`,
           variant: 'warning',
-          // Stays so Run again is there when the user reaches for it.
+          // Stays so Run again is there when the user reaches for it. A card
+          // click opens the task and leaves the toast up (ToastItem keeps a card
+          // with a button), so the user can look before running it again.
           persistent: true,
+          onOpen: failureProjectId
+            ? () => { openTaskFromNotification(failureProjectId, failure.taskId); }
+            : undefined,
           // Re-runs against the task's CURRENT state, which the result says,
           // because the task may have moved twice since the failure. An
           // interrupted run is offered the same action: it is the one status
@@ -1192,7 +1207,7 @@ export function App() {
               // beside it would invite a second run.
               useToastStore.getState().dismissToast(failureToastId);
               void useBoardStore.getState()
-                .runAutomationAgain(failure.automationId, failure.taskId)
+                .runAutomationAgain(failure.automationId, failure.taskId, failureProjectId)
                 .then((result) => {
                   if (!result.ok) {
                     // The run never started (a deleted automation, a closed project).

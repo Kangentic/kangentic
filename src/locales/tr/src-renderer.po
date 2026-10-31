@@ -14,11 +14,6 @@ msgstr "\"{automationName}\", görevin güncel durumunda başarısız oldu."
 
 #: src/renderer/App.tsx
 #, fuzzy
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "\"{automationName}\", {columnName} üzerinde başarısız oldu."
-
-#: src/renderer/App.tsx
-#, fuzzy
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "\"{automationName}\", görevin güncel durumunda hâlâ çalışıyor."
 
@@ -157,6 +152,10 @@ msgstr "\"{taskTitle}\", son konuşmasının süresi dolduğu için sıfırdan b
 #, fuzzy
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\", # dakika boyunca boşta kaldı.} other {\"{taskTitle}\", # dakika boyunca boşta kaldı.}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy

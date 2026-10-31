@@ -12,10 +12,6 @@ msgid "\"{automationName}\" failed against the task's current state."
 msgstr "「{automationName}」依任務目前狀態執行失敗。"
 
 #: src/renderer/App.tsx
-msgid "\"{automationName}\" failed on {columnName}."
-msgstr "「{automationName}」在 {columnName} 執行失敗。"
-
-#: src/renderer/App.tsx
 msgid "\"{automationName}\" is still running against the task's current state."
 msgstr "「{automationName}」仍在依任務目前狀態執行中。"
 
@@ -129,6 +125,10 @@ msgstr "「{taskTitle}」已重新開始，因為上次的對話已過期。"
 #: src/renderer/App.tsx
 msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} other {# minutes}}."
 msgstr "{timeoutMinutes, plural, other {「{taskTitle}」已閒置 # 分鐘。}}"
+
+#: src/renderer/App.tsx
+msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
