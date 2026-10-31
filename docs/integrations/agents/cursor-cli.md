@@ -56,7 +56,7 @@ Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is se
 agent --resume="<chat-id>"
 ```
 
-A non-interactive resume is `agent --trust --resume="<chat-id>"`. The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
+A non-interactive resume is `agent --trust --resume="<chat-id>"`, and a Skip Approvals resume is `agent --trust --force --resume="<chat-id>"`. The `=` sits outside the quote boundary (`--resume='id'` on unix, `--resume="id"` on Windows).
 
 A resume carries no prompt. Nothing Cursor documents says a prompt rides `--resume=<id>`, so the adapter declares `resumePromptDelivery: 'typed'`: Kangentic types a resume's message (a column's message, held messages) in once Cursor is ready. See [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives).
 
@@ -109,7 +109,7 @@ A Knowledge Graph answer from a distro starts in a stable folder beside the shar
 - No `transcript-cleanup.ts` (uses streaming text output, not a TUI alternate screen)
 - `locateSessionHistoryFile` returns
   `~/.cursor/projects/<cwd-slug>/agent-transcripts/<sessionId>/<sessionId>.jsonl` when that file
-  exists. The slug is Cursor's own: non-alphanumeric characters become `-`, runs of dashes
+  exists, else the path the agent itself reported when that file exists. The slug is Cursor's own: non-alphanumeric characters become `-`, runs of dashes
   collapse, and case stays as the working directory was given. View conversation reads that
   JSONL. A user line's `<timestamp>` tag is dropped and not shown as a clock (`ts: 0`,
   `transcriptHasTimestamps` false), and the `<user_query>` wrapper is removed. A line whose

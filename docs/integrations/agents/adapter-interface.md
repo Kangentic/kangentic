@@ -41,7 +41,7 @@ The optional members, methods included (`discoverCapabilities`, `getExitSequence
 | `name` | `string` | Unique identifier (`'claude'`, `'codex'`, `'gemini'`, `'qwen'`, `'cursor'`, `'copilot'`, `'opencode'`, `'aider'`, `'warp'`, `'kimi'`, `'droid'`, `'ollama'`, `'grok'`, `'antigravity'`, `'goose'`) |
 | `displayName` | `string` | Human-readable product name |
 | `sessionType` | `SessionRecord['session_type']` | Value stored in the sessions DB table |
-| `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`. |
+| `supportsCallerSessionId` | `boolean` | True when the CLI accepts a caller-supplied session ID via `--session-id` (Claude). When false, Kangentic captures the agent's own ID via `runtime.sessionId` for `--resume`, or, for an adapter with `createSessionId` (Cursor's `create-chat`), asks the CLI for an ID before a fresh start. See `createSessionId` and `reportsLaunchSessionId` in [optional-properties.md](optional-properties.md). |
 | `resumePromptDelivery` | `'command-line' \| 'typed' \| 'no-resume'` | How a message reaches the agent when it resumes a conversation: on the resume command, or typed in once the agent is ready. `no-resume` means the adapter never resumes, so every start is fresh and the message is its prompt or is typed after it. The Resume Prompt column below lists each agent's value (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)) |
 | `permissions` | `AgentPermissionEntry[]` | Supported permission modes with agent-specific labels |
 | `defaultPermission` | `PermissionMode` | Recommended default permission mode |
