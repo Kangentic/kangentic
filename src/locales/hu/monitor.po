@@ -236,11 +236,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "Be"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-#, fuzzy
-msgid "Open {taskTitle}"
-msgstr "{taskTitle} megnyitása"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 #, fuzzy
 msgid "Open on board"
@@ -353,11 +348,6 @@ msgstr "Táblázat"
 #, fuzzy
 msgid "Task"
 msgstr "Feladat"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-#, fuzzy
-msgid "The workflow the task belongs to"
-msgstr "A munkafolyamat, amelyhez a feladat tartozik"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy

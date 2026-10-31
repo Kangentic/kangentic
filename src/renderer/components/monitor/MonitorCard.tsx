@@ -2,7 +2,6 @@ import React, { useCallback } from 'react';
 import { CirclePause, Check, GitBranch } from 'lucide-react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
-import { useLingui } from '@lingui/react/macro';
 import { ActivityMark } from '../ActivityMark';
 import { IconSlot } from '../IconSlot';
 import type { AppConfig, MonitorSessionRow } from '../../../shared/types';
@@ -351,48 +350,47 @@ function AutomationsPausedSlice({ className, inWorkflow }: { className: string; 
  * 11px time centered beside 12px text rode visibly above it.
  */
 function MonitorDenseCard({ row, onOpen, onContextMenu, hideProject = false }: MonitorCardProps) {
-  const { t } = useLingui();
   const activityLine = formatMonitorStatus(row);
   const showTaskNumbers = useConfigStore((state) => state.config.showTaskNumbers);
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
-  const taskTitle = row.taskTitle;
   return (
-    <Tooltip label={t`Open ${taskTitle}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpen(row)}
-        onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
-        onContextMenu={handleContextMenu}
-        className="border border-edge rounded-md bg-surface-raised min-w-0 flex items-stretch overflow-hidden hover:border-edge-input transition-colors cursor-pointer select-none text-left"
-        data-testid="monitor-card"
-        data-dense="true"
-        data-session-id={row.sessionId}
-        data-project-id={row.projectId}
-      >
-        <div className="flex-1 min-w-0 px-2.5 py-1.5 flex items-center gap-2">
-          <StateGlyph row={row} variant="row" />
-          {!hideProject && (
-            <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
-          )}
-          {/* The ticket sits right after the title, as on the card's title row. */}
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(row)}
+      onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
+      onContextMenu={handleContextMenu}
+      className="border border-edge rounded-md bg-surface-raised min-w-0 flex items-stretch overflow-hidden hover:border-edge-input transition-colors cursor-pointer select-none text-left"
+      data-testid="monitor-card"
+      data-dense="true"
+      data-session-id={row.sessionId}
+      data-project-id={row.projectId}
+    >
+      <div className="flex-1 min-w-0 px-2.5 py-1.5 flex items-center gap-2">
+        <StateGlyph row={row} variant="row" />
+        {!hideProject && (
+          <span className="text-[11px] text-fg-muted truncate shrink-0 max-w-[18ch]">{row.projectName}</span>
+        )}
+        {/* The ticket sits right after the title, as on the card's title row.
+            The title truncates, so its tip is the whole title. */}
+        <Tooltip label={row.taskTitle}>
           <span className="text-sm text-fg font-medium truncate min-w-0">{row.taskTitle}</span>
-          {showTaskNumbers && row.displayId !== null && (
-            <TicketNumber displayId={row.displayId} testId="monitor-row-display-id" className="select-text" />
-          )}
-          <span className="flex-1" />
-          <span className="inline-flex items-baseline gap-2 min-w-0" data-testid="monitor-row-activity">
-            <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
-              {activityLine}
-            </span>
-            {row.status !== 'exited' && (
-              <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
-            )}
+        </Tooltip>
+        {showTaskNumbers && row.displayId !== null && (
+          <TicketNumber displayId={row.displayId} testId="monitor-row-display-id" className="select-text" />
+        )}
+        <span className="flex-1" />
+        <span className="inline-flex items-baseline gap-2 min-w-0" data-testid="monitor-row-activity">
+          <span className={`text-xs truncate min-w-0 max-w-[30ch] select-text ${needsUser(row) ? 'text-attention' : 'text-fg-faint'}`}>
+            {activityLine}
           </span>
-        </div>
-        <MonitorRowSlice row={row} />
+          {row.status !== 'exited' && (
+            <ElapsedTime startedAt={row.startedAt} className="shrink-0 tabular-nums text-[11px] text-fg-faint" />
+          )}
+        </span>
       </div>
-    </Tooltip>
+      <MonitorRowSlice row={row} />
+    </div>
   );
 }
 
@@ -433,9 +431,7 @@ function MonitorFullCard({
   onOpen,
   onContextMenu,
 }: MonitorCardProps) {
-  const { t } = useLingui();
   const handleContextMenu = useCardContextMenu(row, onContextMenu);
-  const taskTitle = row.taskTitle;
 
   // The slot's content follows the Task tab's Card Preview, exactly as the board
   // card's does. The trail lives in the session store (main pushes it on change;
@@ -462,95 +458,96 @@ function MonitorFullCard({
   const footerDivider = !(slotKind === 'trail' && row.labels.length === 0);
 
   return (
-    <Tooltip label={t`Open ${taskTitle}`}>
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={() => onOpen(row)}
-        onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
-        onContextMenu={handleContextMenu}
-        // The board card's frame: its padding by density, and while the agent
-        // waits on you, its dimmed border and slow pulse.
-        className={`${taskCardFrameClass({ isHighlighted: false, isIdle: needsUser(row) }, cardDensity)} min-w-0 flex flex-col cursor-pointer select-none transition-colors text-left`}
-        data-testid="monitor-card"
-        data-session-id={row.sessionId}
-        data-project-id={row.projectId}
-      >
-        <MonitorCardStrips row={row} density={cardDensity} />
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onOpen(row)}
+      onKeyDown={(event) => { if (event.key === 'Enter') onOpen(row); }}
+      onContextMenu={handleContextMenu}
+      // The board card's frame: its padding by density, and while the agent
+      // waits on you, its dimmed border and slow pulse.
+      className={`${taskCardFrameClass({ isHighlighted: false, isIdle: needsUser(row) }, cardDensity)} min-w-0 flex flex-col cursor-pointer select-none transition-colors text-left`}
+      data-testid="monitor-card"
+      data-session-id={row.sessionId}
+      data-project-id={row.projectId}
+    >
+      <MonitorCardStrips row={row} density={cardDensity} />
 
-        {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
-            its numbered name stands in for a title + ticket, and its terminal-shaped
-            state glyph is what marks it as not-a-task. */}
-        <div className="flex items-center gap-1.5">
-          <StateGlyph row={row} variant="card" />
+      {/* Title row - identical to TaskCard's. A Command Terminal has no task, so
+          its numbered name stands in for a title + ticket, and its terminal-shaped
+          state glyph is what marks it as not-a-task. The title truncates, so its
+          tip is the whole title. */}
+      <div className="flex items-center gap-1.5">
+        <StateGlyph row={row} variant="card" />
+        <Tooltip label={row.taskTitle}>
           <div className="text-sm text-fg font-medium truncate flex-1 min-w-0" data-testid="monitor-card-title">
             {row.taskTitle}
           </div>
-          {showTaskNumbers && row.displayId !== null && (
-            <TicketNumber displayId={row.displayId} testId="monitor-card-display-id" className="select-text" />
-          )}
-          {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" />}
-        </div>
-
-        {!isCompact && row.prUrl && (
-          <div className="flex items-center gap-2 mt-1.5">
-            <PrLink
-              prUrl={row.prUrl}
-              prNumber={row.prNumber}
-              prState={row.prState}
-              prMergeReadiness={row.prMergeReadiness}
-              testId="monitor-card-pr-link"
-            />
-          </div>
+        </Tooltip>
+        {showTaskNumbers && row.displayId !== null && (
+          <TicketNumber displayId={row.displayId} testId="monitor-card-display-id" className="select-text" />
         )}
-
-        {/* The board card's slot, exactly: `mt-1`, the agent's output in the well,
-            a content-sized description otherwise. `monitorSlotKind` decides which,
-            and `MonitorBody` asks it the same question to name the rows main
-            should keep sampling a peek for. */}
-        {slotKind === 'trail' && trailMode && messageTrail ? (
-          // `select-text` here rather than inside CardMessageTrail: the board card
-          // renders the same component on a drag source, where selectable text is
-          // the thing the card's own `select-none` exists to stop.
-          <div className="mt-1 select-text">
-            <CardMessageTrail
-              entries={messageTrail}
-              lines={slotRows}
-              mode={trailMode}
-              lineClass="text-fg-muted"
-              terminal
-              testId="monitor-card-trail"
-            />
-          </div>
-        ) : slotKind === 'description' ? (
-          <div
-            className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[slotRows]}`}
-            data-testid="monitor-card-description"
-            data-lines={slotRows}
-          >
-            {stripMarkdown(row.description ?? '')}
-          </div>
-        ) : (
-          <OutputPeek lines={row.outputPeek} rows={slotRows} />
-        )}
-
-        {row.labels.length > 0 && (
-          <div className="mt-1.5">
-            <LabelPills labels={row.labels} labelColors={labelColors} />
-          </div>
-        )}
-
-        {/* Every element above is a fixed height (titles truncate rather than wrap,
-            and the peek does not grow), so this absorbs only the residual between a
-            labelled card and an unlabelled one, or a held card's extra strip, and
-            keeps the footers on one line across the row. */}
-        <div className="flex-1" />
-
-        {/* The board card's footer states, through the board's own components.
-            Compact density drops the footer, as the board card does. */}
-        {!isCompact && <MonitorCardFooter row={row} divider={footerDivider} />}
+        {row.browserRunning && <BrowserAliveGlobe testId="monitor-card-browser-alive" />}
       </div>
-    </Tooltip>
+
+      {!isCompact && row.prUrl && (
+        <div className="flex items-center gap-2 mt-1.5">
+          <PrLink
+            prUrl={row.prUrl}
+            prNumber={row.prNumber}
+            prState={row.prState}
+            prMergeReadiness={row.prMergeReadiness}
+            testId="monitor-card-pr-link"
+          />
+        </div>
+      )}
+
+      {/* The board card's slot, exactly: `mt-1`, the agent's output in the well,
+          a content-sized description otherwise. `monitorSlotKind` decides which,
+          and `MonitorBody` asks it the same question to name the rows main
+          should keep sampling a peek for. */}
+      {slotKind === 'trail' && trailMode && messageTrail ? (
+        // `select-text` here rather than inside CardMessageTrail: the board card
+        // renders the same component on a drag source, where selectable text is
+        // the thing the card's own `select-none` exists to stop.
+        <div className="mt-1 select-text">
+          <CardMessageTrail
+            entries={messageTrail}
+            lines={slotRows}
+            mode={trailMode}
+            lineClass="text-fg-muted"
+            terminal
+            testId="monitor-card-trail"
+          />
+        </div>
+      ) : slotKind === 'description' ? (
+        <div
+          className={`text-xs text-fg-faint mt-1 ${EXCERPT_CLAMP_CLASS[slotRows]}`}
+          data-testid="monitor-card-description"
+          data-lines={slotRows}
+        >
+          {stripMarkdown(row.description ?? '')}
+        </div>
+      ) : (
+        <OutputPeek lines={row.outputPeek} rows={slotRows} />
+      )}
+
+      {row.labels.length > 0 && (
+        <div className="mt-1.5">
+          <LabelPills labels={row.labels} labelColors={labelColors} />
+        </div>
+      )}
+
+      {/* Every element above is a fixed height (titles truncate rather than wrap,
+          and the peek does not grow), so this absorbs only the residual between a
+          labelled card and an unlabelled one, or a held card's extra strip, and
+          keeps the footers on one line across the row. */}
+      <div className="flex-1" />
+
+      {/* The board card's footer states, through the board's own components.
+          Compact density drops the footer, as the board card does. */}
+      {!isCompact && <MonitorCardFooter row={row} divider={footerDivider} />}
+    </div>
   );
 }
 

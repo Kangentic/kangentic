@@ -358,10 +358,6 @@ msgid "Fine"
 msgstr "Fine"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-msgid "Fly back to the opening view"
-msgstr "Fly back to the opening view"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "Fly Forward and Sideways"
 msgstr "Fly Forward and Sideways"
 
@@ -548,10 +544,6 @@ msgstr "Open Settings"
 #: src/renderer/components/knowledge-graph/KnowledgeGraphNodeDetail.tsx
 msgid "Open the full transcript"
 msgstr "Open the full transcript"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-msgid "Open this conversation"
-msgstr "Open this conversation"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 msgid "Orbit the Map"

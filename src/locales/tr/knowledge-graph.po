@@ -445,11 +445,6 @@ msgstr "İnce"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "Başlangıç görünümüne geri uç"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "İleri ve yana uç"
 
@@ -681,11 +676,6 @@ msgstr "Ayarlar'ı aç"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "Tam dökümü aç"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "Bu konuşmayı aç"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

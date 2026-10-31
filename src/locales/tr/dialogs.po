@@ -737,11 +737,6 @@ msgstr "Şimdi kapatırsanız bu görevdeki değişiklikleriniz silinecek."
 msgid "Collapse all"
 msgstr "Tümünü daralt"
 
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Collapse history"
-msgstr "Geçmişi daralt"
-
 #: src/renderer/components/dialogs/task-detail/changes/ChangesPanel.tsx
 #, fuzzy
 msgid "Collapse to split view"
@@ -846,11 +841,6 @@ msgstr "Commit'ler"
 msgctxt "column header"
 msgid "Compactions"
 msgstr "Sıkıştırmalar"
-
-#: src/renderer/components/dialogs/board-manager/ColumnRail.tsx
-#, fuzzy
-msgid "Compare every column's settings side by side"
-msgstr "Tüm sütunların ayarlarını yan yana karşılaştırın"
 
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 #, fuzzy
@@ -1367,11 +1357,6 @@ msgstr "Tümünü genişlet"
 #, fuzzy
 msgid "Expand changes"
 msgstr "Değişiklikleri genişlet"
-
-#: src/renderer/components/dialogs/task-detail/changes/ChangesHistorySection.tsx
-#, fuzzy
-msgid "Expand history"
-msgstr "Geçmişi genişlet"
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy
@@ -2699,16 +2684,6 @@ msgstr "Bir Otomasyon ajanı ayarlayın"
 #, fuzzy
 msgid "Share the task's conversation with the other columns."
 msgstr "Görevin konuşmasını diğer sütunlarla paylaş."
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {fileName} in Changes"
-msgstr "{fileName} dosyasını Değişiklikler'de göster"
-
-#: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
-#, fuzzy
-msgid "Show {shortSha} in Changes"
-msgstr "{shortSha} commit'ini Değişiklikler'de göster"
 
 #: src/renderer/components/dialogs/task-detail/completed/SummaryTab.tsx
 #, fuzzy

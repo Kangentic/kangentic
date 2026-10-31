@@ -330,8 +330,8 @@ test.describe('usage dashboard', () => {
 
   // DataTable puts its column tip on the <th> itself (Tooltip adds no wrapper), so the header
   // keeps its table layout, its click handler, and its own name. The tip says what the column is,
-  // and a sortable column gets the sort gestures appended on a second line.
-  test('a sortable per-project header describes its column and the sort gestures, and a click on it still sorts', async () => {
+  // and a sortable column gets the Shift+Click line appended on a second line.
+  test('a sortable per-project header describes its column and the Shift+Click sort, and a click on it still sorts', async () => {
     const { browser, page } = await launchWithState(twoProjectPreConfig());
     try {
       await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -343,7 +343,7 @@ test.describe('usage dashboard', () => {
       const tokensInHeader = page.locator('[data-testid="per-project-table"] th').filter({ hasText: 'Tokens In' });
       const firstRow = page.locator('[data-testid="per-project-row"]').first();
       const columnTip = 'Fresh input tokens across the turns in this range (cache reads counted separately)';
-      const sortLine = 'Click to sort - Shift+Click adds a secondary sort';
+      const sortLine = 'Shift+Click adds a secondary sort';
 
       // The accessible description collapses the tip's line break to a space.
       await expect(tokensInHeader).toHaveAccessibleDescription(`${columnTip} ${sortLine}`);

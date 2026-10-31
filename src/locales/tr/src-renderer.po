@@ -530,11 +530,6 @@ msgstr "Tüm filtreleri temizle"
 msgid "Clear search"
 msgstr "Aramayı temizle"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Sıralamak için tıklayın - Shift+Tıklama ikincil sıralama ekler"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Oturum sona erdi"
 #, fuzzy
 msgid "Settings"
 msgstr "Ayarlar"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+Tıklama ikincil sıralama ekler"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

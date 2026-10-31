@@ -1548,18 +1548,16 @@ export function KnowledgeGraphCanvas({
           left: `clamp(${paneInsets.left + toolbarHalfWidth}px, 50%, calc(100% - ${paneInsets.right + toolbarHalfWidth}px))`,
         }}
       >
-        <Tooltip label={t`Fly back to the opening view`}>
-          <button
-            type="button"
-            onClick={handleResetView}
-            onPointerDown={(event) => event.stopPropagation()}
-            data-testid="knowledge-graph-reset-view"
-            className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
-          >
-            <RotateCcw size={14} aria-hidden />
-            <Trans>Reset view</Trans>
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          onClick={handleResetView}
+          onPointerDown={(event) => event.stopPropagation()}
+          data-testid="knowledge-graph-reset-view"
+          className="flex h-8 items-center gap-2 rounded-md px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-hover cursor-pointer"
+        >
+          <RotateCcw size={14} aria-hidden />
+          <Trans>Reset view</Trans>
+        </button>
         <span className="h-5 w-px bg-edge" aria-hidden />
         <Tooltip label={t`Show the camera keys`} enabled={!legendOpen}>
           <button

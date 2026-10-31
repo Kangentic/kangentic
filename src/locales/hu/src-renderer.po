@@ -530,11 +530,6 @@ msgstr "Összes szűrő törlése"
 msgid "Clear search"
 msgstr "Keresés törlése"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Kattintson a rendezéshez – Shift+kattintás: másodlagos rendezés"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Munkamenet befejeződött"
 #, fuzzy
 msgid "Settings"
 msgstr "Beállítások"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "A Shift+kattintás másodlagos rendezést ad hozzá"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

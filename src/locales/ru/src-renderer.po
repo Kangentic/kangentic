@@ -530,11 +530,6 @@ msgstr "Сбросить все фильтры"
 msgid "Clear search"
 msgstr "Очистить поиск"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Нажмите для сортировки, Shift+щелчок — дополнительная сортировка"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Сеанс завершен"
 #, fuzzy
 msgid "Settings"
 msgstr "Настройки"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+щелчок добавляет дополнительную сортировку"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

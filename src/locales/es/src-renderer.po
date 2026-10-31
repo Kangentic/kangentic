@@ -530,11 +530,6 @@ msgstr "Borrar todos los filtros"
 msgid "Clear search"
 msgstr "Borrar búsqueda"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Haga clic para ordenar - Mayús+clic agrega un orden secundario"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Sesión finalizada"
 #, fuzzy
 msgid "Settings"
 msgstr "Configuración"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Mayús+clic agrega un orden secundario"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

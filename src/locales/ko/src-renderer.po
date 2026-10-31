@@ -530,11 +530,6 @@ msgstr "모든 필터 지우기"
 msgid "Clear search"
 msgstr "검색 지우기"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "클릭하여 정렬 - Shift+클릭으로 보조 정렬 추가"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "세션 종료됨"
 #, fuzzy
 msgid "Settings"
 msgstr "설정"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Shift+클릭으로 보조 정렬 추가"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

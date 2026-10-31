@@ -31,11 +31,13 @@ import { PopoverShell } from './PopoverShell';
 import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
 
 interface PrioritiesPopoverProps {
-  /** See LabelsPopover: the container-query pair that sheds this trigger's text. */
+  /** See LabelsPopover: the class pair that sheds this trigger's text. */
   collapse?: ToolbarControlCollapse;
+  /** True while the collapse step hides the label, so the tip names the icon-only button. */
+  labelHidden?: boolean;
 }
 
-export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
+export function PrioritiesPopover({ collapse, labelHidden = false }: PrioritiesPopoverProps) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [pendingDeletePriority, setPendingDeletePriority] = useState<{ index: number; label: string; count: number } | null>(null);
@@ -161,7 +163,7 @@ export function PrioritiesPopover({ collapse }: PrioritiesPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label={prioritiesLabel} enabled={!open}>
+      <Tooltip label={labelHidden ? prioritiesLabel : ''} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"

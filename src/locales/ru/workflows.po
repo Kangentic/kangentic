@@ -641,11 +641,6 @@ msgstr "Выполняется. Приостановить рабочий про
 msgid "Save"
 msgstr "Сохранить"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "Выбрать эту задачу"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

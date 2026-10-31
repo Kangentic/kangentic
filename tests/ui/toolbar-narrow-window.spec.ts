@@ -52,6 +52,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
+import { TOOLTIP_DWELL_MS } from '../../src/renderer/utils/tooltip';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -328,6 +329,96 @@ const WORKFLOWS_CONTROLS = [
 const BOARD_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'Add column'];
 const BACKLOG_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter', 'New Task', 'Import Tasks'];
 const WORKFLOWS_LABELS = ['Board', 'Backlog', 'Workflows', 'Labels', 'Priorities', 'Filter'];
+
+/** A control whose tip is its own name, and that name. */
+interface NamedControl {
+  testId: string;
+  name: string;
+}
+
+/** The board branch's controls that carry a name tip: the switcher, then the row's actions. */
+const BOARD_TIPPED_CONTROLS: NamedControl[] = [
+  { testId: 'view-toggle-board', name: 'Board' },
+  { testId: 'view-toggle-backlog', name: 'Backlog' },
+  { testId: 'view-toggle-workflows', name: 'Workflows' },
+  { testId: 'manage-labels-btn', name: 'Labels' },
+  { testId: 'manage-priorities-btn', name: 'Priorities' },
+  { testId: 'board-filter-btn', name: 'Filter' },
+  { testId: 'add-column-button', name: 'Add column' },
+];
+
+/** The backlog branch's controls that carry a name tip. The switcher is the board test's. */
+const BACKLOG_TIPPED_CONTROLS: NamedControl[] = [
+  { testId: 'manage-labels-btn', name: 'Labels' },
+  { testId: 'manage-priorities-btn', name: 'Priorities' },
+  { testId: 'backlog-filter-btn', name: 'Filter' },
+  { testId: 'new-backlog-task-btn', name: 'New Task' },
+  { testId: 'import-sources-btn', name: 'Import Tasks' },
+];
+
+const TIP = '[data-tooltip]';
+
+/** Wait on the PAGE's clock, for a window in which something must not happen. */
+async function waitPageMs(page: Page, milliseconds: number): Promise<void> {
+  const until = await page.evaluate((span) => performance.now() + span, milliseconds);
+  await page.waitForFunction((deadline) => performance.now() >= deadline, until);
+}
+
+/**
+ * Take the pointer off whatever it is on and wait for the tip it held to go, so the next hover
+ * starts with no tip open and a stray tip cannot be mistaken for the next control's.
+ */
+async function parkPointer(page: Page): Promise<void> {
+  await page.mouse.move(0, 0);
+  await expect(page.locator(TIP)).toHaveCount(0);
+}
+
+/**
+ * One control's tip against its collapse step. While the step leaves the label showing, a tip
+ * would only repeat it, so hovering must open nothing: the count is read once, after the page's
+ * own clock has passed the hover dwell (a negative cannot be polled for), and it is soft so a
+ * run that breaks several controls names every one of them.
+ */
+async function expectNoTipOnHover(page: Page, control: NamedControl): Promise<void> {
+  await page.locator(`[data-testid="${control.testId}"]`).hover();
+  await waitPageMs(page, TOOLTIP_DWELL_MS + 200);
+  expect.soft(await page.locator(TIP).count(), `${control.testId} opened a tip while its "${control.name}" label shows`).toBe(0);
+  await parkPointer(page);
+}
+
+/** The other half: once the step hides the label, hovering the icon opens a tip that names it. */
+async function expectNameTipOnHover(page: Page, control: NamedControl): Promise<void> {
+  await page.locator(`[data-testid="${control.testId}"]`).hover();
+  await expect(page.locator(TIP), `${control.testId} shows no "${control.name}" tip while its label is hidden`).toHaveText(control.name);
+  await parkPointer(page);
+}
+
+/**
+ * A toolbar control's tip is its own name, so it shows only while the collapse step hides the
+ * label (one-tooltip.md). Every one of these tips equals the control's `aria-label`, so the
+ * accessible description is empty in both states and cannot tell them apart: the test hovers and
+ * reads the tip element instead. The step thresholds themselves are pinned by
+ * `toolbar-collapse.test.ts`, so this checks the two ends, step 0 and the floor.
+ */
+async function expectNameTipsOnlyWhileLabelsHidden(page: Page, controls: NamedControl[], lastToCollapse: string): Promise<void> {
+  const row = page.locator('[data-testid="view-toggle"]');
+
+  // Full width: every label shows, so hovering any control opens nothing. The labels are
+  // asserted as text first, or an icon-only row would pass the negatives for the wrong reason.
+  await expect(row).toHaveAttribute('data-collapse-step', '0');
+  const wideText = await row.innerText();
+  for (const control of controls) {
+    expect(wideText, `"${control.name}" is missing from the toolbar at ${WIDE.width}px wide`).toContain(control.name);
+  }
+  for (const control of controls) await expectNoTipOnHover(page, control);
+
+  // At the floor beside the 400px sidebar the row reaches its last step, so every label is
+  // hidden and each tip is the only name its icon shows.
+  await page.setViewportSize(FLOOR);
+  await expect(row).toHaveAttribute('data-collapse-step', '3');
+  await expect.poll(() => page.locator(`[data-testid="${lastToCollapse}"]`).innerText()).toBe('');
+  for (const control of controls) await expectNameTipOnHover(page, control);
+}
 
 /**
  * Every control in `controlTestIds` that carries a label (the inputs do not),
@@ -656,6 +747,35 @@ test.describe('Chrome rows at the 900x600 floor', () => {
       // The search pays for the wider button, down to the trade's own floor and no further.
       const filteredSearchWidth = await readSearchWidth(page);
       expect(filteredSearchWidth, `the search field is ${filteredSearchWidth}px with a filter active`).toBeGreaterThanOrEqual(FILTERED_SEARCH_FLOOR_PX);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /**
+   * The board branch: the Board / Backlog / Workflows switcher (nothing runs in this seed, so
+   * Workflows has no live-state tip to keep), Labels, Priorities, Filter and Add column.
+   */
+  test('on the board, a toolbar control shows its name as a tip only while its label is hidden', async () => {
+    // Intentional: every negative hover waits out the 400ms dwell on the page's clock, one control
+    // after another, so the run is long by construction and no poll can shorten it.
+    test.slow();
+    const { browser, page } = await launch();
+    try {
+      await expectNameTipsOnlyWhileLabelsHidden(page, BOARD_TIPPED_CONTROLS, 'add-column-button');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  /** The backlog branch: Labels, Priorities, Filter, New Task and Import Tasks. */
+  test('on the backlog, a toolbar control shows its name as a tip only while its label is hidden', async () => {
+    // Same reason as the board branch above.
+    test.slow();
+    const { browser, page } = await launch();
+    try {
+      await switchToBacklog(page);
+      await expectNameTipsOnlyWhileLabelsHidden(page, BACKLOG_TIPPED_CONTROLS, 'new-backlog-task-btn');
     } finally {
       await browser.close();
     }

@@ -236,11 +236,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "Вкл."
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-#, fuzzy
-msgid "Open {taskTitle}"
-msgstr "Открыть {taskTitle}"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 #, fuzzy
 msgid "Open on board"
@@ -353,11 +348,6 @@ msgstr "Таблица"
 #, fuzzy
 msgid "Task"
 msgstr "Задача"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-#, fuzzy
-msgid "The workflow the task belongs to"
-msgstr "Рабочий процесс, к которому относится задача"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy

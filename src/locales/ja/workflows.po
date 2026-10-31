@@ -641,11 +641,6 @@ msgstr "実行中。ワークフローを一時停止"
 msgid "Save"
 msgstr "保存"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "このタスクを選択"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

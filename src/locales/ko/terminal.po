@@ -52,16 +52,6 @@ msgstr "전체"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "보드 프로필 - 이 작업이 따르는 열별 에이전트, 모델 및 노력 수준"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change effort"
-msgstr "클릭하여 노력 수준 변경"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-#, fuzzy
-msgid "Click to change model"
-msgstr "클릭하여 모델 변경"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 #, fuzzy
 msgid "Collapse terminal panel"
@@ -133,11 +123,6 @@ msgstr "유휴(입력 대기 중)"
 #, fuzzy
 msgid "Input / output tokens"
 msgstr "입력 / 출력 토큰"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-#, fuzzy
-msgid "Isolated session"
-msgstr "격리된 세션"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

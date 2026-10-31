@@ -186,9 +186,9 @@ test.describe('Backlog View', () => {
   });
 
   // The backlog is the one DataTable surface with row reordering (`sortableEnabled` while no column
-  // sort is active). Its sortable headers describe the sort gestures, a header with nothing to say
-  // has no description, and the drag handle is named for its action.
-  test('headers describe the sort gestures and each row has a named drag handle', async () => {
+  // sort is active). Its sortable headers describe the Shift+Click gesture, a header with nothing to
+  // say has no description, and the drag handle is named for its action.
+  test('headers describe the Shift+Click sort and each row has a named drag handle', async () => {
     const { browser, page } = await launchPage();
     try {
       await createProject(page, 'backlog-test');
@@ -199,10 +199,11 @@ test.describe('Backlog View', () => {
       await page.locator('[data-testid="create-backlog-task-btn"]').click();
       await page.locator('[data-testid="new-backlog-task-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
 
-      // Priority is sortable and has no tip of its own, so its description is the sort line alone.
+      // Priority is sortable and has no tip of its own, so its description is the Shift+Click line
+      // alone. A plain click needs no hint: the header shows it sorts.
       const table = page.locator('[data-testid="backlog-view"]');
       await expect(table.locator('th').filter({ hasText: 'Priority' }))
-        .toHaveAccessibleDescription('Click to sort - Shift+Click adds a secondary sort');
+        .toHaveAccessibleDescription('Shift+Click adds a secondary sort');
       // Labels is not sortable and has no tip, so there is nothing to describe.
       await expect(table.locator('th').filter({ hasText: 'Labels' })).toHaveAccessibleDescription('');
 

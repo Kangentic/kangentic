@@ -571,18 +571,20 @@ function RunOrderPanel({ detail, visibleKeys, onSelectTask }: WorkflowInspectorP
             </div>
             <div className="flex-1 min-w-0">
               {group.map((task) => (
-                <Tooltip key={task.key} label={t`Select this task`}>
-                  <button
-                    type="button"
-                    onClick={() => onSelectTask(task.key)}
-                    className="flex items-center gap-2.5 w-full h-[30px] px-2 rounded-md text-left hover:bg-surface-hover/50 transition-colors"
-                    data-testid="workflow-run-order-row"
-                    data-task-key={task.key}
-                  >
+                <button
+                  key={task.key}
+                  type="button"
+                  onClick={() => onSelectTask(task.key)}
+                  className="flex items-center gap-2.5 w-full h-[30px] px-2 rounded-md text-left hover:bg-surface-hover/50 transition-colors"
+                  data-testid="workflow-run-order-row"
+                  data-task-key={task.key}
+                >
+                  {/* The title truncates, so its tip is the whole title. */}
+                  <Tooltip label={task.title}>
                     <span className="flex-1 min-w-0 truncate text-[13px] text-fg-secondary">{task.title}</span>
-                    {task.task && <RunOrderRowMark task={task.task} />}
-                  </button>
-                </Tooltip>
+                  </Tooltip>
+                  {task.task && <RunOrderRowMark task={task.task} />}
+                </button>
               ))}
             </div>
           </div>

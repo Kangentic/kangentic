@@ -274,10 +274,6 @@ msgstr "出错或超时的调用。这些调用仍会按智能体报告的费用
 msgid "Chart metric"
 msgstr "图表指标"
 
-#: src/renderer/components/stats/StatsScopePicker.tsx
-msgid "Choose which project's usage to view"
-msgstr "选择要查看哪个项目的用量"
-
 #: src/renderer/components/stats/StatsCustomRangePicker.tsx
 msgid "Clear custom range"
 msgstr "清除自定义范围"
@@ -349,10 +345,6 @@ msgstr "自定义"
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Day"
 msgstr "日期"
-
-#: src/renderer/components/stats/StatsCustomRangePicker.tsx
-msgid "Edit the custom range"
-msgstr "编辑自定义范围"
 
 #: src/renderer/components/stats/BackgroundHistoryCard.tsx
 msgid "Failed"
@@ -515,10 +507,6 @@ msgctxt "Usage statistics"
 msgid "Output"
 msgstr "输出"
 
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Output tokens across the turns in this range"
-msgstr "该时间范围内各轮次的输出 token"
-
 #: src/renderer/components/stats/KpiTiles.tsx
 msgid "over {coveredSessionsCompact} sessions"
 msgstr "基于 {coveredSessionsCompact} 个会话"
@@ -658,10 +646,6 @@ msgstr "用量最多的智能体"
 #: src/renderer/components/stats/BackgroundCard.tsx
 msgid "Total"
 msgstr "总计"
-
-#: src/renderer/components/stats/PerProjectTable.tsx
-msgid "Total tool calls across sessions in the range"
-msgstr "该时间范围内各会话的工具调用总数"
 
 #: src/renderer/components/stats/StatsPage.tsx
 msgid "Usage"

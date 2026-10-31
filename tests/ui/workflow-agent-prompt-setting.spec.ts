@@ -120,8 +120,8 @@ test('Expand edits a copy: Cancel keeps the setting, a close with edits asks, Sa
     await createProject(page, `WorkflowPromptExpand ${Date.now()}`);
     await openWorkflowsTab(page);
 
-    // The button says what it opens on hover (board 5b).
-    await expect(page.locator('[data-testid="workflow-agent-prompt-expand"]')).toHaveAccessibleDescription('Expand the prompt');
+    // The button's label says what it does, so it carries no tip that repeats it.
+    await expect(page.locator('[data-testid="workflow-agent-prompt-expand"]')).toHaveAccessibleDescription('');
 
     // Cancel throws the copy away.
     await page.locator('[data-testid="workflow-agent-prompt-expand"]').click();

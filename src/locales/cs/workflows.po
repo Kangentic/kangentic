@@ -641,11 +641,6 @@ msgstr "Spuštěno. Pozastavit pracovní postup"
 msgid "Save"
 msgstr "Uložit"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "Vybrat tento úkol"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

@@ -375,11 +375,6 @@ msgstr "Aparece solo en el menú de opciones del detalle de la tarea"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Se aplica tras reiniciar y no cambia la salida del agente ni el texto del terminal."
 
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Applies to all projects"
-msgstr "Se aplica a todos los proyectos"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -1175,11 +1170,6 @@ msgstr "Ejecución"
 #, fuzzy
 msgid "Expand"
 msgstr "Expandir"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-#, fuzzy
-msgid "Expand the prompt"
-msgstr "Expandir el prompt"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2785,11 +2775,6 @@ msgstr "El primer mensaje que recibe para un nuevo flujo de trabajo."
 #, fuzzy
 msgid "The Kangentic relay"
 msgstr "El relay de Kangentic"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "El grafo de conocimiento y el índice que lee. Se aplica a todos los proyectos"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy

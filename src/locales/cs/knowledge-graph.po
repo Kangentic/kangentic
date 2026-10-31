@@ -445,11 +445,6 @@ msgstr "Jemné"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "Přeletět zpět do výchozího pohledu"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "Let vpřed a do stran"
 
@@ -681,11 +676,6 @@ msgstr "Otevřít Nastavení"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "Otevřít celý přepis"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "Otevřít tuto konverzaci"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

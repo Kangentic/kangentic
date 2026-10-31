@@ -17,8 +17,9 @@ export interface DataTableColumn<TRow, TKey extends string = string> {
   sortValue?: (row: TRow) => number | string | null;
   render: (row: TRow) => React.ReactNode;
   headerRender?: (data: TRow[]) => React.ReactNode;
-  /** Hover explanation for the column header (what the stat means). Sortable
-   *  columns get the sort hint appended automatically. */
+  /** Hover explanation for the column header (what the stat means). Leave it
+   *  unset when it would only restate the label. Sortable columns get the
+   *  Shift+Click line (`sortHint()`) appended automatically. */
   headerTip?: string;
 }
 
@@ -79,14 +80,12 @@ export interface SortableColumn<TRow, TKey extends string> {
 }
 
 /**
- * The hint every sortable header carries, here and in the completed task view's Usage tables.
- * English only: kept for the Usage tables until their area switches to `sortHint()`.
+ * The hint every sortable header carries, here and in the completed task view's Usage tables, in
+ * the session's language. It names only the Shift+Click gesture: the clickable header already
+ * says a plain click sorts.
  */
-export const SORT_HINT = 'Click to sort - Shift+Click adds a secondary sort';
-
-/** `SORT_HINT` in the session's language, resolved where the header draws it. */
 export function sortHint(): string {
-  return i18n._(msg`Click to sort - Shift+Click adds a secondary sort`);
+  return i18n._(msg`Shift+Click adds a secondary sort`);
 }
 
 /**

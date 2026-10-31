@@ -68,7 +68,7 @@ export const SidebarCommandTerminalIndicator = React.memo(function SidebarComman
       : 'text-fg-muted';
 
   return (
-    <Tooltip label={label} detail={t`Click to open`}>
+    <Tooltip label={label}>
       <button
         type="button"
         // The row is a dnd-kit sortable with a 5px pointer activation constraint and

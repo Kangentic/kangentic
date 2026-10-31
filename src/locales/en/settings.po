@@ -303,10 +303,6 @@ msgstr "Appears in the task detail kebab menu only"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "Applies after a restart, and does not change agent output or terminal text."
 
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "Applies to all projects"
-msgstr "Applies to all projects"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
 msgstr "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -949,10 +945,6 @@ msgstr "Execution"
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Expand"
 msgstr "Expand"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-msgid "Expand the prompt"
-msgstr "Expand the prompt"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -2250,10 +2242,6 @@ msgstr "The first message it gets for a new workflow."
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "The Kangentic relay"
 msgstr "The Kangentic relay"
-
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "The Knowledge Graph and the index it reads. Applies to all projects"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."

@@ -445,11 +445,6 @@ msgstr "細かい"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "初期ビューに戻る"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "前後左右に移動"
 
@@ -681,11 +676,6 @@ msgstr "設定を開く"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "トランスクリプト全体を開く"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "この会話を開く"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

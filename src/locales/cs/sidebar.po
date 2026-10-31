@@ -88,11 +88,6 @@ msgstr "Opravdu chcete odstranit <0>„{projectName}“</0>?"
 msgid "Clear search"
 msgstr "Vymazat hledání"
 
-#: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
-#, fuzzy
-msgid "Click to open"
-msgstr "Kliknutím otevřete"
-
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
@@ -175,11 +170,6 @@ msgstr "Žádné odpovídající projekty"
 #, fuzzy
 msgid "No projects yet"
 msgstr "Zatím žádné projekty"
-
-#: src/renderer/components/sidebar/project-sidebar/SidebarFooterActions.tsx
-#, fuzzy
-msgid "Open folder as project"
-msgstr "Otevřít složku jako projekt"
 
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy

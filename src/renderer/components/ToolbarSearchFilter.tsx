@@ -26,6 +26,8 @@ interface ToolbarSearchFilterProps {
   onClearFilters: () => void;
   /** The class pair that sheds the Filter button's text at the toolbar's first step. See toolbar-collapse.ts. */
   filterCollapse?: ToolbarControlCollapse;
+  /** True while the collapse step hides the Filter label, so its tip names the icon-only button. */
+  filterLabelHidden?: boolean;
 }
 
 /**
@@ -53,6 +55,7 @@ export function ToolbarSearchFilter({
   onToggleLabel,
   onClearFilters,
   filterCollapse,
+  filterLabelHidden = false,
 }: ToolbarSearchFilterProps) {
   const { t } = useLingui();
   const [showFilterPopover, setShowFilterPopover] = useState(false);
@@ -118,7 +121,7 @@ export function ToolbarSearchFilter({
       </div>
 
       <div className="relative shrink-0">
-        <Tooltip label={t`Filter`} enabled={!showFilterPopover}>
+        <Tooltip label={filterLabelHidden ? t`Filter` : ''} enabled={!showFilterPopover}>
           <button
             ref={filterButtonRef}
             type="button"

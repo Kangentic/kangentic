@@ -3,7 +3,6 @@ import { Paperclip, Eye, PenLine } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { DescriptionMentionMenu } from './DescriptionMentionMenu';
-import { Tooltip } from './Tooltip';
 import { useDescriptionMentions } from '../hooks/useDescriptionMentions';
 import {
   applyTextareaEdit,
@@ -319,28 +318,26 @@ export function DescriptionEditor({
             )}
           </div>
         )}
-        <Tooltip label={showPreview ? t`Back to writing markdown` : t`Preview rendered markdown`}>
-          <button
-            type="button"
-            onClick={togglePreview}
-            // Inset equally on both axes so it reads as sitting in the corner
-            // rather than pinned to the top edge. 12px is set by the horizontal
-            // requirement - it clears the textarea's 8px scrollbar with a 4px gap,
-            // and sitting flush in the corner instead would put the pill directly
-            // on the scrollbar track, which read as one broken control - so the
-            // top simply matches it.
-            className={`absolute top-3 right-3 z-10 ${toggleButtonClass(showPreview)}`}
-            aria-label={showPreview ? t`Back to writing markdown` : t`Preview rendered markdown`}
-            aria-pressed={showPreview}
-            data-testid="description-preview-toggle"
-          >
-            {showPreview ? <PenLine size={13} /> : <Eye size={13} />}
-            {/* "Write" / "Preview" rather than "Source": it is the vocabulary
-                every git forge uses for this exact control, so it is what a user
-                arrives already knowing. */}
-            {showPreview ? <Trans>Write</Trans> : <Trans>Preview</Trans>}
-          </button>
-        </Tooltip>
+        <button
+          type="button"
+          onClick={togglePreview}
+          // Inset equally on both axes so it reads as sitting in the corner
+          // rather than pinned to the top edge. 12px is set by the horizontal
+          // requirement - it clears the textarea's 8px scrollbar with a 4px gap,
+          // and sitting flush in the corner instead would put the pill directly
+          // on the scrollbar track, which read as one broken control - so the
+          // top simply matches it.
+          className={`absolute top-3 right-3 z-10 ${toggleButtonClass(showPreview)}`}
+          aria-label={showPreview ? t`Back to writing markdown` : t`Preview rendered markdown`}
+          aria-pressed={showPreview}
+          data-testid="description-preview-toggle"
+        >
+          {showPreview ? <PenLine size={13} /> : <Eye size={13} />}
+          {/* "Write" / "Preview" rather than "Source": it is the vocabulary
+              every git forge uses for this exact control, so it is what a user
+              arrives already knowing. */}
+          {showPreview ? <Trans>Write</Trans> : <Trans>Preview</Trans>}
+        </button>
       </div>
     </div>
   );

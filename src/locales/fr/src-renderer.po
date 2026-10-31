@@ -530,11 +530,6 @@ msgstr "Effacer tous les filtres"
 msgid "Clear search"
 msgstr "Effacer la recherche"
 
-#: src/renderer/components/DataTable.tsx
-#, fuzzy
-msgid "Click to sort - Shift+Click adds a secondary sort"
-msgstr "Cliquer pour trier - Maj+Clic ajoute un tri secondaire"
-
 #: src/renderer/pop-out/PopOutWindowFrame.tsx
 #, fuzzy
 msgid "Close"
@@ -1577,6 +1572,11 @@ msgstr "Session terminée"
 #, fuzzy
 msgid "Settings"
 msgstr "Paramètres"
+
+#: src/renderer/components/DataTable.tsx
+#, fuzzy
+msgid "Shift+Click adds a secondary sort"
+msgstr "Maj+Clic ajoute un tri secondaire"
 
 #: src/renderer/window-manager/components/TaskDetailWindow.tsx
 #, fuzzy

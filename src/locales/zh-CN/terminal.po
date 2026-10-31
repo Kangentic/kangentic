@@ -43,14 +43,6 @@ msgstr "全部"
 msgid "Board Profile - the per-column agent, model, and effort this task follows"
 msgstr "看板配置方案：此任务在各列遵循的智能体、模型和推理强度"
 
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-msgid "Click to change effort"
-msgstr "点击更改推理强度"
-
-#: src/renderer/components/terminal/ModelEffortPicker.tsx
-msgid "Click to change model"
-msgstr "点击更改模型"
-
 #: src/renderer/components/terminal/TerminalPanel.tsx
 msgid "Collapse terminal panel"
 msgstr "折叠终端面板"
@@ -108,10 +100,6 @@ msgstr "空闲（等待输入）"
 #: src/renderer/components/terminal/ContextBar.tsx
 msgid "Input / output tokens"
 msgstr "输入/输出 token"
-
-#: src/renderer/components/terminal/TerminalPanel.tsx
-msgid "Isolated session"
-msgstr "隔离会话"
 
 #: src/renderer/components/terminal/ActivityLog.tsx
 #: src/renderer/components/terminal/ModelEffortPicker.tsx

@@ -236,11 +236,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "켜짐"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-#, fuzzy
-msgid "Open {taskTitle}"
-msgstr "{taskTitle} 열기"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 #, fuzzy
 msgid "Open on board"
@@ -353,11 +348,6 @@ msgstr "표"
 #, fuzzy
 msgid "Task"
 msgstr "작업"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-#, fuzzy
-msgid "The workflow the task belongs to"
-msgstr "작업이 속한 워크플로"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 #, fuzzy

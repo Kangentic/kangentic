@@ -303,10 +303,6 @@ msgstr "僅顯示於任務詳細資料更多選單"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "重新啟動後生效，且不會改變代理輸出或終端機文字。"
 
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "Applies to all projects"
-msgstr "套用至所有專案"
-
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
 msgstr "偵測到 kangentic.json 變更時立即套用，不再詢問確認。"
@@ -949,10 +945,6 @@ msgstr "執行方式"
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Expand"
 msgstr "展開"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-msgid "Expand the prompt"
-msgstr "展開提示詞"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -2250,10 +2242,6 @@ msgstr "每個新工作流程開始時它收到的第一則訊息。"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "The Kangentic relay"
 msgstr "Kangentic 中繼伺服器"
-
-#: src/renderer/components/settings/settings-tabs.ts
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "知識圖譜及其讀取的索引。套用至所有專案"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 msgid "The language of menus, settings and dialogs."

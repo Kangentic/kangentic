@@ -375,11 +375,6 @@ msgstr "작업 세부 정보 케밥 메뉴에만 표시"
 msgid "Applies after a restart, and does not change agent output or terminal text."
 msgstr "다시 시작한 후에 적용되며, 에이전트 출력이나 터미널 텍스트는 바뀌지 않습니다."
 
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "Applies to all projects"
-msgstr "모든 프로젝트에 적용"
-
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Apply a detected kangentic.json change immediately instead of asking to confirm."
@@ -1175,11 +1170,6 @@ msgstr "실행"
 #, fuzzy
 msgid "Expand"
 msgstr "펼치기"
-
-#: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
-#, fuzzy
-msgid "Expand the prompt"
-msgstr "프롬프트 펼치기"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -2785,11 +2775,6 @@ msgstr "새 워크플로에서 에이전트가 받는 첫 메시지입니다."
 #, fuzzy
 msgid "The Kangentic relay"
 msgstr "Kangentic 릴레이"
-
-#: src/renderer/components/settings/settings-tabs.ts
-#, fuzzy
-msgid "The Knowledge Graph and the index it reads. Applies to all projects"
-msgstr "지식 그래프 및 지식 그래프가 읽는 인덱스입니다. 모든 프로젝트에 적용"
 
 #: src/renderer/components/settings/tabs/LanguageTab.tsx
 #, fuzzy

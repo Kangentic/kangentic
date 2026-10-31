@@ -641,11 +641,6 @@ msgstr "실행 중. 워크플로 일시 중지"
 msgid "Save"
 msgstr "저장"
 
-#: src/renderer/components/workflows/WorkflowInspector.tsx
-#, fuzzy
-msgid "Select this task"
-msgstr "이 작업 선택"
-
 #: src/renderer/components/workflows/WorkflowAgentPane.tsx
 #, fuzzy
 msgid "Show the workflow agent"

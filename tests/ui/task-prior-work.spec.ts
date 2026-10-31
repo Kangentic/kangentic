@@ -182,10 +182,8 @@ test.describe('task prior work', () => {
   });
 
   // A close passage can sit inside a task whose title reads as unrelated, so
-  // the row's tip carries the passage that matched.
-  //
-  // Red-green: with the tip's label back to "Open this conversation" alone,
-  // the row's description no longer holds the passage.
+  // the row's tip carries the passage that matched, and only that: a click on
+  // the row opening its conversation needs no words.
   test('a row describes itself with the passage that matched', async () => {
     const passage = 'Assistant: Deleting a started workflow only clears each unfinished task\'s membership.';
     const related = `[${hit('s-5', 'Task comments on desktop', passage)}]`;
@@ -194,26 +192,24 @@ test.describe('task prior work', () => {
       await openFirstTask(page);
       await page.locator('[data-testid="task-prior-work-toggle"]').click();
       const item = page.locator('[data-testid="task-prior-work-item"]').first();
-      await expect(item).toHaveAccessibleDescription(new RegExp(passage.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+      await expect(item).toHaveAccessibleDescription(passage);
     } finally {
       await browser.close();
     }
   });
 
-  // Main sends an empty snippet when it has no passage for a row, so the tip
-  // falls back to the action alone. The description is exactly that, with no
-  // passage line above it and no second copy of it below.
-  //
-  // Red-green: with the tip's label left as the snippet alone (no fallback),
-  // the label is empty, the tip stays shut, and the row has no description.
-  test('a row with no passage describes itself as the action alone', async () => {
+  // Main sends an empty snippet when it has no passage for a row. The row's
+  // title already shows, so with no passage there is nothing for a tip to add.
+  test('a row with no passage has no tip', async () => {
     const related = `[${hit('s-6', 'Terminal resize debounce', '')}]`;
     const { browser, page } = await launchWithState(preConfig(related));
     try {
       await openFirstTask(page);
       await page.locator('[data-testid="task-prior-work-toggle"]').click();
       const item = page.locator('[data-testid="task-prior-work-item"]').first();
-      await expect(item).toHaveAccessibleDescription(/^Open this conversation$/);
+      // Visible first, so an empty description cannot pass for a row that never rendered.
+      await expect(item).toBeVisible();
+      await expect(item).toHaveAccessibleDescription('');
     } finally {
       await browser.close();
     }

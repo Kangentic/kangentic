@@ -192,10 +192,6 @@ msgctxt "automations state"
 msgid "On"
 msgstr "On"
 
-#: src/renderer/components/monitor/MonitorCard.tsx
-msgid "Open {taskTitle}"
-msgstr "Open {taskTitle}"
-
 #: src/renderer/components/monitor/MonitorRowContextMenu.tsx
 msgid "Open on board"
 msgstr "Open on board"
@@ -287,10 +283,6 @@ msgstr "Table"
 #: src/renderer/components/monitor/useMonitorDetailOwnership.ts
 msgid "Task"
 msgstr "Task"
-
-#: src/renderer/components/monitor/MonitorTable.tsx
-msgid "The workflow the task belongs to"
-msgstr "The workflow the task belongs to"
 
 #: src/renderer/components/monitor/monitor-view-model.ts
 msgid "Waiting for your approval {when}"

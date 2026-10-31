@@ -445,11 +445,6 @@ msgstr "Szczegółowy"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy
-msgid "Fly back to the opening view"
-msgstr "Wróć do widoku początkowego"
-
-#: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
-#, fuzzy
 msgid "Fly Forward and Sideways"
 msgstr "Lot do przodu i na boki"
 
@@ -681,11 +676,6 @@ msgstr "Otwórz Ustawienia"
 #, fuzzy
 msgid "Open the full transcript"
 msgstr "Otwórz pełną transkrypcję"
-
-#: src/renderer/components/knowledge-graph/TaskPriorWork.tsx
-#, fuzzy
-msgid "Open this conversation"
-msgstr "Otwórz tę rozmowę"
 
 #: src/renderer/components/knowledge-graph/KnowledgeGraphCanvas.tsx
 #, fuzzy

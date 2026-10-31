@@ -15,14 +15,15 @@ import type { ToolbarControlCollapse } from '../../board/toolbar-collapse';
 
 interface LabelsPopoverProps {
   /**
-   * The container-query pair that sheds this trigger's text in a tight toolbar
-   * row. Omitted, the button always shows its label, which is what a mount site
-   * outside the toolbar's `@container` needs.
+   * The class pair that sheds this trigger's text at the toolbar's collapse step
+   * (toolbar-collapse.ts). Omitted, the button always shows its label.
    */
   collapse?: ToolbarControlCollapse;
+  /** True while the collapse step hides the label, so the tip names the icon-only button. */
+  labelHidden?: boolean;
 }
 
-export function LabelsPopover({ collapse }: LabelsPopoverProps) {
+export function LabelsPopover({ collapse, labelHidden = false }: LabelsPopoverProps) {
   const { t } = useLingui();
   const [open, setOpen] = useState(false);
   const [pendingDeleteLabel, setPendingDeleteLabel] = useState<{ name: string; count: number } | null>(null);
@@ -126,7 +127,7 @@ export function LabelsPopover({ collapse }: LabelsPopoverProps) {
 
   return (
     <div className="relative shrink-0">
-      <Tooltip label={labelsButtonLabel} enabled={!open}>
+      <Tooltip label={labelHidden ? labelsButtonLabel : ''} enabled={!open}>
         <button
           ref={buttonRef}
           type="button"

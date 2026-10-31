@@ -157,7 +157,9 @@ export function McpServerTab({ globalConfig }: { globalConfig: AppConfig }) {
                 <ul className="grid grid-cols-3 gap-1">
                   {tools.map((tool) => {
                     // The manifest's blurb stays English. Only the sentence
-                    // around it is translated.
+                    // around it is translated. The cell truncates a long label
+                    // ("Mark Background Service"), so the tip's title is the
+                    // whole label, and the blurb says what the label does not.
                     const blurb = tool.blurb;
                     return (
                       <li key={tool.name} className="min-w-0">
