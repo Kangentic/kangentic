@@ -23,8 +23,8 @@ When you codify a new convention, add it as a `.claude/rules/*.md` file followin
    per subsystem (`--verbose` names each rule). Run it when you add a rule or widen a glob. If your
    change moves a subsystem's number a lot, narrow the glob or split the rule rather than accepting
    it. This is a procedure, not a gate: there is no measured point at which the union starts hurting,
-   so a pass/fail threshold would be invented. The one real gate is on CLAUDE.md alone, where the
-   harness supplies the limit.
+   so a pass/fail threshold would be invented. The one real gate is on AGENTS.md and CLAUDE.md
+   together, where the harness supplies the limit.
 3. **Mind the read-trigger gap.** A path-scoped rule loads when a matching file is *read into
    context*, not when Claude *creates* a new file in that path. So (a) any convention that must hold
    at file-creation time (universal style, security) belongs in an always-on rule, a lint rule, or a
@@ -37,9 +37,11 @@ When you codify a new convention, add it as a `.claude/rules/*.md` file followin
    check or ESLint rule both run in CI; a review-time auditor agent or `/code-review` is the
    probabilistic fallback. Flag explicitly where mechanical coverage is missing. Do not stack three
    redundant enforcers on one rule.
-6. **Update the rules index in CLAUDE.md** with a one-line pointer, and add a backlink from the
-   enforcing agent or skill so the rule stays the single source of truth.
-   `tests/unit/rules-index-parity.test.ts` fails when a rule is missing from the index.
+6. **Update the rules index in AGENTS.md** with a one-line pointer, and add a backlink from the
+   enforcing agent or skill so the rule stays the single source of truth. A rule that binds only
+   Claude Code (today only `bash-single-command.md`) goes under CLAUDE.md's "Always-on rules
+   (Claude Code only)" list instead. `tests/unit/rules-index-parity.test.ts` fails when a rule is
+   missing from the index.
 7. **Scaling.** Rules are discovered recursively, so when the flat list grows large, group them into
    `.claude/rules/<subsystem>/` subdirectories (for example `frontend/`, `backend/`). There is no
    per-rule local override; machine-specific overrides go in `CLAUDE.local.md`.

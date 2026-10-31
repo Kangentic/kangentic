@@ -74,7 +74,7 @@ the one who did the thing.
 
 - **Test:** `tests/unit/writing-style-characters.test.ts` fails on em-dashes, en-dashes, curly
   quotes, and emoji in a markdown heading, across `src/`, `scripts/`, `docs/`, `demo/`, `.claude/rules`,
-  `.claude/skills`, `.claude/agents`, `README.md`, and `CLAUDE.md`. Runs in CI via
+  `.claude/skills`, `.claude/agents`, `README.md`, `AGENTS.md`, and `CLAUDE.md`. Runs in CI via
   `npm run test:unit`.
 - **Review:** the `writing-style.md` line in `/code-review`'s Project Conventions list is checked by
   the always-on conventions finder, which runs whatever files changed. That is what gives a
@@ -109,6 +109,6 @@ for Chinese and Japanese. The scan does not read `i18n/`, and under `src/locales
 English catalog.
 
 Pre-existing prose is also exempt. This rule governs text you write or rewrite; it does not ask for
-a retro-fit of what is already committed. Restyling `CLAUDE.md`, the ` -- ` separators throughout
+a retro-fit of what is already committed. Restyling `AGENTS.md`, the ` -- ` separators throughout
 `docs/` and `.claude/skills/`, and the established metaphor nouns already in the tree are each their
 own job, not a finding against a change that happens to touch the file.

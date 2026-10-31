@@ -23,7 +23,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 const ROOT = path.resolve(__dirname, '../..');
-const ROOT_FILES = new Set(['CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
+const ROOT_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
 /** The translated READMEs (i18n/README.<locale>.md), which link the docs the way README.md does. */
 const TRANSLATED_README = /^i18n\/README\.[\w-]+\.md$/;
 const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
