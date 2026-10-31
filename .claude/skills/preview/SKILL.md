@@ -1,4 +1,5 @@
 ---
+name: preview
 description: Open dev server for previewing live code changes
 allowed-tools: Bash(node:*), Bash(npm:*)
 argument-hint: [--fresh] [--no-watch] [--env KEY=VALUE]...

@@ -24,6 +24,7 @@ description: |
   -> Spawn session-debugger to check generation counter guards and spawn deduplication.
   </example>
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Session State Machine Debugger

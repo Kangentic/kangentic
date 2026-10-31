@@ -1,4 +1,5 @@
 ---
+name: merge-pull-request
 description: Merge an already-green PR (rebase merge, delete branch) and fast-forward the local main checkout for HMR. This is the Merge column skill. It assumes the Testing column (/pull-request) already drove the PR to green. Not for creating a PR (use /pull-request) or a direct quick-push (use /merge-back).
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(gh:*), Agent, mcp__kangentic__kangentic_get_current_task, mcp__kangentic__kangentic_link_pr
 ---

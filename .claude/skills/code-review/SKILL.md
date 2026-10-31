@@ -1,4 +1,5 @@
 ---
+name: code-review
 description: Review git changes for quality and conventions via parallel reviewer subagents synthesized in the main agent (fixes everything it verifies in or out of the diff, records the decisions it made, fills red-green test-coverage holes, commits that pass locally, and ends Ready or Blocked from a script, sending what it could not finish back as numbered steps, never as new tasks)
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(node:*), Agent
 argument-hint: [base-ref] [review-only]

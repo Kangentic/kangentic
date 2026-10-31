@@ -1,4 +1,5 @@
 ---
+name: pull-request
 description: Create a PR and drive its CI checks to all-green (auto-fixing code and de-flaking/rewriting tests), then stop. Never merges. This is the Testing column skill. Use /merge-pull-request to merge a green PR.
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Bash(npx:*), Bash(gh:*), Agent
 argument-hint: [commit message]

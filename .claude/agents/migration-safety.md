@@ -25,6 +25,7 @@ description: |
   -> Spawn migration-safety to verify a migration exists and repositories handle the new column.
   </example>
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Database Migration & Schema Validator

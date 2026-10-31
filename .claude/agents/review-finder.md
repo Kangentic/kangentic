@@ -16,6 +16,7 @@ description: |
   (measured in docs/audits/code-review-fanout-audit.md). Not for general searching - use the
   built-in agents for that.
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Review Finder

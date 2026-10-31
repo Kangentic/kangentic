@@ -1,4 +1,5 @@
 ---
+name: cross-platform
 description: Cross-platform pitfalls for shell handling, paths, and file operations
 ---
 

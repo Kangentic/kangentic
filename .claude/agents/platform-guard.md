@@ -29,6 +29,7 @@ description: |
   -> Spawn platform-guard to verify { force: true } is used (Windows file locking).
   </example>
 tools: Read, Glob, Grep
+readonly: true
 ---
 
 # Cross-Platform Safety Checker
