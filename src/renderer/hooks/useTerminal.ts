@@ -1664,8 +1664,8 @@ export function useTerminal(options: UseTerminalOptions) {
       cursorStyle: configuredCursorStyle,
       // HIDE the cursor when this terminal is BLURRED. Only the focused pane (where
       // you are typing) shows a cursor - a solid blinking block - so the cursor is a
-      // clean "you are here" cue. The window's accent outline + pulsing line carry
-      // the "which window is selected" cue for the unfocused panes.
+      // clean "you are here" cue. The window's still accent border carries the
+      // "which window is selected" cue for the unfocused panes.
       cursorInactiveStyle: 'none',
       allowProposedApi: true,
       linkHandler: createTerminalLinkHandler((url) => window.electronAPI.shell.openExternal(url)),

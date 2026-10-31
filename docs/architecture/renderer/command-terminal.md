@@ -90,7 +90,12 @@ side, three are one tall beside two stacked, and four are a two by two grid spli
 Starting or stopping a terminal rebuilds the preset for the new count and keeps the order the
 terminals read in on screen (`windowIdsInReadingOrder`, which reads a preset by its structure so
 seams that cross never reorder a grid). A dragged seam holds until the count changes, because
-`isHostArranged` still recognizes the preset after a seam moves. The terminals' arrangement
+`isHostArranged` still recognizes the preset after a seam moves, and a double-click on a seam
+evens its two terminals, 50/50, as a sash does in an editor. A seam only shares the room the
+panel has, never pushes its edge: the panel's edges size it and the seam divides it, as in every
+editor's and terminal's splits. So a seam with no room above both floors (the panel at its
+minimum) shows no resize cursor or accent line and takes no drag, rather than a cursor that
+promises a move it cannot make. The terminals' arrangement
 persists globally in `AppConfig.commandTerminalWorkspace`, and a blob saved before the panel
 (floating windows) is re-tiled on load.
 
@@ -102,9 +107,19 @@ terminals, two rows from three, one terminal while the user has one expanded) be
 at its 200px drag minimum, whether the rail is folded or not: a panel sized down to a folded rail
 would leave the terminals under their floor the moment the rail opened. The minimum assumes even
 tiles, so the layout holds each pane at the floor whatever a dragged seam asks for, while the area
-has room for the grid (`resolveTileLayout`'s `minPane`); the seam keeps its ratio, and room coming
-back restores the dragged proportions. Without it, a seam dragged toward one side and a panel
-shrunk to its minimum left a terminal at 356px, found driving a live preview. So the panel's edge
+has room for the grid (`resolveTileLayout`'s `minPane`). An edge resize or a maximize first adopts
+what the hold shows as the seams' own sizes (`heldSplitSizes`), so the terminals grow from the
+proportions on screen. Keeping the dragged ratio instead was the first version: a seam dragged
+fully left in a wide panel, the panel shrunk to its minimum (shown even) and grown again, gave all
+the new room to one terminal while the other sat at 630 until the panel was as wide as before.
+Without the hold, a seam dragged toward one side and a panel
+shrunk to its minimum left a terminal at 356px, found driving a live preview. An area short of the
+grid scales the floors down together rather than dropping the hold, so the layout is continuous
+across the edge. Dropping it there showed while shrinking a panel with a skewed seam: the rail's
+resolved width follows the row a frame late, the terminal area was a few pixels short of the grid
+for that frame, and a terminal jumped from 630 to 528px and back (recorded frame by frame). The
+open rail now also gives way in the same layout pass, down to its 200px minimum, against the
+area's `commandTerminalAreaMinWidth`, so that frame no longer comes short. So the panel's edge
 stops where the grid still fits. A terminal added, from the rail or the phone, and a Restore grow the
 panel to fit, because `toPixels` holds it above the minimum, and the panel saves the size it grew
 to, so the next Expand leaves it there. Only an Expand the user chose lets the panel shrink to one
@@ -119,9 +134,12 @@ The context bar under every terminal (the Command Terminal's, a task window's an
 panel's: one component) is one row, inset 4px each side. The agent's name, the model and effort
 pickers, the rate limits and the context always show, and a task's profile picker with them; the
 rest folds into a +N pill in a fixed order (`CONTEXT_BAR_FOLD_ORDER`): the shell, the agent's
-version number, active time, elapsed, tokens, tool calls, cost, then the context counts. The +N
-pill's list shows copies of the folded pills with their tips, and tool calls opened there opens its
-table above the +N pill. A folded pill stays mounted in the row, out of flow and out of sight, so
+version number, active time, elapsed, tokens, tool calls, cost, then the context counts. They fold
+before a bar would drop under 80px (`METER_COMFORT_TRACK_PX`), so at the floor the row is those
+five alone and the bars take the room cost and the counts held; once only the five are left, a bar
+narrows to its own 40px minimum before anything else folds. The +N pill's list shows copies of the
+folded pills with their tips, drawn on the bar's own fill so each keeps the pill it is in the row,
+and tool calls opened there opens its table above the +N pill. A folded pill stays mounted in the row, out of flow and out of sight, so
 its width is its own and its pulses keep running. The fold is decided from widths it cannot change
 (`useContextBarFold`): each pill's own width, and each meter's (the rate limits, the context) with
 its tracks at their minimum, so a pill never flips in and out at the edge. It reruns on resize
@@ -133,7 +151,10 @@ The rate-limit tracks and the context bar keep a 40px minimum: at 20px they stop
 bars. Measured on a live Claude bar with them there, the row that never folds needs 589px of
 terminal for Haiku at low effort and 621 for Sonnet at medium, the widest 5.x pair, which is why
 the floor is 630 (550 and 560 were tried first, with 20px bars). A longer "(1M context)" model
-name needs more; at the floor its rate limits fold.
+name needs more; at the floor its rate limits fold. The 80px comfort width came after, on
+2026-10-31: with one rate-limit window, cost and the context counts fit beside bars of 73 and 51px
+at the floor, and folding them gives the bars about 100 and 130px. It moves nothing about the
+floor, which never counted them.
 
 ### Decision: a 650px floor instead of a one-row context bar (2026-10-25)
 
@@ -800,9 +821,11 @@ shows only beside another terminal since a lone one already fills the panel. It 
 priority-plus via `useHeaderPillOverflow`. Only Stop, the title, the pencil, the kebab and Expand
 are protected (the pencil's width counts toward the title's reservation); the pills and the branch
 picker fold into the kebab as the terminal narrows, down to the pane floor. While the name field is
-open the folded set is frozen, so nothing in the header moves under it. The blue
-focus line, and the accent border with it, show only while two or more terminals are visible: a
-lone or expanded terminal has nothing to be told apart from.
+open the folded set is frozen, so nothing in the header moves under it. The focused terminal's
+cue is a still, faint accent border, shown only while two or more terminals are visible: a lone or
+expanded terminal has nothing to be told apart from. It used to carry a pulsing accent line along
+its top as well; that went on 2026-10-31 for every window the frame draws, task windows included,
+since the border alone tells the tiles apart and the motion only added noise.
 
 ## One title-bar toggle
 

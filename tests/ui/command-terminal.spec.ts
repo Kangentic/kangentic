@@ -2180,7 +2180,7 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('a terminal has no window controls of its own, and its focus line shows only beside another', async () => {
+    test('a terminal has no window controls of its own, and its focus border shows only beside another', async () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
@@ -2192,13 +2192,23 @@ test.describe('Command Terminal', () => {
         await expect(page.locator('[data-testid^="window-resize-"]')).toHaveCount(0);
         await expect(firstTerminal.getByRole('button', { name: /pop out|maximize|restore/i })).toHaveCount(0);
 
-        // A lone terminal is plainly the one taking keys, so it draws no focus line.
-        const focusLines = page.locator('[data-testid^="window-frame-"] > [class*="bg-accent/70"]');
-        await expect(focusLines).toHaveCount(0);
+        // A lone terminal is plainly the one taking keys, so it draws no focus border.
+        const framesWithFocusBorder = page.locator('[data-testid^="window-frame-"][class*="focus-within:border-accent"]');
+        await expect(framesWithFocusBorder).toHaveCount(0);
 
         await page.getByTestId('command-terminal-new').click();
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-        await expect(focusLines).toHaveCount(2);
+        await expect(framesWithFocusBorder).toHaveCount(2);
+
+        // The cue is the still border alone: the focused frame's border differs from
+        // its neighbor's, and no pulsing line is drawn along its top.
+        const frames = page.locator('[data-testid^="window-frame-"]');
+        await frames.first().locator('.xterm-helper-textarea').focus();
+        await expect.poll(async () => frames.evaluateAll((elements) => {
+          const colors = elements.map((element) => getComputedStyle(element).borderTopColor);
+          return colors.length === 2 && colors[0] !== colors[1];
+        })).toBe(true);
+        await expect(page.locator('[data-testid^="window-frame-"] > [class*="animate-pulse"]')).toHaveCount(0);
       } finally {
         await browser.close();
       }
@@ -2960,6 +2970,326 @@ test.describe('Command Terminal', () => {
         expect(sizesAfter).toHaveLength(2);
         sizesAfter.forEach((size, index) => expect(Math.abs(size - sizesBefore[index])).toBeLessThanOrEqual(GEOMETRY_TOLERANCE));
         expect(Math.abs((await tileWidth(page, 'slot-1')) - before)).toBeLessThanOrEqual(2);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a double-click on a dragged seam evens the two terminals, 50/50', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        const seamLocator = page.locator('[data-testid^="tile-splitter-"]');
+        const seam = await seamLocator.boundingBox();
+        if (!seam) throw new Error('no seam');
+        await page.mouse.move(seam.x + seam.width / 2, seam.y + seam.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(seam.x + seam.width / 2 + 160, seam.y + seam.height / 2, { steps: 6 });
+        await page.mouse.up();
+        // The drag took: the first terminal holds more than half of the pair.
+        await expect.poll(async () => (await commandTileLayout(page))?.sizes[0] ?? 0, { timeout: 3000 })
+          .toBeGreaterThan(0.5 + GEOMETRY_TOLERANCE);
+
+        const moved = await seamLocator.boundingBox();
+        if (!moved) throw new Error('no seam after the drag');
+        await page.mouse.dblclick(moved.x + moved.width / 2, moved.y + moved.height / 2);
+        await expect.poll(async () => (await commandTileLayout(page))?.sizes[0] ?? 0, { timeout: 3000 })
+          .toBeCloseTo(0.5, 3);
+        await expect.poll(async () => Math.abs((await tileWidth(page, 'slot-1')) - (await tileWidth(page, 'slot-2'))), { timeout: 3000 })
+          .toBeLessThanOrEqual(2);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    /** Drag the tile seam by `deltaX`, from its live center. */
+    async function dragSeamBy(page: Page, deltaX: number): Promise<void> {
+      const seam = await page.locator('[data-testid^="tile-splitter-"]').boundingBox();
+      if (!seam) throw new Error('no seam');
+      await page.mouse.move(seam.x + seam.width / 2, seam.y + seam.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(seam.x + seam.width / 2 + deltaX, seam.y + seam.height / 2, { steps: 8 });
+      await page.mouse.up();
+    }
+
+    /** The gap between the terminals and the terminal area's edges, and the overlap or gap between neighbors. */
+    const tileFit = (page: Page) => page.evaluate(() => {
+      const area = document.querySelector('[data-testid="command-terminal-area"]')?.getBoundingClientRect();
+      const frames = Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+        .map((frame) => frame.getBoundingClientRect())
+        .filter((box) => box.width > 0)
+        .sort((first, second) => first.left - second.left);
+      if (!area || frames.length === 0) return null;
+      return {
+        leftGap: Math.round(frames[0].left - area.left),
+        rightGap: Math.round(area.right - frames[frames.length - 1].right),
+        widths: frames.map((box) => Math.round(box.width)),
+      };
+    });
+
+    async function expectTilesFillArea(page: Page): Promise<void> {
+      await expect.poll(async () => {
+        const fit = await tileFit(page);
+        return fit !== null && Math.abs(fit.leftGap) <= EDGE_TOLERANCE && Math.abs(fit.rightGap) <= EDGE_TOLERANCE;
+      }, { timeout: 3000, message: 'the terminals fill the area' }).toBe(true);
+    }
+
+    test('after a double-click evens the seam, a panel grown from its west edge fills with the terminals and the seam still drags its full range', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        await dragSeamBy(page, 160);
+        const seamLocator = page.locator('[data-testid^="tile-splitter-"]');
+        const moved = await seamLocator.boundingBox();
+        if (!moved) throw new Error('no seam');
+        await page.mouse.dblclick(moved.x + moved.width / 2, moved.y + moved.height / 2);
+        await expect.poll(async () => (await commandTileLayout(page))?.sizes[0] ?? 0, { timeout: 3000 }).toBeCloseTo(0.5, 3);
+
+        // Grow the panel from its west edge, as far as the window lets it.
+        const before = await panelBox(page);
+        const west = await page.getByTestId('command-terminal-panel-resize-w').boundingBox();
+        if (!west) throw new Error('no west edge');
+        await page.mouse.move(west.x + west.width / 2, west.y + west.height / 2);
+        await page.mouse.down();
+        await page.mouse.move(5, west.y + west.height / 2, { steps: 8 });
+        await page.mouse.up();
+        await expect.poll(async () => (await panelBox(page)).width, { timeout: 3000 }).toBeGreaterThan(before.width + 100);
+        await expectTilesFillArea(page);
+
+        // The seam takes a long drag in the grown panel, not a few pixels.
+        const seamBefore = await seamLocator.boundingBox();
+        if (!seamBefore) throw new Error('no seam');
+        await dragSeamBy(page, 250);
+        await expect.poll(async () => ((await seamLocator.boundingBox())?.x ?? 0) - seamBefore.x, { timeout: 3000 })
+          .toBeGreaterThanOrEqual(240);
+        await expectTilesFillArea(page);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a panel grown from the minimum, where the floor evened the terminals, grows them evenly whatever the seam held before', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        // The seam dragged as far left as it goes in the wide panel: the first terminal at its floor.
+        await dragSeamBy(page, -900);
+        await expect.poll(async () => (await commandTileLayout(page))?.sizes[0] ?? 1, { timeout: 3000 }).toBeLessThan(0.45);
+        await expect.poll(async () => tileWidth(page, 'slot-1'), { timeout: 3000 }).toBeLessThanOrEqual(TERMINAL_FLOOR_WIDTH + EDGE_TOLERANCE);
+
+        // Shrunk to the minimum, the floor shows them even.
+        await dragPanelEdgeTo(page, 'e', { x: 10 });
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        await expect.poll(async () => Math.abs((await tileWidth(page, 'slot-1')) - (await tileWidth(page, 'slot-2'))), { timeout: 3000 })
+          .toBeLessThanOrEqual(2);
+
+        // Grown back from that edge, both grow by the same amount, as they looked.
+        await dragPanelEdgeTo(page, 'e', { x: 2500 });
+        await expect.poll(async () => (await panelBox(page)).width, { timeout: 3000 }).toBeGreaterThan(2000);
+        await expect.poll(async () => Math.abs((await tileWidth(page, 'slot-1')) - (await tileWidth(page, 'slot-2'))), { timeout: 3000 })
+          .toBeLessThanOrEqual(2);
+        await expectTilesFillArea(page);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('at the panel minimum the seam has no room, so it shows no resize cursor or line and takes no drag; with room it does again', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        const seamLocator = page.locator('[data-testid^="tile-splitter-"]');
+        const seamLook = () => seamLocator.evaluate((element) => ({
+          cursor: getComputedStyle(element).cursor,
+          line: getComputedStyle(element.firstElementChild as Element).backgroundColor,
+        }));
+        await expect(seamLocator).toHaveAttribute('data-movable', 'true');
+        expect((await seamLook()).cursor).toBe('col-resize');
+
+        await dragPanelEdgeTo(page, 'e', { x: 10 });
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        await expect(seamLocator).toHaveAttribute('data-movable', 'false');
+        const seam = await seamLocator.boundingBox();
+        if (!seam) throw new Error('no seam');
+        // Hovered: neither the resize cursor nor the accent line.
+        await page.mouse.move(seam.x + seam.width / 2, seam.y + seam.height / 2);
+        const atMinimum = await seamLook();
+        expect(atMinimum.cursor).not.toBe('col-resize');
+        expect(atMinimum.line).toBe('rgba(0, 0, 0, 0)');
+        // A press opens no drag.
+        await page.mouse.down();
+        expect(await isManagerResizeGateOpen(page)).toBe(false);
+        await page.mouse.up();
+
+        await dragPanelEdgeTo(page, 'e', { x: 2500 });
+        await expect(seamLocator).toHaveAttribute('data-movable', 'true', { timeout: 3000 });
+        expect((await seamLook()).cursor).toBe('col-resize');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('maximizing a panel the floor holds even grows its terminals evenly', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        await dragSeamBy(page, -900);
+        await expect.poll(async () => tileWidth(page, 'slot-1'), { timeout: 3000 }).toBeLessThanOrEqual(TERMINAL_FLOOR_WIDTH + EDGE_TOLERANCE);
+        await dragPanelEdgeTo(page, 'e', { x: 10 });
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+
+        await page.getByTestId('command-terminal-panel-maximize').click();
+        await expect.poll(async () => (await panelBox(page)).width, { timeout: 3000 }).toBeGreaterThan(2000);
+        await expect.poll(async () => Math.abs((await tileWidth(page, 'slot-1')) - (await tileWidth(page, 'slot-2'))), { timeout: 3000 })
+          .toBeLessThanOrEqual(2);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a panel grown back from its minimum gives the seam its full range again, both ways', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        await openTwoReady(page);
+        await dragPanelEdgeTo(page, 'e', { x: 10 });
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        // At the minimum the seam has no room either way, and a double-click there changes nothing.
+        const seamLocator = page.locator('[data-testid^="tile-splitter-"]');
+        const atMinimum = await seamLocator.boundingBox();
+        if (!atMinimum) throw new Error('no seam');
+        await page.mouse.dblclick(atMinimum.x + atMinimum.width / 2, atMinimum.y + atMinimum.height / 2);
+
+        await dragPanelEdgeTo(page, 'e', { x: 2500 });
+        await expect.poll(async () => (await panelBox(page)).width, { timeout: 3000 }).toBeGreaterThan(2000);
+        await expectTilesFillArea(page);
+
+        const seamBefore = await seamLocator.boundingBox();
+        if (!seamBefore) throw new Error('no seam');
+        await dragSeamBy(page, 250);
+        await expect.poll(async () => ((await seamLocator.boundingBox())?.x ?? 0) - seamBefore.x, { timeout: 3000 })
+          .toBeGreaterThanOrEqual(240);
+        await dragSeamBy(page, -500);
+        await expect.poll(async () => seamBefore.x - ((await seamLocator.boundingBox())?.x ?? 0), { timeout: 3000 })
+          .toBeGreaterThanOrEqual(240);
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        await expectTilesFillArea(page);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('shrinking a panel with an uneven seam refits each terminal once on release, holds no frame mid-drag, and keeps the terminals filling it', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        const { first, second } = await openTwoReady(page);
+        await dragSeamBy(page, -200);
+        await stillTerminals(page, [first, second]);
+        await settleResizes(page);
+        await expectNoFrameHold(page);
+        await watchFrameHolds(page);
+
+        const widthsBefore = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+          .map((frame) => Math.round(frame.getBoundingClientRect().width)));
+        // Every frame of the drag, not only where the steps land: a terminal that shrinks and
+        // grows back inside one step is the jitter a final read cannot see.
+        await page.evaluate(() => {
+          const holder = window as unknown as { __dragFrames: number[][]; __recording: boolean };
+          holder.__dragFrames = [];
+          holder.__recording = true;
+          const record = () => {
+            if (!holder.__recording) return;
+            holder.__dragFrames.push(Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+              .map((frame) => Math.round(frame.getBoundingClientRect().width)));
+            requestAnimationFrame(record);
+          };
+          requestAnimationFrame(record);
+        });
+
+        const east = await page.getByTestId('command-terminal-panel-resize-e').boundingBox();
+        if (!east) throw new Error('no east edge');
+        const startX = east.x + east.width / 2;
+        const y = east.y + east.height / 2;
+        await page.mouse.move(startX, y);
+        await page.mouse.down();
+        const midDrag: Array<{ step: number; resizes: number; holds: number; gateOpen: boolean; fit: Awaited<ReturnType<typeof tileFit>> }> = [];
+        for (let step = 1; step <= 14; step += 1) {
+          await page.mouse.move(startX - step * 60, y, { steps: 4 });
+          await settleFrames(page, 3);
+          midDrag.push({
+            step,
+            resizes: await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length),
+            holds: (await frameHolds(page)).length,
+            gateOpen: await isManagerResizeGateOpen(page),
+            fit: await tileFit(page),
+          });
+        }
+        await page.mouse.up();
+        const dragFrames = await page.evaluate(() => {
+          const holder = window as unknown as { __dragFrames: number[][]; __recording: boolean };
+          holder.__recording = false;
+          return holder.__dragFrames;
+        });
+        // A shrinking panel never grows a terminal, frame to frame.
+        for (let frameIndex = 1; frameIndex < dragFrames.length; frameIndex += 1) {
+          dragFrames[frameIndex].forEach((width, tileIndex) => {
+            expect(width, `frame ${frameIndex} tile ${tileIndex}: ${JSON.stringify(dragFrames.slice(Math.max(0, frameIndex - 2), frameIndex + 2))}`)
+              .toBeLessThanOrEqual(dragFrames[frameIndex - 1][tileIndex] + 1);
+          });
+        }
+
+        // Mid-drag: the gate held every refit, no terminal held a frame, and the tiles kept filling the panel.
+        for (const sample of midDrag) {
+          expect(sample, `step ${sample.step}`).toMatchObject({ resizes: 0, holds: 0, gateOpen: true });
+          expect(Math.abs(sample.fit?.leftGap ?? 99), `step ${sample.step} left gap`).toBeLessThanOrEqual(EDGE_TOLERANCE);
+          expect(Math.abs(sample.fit?.rightGap ?? 99), `step ${sample.step} right gap`).toBeLessThanOrEqual(EDGE_TOLERANCE);
+        }
+        // Released: one refit for each terminal the shrink resized, none for one it left alone, one layout change.
+        await expectNoFrameHold(page);
+        await settleFrames(page, 10);
+        const widthsAfter = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
+          .map((frame) => Math.round(frame.getBoundingClientRect().width)));
+        const sessionsInOrder = [first, second];
+        for (const [index, sessionId] of sessionsInOrder.entries()) {
+          const resized = Math.abs(widthsAfter[index] - widthsBefore[index]) > 8;
+          expect((await resizesOf(page, sessionId)).length, `terminal ${index + 1}, ${widthsBefore[index]} to ${widthsAfter[index]}px`)
+            .toBe(resized ? 1 : 0);
+        }
+        expect(widthsAfter.some((width, index) => width < widthsBefore[index] - 8)).toBe(true);
+        expect((await frameHolds(page)).length).toBeLessThanOrEqual(1);
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        await expectTilesFillArea(page);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('growing a panel back keeps the terminals filling it and refits each once on release', async () => {
+      const { browser, page } = await launchWithState(multiTerminalPreConfig());
+      try {
+        const { first, second } = await openTwoReady(page);
+        await dragPanelEdgeTo(page, 'e', { x: 10 });
+        await expectTiledAtFloor(page, ['slot-1', 'slot-2']);
+        await stillTerminals(page, [first, second]);
+        await settleResizes(page);
+        await expectNoFrameHold(page);
+
+        const east = await page.getByTestId('command-terminal-panel-resize-e').boundingBox();
+        if (!east) throw new Error('no east edge');
+        const startX = east.x + east.width / 2;
+        const y = east.y + east.height / 2;
+        await page.mouse.move(startX, y);
+        await page.mouse.down();
+        for (let step = 1; step <= 8; step += 1) {
+          await page.mouse.move(startX + step * 60, y);
+          await settleFrames(page, 3);
+          const fit = await tileFit(page);
+          expect(Math.abs(fit?.rightGap ?? 99), `step ${step} right gap`).toBeLessThanOrEqual(EDGE_TOLERANCE);
+          expect(await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length), `step ${step} resizes`).toBe(0);
+        }
+        await page.mouse.up();
+        await expect.poll(async () => (await resizesOf(page, first)).length, { timeout: 3000 }).toBe(1);
+        await expect.poll(async () => (await resizesOf(page, second)).length, { timeout: 3000 }).toBe(1);
+        await expectTilesFillArea(page);
       } finally {
         await browser.close();
       }

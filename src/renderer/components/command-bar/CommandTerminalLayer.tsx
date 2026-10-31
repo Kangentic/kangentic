@@ -38,6 +38,7 @@ import {
   windowIdsInReadingOrder,
 } from '../../window-manager';
 import type { ManagedWindow, WindowManagerLayerOptions } from '../../window-manager';
+import { heldSplitSizes, TILE_GAP_PX } from '../../window-manager/tiling/resolve-layout';
 import { COMMAND_PANEL_HEADER_HEIGHT_PX, CommandTerminalPanel } from './CommandTerminalPanel';
 import { CommandTerminalRail } from './CommandTerminalRail';
 import { COMMAND_RAIL_DEFAULT_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
@@ -52,7 +53,7 @@ import { useKeybinding } from '../../hooks/useKeybinding';
 import { getIsHmrReload } from '../../utils/hmr-flag';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
 import { CommandTerminalLayerProvider } from './command-terminal-context';
-import { COMMAND_TERMINAL_FLOOR, commandTerminalGridMinimum } from './command-terminal-grid-fit';
+import { COMMAND_TERMINAL_FLOOR, commandTerminalAreaMinWidth, commandTerminalGridMinimum } from './command-terminal-grid-fit';
 import { planCommandWindowReconciliation } from './command-window-reconcile';
 import { MAX_COMMAND_TERMINALS, commandTerminalSlotId, commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { resolveProjectRoot } from '../../../shared/git-utils';
@@ -555,6 +556,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   const terminalCount = commandWindowManager.store((state) => Object.keys(state.windows).length);
   const expanded = commandWindowManager.store((state) => state.expandedWindowId !== null);
   const gridMinimum = commandTerminalGridMinimum(terminalCount, expanded, COMMAND_LAYER_OPTIONS.minSize);
+  const terminalAreaMinWidth = commandTerminalAreaMinWidth(gridMinimum.width, COMMAND_RAIL_MIN_WIDTH_PX);
   const panelMinSize = useMemo(
     () => panelMinSizeFor({ width: gridMinimum.width, height: gridMinimum.height }),
     [gridMinimum.width, gridMinimum.height],
@@ -565,6 +567,20 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
   // their new tiles until they have repainted (`terminal-layout-transition.ts`).
   const changeLayout = useCallback((change: () => void) => {
     runTerminalLayoutChange(terminalLayoutScopeOf(terminalArea), change);
+  }, [terminalArea]);
+  // Before the panel resizes, the terminals take the proportions on screen as
+  // their own: two the floor holds even at the panel's minimum grow evenly, not
+  // from a seam an earlier, wider panel left skewed. Nothing on screen moves.
+  const adoptHeldLayout = useCallback(() => {
+    const state = commandWindowManager.store.getState();
+    if (!terminalArea || !state.tileTree || state.expandedWindowId !== null) return;
+    const size = {
+      width: terminalArea.clientWidth * state.tileTreeRect.w,
+      height: terminalArea.clientHeight * state.tileTreeRect.h,
+    };
+    for (const split of heldSplitSizes(state.tileTree, size, TILE_GAP_PX, COMMAND_LAYER_OPTIONS.minSize)) {
+      state.setSplitSizes(split.splitId, split.sizes);
+    }
   }, [terminalArea]);
   const handleNewTerminal = useCallback(() => {
     changeLayout(spawnAdditionalCommandTerminal);
@@ -634,7 +650,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
         // The window's own title bar takes the place of the panel header.
         <div className="flex flex-1 min-h-0" data-testid="command-terminal-detached">
           {rail}
-          <div ref={setTerminalArea} className="relative flex-1 min-w-0" data-testid="command-terminal-area" />
+          <div ref={setTerminalArea} className="relative flex-1" style={{ minWidth: terminalAreaMinWidth }} data-testid="command-terminal-area" />
         </div>
       ) : createPortal(
         // Above board windows (z-40), below true modal dialogs / popovers (z-50)
@@ -644,6 +660,8 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
           <CommandTerminalPanel
             onHide={onHide}
             minSize={panelMinSize}
+            terminalAreaMinWidth={terminalAreaMinWidth}
+            onResizeStart={adoptHeldLayout}
             chrome={PANEL_CHROME}
             onTerminalAreaReady={setTerminalArea}
             onOpenInNewWindow={handleOpenInNewWindow}

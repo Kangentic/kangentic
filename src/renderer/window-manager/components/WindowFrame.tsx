@@ -43,10 +43,13 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
   const parkWindow = layerStore((state) => state.parkWindow);
   const isFocused = layerStore((state) => state.focusedWindowId === managedWindow.id);
   const isParked = managedWindow.parked === true;
-  // A host-arranged layer's lone window needs no focus line: nothing beside it
-  // could be the one taking keys. Neither does an expanded one.
+  // The focus cue is a still, faint accent border, driven by REAL focus
+  // (:focus-within) rather than the sticky focusedWindowId, so it drops the
+  // moment focus moves to a dialog or another window. A host-arranged layer's
+  // lone window draws none: nothing beside it could be the one taking keys.
+  // Neither does an expanded one.
   const hostArranged = layer.hostArranged === true;
-  const showFocusLine = layerStore((state) =>
+  const showFocusBorder = layerStore((state) =>
     !hostArranged || (state.expandedWindowId === null && Object.keys(state.windows).length > 1));
   // A host-arranged layer can expand one window over the rest: it fills the
   // overlay, and the others stay mounted behind it, hidden, at the SAME rect.
@@ -200,23 +203,11 @@ function WindowFrameInner({ managedWindow, containerSize, overlayRef, tiledRect 
       inert={isHidden || undefined}
       data-expanded={isExpanded || undefined}
       className={`pointer-events-auto group bg-surface-raised border border-edge ${
-        showFocusLine ? 'focus-within:border-accent/40' : ''
+        showFocusBorder ? 'focus-within:border-accent/40' : ''
       } ${isMaximized || isTiled || hostArranged ? 'rounded-none' : 'rounded-lg'
       } ${isTiled || hostArranged ? '' : 'shadow-2xl'} flex flex-col overflow-hidden ${contentClassName}`}
       data-testid={`window-frame-${managedWindow.id}`}
     >
-      {/* Focus cue driven by REAL focus (:focus-within), not the sticky
-          focusedWindowId: a faint 1px accent outline (border above) + a 2px dimmed
-          accent line along the top that gently pulses, shown ONLY while this window
-          actually holds keyboard focus (its terminal or a control) - so it drops the
-          moment focus moves to a dialog or another window, matching the blinking
-          cursor. Always rendered; CSS toggles visibility, so no layout shift. */}
-      {showFocusLine && (
-        <div
-          className="pointer-events-none absolute inset-x-0 top-0 z-20 hidden h-0.5 bg-accent/70 animate-pulse group-focus-within:block"
-          aria-hidden
-        />
-      )}
       <WindowContent
         managedWindow={managedWindow}
         isFocused={isFocused}

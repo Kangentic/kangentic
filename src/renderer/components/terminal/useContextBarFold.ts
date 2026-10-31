@@ -9,7 +9,7 @@
  *   remounts nothing.
  * - `data-meter` on the rate limits and context pills, whose `data-meter-track`
  *   bars stretch to fill the row; a meter counts with each track at its own
- *   minimum width.
+ *   minimum width, and reports what its tracks take at the comfort width on top.
  * - `data-fold-more` on the +N pill, kept in the row out of sight while nothing
  *   is folded, so its width is known before anything does.
  *
@@ -20,6 +20,7 @@
 
 import { useLayoutEffect, useState, type RefObject } from 'react';
 import {
+  METER_COMFORT_TRACK_PX,
   isContextBarFoldId,
   resolveContextBarFold,
   type ContextBarFoldId,
@@ -44,6 +45,15 @@ function meterMinimumWidth(meter: HTMLElement, width: number): number {
   return minimum;
 }
 
+/** The room a meter's tracks take at the comfort width beyond their own minimum. */
+function meterComfortWidth(meter: HTMLElement): number {
+  let comfort = 0;
+  for (const track of Array.from(meter.querySelectorAll<HTMLElement>('[data-meter-track]'))) {
+    comfort += Math.max(0, METER_COMFORT_TRACK_PX - pixels(getComputedStyle(track).minWidth));
+  }
+  return comfort;
+}
+
 /** The room a part takes inside its pill: its width, its margin, and its pill's gap. */
 function innerPartWidth(part: HTMLElement): number {
   const parentGap = part.parentElement ? pixels(getComputedStyle(part.parentElement).columnGap) : 0;
@@ -55,6 +65,7 @@ export function measureContextBarFold(bar: HTMLElement): ContextBarFoldInput {
   const gap = pixels(style.columnGap);
   const available = bar.clientWidth - pixels(style.paddingLeft) - pixels(style.paddingRight);
   const items: ContextBarFoldItem[] = [];
+  const meterComfort: Partial<Record<ContextBarFoldId, number>> = {};
   // The first thing in the row has no gap before it.
   let fixedWidth = -gap;
   let moreWidth = 0;
@@ -73,12 +84,17 @@ export function measureContextBarFold(bar: HTMLElement): ContextBarFoldInput {
       if (!part.hasAttribute('data-folded')) width -= partWidth;
       items.push({ id: partId, width: partWidth });
     }
-    if (child.hasAttribute('data-meter')) width = meterMinimumWidth(child, width);
+    const isMeter = child.hasAttribute('data-meter');
+    if (isMeter) width = meterMinimumWidth(child, width);
     const id = child.dataset.foldId;
-    if (isContextBarFoldId(id)) items.push({ id, width: width + gap });
-    else fixedWidth += width + gap;
+    if (isContextBarFoldId(id)) {
+      items.push({ id, width: width + gap });
+      if (isMeter) meterComfort[id] = meterComfortWidth(child);
+    } else {
+      fixedWidth += width + gap;
+    }
   }
-  return { available, fixedWidth, items, moreWidth };
+  return { available, fixedWidth, items, moreWidth, meterComfort };
 }
 
 /**

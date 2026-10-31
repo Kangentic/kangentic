@@ -230,7 +230,7 @@ something is listening on.
 
 The model and effort pills are intentionally NOT toggleable. They double as in-place picker triggers (clicking them opens a popover whose pick restarts the task's session with the new model or effort; a Command Terminal switches live), so a "hide" toggle would silently disable that feature. They render whenever a session reports a model.
 
-A pill turned on here can still fold: the bar is one row, and what does not fit moves into its +N pill, in a fixed order (the shell, the version number, active time, elapsed, tokens, tool calls, cost, then the context counts). The agent's name, the model and effort, the rate limits and the context stay in the row ([the context bar's one row](../architecture/renderer/command-terminal.md#the-context-bars-one-row)).
+A pill turned on here can still fold: the bar is one row, and what does not fit beside bars of at least 80px moves into its +N pill, in a fixed order (the shell, the version number, active time, elapsed, tokens, tool calls, cost, then the context counts). The agent's name, the model and effort, the rate limits and the context stay in the row ([the context bar's one row](../architecture/renderer/command-terminal.md#the-context-bars-one-row)).
 
 All context bar settings are global-only and cannot be overridden per-project.
 

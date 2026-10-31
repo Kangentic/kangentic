@@ -2,7 +2,7 @@
  * Keeps keyboard focus inside the window group when a window closes. If closing a
  * window orphans the focus - the focused element lived inside it, so
  * `document.activeElement` falls back to <body> after the close - this moves focus
- * to the most-recently-active remaining window's terminal. The focus cue + blinking
+ * to the most-recently-active remaining window's terminal. The focus border + blinking
  * cursor follow, so a docked group keeps an active pane, like closing the focused
  * tab in a tab group hands focus to a sibling. Mounted once by WindowLayer.
  *

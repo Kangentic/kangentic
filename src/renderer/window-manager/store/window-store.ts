@@ -26,6 +26,7 @@ import {
   insertWindowIntoTree,
   removeWindowFromTree,
   setSeamRatio,
+  setSplitSizes,
   swapWindowsInTree,
   treeContainsWindow,
   wrapTreeWithRoot,
@@ -295,6 +296,9 @@ export interface WindowStoreState {
   /** Resize one seam: the boundary between children `index` and `index + 1` of
    *  the split with `splitId`. `pairRatio` is the first pane's share of the pair. */
   setSeamRatio: (splitId: string, index: number, pairRatio: number) => void;
+  /** Set every child size of one split at once (`setSplitSizes`): a host adopting
+   *  the layout its pane floor holds (`heldSplitSizes`). */
+  setSplitSizes: (splitId: string, sizes: readonly number[]) => void;
   /** Resize the whole tiling footprint (the group's outer region) - e.g. drag a
    *  right-docked group's left edge to widen all its panes while it stays docked
    *  right. The vacated space stays empty board. */
@@ -843,6 +847,14 @@ export function createWindowManagerStore(options: WindowManagerStoreOptions): Wi
       set((current) => {
         if (!current.tileTree) return current;
         return { tileTree: setSeamRatio(current.tileTree, splitId, index, pairRatio) };
+      });
+    },
+
+    setSplitSizes: (splitId, sizes) => {
+      set((current) => {
+        if (!current.tileTree) return current;
+        const tileTree = setSplitSizes(current.tileTree, splitId, sizes);
+        return tileTree === current.tileTree ? current : { tileTree };
       });
     },
 

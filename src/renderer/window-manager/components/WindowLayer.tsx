@@ -43,17 +43,16 @@ import { useWorkspacePersistence } from '../bridge/useWorkspacePersistence';
 import { useClickOutsideToClose } from '../bridge/useClickOutsideToClose';
 import { shouldParkTaskDetailWindowOnClose, useParkedWindowReaper } from '../bridge/window-parking';
 import type { ContainerSize } from '../store/geometry';
-import { resolveTileLayout } from '../tiling/resolve-layout';
+import { resolveTileLayout, TILE_GAP_PX } from '../tiling/resolve-layout';
 import { WindowFrame } from './WindowFrame';
 import { TileSplitter } from './TileSplitter';
 import { FootprintResizer } from './FootprintResizer';
 import type { FootprintEdge } from './FootprintResizer';
 import { SnapPreview } from './SnapPreview';
 
-/** Panes sit FLUSH (zero reserved gap) so nothing shows through behind a tiled
- *  layout. The draggable seam is an invisible OVERLAY of this width, centered on
- *  the boundary, that only paints a thin accent line on hover/drag. */
-const TILE_GAP_PX = 0;
+/** The draggable seam is an invisible OVERLAY of this width, centered on the
+ *  boundary between flush panes (`TILE_GAP_PX`), that only paints a thin accent
+ *  line on hover/drag. */
 const TILE_SEAM_PX = 10;
 
 /** Every footprint edge gets an outer resizer, so a tiled group can be resized

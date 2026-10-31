@@ -35,3 +35,13 @@ export function commandTerminalGridMinimum(
   const rows = !expanded && terminalCount >= 3 ? 2 : 1;
   return { width: columns * floor.width, height: rows * floor.height };
 }
+
+/**
+ * The terminal area's minimum width beside the rail: the grid's, or all the row
+ * has beside a rail at its minimum. The open rail gives way to it in the same
+ * layout pass, so a panel shrinking a frame ahead of the rail's own width never
+ * squeezes the terminals under the floor.
+ */
+export function commandTerminalAreaMinWidth(gridMinimumWidth: number, railMinimumWidth: number): string {
+  return `min(${gridMinimumWidth}px, calc(100% - ${railMinimumWidth}px))`;
+}

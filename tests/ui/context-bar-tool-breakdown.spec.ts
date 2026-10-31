@@ -789,8 +789,12 @@ test.describe('ContextBar tool-call popover in a short window', () => {
 
 // Own page: this case resizes the window, which must not leak into the shared one.
 test.describe('ContextBar tool-call popover right-aligned to its trigger', () => {
-  /** The trigger sits about 650px in, so a window under 1300px wide puts it past the midpoint and right-aligns the popover. */
-  const NARROW_VIEWPORT_WIDTH_PX = 1000;
+  /**
+   * A narrow window folds the shell and version, the two pills left of the
+   * trigger, so it sits about 530px in; what folds after them sits right of it.
+   * At 900px that is well past the midpoint, which right-aligns the popover.
+   */
+  const NARROW_VIEWPORT_WIDTH_PX = 900;
   /** The table is far wider than the "No tool calls yet" state; a smaller change would let the case pass without moving an edge. */
   const MIN_WIDTH_GROWTH_PX = 40;
 

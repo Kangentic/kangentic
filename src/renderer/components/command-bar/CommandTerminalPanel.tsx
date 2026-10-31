@@ -178,6 +178,10 @@ interface CommandTerminalPanelProps {
   onTerminalAreaReady: (element: HTMLElement | null) => void;
   /** The smallest the panel may be: the terminals' grid at the pane floor beside the rail. */
   minSize: PanelSize;
+  /** The terminal area's minimum width (`commandTerminalAreaMinWidth`), a CSS length. */
+  terminalAreaMinWidth: string;
+  /** Runs as an edge resize or a maximize begins: the terminals adopt the layout on screen. */
+  onResizeStart?: () => void;
   /** What the panel adds around its terminals: the rail and the header, with the border. */
   chrome: PanelSize;
   /** Move the panel into a window of its own. */
@@ -191,6 +195,8 @@ export function CommandTerminalPanel({
   rail,
   onTerminalAreaReady,
   minSize,
+  terminalAreaMinWidth,
+  onResizeStart,
   chrome,
   onOpenInNewWindow,
   openInNewWindowDisabledReason,
@@ -245,8 +251,9 @@ export function CommandTerminalPanel({
   // Every terminal in the panel resizes: the new layout shows at once, and each
   // terminal holds its frame until its agent has repainted.
   const toggleMaximized = useCallback(() => {
+    onResizeStart?.();
     runTerminalLayoutChange(areaRef.current, () => saveGeometry({ ...geometry, maximized: !geometry.maximized }));
-  }, [geometry, saveGeometry]);
+  }, [geometry, saveGeometry, onResizeStart]);
 
   useKeybinding('panel.maximize', toggleMaximized, { capture: true });
 
@@ -353,6 +360,7 @@ export function CommandTerminalPanel({
     if (event.button !== 0 || gestureRef.current) return;
     event.stopPropagation();
     event.preventDefault();
+    onResizeStart?.();
     beginGesture(event, edge);
   };
 
@@ -455,7 +463,12 @@ export function CommandTerminalPanel({
           </div>
           <div className="flex flex-1 min-h-0">
             {rail}
-            <div ref={onTerminalAreaReady} className="relative flex-1 min-w-0" data-testid="command-terminal-area" />
+            <div
+              ref={onTerminalAreaReady}
+              className="relative flex-1"
+              style={{ minWidth: terminalAreaMinWidth }}
+              data-testid="command-terminal-area"
+            />
           </div>
           {!geometry.maximized && RESIZE_EDGES.map(({ edge, className }) => (
             <div

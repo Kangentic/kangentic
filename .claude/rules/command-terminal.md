@@ -59,7 +59,16 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   terminals under their floor when the rail opened). A dragged seam keeps its ratio, but the
   layout holds every pane at the floor while the area has room for the grid (`resolveTileLayout`'s
   `minPane`, which `WindowLayer` and `TileSplitter` pass for a host-arranged layer), so a seam
-  skewed toward one side never leaves a terminal under the floor at the panel's minimum. So the
+  skewed toward one side never leaves a terminal under the floor at the panel's minimum. An area
+  short of the grid scales the floors down together, never back to the seam's own ratio: the hold
+  dropping at the edge made a shrinking panel jump a terminal by 100px for a frame. The open rail
+  gives way to the terminals in the same layout pass (`flex-shrink` down to its 200px minimum
+  against the area's `commandTerminalAreaMinWidth`), because its resolved width follows the row a
+  frame late. An edge resize or a maximize first adopts the layout on screen as the seams' own
+  (`heldSplitSizes`, `setSplitSizes`), so two terminals the floor shows even grow evenly rather
+  than from a seam an earlier, wider panel left skewed. A double-click on a seam evens its two
+  terminals, 50/50. A seam whose pair has no room above both floors (the panel at its minimum)
+  shows no resize cursor or line and takes no drag; a seam never grows the panel. So the
   edge stops where the grid still fits,
   and a terminal added (from anywhere) or a Restore grows the panel to fit, and the panel saves the
   size it grew to, so the next Expand does not shrink it back. Nothing falls back to one terminal
@@ -248,7 +257,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   responsive (priority-plus via `useHeaderPillOverflow`): only Stop, the title, the pencil, the
   kebab and Expand are protected, and the pills and branch picker fold into the kebab as the
   terminal narrows. While the name field is open the folded set is frozen, so nothing in the
-  header moves. The focus line shows only while two or more terminals are visible.
+  header moves. The focused terminal's cue is the frame's still accent border, shown only while
+  two or more terminals are visible; there is no pulsing line.
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
   panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
@@ -290,7 +300,14 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   tile at 1920 with the panel's edge stopping where they still fit, that an expanded terminal's
   panel shrinks to one and Restore grows it back and keeps that size, that Add terminal grows a
   panel wider for two and taller for three, that a window too small for the grid keeps every
-  terminal tiled, and that a terminal the user expanded stays expanded.
+  terminal tiled, and that a terminal the user expanded stays expanded. `window-tiling.test.ts`
+  pins the floor hold and that an area a pixel short of it moves a pane a pixel.
+  `command-terminal.spec.ts` records every frame of a panel shrink with a skewed seam and fails on
+  a terminal that grows mid-shrink, a refit or frame hold before release, or a gap beside the
+  terminals; it grows the panel back from its edge and from its minimum and drags the seam its
+  full range both ways; that a panel the floor holds even grows its terminals evenly from an edge
+  and on maximize, whatever the seam held; and a double-click on a dragged seam evens it.
+  `window-tiling.test.ts` pins `heldSplitSizes`, a split of three adopted exactly included.
 - **Test (panel):** `tests/unit/command-terminal-host-arrangement.test.ts` pins the presets, the
   seam that holds until the count changes, the expanded window (focused, never saved, released on
   close), the swap that keeps every tile and seam, and the reading order a re-tile keeps.

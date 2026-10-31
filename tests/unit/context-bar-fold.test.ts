@@ -23,6 +23,11 @@ const FIXED = 82 + 8 + 52;
 const MORE = 30 + 8;
 
 const fold = (available: number) => [...resolveContextBarFold({ available, fixedWidth: FIXED, items: ITEMS, moreWidth: MORE })];
+/** One track per bar at a 40px minimum: each wants 40px more at the 80px comfort width. */
+const COMFORT = { 'rate-limits': 40, context: 40 };
+const foldWithComfort = (available: number) => [
+  ...resolveContextBarFold({ available, fixedWidth: FIXED, items: ITEMS, moreWidth: MORE, meterComfort: COMFORT }),
+];
 
 describe('resolveContextBarFold', () => {
   it('folds nothing when the whole row fits, and shows no +N', () => {
@@ -53,6 +58,30 @@ describe('resolveContextBarFold', () => {
     expect(fold(whole)).toEqual([]);
     expect(fold(whole - 1)).toEqual(['shell']);
     expect(fold(whole - 93 + MORE - 1)).toEqual(['shell', 'version']);
+  });
+
+  it('folds cost and then the context counts before a bar drops under its comfort width', () => {
+    // At 600 the bars at their 40px minimum leave room for the counts, so without
+    // the comfort width they stay; each bar wanting 40px more folds them too.
+    expect(fold(600)).not.toContain('context-fraction');
+    expect(foldWithComfort(600)).toEqual(['shell', 'version', 'elapsed', 'tokens', 'tool-calls', 'cost', 'context-fraction']);
+  });
+
+  it('never folds the five for the comfort width: once only they are left, a bar narrows to its minimum', () => {
+    // The five and the +N pill take 511px with the bars at their minimum.
+    for (const available of [511, 520, 560]) {
+      const folded = foldWithComfort(available);
+      expect(folded).not.toContain('rate-limits');
+      expect(folded).not.toContain('context');
+      expect(folded).not.toContain('agent');
+    }
+    expect(foldWithComfort(510)).toContain('rate-limits');
+  });
+
+  it('moves the edge in a wide row by the comfort width, and folds nothing with room for it', () => {
+    expect(fold(1050)).toEqual([]);
+    expect(foldWithComfort(1050)).toEqual(['shell']);
+    expect(foldWithComfort(1200)).toEqual([]);
   });
 
   it('skips a pill the bar does not show', () => {

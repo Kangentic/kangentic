@@ -438,13 +438,16 @@ export function CommandTerminalRail({
   const hasRunning = terminals.length > 0;
 
   // One element in both states, its children in fixed slots, so folding keeps
-  // the toggle the user pressed (and the keyboard focus on it).
+  // the toggle the user pressed (and the keyboard focus on it). Open, it gives
+  // way to the terminals' minimum in the same layout pass, down to its own
+  // minimum: its resolved width follows the row a frame late, and a panel
+  // shrinking under it would otherwise squeeze the terminals for that frame.
   return (
     <nav
       ref={railRef}
       aria-label={t`Command Terminals`}
-      className={`relative flex flex-shrink-0 flex-col border-r border-edge py-2.5 select-none ${folded ? 'items-start pl-1' : 'px-2'}`}
-      style={{ width: rail.width }}
+      className={`relative flex ${folded ? 'flex-shrink-0' : 'flex-shrink'} flex-col border-r border-edge py-2.5 select-none ${folded ? 'items-start pl-1' : 'px-2'}`}
+      style={{ width: rail.width, minWidth: folded ? undefined : COMMAND_RAIL_MIN_WIDTH_PX }}
       data-testid="command-terminal-rail"
       data-collapsed={folded ? 'true' : 'false'}
     >

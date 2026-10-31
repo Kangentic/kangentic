@@ -715,9 +715,8 @@ test('a project switch that fails releases the landing, so the next press steps 
 
 // A second Command Terminal in A (slot-2) beside slot-1, so one can be expanded
 // while the other is the target. The panel is seeded to fill the area and the
-// viewport is wide, so two terminals fit at the pane floor and the layer's own
-// expand-while-it-does-not-fit hook stays out of the way: it would otherwise
-// expand whichever terminal is focused and hide what this test pins.
+// viewport is wide, so the two terminals tile at the pane floor and the only
+// expand is the one the test makes.
 const SESSION_COMMAND_A_SECOND = `sess-cycle-cmd-a-second-${RUN_ID}`;
 const SECOND_COMMAND_TERMINAL_SEED = `
   window.__mockPreConfigure(function (state) {

@@ -234,3 +234,43 @@ export function setSeamRatio(tree: TileNode, splitId: string, index: number, pai
   });
   return changed ? { ...tree, children } : tree;
 }
+
+/**
+ * Set every child size of the split with `splitId` at once (normalized to sum
+ * to 1). For adopting a layout the pane floor holds (`heldSplitSizes`), which
+ * may move room between panes no single seam's pair could. Returns the same tree
+ * when there is no such split, the count does not match, or a size is not positive.
+ */
+export function setSplitSizes(tree: TileNode, splitId: string, sizes: readonly number[]): TileNode {
+  if (tree.kind === 'leaf') return tree;
+  if (tree.id === splitId) {
+    if (sizes.length !== tree.children.length || sizes.some((size) => !(size > 0))) return tree;
+    const total = sizes.reduce((sum, size) => sum + size, 0);
+    return { ...tree, sizes: sizes.map((size) => size / total) };
+  }
+  let changed = false;
+  const children = tree.children.map((child) => {
+    const result = setSplitSizes(child, splitId, sizes);
+    if (result !== child) changed = true;
+    return result;
+  });
+  return changed ? { ...tree, children } : tree;
+}
+
+/**
+ * The share of its PAIR a seam gives the first of the two panes, as
+ * `setSeamRatio` takes it. Null when the tree holds no such seam.
+ */
+export function seamPairRatio(tree: TileNode, splitId: string, index: number): number | null {
+  if (tree.kind === 'leaf') return null;
+  if (tree.id === splitId) {
+    if (index < 0 || index + 1 >= tree.sizes.length) return null;
+    const pairSum = tree.sizes[index] + tree.sizes[index + 1];
+    return pairSum > 0 ? tree.sizes[index] / pairSum : null;
+  }
+  for (const child of tree.children) {
+    const ratio = seamPairRatio(child, splitId, index);
+    if (ratio !== null) return ratio;
+  }
+  return null;
+}

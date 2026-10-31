@@ -129,6 +129,54 @@ test.describe('Context bar fold', () => {
     }
   });
 
+  test('cost and the context counts fold before a bar drops under 80px, and the list keeps their pill look', async () => {
+    const { browser, page } = await launch();
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      const bar = page.locator('[data-testid="usage-bar"].min-h-8');
+      await expect(bar).toBeVisible({ timeout: 10000 });
+      await pushUsage(page);
+      await expect.poll(async () => bar.textContent(), { timeout: 5000 }).toMatch(/Sonnet 5\.5/);
+
+      const readRow = () => bar.evaluate((element) => {
+        const optionalIds = ['shell', 'version', 'agent-active', 'elapsed', 'tokens', 'tool-calls', 'cost', 'context-fraction'];
+        const optionalShown = optionalIds.some((id) => {
+          const node = element.querySelector(`[data-fold-id="${id}"]`);
+          return node !== null && !node.hasAttribute('data-folded');
+        });
+        const trackWidths = Array.from(element.querySelectorAll('[data-meter] [data-meter-track]'))
+          .filter((track) => track.closest('[data-folded]') === null)
+          .map((track) => track.getBoundingClientRect().width);
+        return { optionalShown, narrowestTrack: trackWidths.length > 0 ? Math.min(...trackWidths) : Infinity };
+      });
+
+      // While anything outside the five shows, no bar is under its 80px comfort width.
+      for (const width of [1400, 1200, 1100, 1000, 900, 800, 760]) {
+        await page.setViewportSize({ width, height: 700 });
+        await expect.poll(async () => {
+          const row = await readRow();
+          return !row.optionalShown || row.narrowestTrack >= 79.5;
+        }, { timeout: 5000, message: `at ${width}px` }).toBe(true);
+      }
+      // The sweep reached the narrow end: cost is in the list and the context bar stays.
+      await expect(bar.locator('[data-fold-id="cost"][data-folded]')).toHaveCount(1);
+      await expect(bar.locator('[data-fold-id="context"][data-folded]')).toHaveCount(0);
+
+      // The list draws on the bar's own fill, so each copy keeps its raised pill.
+      await bar.getByTestId('context-bar-overflow').click();
+      const list = page.getByTestId('context-bar-overflow-list');
+      await expect(list).toBeVisible();
+      const fills = await list.evaluate((element) => {
+        const pill = element.querySelector('[data-overflow-item="cost"] > *');
+        return { list: getComputedStyle(element).backgroundColor, pill: pill ? getComputedStyle(pill).backgroundColor : '' };
+      });
+      expect(fills.pill).not.toBe('');
+      expect(fills.pill).not.toBe(fills.list);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('tool calls folded into the list open their table above the +N pill', async () => {
     const { browser, page } = await launch();
     try {

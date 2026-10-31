@@ -89,7 +89,8 @@ export function ContextBarOverflow({
           style={style}
           portal
           transformOrigin={`${placement.vertical === 'above' ? 'bottom' : 'top'} ${placement.horizontal}`}
-          className="fixed z-[2147483646] flex flex-col items-start gap-1.5 rounded-lg border border-edge bg-surface-raised p-1.5 text-xs shadow-xl max-h-[min(340px,var(--popover-available-height,340px))] overflow-y-auto"
+          // The bar's own fill, so each copy keeps the pill it is in the row.
+          className="fixed z-[2147483646] flex flex-col items-start gap-1.5 rounded-lg border border-edge bg-surface p-1.5 text-xs shadow-xl max-h-[min(340px,var(--popover-available-height,340px))] overflow-y-auto"
           data-testid="context-bar-overflow-list"
         >
           {items.map((item) => (
