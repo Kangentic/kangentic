@@ -300,4 +300,24 @@ test.describe('Renaming a Command Terminal', () => {
       await browser.close();
     }
   });
+
+  test('a click outside the row menu closes it and runs none of its items', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTerminals(page, 2);
+      await terminalOf(page, 'slot-1').getByTestId('command-bar-expand').click();
+      await runningRowOf(page, 'slot-2').click({ button: 'right' });
+      const menu = page.getByTestId('command-terminal-row-menu');
+      await expect(menu).toBeVisible();
+      // The Running heading: inside the rail, outside the menu, and no control.
+      await page.getByTestId('command-terminal-running').click({ position: { x: 12, y: 6 } });
+      await expect(menu).toHaveCount(0);
+      await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
+      await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');
+      await expect(runningRowOf(page, 'slot-2').getByTestId('command-terminal-running-name-field')).toHaveCount(0);
+      expect(await renameCalls(page)).toEqual([]);
+    } finally {
+      await browser.close();
+    }
+  });
 });

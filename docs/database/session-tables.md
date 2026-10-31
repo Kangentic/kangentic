@@ -307,8 +307,8 @@ The conversations a project's Command Terminals held, so the Command Terminal pa
 Written in main by `CommandTerminalHistory` (`src/main/ipc/helpers/command-terminal-history.ts`) from `SessionManager`'s events, for every terminal, one a phone started included:
 - A row is written when the agent reports its session id. A `/clear` or `/resume` inside a terminal reports a new id, which stamps the previous row's `ended_at` and writes a new one.
 - `touched_at` is set once someone used the terminal (`Session.hasUserInput`). Only touched rows are listed, and an untouched row is deleted when it ends, so a terminal nobody used leaves nothing behind.
-- `label` takes the terminal's name, first write wins.
-- `first_prompt` takes the conversation's first prompt on one line (capped at 200 characters), first write wins, so a resume keeps the original. The Earlier row and the phone's list show it when `label` is null, which is every row while no Automation agent is set. The activity engine's synthetic prompt marker is skipped.
+- `label` follows the terminal's name: each change of it is written, a rename or a clear back to null included, and a push that leaves the name as it was writes nothing, so a conversation `/resume`d into a renamed terminal keeps its own name. A rename made before the agent reports its id is held and written once the row exists.
+- `first_prompt` takes the conversation's first prompt on one line (capped at 200 characters), first write wins, so a resume keeps the original. The Earlier row and the phone's list show it when `label` is null, which is every row while no Automation agent is set and nobody renamed the terminal. The activity engine's synthetic prompt marker is skipped.
 - `ended_at` is stamped when the terminal ends.
 - `cli_target` is the terminal's CLI target, as the `sessions` column holds it, taking the newest on each write. The Earlier list asks the agent for the transcript where it is, so a conversation a WSL distro holds is not dropped as purged. NULL for this machine.
 
