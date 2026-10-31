@@ -17,6 +17,7 @@ vi.mock('node:fs', async (importOriginal) => {
 import { AgentDetector, type AgentDetectorConfig, type AgentDetectorDependencies } from '../../src/main/agent/shared/agent-detector';
 import { execVersion } from '../../src/main/agent/shared/exec-version';
 import type { WslDistroFacts } from '../../src/main/agent/shared/wsl-distro';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 
 const FACTS: WslDistroFacts = {
   distro: 'Ubuntu',
@@ -196,5 +197,78 @@ describe('AgentDetector - a CLI inside a WSL distro', () => {
     expect(result).toMatchObject({ found: false, path: CLI_PATH, detectionError: 'the file does not exist on disk' });
     expect(result.cliTarget).toBeUndefined();
     expect(runWsl).not.toHaveBeenCalled();
+  });
+});
+
+// A probe that never reached the CLI says nothing about whether it is installed:
+// wsl.exe exited 0 having printed nothing (a distro still booting), or the pty
+// host never answered the exec. Such a NOT FOUND is answered but not cached, so
+// the next detection runs wsl.exe again, as it does for a Windows path
+// (agent-detector-fallback.test.ts). Every other failure is still cached.
+describe('AgentDetector - a WSL probe that says nothing about the install is not cached', () => {
+  const WSL_TARGET = { kind: 'wsl', distro: 'Ubuntu' };
+  const VERSION_OUTPUT = { stdout: '2.1.311 (Claude Code)\n', stderr: '' };
+  // Rejects anything that does not open with a dotted version, so that printed
+  // text which is not a version is a real rejection, not a permissive match.
+  const semverOnly: AgentDetectorConfig['parseVersion'] = (raw) => /^\d+\.\d+\.\d+/.exec(raw)?.[0] ?? null;
+
+  function makeWslDetector(runWsl: AgentDetectorDependencies['runWsl']): AgentDetector {
+    return new AgentDetector(
+      { binaryName: 'claude', supportsWslCli: true, parseVersion: semverOnly },
+      { platform: 'win32', resolveFacts: async () => FACTS, runWsl },
+    );
+  }
+
+  it('runs wsl.exe again after a probe that printed nothing, and finds the CLI', async () => {
+    const runWsl = vi.fn()
+      .mockResolvedValueOnce({ stdout: '  \n', stderr: '' })
+      .mockResolvedValueOnce(VERSION_OUTPUT);
+    const detector = makeWslDetector(runWsl);
+
+    const first = await detector.detect(CLI_PATH);
+    expect(first).toEqual({ found: false, path: CLI_PATH, version: null, cliTarget: WSL_TARGET, detectionError: 'empty output' });
+
+    expect(await detector.detect(CLI_PATH)).toEqual({ found: true, path: CLI_PATH, version: '2.1.311', cliTarget: WSL_TARGET });
+    expect(runWsl).toHaveBeenCalledTimes(2);
+  });
+
+  it.each([
+    ['timed out', new PtyHostTimeoutError('exec')],
+    ['exited', new PtyHostExitedError('The pty host exited and did not answer exec in time')],
+  ])('runs wsl.exe again after the pty host %s, and finds the CLI', async (_label, hostError) => {
+    const runWsl = vi.fn()
+      .mockRejectedValueOnce(hostError)
+      .mockResolvedValueOnce(VERSION_OUTPUT);
+    const detector = makeWslDetector(runWsl);
+
+    const first = await detector.detect(CLI_PATH);
+    expect(first).toMatchObject({ found: false, path: CLI_PATH, version: null, cliTarget: WSL_TARGET });
+    // The user sees why it failed, not a bare "not found".
+    expect(first.detectionError).toBeTruthy();
+
+    expect(await detector.detect(CLI_PATH)).toEqual({ found: true, path: CLI_PATH, version: '2.1.311', cliTarget: WSL_TARGET });
+    expect(runWsl).toHaveBeenCalledTimes(2);
+  });
+
+  it('still caches a NOT FOUND from output that is not a version, so a repeat does not run wsl.exe again', async () => {
+    const runWsl = vi.fn(async () => ({ stdout: 'Usage: claude [options]\n', stderr: '' }));
+    const detector = makeWslDetector(runWsl);
+
+    const first = await detector.detect(CLI_PATH);
+    expect(first).toMatchObject({ found: false, detectionError: 'Usage: claude [options]' });
+    expect(await detector.detect(CLI_PATH)).toBe(first);
+    expect(runWsl).toHaveBeenCalledTimes(1);
+  });
+
+  it('still caches a NOT FOUND from a probe the distro failed with an error of its own', async () => {
+    const runWsl = vi.fn(async () => {
+      throw Object.assign(new Error('Command failed'), { code: 127, stderr: "/usr/bin/env: 'node': No such file or directory\n" });
+    });
+    const detector = makeWslDetector(runWsl);
+
+    const first = await detector.detect(CLI_PATH);
+    expect(first).toMatchObject({ found: false, detectionError: "/usr/bin/env: 'node': No such file or directory" });
+    expect(await detector.detect(CLI_PATH)).toBe(first);
+    expect(runWsl).toHaveBeenCalledTimes(1);
   });
 });

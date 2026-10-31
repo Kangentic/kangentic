@@ -1,0 +1,77 @@
+{
+  "session_id": "5b8f2c1e-3d4a-4f6b-9c7d-2e1a0f9b8c7d",
+  "transcript_path": "C:\\Users\\dev\\.claude\\projects\\C--Users-dev-projects-example\\5b8f2c1e-3d4a-4f6b-9c7d-2e1a0f9b8c7d.jsonl",
+  "cwd": "C:\\Users\\dev\\projects\\example",
+  "scratchpad_dir": "C:\\Users\\dev\\AppData\\Local\\Temp\\claude\\C--Users-dev-projects-example\\5b8f2c1e-3d4a-4f6b-9c7d-2e1a0f9b8c7d\\scratchpad",
+  "prompt_id": "7c1d9e2f-4a3b-4c5d-8e6f-1a2b3c4d5e6f",
+  "effort": {
+    "level": "high"
+  },
+  "session_name": "Example task",
+  "model": {
+    "id": "claude-sonnet-5-5",
+    "display_name": "Sonnet 5.5"
+  },
+  "workspace": {
+    "current_dir": "C:\\Users\\dev\\projects\\example",
+    "project_dir": "C:\\Users\\dev\\projects\\example",
+    "added_dirs": [],
+    "git_worktree": "example",
+    "repo": {
+      "host": "github.com",
+      "owner": "example",
+      "name": "example"
+    }
+  },
+  "version": "2.1.316",
+  "output_style": {
+    "name": "default"
+  },
+  "cost": {
+    "total_cost_usd": 10.267959954999998,
+    "total_duration_ms": 2014559,
+    "total_api_duration_ms": 553817,
+    "total_lines_added": 398,
+    "total_lines_removed": 36
+  },
+  "context_window": {
+    "total_input_tokens": 317563,
+    "total_output_tokens": 152,
+    "context_window_size": 1000000,
+    "current_usage": {
+      "input_tokens": 2,
+      "output_tokens": 152,
+      "cache_creation_input_tokens": 267,
+      "cache_read_input_tokens": 317294
+    },
+    "used_percentage": 32,
+    "remaining_percentage": 68
+  },
+  "exceeds_200k_tokens": true,
+  "prompt_cache": {
+    "warm": true,
+    "caching_observed": true,
+    "ttl": "1h",
+    "expires_at": 1793434870,
+    "requests": 16,
+    "misses": 0,
+    "expected_rebuilds": 0,
+    "hit_ratio": 0.9359274064676086,
+    "cache_write_tokens": 317517,
+    "miss_recache_tokens": 0,
+    "last_miss_at": null,
+    "last_miss_cause": null,
+    "miss_causes": {},
+    "recache_tokens_if_cold": 317563
+  },
+  "fast_mode": false,
+  "thinking": {
+    "enabled": true
+  },
+  "rate_limits": {
+    "seven_day": {
+      "used_percentage": 60,
+      "resets_at": 1793718000
+    }
+  }
+}
