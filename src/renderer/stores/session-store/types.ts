@@ -141,7 +141,9 @@ export interface CoreSessionSlice {
    * higher generation and replaces the held value, and a stale sibling's
    * pre-reset number carries a lower one and is ignored. Within one generation
    * `usedPercentage` only rises, so a lower report is stale and is rejected
-   * instead of flip-flopping every bar. Provenance
+   * instead of flip-flopping every bar. A window whose `resetsAt` has passed
+   * is dropped, because Claude Code stops reporting a window once it resets
+   * and a sibling's last report of it would otherwise linger. Provenance
    * (`capturedAt` / `sourceSessionId`) reflects the last report that actually
    * changed the merged result, so the tooltip's "Updated ..." time can lag an
    * identical repeat report - the deliberate price of preserving the snapshot's

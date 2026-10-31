@@ -13,7 +13,7 @@
  * first fallback entry in ClaudeDetector, guarding against accidental
  * reordering.
  */
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // All three mocks must be hoisted before any imports of the modules
 // under test. Vitest hoists vi.mock() calls automatically.
@@ -42,6 +42,7 @@ import which from 'which';
 import { AgentDetector, type AgentDetectorConfig } from '../../src/main/agent/shared/agent-detector';
 import { execVersion } from '../../src/main/agent/shared/exec-version';
 import { ClaudeDetector } from '../../src/main/agent/adapters/claude';
+import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host/pty-host-request-errors';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -249,11 +250,10 @@ describe('AgentDetector - fallback path detection (which() fails)', () => {
   });
 
   it('embeds the unrecognized-output line (firstLine(raw)) in the override failure warning', async () => {
-    // This is the one place firstLine(raw) reaches a user at all: the PATH
-    // stage's describeProbeFailure discards this same detail in favor of a
-    // static "likely a different tool" message (see agent-detector-dead-shim
-    // .test.ts), but the override branch has no such rewrite - it always
-    // shows probe.detail verbatim.
+    // The override branch shows probe.detail verbatim, both in the warning and
+    // as `detectionError`. The PATH stage's describeProbeFailure appends the
+    // same line after its "likely a different tool" explanation (see
+    // agent-detector-dead-shim.test.ts).
     const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const overridePath = '/custom/path/testcli';
     const config: AgentDetectorConfig = {
@@ -505,6 +505,221 @@ describe('AgentDetector - PATH candidate loop (binaryAliases fall-through)', () 
     const result = await new AgentDetector(config).detect();
 
     expect(result).toEqual({ found: true, path: fallbackPath, version: '2.0.0' });
+  });
+});
+
+// ── Transient probe failures are not cached ───────────────────────────────────
+//
+// At a preview's boot, with every agent probed at once, Claude's `--version`
+// exited 0 having printed nothing (its parser accepts any non-empty text, so
+// nothing else reads as a mismatch), as did Qwen, Grok, Agy and Oz in the same
+// millisecond; Kimi and OpenCode got "The pty host did not answer exec in time".
+// The same binaries printed their versions seconds later. The NOT FOUND was
+// cached, so a spawn 33 s later failed without probing again. Neither failure
+// says anything about the install, so such a NOT FOUND is answered but not kept.
+
+describe('AgentDetector - transient probe failures are not cached', () => {
+  const claudePath = 'C:\\Users\\dev\\.local\\bin\\claude.EXE';
+
+  function makeClaudeLikeDetector(fallbackPaths?: string[]): AgentDetector {
+    return new AgentDetector({
+      binaryName: 'claude',
+      ...(fallbackPaths ? { fallbackPaths } : {}),
+      parseVersion: (raw) => raw.replace(/\s*\(Claude Code\)\s*$/i, '').trim() || null,
+    });
+  }
+
+  function warnLines(warnSpy: ReturnType<typeof vi.spyOn>): string[] {
+    return warnSpy.mock.calls.map((call: unknown[]) => call.map(String).join(' '));
+  }
+
+  beforeEach(() => {
+    vi.mocked(which).mockReset();
+    vi.mocked(which).mockResolvedValue([claudePath] as unknown as string);
+    vi.mocked(fs.existsSync).mockReset();
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(execVersion).mockReset();
+  });
+
+  afterEach(() => {
+    // Later blocks use clearAllMocks, which keeps an implementation, so put the
+    // module default (which() rejects) back.
+    vi.mocked(which).mockReset();
+    vi.mocked(which).mockRejectedValue(new Error('not found'));
+  });
+
+  it('probes again after a NOT FOUND whose --version printed nothing, and finds the CLI', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.mocked(execVersion)
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+    const detector = makeClaudeLikeDetector();
+
+    expect(await detector.detect()).toEqual({ found: false, path: null, version: null });
+    expect(await detector.detect()).toEqual({ found: true, path: claudePath, version: '2.1.316' });
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(2);
+
+    // The log names what happened instead of blaming another tool.
+    const lines = warnLines(warnSpy);
+    const failureLine = lines.find((line) => line.includes(claudePath));
+    expect(failureLine).toContain('its --version exited without printing anything');
+    expect(failureLine).not.toContain('different tool');
+    expect(lines.find((line) => line.includes('NOT FOUND'))).toContain('not kept');
+    warnSpy.mockRestore();
+  });
+
+  it.each([
+    ['timed out', new PtyHostTimeoutError('exec')],
+    ['exited', new PtyHostExitedError('The pty host exited and did not answer exec in time')],
+  ])('probes again after a NOT FOUND where the pty host %s', async (_label, hostError) => {
+    vi.mocked(execVersion)
+      .mockRejectedValueOnce(hostError)
+      .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+    const detector = makeClaudeLikeDetector();
+
+    expect((await detector.detect()).found).toBe(false);
+    expect(await detector.detect()).toEqual({ found: true, path: claudePath, version: '2.1.316' });
+  });
+
+  it('still caches a NOT FOUND from output in another tool\'s format', async () => {
+    const strictDetector = new AgentDetector({
+      binaryName: 'claude',
+      parseVersion: (raw) => (/\(Claude Code\)$/.test(raw) ? raw.replace(/\s*\(Claude Code\)$/, '') : null),
+    });
+    vi.mocked(execVersion).mockResolvedValue({ stdout: 'UNRELATED_TOOL 4.0.0', stderr: '' });
+
+    const first = await strictDetector.detect();
+    const second = await strictDetector.detect();
+
+    expect(first.found).toBe(false);
+    expect(second).toBe(first);
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
+  });
+
+  it('still caches a NOT FOUND from a probe that failed with an exit code', async () => {
+    vi.mocked(execVersion).mockRejectedValue(Object.assign(new Error('Command failed'), { code: 1, stderr: 'Error: Cannot find module' }));
+    const detector = makeClaudeLikeDetector();
+
+    const first = await detector.detect();
+    expect(await detector.detect()).toBe(first);
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
+  });
+
+  it('probes an override again after it printed nothing', async () => {
+    const overridePath = 'C:\\tools\\claude.exe';
+    vi.mocked(execVersion)
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+    const detector = makeClaudeLikeDetector();
+
+    expect(await detector.detect(overridePath)).toEqual({ found: false, path: overridePath, version: null, detectionError: 'empty output' });
+    expect(await detector.detect(overridePath)).toEqual({ found: true, path: overridePath, version: '2.1.316' });
+  });
+
+  // The same two failures reach a NOT FOUND through the other stages of
+  // `performDetection`: a fallback path, the slow retry after a timeout, and an
+  // override that the pty host never answered for.
+
+  it('probes a fallback path again after a NOT FOUND whose --version printed nothing, and finds the CLI', async () => {
+    const fallbackPath = '/opt/homebrew/bin/claude';
+    // Nothing on PATH (the `nothrow` shape), so the fallback stage is the only probe.
+    vi.mocked(which).mockResolvedValue(null as unknown as string);
+    vi.mocked(execVersion)
+      .mockResolvedValueOnce({ stdout: '', stderr: '' })
+      .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+    const detector = makeClaudeLikeDetector([fallbackPath]);
+
+    expect(await detector.detect()).toEqual({ found: false, path: null, version: null });
+    expect(await detector.detect()).toEqual({ found: true, path: fallbackPath, version: '2.1.316' });
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(2);
+    expect(vi.mocked(execVersion)).toHaveBeenNthCalledWith(1, fallbackPath);
+    expect(vi.mocked(execVersion)).toHaveBeenNthCalledWith(2, fallbackPath);
+  });
+
+  it('still caches a NOT FOUND from a fallback path that printed another tool\'s format', async () => {
+    const fallbackPath = '/opt/homebrew/bin/claude';
+    vi.mocked(which).mockResolvedValue(null as unknown as string);
+    const strictDetector = new AgentDetector({
+      binaryName: 'claude',
+      fallbackPaths: [fallbackPath],
+      parseVersion: (raw) => (/\(Claude Code\)$/.test(raw) ? raw.replace(/\s*\(Claude Code\)$/, '') : null),
+    });
+    vi.mocked(execVersion).mockResolvedValue({ stdout: 'UNRELATED_TOOL 4.0.0', stderr: '' });
+
+    const first = await strictDetector.detect();
+    const second = await strictDetector.detect();
+
+    expect(first.found).toBe(false);
+    expect(second).toBe(first);
+    expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
+  });
+
+  describe('when the first --version probe timed out and the slow retry runs', () => {
+    // A child killed by the probe's own timeout: the two fields `isProbeTimeout` reads.
+    function childTimeout(): Error {
+      return Object.assign(new Error('Command timed out'), { killed: true, signal: 'SIGTERM' });
+    }
+
+    it('probes again when the retry gets no answer from the pty host', async () => {
+      vi.mocked(execVersion)
+        .mockRejectedValueOnce(childTimeout())
+        .mockRejectedValueOnce(new PtyHostTimeoutError('exec'))
+        .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+      const detector = makeClaudeLikeDetector();
+
+      expect((await detector.detect()).found).toBe(false);
+      expect(await detector.detect()).toEqual({ found: true, path: claudePath, version: '2.1.316' });
+
+      // The first detection spent both probes (the plain one, then the slow retry
+      // with a longer budget), and the second detection probed afresh.
+      expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(execVersion)).toHaveBeenNthCalledWith(1, claudePath);
+      expect(vi.mocked(execVersion)).toHaveBeenNthCalledWith(2, claudePath, expect.any(Number));
+      expect(vi.mocked(execVersion)).toHaveBeenNthCalledWith(3, claudePath);
+    });
+
+    it('still caches a NOT FOUND when the retry fails with an exit code', async () => {
+      vi.mocked(execVersion)
+        .mockRejectedValueOnce(childTimeout())
+        .mockRejectedValueOnce(Object.assign(new Error('Command failed'), { code: 1, stderr: 'Error: Cannot find module' }));
+      const detector = makeClaudeLikeDetector();
+
+      const first = await detector.detect();
+      expect(first.found).toBe(false);
+      expect(await detector.detect()).toBe(first);
+      expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe('an override the pty host did not answer for', () => {
+    const overridePath = '/opt/tools/claude';
+
+    it.each([
+      ['timed out', new PtyHostTimeoutError('exec')],
+      ['exited', new PtyHostExitedError('The pty host exited and did not answer exec in time')],
+    ])('probes the override again after the pty host %s, and finds the CLI', async (_label, hostError) => {
+      vi.mocked(execVersion)
+        .mockRejectedValueOnce(hostError)
+        .mockResolvedValueOnce({ stdout: '2.1.316 (Claude Code)', stderr: '' });
+      const detector = makeClaudeLikeDetector();
+
+      const first = await detector.detect(overridePath);
+      expect(first).toMatchObject({ found: false, path: overridePath, version: null });
+      // The user sees why it failed, not a bare "not found".
+      expect(first.detectionError).toBeTruthy();
+      expect(await detector.detect(overridePath)).toEqual({ found: true, path: overridePath, version: '2.1.316' });
+      expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(2);
+    });
+
+    it('still caches the override\'s NOT FOUND when the probe failed with an exit code', async () => {
+      vi.mocked(execVersion).mockRejectedValue(Object.assign(new Error('Command failed'), { code: 1, stderr: 'Error: Cannot find module' }));
+      const detector = makeClaudeLikeDetector();
+
+      const first = await detector.detect(overridePath);
+      expect(first).toMatchObject({ found: false, path: overridePath });
+      expect(await detector.detect(overridePath)).toBe(first);
+      expect(vi.mocked(execVersion)).toHaveBeenCalledTimes(1);
+    });
   });
 });
 

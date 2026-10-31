@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   windowElapsedPercentage,
+  isRateLimitWindowExpired,
+  liveRateLimitWindows,
   mergeRateLimitSnapshot,
+  rateLimitWindowsShortestFirst,
   type RateLimitSnapshot,
 } from '../../src/renderer/utils/rate-limit-window';
 import { RATE_LIMIT_RESET_EPSILON_SECONDS } from '../../src/shared/types';
@@ -44,13 +47,71 @@ describe('windowElapsedPercentage', () => {
   });
 });
 
-// Fixed epochs throughout: the merge compares reported `resetsAt` values only,
-// never the wall clock, so every case here is fully deterministic.
+describe('isRateLimitWindowExpired / liveRateLimitWindows', () => {
+  const RESETS_AT = 2_000_000; // arbitrary fixed epoch seconds
+
+  function windowResettingAt(resetsAt: number, id: string = 'seven-day'): RateLimitWindow {
+    return { id, label: id, iconKind: 'period', usedPercentage: 10, resetsAt };
+  }
+
+  it('is not expired before the reset time', () => {
+    expect(isRateLimitWindowExpired(windowResettingAt(RESETS_AT), RESETS_AT * 1000 - 1)).toBe(false);
+  });
+
+  it('is expired exactly at the reset time and after it', () => {
+    expect(isRateLimitWindowExpired(windowResettingAt(RESETS_AT), RESETS_AT * 1000)).toBe(true);
+    expect(isRateLimitWindowExpired(windowResettingAt(RESETS_AT), RESETS_AT * 1000 + 60_000)).toBe(true);
+  });
+
+  it('never expires a window whose reset time is unknown (0 or below)', () => {
+    // The parser turns a missing or malformed resets_at into 0.
+    expect(isRateLimitWindowExpired(windowResettingAt(0), RESETS_AT * 1000)).toBe(false);
+    expect(isRateLimitWindowExpired(windowResettingAt(-1), RESETS_AT * 1000)).toBe(false);
+  });
+
+  it('returns the same array when no window has lapsed, and a filtered copy when one has', () => {
+    const windows = [windowResettingAt(RESETS_AT - 10, 'five-hour'), windowResettingAt(RESETS_AT + 10)];
+    expect(liveRateLimitWindows(windows, (RESETS_AT - 20) * 1000)).toBe(windows);
+
+    const live = liveRateLimitWindows(windows, RESETS_AT * 1000);
+    expect(live).not.toBe(windows);
+    expect(live.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day']);
+    expect(windows).toHaveLength(2);
+  });
+});
+
+describe('rateLimitWindowsShortestFirst', () => {
+  function windowLasting(id: string, windowDurationSeconds?: number): RateLimitWindow {
+    return { id, label: id, iconKind: 'period', usedPercentage: 10, resetsAt: 2_000_000, windowDurationSeconds };
+  }
+
+  it('puts the shortest window first and leaves the input untouched', () => {
+    const windows = [windowLasting('seven-day', 604_800), windowLasting('five-hour', 18_000)];
+    expect(rateLimitWindowsShortestFirst(windows).map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day']);
+    expect(windows.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day', 'five-hour']);
+  });
+
+  it('keeps windows with no fixed duration after the rest, in their own order', () => {
+    const windows = [windowLasting('open-a'), windowLasting('seven-day', 604_800), windowLasting('open-b'), windowLasting('five-hour', 18_000)];
+    expect(rateLimitWindowsShortestFirst(windows).map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day', 'open-a', 'open-b']);
+  });
+});
+
+// Fixed epochs throughout, and every merge passes one fixed `nowMs` that sits
+// before every reset time below, so no window expires unless a case says so.
+// The comparison between two reports never reads a clock, so every case here
+// is fully deterministic.
 describe('mergeRateLimitSnapshot', () => {
   const FIVE_HOUR_SECONDS = 5 * 60 * 60; // 18000
   const SEVEN_DAY_SECONDS = 7 * 24 * 60 * 60; // 604800
   const FIVE_HOUR_RESET = 2_000_000; // arbitrary fixed epoch seconds
   const SEVEN_DAY_RESET = 3_000_000;
+  // Before every fixture's resetsAt, including the anchor-drift case's 1000s.
+  const BEFORE_ANY_RESET_MS = 500 * 1000;
+
+  function merge(current: RateLimitSnapshot | null, incoming: RateLimitSnapshot): RateLimitSnapshot {
+    return mergeRateLimitSnapshot(current, incoming, BEFORE_ANY_RESET_MS);
+  }
 
   function fiveHour(usedPercentage: number, resetsAt: number = FIVE_HOUR_RESET): RateLimitWindow {
     return {
@@ -80,14 +141,14 @@ describe('mergeRateLimitSnapshot', () => {
 
   it('returns the incoming snapshot unchanged when current is null (seed)', () => {
     const incoming = snapshot([fiveHour(30), sevenDay(10)], 'sess-a', 1000);
-    expect(mergeRateLimitSnapshot(null, incoming)).toBe(incoming);
+    expect(merge(null, incoming)).toBe(incoming);
   });
 
   it('raises usedPercentage when the same window reports higher, updating provenance', () => {
     const current = snapshot([fiveHour(30), sevenDay(10)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(55), sevenDay(18)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result).not.toBe(current);
     expect(result.rateLimits[0].usedPercentage).toBe(55);
     expect(result.rateLimits[1].usedPercentage).toBe(18);
@@ -102,28 +163,28 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(98), sevenDay(19)], 'sess-fresh', 1000);
     const incoming = snapshot([fiveHour(71), sevenDay(14)], 'sess-stale', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('returns the exact current reference when the same window reports an equal value', () => {
     const current = snapshot([fiveHour(40), sevenDay(12)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(40), sevenDay(12)], 'sess-b', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('treats a resetsAt jitter within the epsilon as the same window (lower rejected)', () => {
     const current = snapshot([fiveHour(80, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(70, FIVE_HOUR_RESET - 30)], 'sess-b', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('treats a resetsAt jitter within the epsilon as the same window (higher raised)', () => {
     const current = snapshot([fiveHour(80, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(85, FIVE_HOUR_RESET + 30)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result.rateLimits[0].usedPercentage).toBe(85);
     expect(result.sourceSessionId).toBe('sess-b');
   });
@@ -134,14 +195,14 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(90, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(3, FIVE_HOUR_RESET + RATE_LIMIT_RESET_EPSILON_SECONDS)], 'sess-b', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('treats a delta of one second past the epsilon as a rollover', () => {
     const current = snapshot([fiveHour(90, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(3, FIVE_HOUR_RESET + RATE_LIMIT_RESET_EPSILON_SECONDS + 1)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result.rateLimits[0].usedPercentage).toBe(3);
   });
 
@@ -152,7 +213,7 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(40, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(70, FIVE_HOUR_RESET - RATE_LIMIT_RESET_EPSILON_SECONDS)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result.rateLimits[0].usedPercentage).toBe(70);
     expect(result.rateLimits[0].resetsAt).toBe(FIVE_HOUR_RESET);
     expect(result.sourceSessionId).toBe('sess-b');
@@ -163,7 +224,7 @@ describe('mergeRateLimitSnapshot', () => {
     const incoming = snapshot([fiveHour(95, FIVE_HOUR_RESET - RATE_LIMIT_RESET_EPSILON_SECONDS - 1)], 'sess-b', 2000);
 
     // Older window (delta < -EPSILON): ignored even though 95 > 40. Exact current reference kept.
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('takes a rolled-over window wholesale even when its usedPercentage is lower', () => {
@@ -172,7 +233,7 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(96, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(2, FIVE_HOUR_RESET + FIVE_HOUR_SECONDS)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result).not.toBe(current);
     expect(result.rateLimits[0].usedPercentage).toBe(2);
     expect(result.rateLimits[0].resetsAt).toBe(FIVE_HOUR_RESET + FIVE_HOUR_SECONDS);
@@ -185,7 +246,7 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(40, FIVE_HOUR_RESET)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(95, FIVE_HOUR_RESET - FIVE_HOUR_SECONDS)], 'sess-b', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('does not let the anchor drift across successive same-window updates (a real rollover is still detected)', () => {
@@ -195,15 +256,15 @@ describe('mergeRateLimitSnapshot', () => {
     // genuine rollover (delta +61 from the pinned anchor, past the epsilon) and is
     // taken wholesale. If the anchor had drifted to 1060, +1 would look same-window
     // and the fresh low value would be wrongly rejected as stale.
-    const step1 = mergeRateLimitSnapshot(null, snapshot([fiveHour(10, 1000)], 'sess-a', 1));
-    const step2 = mergeRateLimitSnapshot(step1, snapshot([fiveHour(20, 1030)], 'sess-b', 2));
-    const step3 = mergeRateLimitSnapshot(step2, snapshot([fiveHour(30, 1060)], 'sess-c', 3));
+    const step1 = merge(null, snapshot([fiveHour(10, 1000)], 'sess-a', 1));
+    const step2 = merge(step1, snapshot([fiveHour(20, 1030)], 'sess-b', 2));
+    const step3 = merge(step2, snapshot([fiveHour(30, 1060)], 'sess-c', 3));
     // Anchor is still pinned to 1000 through the same-window raises.
     expect(step3.rateLimits[0].resetsAt).toBe(1000);
     expect(step3.rateLimits[0].usedPercentage).toBe(30);
 
     // A genuine rollover: resetsAt 1061 is > epsilon past the pinned anchor (1000).
-    const rolledOver = mergeRateLimitSnapshot(step3, snapshot([fiveHour(5, 1061)], 'sess-d', 4));
+    const rolledOver = merge(step3, snapshot([fiveHour(5, 1061)], 'sess-d', 4));
     expect(rolledOver.rateLimits[0].usedPercentage).toBe(5);
     expect(rolledOver.rateLimits[0].resetsAt).toBe(1061);
   });
@@ -212,7 +273,7 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(30)], 'sess-a', 1000);
     const incoming = snapshot([fiveHour(30), sevenDay(12)], 'sess-b', 2000);
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result).not.toBe(current);
     expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day']);
     expect(result.rateLimits[1].usedPercentage).toBe(12);
@@ -225,7 +286,7 @@ describe('mergeRateLimitSnapshot', () => {
 
     // Only five-hour is in incoming and it is equal, so nothing changes: the
     // preserved seven-day window keeps the whole snapshot reference-stable.
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('applies a mixed outcome in one report: raises one window, ignores a stale sibling', () => {
@@ -236,7 +297,7 @@ describe('mergeRateLimitSnapshot', () => {
       2000,
     );
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     expect(result).not.toBe(current);
     expect(result.rateLimits[0].usedPercentage).toBe(60); // raised
     expect(result.rateLimits[1].usedPercentage).toBe(20); // stale sibling ignored
@@ -247,12 +308,12 @@ describe('mergeRateLimitSnapshot', () => {
     const current = snapshot([fiveHour(30)], 'sess-a', 1000);
     const incoming = snapshot([], 'sess-b', 2000);
 
-    expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+    expect(merge(current, incoming)).toBe(current);
   });
 
   it('returns the incoming empty-array snapshot when current is null', () => {
     const incoming = snapshot([], 'sess-b', 2000);
-    expect(mergeRateLimitSnapshot(null, incoming)).toBe(incoming);
+    expect(merge(null, incoming)).toBe(incoming);
   });
 
   it('preserves current window order and appends new ids at the end', () => {
@@ -263,7 +324,7 @@ describe('mergeRateLimitSnapshot', () => {
       2000,
     );
 
-    const result = mergeRateLimitSnapshot(current, incoming);
+    const result = merge(current, incoming);
     // Current order (seven-day, five-hour) is preserved; the new id is appended.
     expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day', 'five-hour', 'one-hour']);
   });
@@ -274,13 +335,85 @@ describe('mergeRateLimitSnapshot', () => {
     const incomingWindows = [fiveHour(80), sevenDay(40)];
     const incoming = snapshot(incomingWindows, 'sess-b', 2000);
 
-    mergeRateLimitSnapshot(current, incoming);
+    merge(current, incoming);
 
     expect(current.rateLimits).toBe(currentWindows);
     expect(current.rateLimits[0].usedPercentage).toBe(30);
     expect(current.sourceSessionId).toBe('sess-a');
     expect(incoming.rateLimits).toBe(incomingWindows);
     expect(incoming.rateLimits[0].usedPercentage).toBe(80);
+  });
+
+  describe('lapsed windows (resetsAt passed)', () => {
+    // Claude Code drops a window from its payload once its resets_at passes, and
+    // an Ultra plan never sends the 5h window. These cases pass their own nowMs.
+    const AFTER_FIVE_HOUR_RESET_MS = (FIVE_HOUR_RESET + 60) * 1000;
+
+    it('drops a held window that lapsed even though the incoming report omits it', () => {
+      // A session from yesterday held 5h + 7d. Today's report carries only 7d.
+      const current = snapshot([fiveHour(57), sevenDay(56)], 'sess-yesterday', 1000);
+      const incoming = snapshot([sevenDay(56)], 'sess-today', 2000);
+
+      const result = mergeRateLimitSnapshot(current, incoming, AFTER_FIVE_HOUR_RESET_MS);
+      expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day']);
+      expect(result.rateLimits[0].usedPercentage).toBe(56);
+    });
+
+    it('keeps the current provenance when the only change is a dropped lapsed window', () => {
+      const current = snapshot([fiveHour(57), sevenDay(56)], 'sess-yesterday', 1000);
+      const incoming = snapshot([sevenDay(40)], 'sess-stale', 2000);
+
+      const result = mergeRateLimitSnapshot(current, incoming, AFTER_FIVE_HOUR_RESET_MS);
+      expect(result).not.toBe(current);
+      expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.usedPercentage)).toEqual([56]);
+      expect(result.capturedAt).toBe(1000);
+      expect(result.sourceSessionId).toBe('sess-yesterday');
+    });
+
+    it('ignores a sibling re-sending a lapsed window and returns the exact current reference', () => {
+      // The sibling's last payload still carries the 5h window it saw before the
+      // reset. It must not bring the bar back, and a repeat must not re-render.
+      const current = snapshot([sevenDay(56)], 'sess-ultra', 1000);
+      const incoming = snapshot([fiveHour(57), sevenDay(56)], 'sess-sibling', 2000);
+
+      expect(mergeRateLimitSnapshot(current, incoming, AFTER_FIVE_HOUR_RESET_MS)).toBe(current);
+    });
+
+    it('drops a lapsed window from the first snapshot (null current)', () => {
+      const incoming = snapshot([fiveHour(57), sevenDay(56)], 'sess-sibling', 2000);
+
+      const result = mergeRateLimitSnapshot(null, incoming, AFTER_FIVE_HOUR_RESET_MS);
+      expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day']);
+      expect(result.capturedAt).toBe(2000);
+      expect(result.sourceSessionId).toBe('sess-sibling');
+      expect(incoming.rateLimits).toHaveLength(2);
+    });
+
+    it('keeps a window whose resetsAt is unknown (0)', () => {
+      const current = snapshot([fiveHour(30, 0)], 'sess-a', 1000);
+      const incoming = snapshot([fiveHour(30, 0)], 'sess-b', 2000);
+
+      expect(mergeRateLimitSnapshot(current, incoming, AFTER_FIVE_HOUR_RESET_MS)).toBe(current);
+      expect(mergeRateLimitSnapshot(null, incoming, AFTER_FIVE_HOUR_RESET_MS)).toBe(incoming);
+    });
+
+    it('leaves an empty window list once every window has lapsed', () => {
+      const afterEveryReset = (SEVEN_DAY_RESET + 60) * 1000;
+      const current = snapshot([fiveHour(57), sevenDay(56)], 'sess-a', 1000);
+      const incoming = snapshot([fiveHour(57), sevenDay(56)], 'sess-b', 2000);
+
+      expect(mergeRateLimitSnapshot(current, incoming, afterEveryReset).rateLimits).toEqual([]);
+    });
+
+    it('appends a 5h window that comes back after its reset, and the pill order puts it first again', () => {
+      const current = snapshot([fiveHour(57), sevenDay(56)], 'sess-a', 1000);
+      const pruned = mergeRateLimitSnapshot(current, snapshot([sevenDay(56)], 'sess-a', 2000), AFTER_FIVE_HOUR_RESET_MS);
+      const nextWindowReset = FIVE_HOUR_RESET + FIVE_HOUR_SECONDS;
+      const reopened = mergeRateLimitSnapshot(pruned, snapshot([fiveHour(3, nextWindowReset), sevenDay(57)], 'sess-a', 3000), AFTER_FIVE_HOUR_RESET_MS);
+
+      expect(reopened.rateLimits.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day', 'five-hour']);
+      expect(rateLimitWindowsShortestFirst(reopened.rateLimits).map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['five-hour', 'seven-day']);
+    });
   });
 
   describe('reset generation (stamped by main)', () => {
@@ -292,7 +425,7 @@ describe('mergeRateLimitSnapshot', () => {
       const current = snapshot([stamped(sevenDay(99), 0)], 'sess-a', 1000);
       const incoming = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 2000);
 
-      const result = mergeRateLimitSnapshot(current, incoming);
+      const result = merge(current, incoming);
       expect(result).not.toBe(current);
       expect(result.rateLimits[0].usedPercentage).toBe(1);
       expect(result.rateLimits[0].generation).toBe(1);
@@ -303,14 +436,14 @@ describe('mergeRateLimitSnapshot', () => {
       const current = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 1000);
       const incoming = snapshot([stamped(sevenDay(99), 0)], 'sess-b', 2000);
 
-      expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+      expect(merge(current, incoming)).toBe(current);
     });
 
     it('keeps the anchor pinned when a higher generation lands with resetsAt jitter', () => {
       const current = snapshot([stamped(sevenDay(99, SEVEN_DAY_RESET), 0)], 'sess-a', 1000);
       const incoming = snapshot([stamped(sevenDay(1, SEVEN_DAY_RESET + 30), 1)], 'sess-a', 2000);
 
-      const result = mergeRateLimitSnapshot(current, incoming);
+      const result = merge(current, incoming);
       expect(result.rateLimits[0].usedPercentage).toBe(1);
       expect(result.rateLimits[0].resetsAt).toBe(SEVEN_DAY_RESET);
     });
@@ -322,43 +455,43 @@ describe('mergeRateLimitSnapshot', () => {
       const current = snapshot([stamped(sevenDay(20, SEVEN_DAY_RESET + SEVEN_DAY_SECONDS), 0)], 'sess-a', 1000);
       const incoming = snapshot([stamped(sevenDay(1, SEVEN_DAY_RESET), 1)], 'sess-b', 2000);
 
-      expect(mergeRateLimitSnapshot(current, incoming)).toBe(current);
+      expect(merge(current, incoming)).toBe(current);
     });
 
     it('takes a rollover even from a lower generation', () => {
       const current = snapshot([stamped(sevenDay(40, SEVEN_DAY_RESET), 2)], 'sess-a', 1000);
       const incoming = snapshot([stamped(sevenDay(3, SEVEN_DAY_RESET + SEVEN_DAY_SECONDS), 1)], 'sess-b', 2000);
 
-      const result = mergeRateLimitSnapshot(current, incoming);
+      const result = merge(current, incoming);
       expect(result.rateLimits[0].usedPercentage).toBe(3);
       expect(result.rateLimits[0].resetsAt).toBe(SEVEN_DAY_RESET + SEVEN_DAY_SECONDS);
     });
 
     it('applies the usual same-window maximum within one generation', () => {
       const current = snapshot([stamped(sevenDay(1), 1)], 'sess-a', 1000);
-      const raised = mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(3), 1)], 'sess-c', 2000));
+      const raised = merge(current, snapshot([stamped(sevenDay(3), 1)], 'sess-c', 2000));
       expect(raised.rateLimits[0].usedPercentage).toBe(3);
 
-      expect(mergeRateLimitSnapshot(raised, snapshot([stamped(sevenDay(2), 1)], 'sess-a', 3000))).toBe(raised);
+      expect(merge(raised, snapshot([stamped(sevenDay(2), 1)], 'sess-a', 3000))).toBe(raised);
     });
 
     it('reads an absent generation as 0', () => {
       const current = snapshot([sevenDay(99)], 'sess-a', 1000);
-      const reset = mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(1), 1)], 'sess-b', 2000));
+      const reset = merge(current, snapshot([stamped(sevenDay(1), 1)], 'sess-b', 2000));
       expect(reset.rateLimits[0].usedPercentage).toBe(1);
 
       // An unstamped report is generation 0, behind the held generation 1.
-      expect(mergeRateLimitSnapshot(reset, snapshot([sevenDay(99)], 'sess-c', 3000))).toBe(reset);
+      expect(merge(reset, snapshot([sevenDay(99)], 'sess-c', 3000))).toBe(reset);
       // An explicit 0 merges like an absent one.
-      expect(mergeRateLimitSnapshot(current, snapshot([stamped(sevenDay(50), 0)], 'sess-d', 2000))).toBe(current);
+      expect(merge(current, snapshot([stamped(sevenDay(50), 0)], 'sess-d', 2000))).toBe(current);
     });
 
     it('folds to the same result in either order', () => {
       const stale = snapshot([stamped(fiveHour(40), 0), stamped(sevenDay(99), 0)], 'sess-stale', 1000);
       const fresh = snapshot([stamped(fiveHour(40), 0), stamped(sevenDay(1), 1)], 'sess-fresh', 2000);
 
-      const staleFirst = mergeRateLimitSnapshot(mergeRateLimitSnapshot(null, stale), fresh);
-      const freshFirst = mergeRateLimitSnapshot(mergeRateLimitSnapshot(null, fresh), stale);
+      const staleFirst = merge(merge(null, stale), fresh);
+      const freshFirst = merge(merge(null, fresh), stale);
       for (const result of [staleFirst, freshFirst]) {
         expect(result.rateLimits.map((rateLimitWindow) => rateLimitWindow.usedPercentage)).toEqual([40, 1]);
       }

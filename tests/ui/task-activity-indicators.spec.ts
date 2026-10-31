@@ -1182,9 +1182,10 @@ test.describe('Task Activity Indicators', () => {
       }
     });
 
-    test('formatResetTime returns "Resets now" when resetsAt is in the past', async () => {
-      // The <=0 branch in formatResetTime: when epochSeconds * 1000 - Date.now() <= 0.
-      // Both windows use resetsAt = now - 60s so both lines should show "Resets now".
+    test('hides the pill once every window\'s resetsAt has passed', async () => {
+      // Claude Code stops reporting a window once its resets_at passes, so a
+      // lapsed window is dropped rather than shown as "Resets now". Both windows
+      // here reset 60s ago, which leaves nothing to show.
       const { browser, page } = await launchWithState(
         makePreConfig({ sessionStatus: 'running', activity: 'idle', withUsage: true, withRateLimits: true, rateLimitResetsInPast: true })
       );
@@ -1196,16 +1197,10 @@ test.describe('Task Activity Indicators', () => {
 
         const contextBar = page.locator('[data-testid="usage-bar"].min-h-8');
         await expect(contextBar).toBeVisible({ timeout: 10000 });
-
-        const pill = contextBar.locator('[data-testid="rate-limits-pill"]');
-        await expect(pill).toBeVisible();
-
-        const description = await pill.getAttribute('aria-description');
-        expect(description).toBeTruthy();
-        // Both windows reset in the past, so both parts should contain "Resets now".
-        // We check that the description contains "Resets now" at all - two occurrences
-        // would require splitting, but one is sufficient to confirm the branch fires.
-        expect(description).toContain('Resets now');
+        // The seeded snapshot reached the store (its windows dropped to none), so
+        // a missing pill below is the expiry, not a seed that never arrived.
+        await expect.poll(() => page.evaluate('window.__zustandStores.session.getState().latestRateLimits !== null')).toBe(true);
+        await expect(contextBar.locator('[data-testid="rate-limits-pill"]')).toHaveCount(0);
 
         await page.locator('[data-testid="task-detail-close"]').click();
         await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });

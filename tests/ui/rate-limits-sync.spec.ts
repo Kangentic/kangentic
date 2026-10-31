@@ -49,14 +49,37 @@ async function launchWithState(preConfigScript: string): Promise<{ browser: Brow
 }
 
 /**
- * Pre-configure two tasks, each backed by its own session, and seed the
- * usage cache with different rateLimits for each. The two entries share the
- * same `resetsAt` (same fixed windows), so the monotonic per-window merge keeps
- * the higher "fresh" values (73/41) as the snapshot regardless of iteration
- * order. The `getUsage` map below inserts the fresh entry FIRST specifically to
- * prove order independence (last-writer-wins would have shown the stale 18/4).
+ * Each session's rateLimits, as JavaScript array expressions evaluated inside
+ * the page's `getUsage` stub, where `nowSeconds` is in scope.
  */
-function makePreConfig(): string {
+interface SeededWindows {
+  fresh: string;
+  stale: string;
+}
+
+/**
+ * The two entries share the same `resetsAt` (same fixed windows), so the
+ * monotonic per-window merge keeps the higher "fresh" values (73/41).
+ */
+const TWO_WINDOW_SEED: SeededWindows = {
+  fresh: `[
+    { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
+    { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
+  ]`,
+  stale: `[
+    { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
+    { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
+  ]`,
+};
+
+/**
+ * Pre-configure two tasks, each backed by its own session, and seed the
+ * usage cache with different rateLimits for each (`TWO_WINDOW_SEED` unless a
+ * case passes its own). The `getUsage` map below inserts the fresh entry FIRST
+ * specifically to prove order independence (last-writer-wins would have shown
+ * the stale 18/4).
+ */
+function makePreConfig(seededWindows: SeededWindows = TWO_WINDOW_SEED): string {
   return `
     window.__mockPreConfigure(function (state) {
       var ts = new Date().toISOString();
@@ -141,12 +164,11 @@ function makePreConfig(): string {
       return { currentProjectId: '${PROJECT_ID}' };
     });
 
-    // Seed two distinct rateLimits snapshots that share the same resetsAt (same
-    // fixed windows). The FRESH entry (73/41) is inserted FIRST and the stale
-    // entry (18/4) LAST: the monotonic per-window merge still keeps 73/41, which
-    // last-writer-wins would not have. Both entries anchor to a single captured
-    // nowSeconds so the two windows line up exactly (well within the merge's
-    // reset epsilon).
+    // Seed the two sessions' rateLimits. The FRESH entry is inserted FIRST and
+    // the stale entry LAST: the monotonic per-window merge still keeps the
+    // fresher values, which last-writer-wins would not have. Both entries anchor
+    // to a single captured nowSeconds so the two windows line up exactly (well
+    // within the merge's reset epsilon).
     window.electronAPI.sessions.getUsage = async function () {
       var nowSeconds = Math.floor(Date.now() / 1000);
       var baseUsage = {
@@ -156,21 +178,31 @@ function makePreConfig(): string {
       };
       var result = {};
       result['${SESSION_FRESH_ID}'] = Object.assign({}, baseUsage, {
-        rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 73, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 41, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
-        ],
+        rateLimits: ${seededWindows.fresh},
       });
       result['${SESSION_STALE_ID}'] = Object.assign({}, baseUsage, {
-        rateLimits: [
-          { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 18, resetsAt: nowSeconds + 3600, windowDurationSeconds: 5 * 60 * 60 },
-          { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 4, resetsAt: nowSeconds + 86400 * 5, windowDurationSeconds: 7 * 24 * 60 * 60 },
-        ],
+        rateLimits: ${seededWindows.stale},
       });
       return result;
     };
   `;
 }
+
+/**
+ * Claude reports only the windows that apply. The fresh session is an Ultra
+ * plan (no 5h window, 7d at 56%). The stale session is yesterday's: its last
+ * payload still carries a 5h window that reset a minute ago, beside an older 7d
+ * number. Only the 7d bar may show, at the fresher 56%.
+ */
+const ONE_WINDOW_SEED: SeededWindows = {
+  fresh: `[
+    { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 56, resetsAt: nowSeconds + 86400 * 3, windowDurationSeconds: 7 * 24 * 60 * 60 },
+  ]`,
+  stale: `[
+    { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 57, resetsAt: nowSeconds - 60, windowDurationSeconds: 5 * 60 * 60 },
+    { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 50, resetsAt: nowSeconds + 86400 * 3, windowDurationSeconds: 7 * 24 * 60 * 60 },
+  ]`,
+};
 
 test.describe('Rate limits cross-session sync', () => {
   let browser: Browser;
@@ -343,5 +375,80 @@ test.describe('Rate limits cross-session sync', () => {
     await expect(tip).toHaveCount(0);
     await page.locator('[data-testid="task-detail-close"]').click();
     await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'hidden', timeout: 3000 });
+  });
+});
+
+test.describe('Rate limits with one reported window', () => {
+  // Each case launches its own page: the second one writes the store directly,
+  // and the file runs its tests in parallel.
+
+  async function openFreshTaskPill(page: Page) {
+    await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+    await page.locator(`[data-task-id="${TASK_FRESH_ID}"]`).first().click();
+    await page.locator('[data-testid="task-detail-dialog"]').waitFor({ state: 'visible' });
+    const contextBar = page.locator('[data-testid="task-detail-dialog"] [data-testid="usage-bar"].min-h-8');
+    await expect(contextBar).toBeVisible({ timeout: 10000 });
+    return contextBar.locator('[data-testid="rate-limits-pill"]');
+  }
+
+  test('a 7d-only report shows one bar, and a sibling\'s lapsed 5h window stays out', async () => {
+    const { browser, page } = await launchWithState(makePreConfig(ONE_WINDOW_SEED));
+    try {
+      const pill = await openFreshTaskPill(page);
+      await expect(pill).toBeVisible();
+
+      const fills = pill.locator('span.block.h-full.rounded-full');
+      await expect(fills).toHaveCount(1);
+      expect(await fills.first().evaluate((fillElement) => (fillElement as HTMLElement).style.width)).toBe('56%');
+      await expect(pill.locator('[data-testid="rate-limit-time-marker"]')).toHaveCount(1);
+      await expect(pill).toContainText('56%');
+      await expect(pill).not.toContainText('57%');
+
+      await expect(pill).toHaveAccessibleDescription(/^7d weekly 56%\. Resets /);
+      const description = await pill.getAttribute('aria-description');
+      expect(description).not.toContain('5h session');
+
+      await pill.hover();
+      const tip = page.locator('[data-testid="rate-limits-tip"]');
+      await expect(tip).toBeVisible();
+      const windows = tip.locator('[data-testid="rate-limits-tip-window"]');
+      await expect(windows).toHaveCount(1);
+      await expect(windows.first()).toContainText('7d weekly');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a lapsed window already in the snapshot is not drawn', async () => {
+    // Write the snapshot straight into the store, past the merge, so only the
+    // pill's own expiry stands between the lapsed 5h window and the screen.
+    const { browser, page } = await launchWithState(makePreConfig(ONE_WINDOW_SEED));
+    try {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.evaluate(() => {
+        const nowSeconds = Math.floor(Date.now() / 1000);
+        const stores = (window as unknown as {
+          __zustandStores: { session: { setState: (patch: Record<string, unknown>) => void } };
+        }).__zustandStores;
+        stores.session.setState({
+          latestRateLimits: {
+            rateLimits: [
+              { id: 'five-hour', label: '5h session', iconKind: 'session', usedPercentage: 57, resetsAt: nowSeconds - 60, windowDurationSeconds: 5 * 60 * 60 },
+              { id: 'seven-day', label: '7d weekly', iconKind: 'period', usedPercentage: 56, resetsAt: nowSeconds + 86400 * 3, windowDurationSeconds: 7 * 24 * 60 * 60 },
+            ],
+            capturedAt: Date.now(),
+            sourceSessionId: 'sess-rate-limits-stale',
+          },
+        });
+      });
+
+      const pill = await openFreshTaskPill(page);
+      await expect(pill).toBeVisible();
+      await expect(pill.locator('span.block.h-full.rounded-full')).toHaveCount(1);
+      await expect(pill).toContainText('56%');
+      await expect(pill).not.toContainText('57%');
+    } finally {
+      await browser.close();
+    }
   });
 });
