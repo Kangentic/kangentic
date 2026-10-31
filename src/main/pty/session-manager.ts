@@ -3667,6 +3667,26 @@ export class SessionManager extends EventEmitter {
   }
 
   /**
+   * Record the name the user gave a Command Terminal.
+   *
+   * Unlike the namer's write, this replaces a name the terminal already has, and
+   * a blank name clears it back to "Command Terminal N". The namer's own write
+   * stays first-write-wins, so it cannot replace a name set here, even when its
+   * answer lands after the rename. Announced on 'session-changed' like the
+   * namer's. Returns whether the name changed; unknown or non-transient
+   * sessions are ignored.
+   */
+  renameCommandTerminalLabel(sessionId: string, label: string): boolean {
+    const session = this.registry.get(sessionId);
+    if (!session || !isCommandTerminalSession(session)) return false;
+    const nextLabel = label.trim() || null;
+    if ((session.commandTerminalLabel ?? null) === nextLabel) return false;
+    session.commandTerminalLabel = nextLabel;
+    this.emit('session-changed', sessionId, toSession(session));
+    return true;
+  }
+
+  /**
    * Record where a Command Terminal's checkout actually sits now.
    *
    * The spawn stamps the branch it checked out, but the main checkout's HEAD is

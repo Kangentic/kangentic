@@ -86,6 +86,12 @@ export class CommandTerminalHistory {
    */
   private readonly promptBeforeRow = new Map<string, string>();
   /**
+   * Terminals the user renamed before their agent reported its id. A resumed
+   * terminal's row already holds its old name, which recording keeps, so the
+   * rename is written over it once the id records the row.
+   */
+  private readonly renamedBeforeRow = new Set<string>();
+  /**
    * Conversations a resume is starting, by agent session id, with the terminal
    * that took each once it spawned (null while the start runs). A resumed
    * terminal reports its agent's id a second or two after it spawns, so until
@@ -118,7 +124,30 @@ export class CommandTerminalHistory {
     }
     this.heldBySession.clear();
     this.promptBeforeRow.clear();
+    this.renamedBeforeRow.clear();
     this.resumesInFlight.clear();
+  }
+
+  /**
+   * The user renamed a live terminal (`SessionManager.renameCommandTerminalLabel`
+   * has already applied it). Its row takes the new name, or loses its name for
+   * null. Before the agent reports its id there is no row yet, so the rename
+   * waits for the one that id records.
+   */
+  renameLabel(sessionId: string, label: string | null): void {
+    if (this.disposed) return;
+    const held = this.heldBySession.get(sessionId);
+    if (!held) {
+      this.renamedBeforeRow.add(sessionId);
+      return;
+    }
+    const repository = this.deps.getRepository(held.projectId);
+    if (!repository) return;
+    // A cleared name leaves the row unnamed, so a name the namer still gives
+    // it is recorded like any first name.
+    held.labeled = label !== null;
+    this.write(() => repository.renameLabel(held.agentSessionId, label), 'rename');
+    this.deps.notifyChanged(held.projectId);
   }
 
   /**
@@ -266,6 +295,10 @@ export class CommandTerminalHistory {
     }), 'record');
     const conversation: HeldConversation = { projectId, agentSessionId, touched, labeled: label !== null, prompted: false };
     this.heldBySession.set(sessionId, conversation);
+    if (this.renamedBeforeRow.delete(sessionId)) {
+      // Recording kept a resumed row's old name; the user's rename replaces it.
+      this.write(() => repository.renameLabel(agentSessionId, label), 'rename');
+    }
     const earlyPrompt = this.promptBeforeRow.get(sessionId);
     if (earlyPrompt !== undefined) {
       this.promptBeforeRow.delete(sessionId);
@@ -321,6 +354,7 @@ export class CommandTerminalHistory {
   private readonly onSessionRemoved: SessionListener = (sessionId) => {
     this.releaseResumesOf(sessionId);
     this.promptBeforeRow.delete(sessionId);
+    this.renamedBeforeRow.delete(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (!held) return;
     this.heldBySession.delete(sessionId);

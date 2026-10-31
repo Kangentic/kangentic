@@ -177,6 +177,7 @@ export const IPC = {
   SESSION_SPAWN_TRANSIENT: 'session:spawnTransient',
   SESSION_KILL_TRANSIENT: 'session:killTransient',
   SESSION_SET_TRANSIENT_BRANCH: 'session:setTransientBranch',
+  SESSION_SET_TRANSIENT_LABEL: 'session:setTransientLabel',
   COMMAND_TERMINAL_HISTORY_LIST: 'commandTerminalHistory:list',
   COMMAND_TERMINAL_HISTORY_CHANGED: 'commandTerminalHistory:changed',
   SESSION_SET_FOCUSED: 'session:setFocused',

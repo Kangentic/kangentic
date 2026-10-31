@@ -168,7 +168,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   effort, in the shared answer home), and is off when no Automation agent is set: the terminal
   keeps "Command Terminal N". A resumed terminal is seeded with its conversation's label, so the
   namer skips it. Display reads `commandTerminalLabel` off the registry row through
-  `commandTerminalDisplayName`; there is no renderer-side label. The namer needs the prompt's
+  `commandTerminalDisplayName`; there is no renderer-side label. A user's rename
+  (`session:setTransientLabel`) goes to main too, replaces the label through
+  `renameCommandTerminalLabel`, and clears it when blank. The namer's write stays
+  first-write-wins, so it never replaces a name the user gave, in either order. The namer needs the prompt's
   text on the Prompt event, so `startCommandTerminal` passes `capturePromptText` and an adapter
   whose hooks are per-session (Claude) copies its prompt payload into `detail`. Never set that
   flag on a task spawn: task events stay free of prompt text.
@@ -299,7 +302,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
 - **Test (UI):** `tests/ui/command-terminal.spec.ts` covers the panel (layout, move, resize,
   maximize), the rail and Earlier, Expand, Swap, Open in new window (including a page booted as
   the detached window that adopts its running terminal and starts no second one), a removal push
-  closing its window, and a branch switch keeping it. `command-terminal-branch.spec.ts` and
+  closing its window, a branch switch keeping it, and a rename from the title, the kebab and a
+  Running row. `transient-session-set-label-handler.test.ts` pins the rename's handler. `command-terminal-branch.spec.ts` and
   `sidebar-command-terminals.spec.ts` cover the branch pill and the sidebar indicator.
 - **Review:** the header layout ordering and the title-bar placement are visual conventions with
   no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.

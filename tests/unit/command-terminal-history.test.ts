@@ -166,6 +166,92 @@ describe('CommandTerminalHistory', () => {
     expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'Early name' }]);
   });
 
+  it('replaces the recorded name with a rename and refreshes Earlier', async () => {
+    const { sessions, history, notifyChanged } = setup();
+    sessions.add('pty-1', { hasUserInput: true });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.change('pty-1', { commandTerminalLabel: 'Fix the flaky drag test' });
+    notifyChanged.mockClear();
+
+    // The handler applies the rename to the row first, then hands it here.
+    sessions.change('pty-1', { commandTerminalLabel: 'Drag test' });
+    history.renameLabel('pty-1', 'Drag test');
+    expect(notifyChanged).toHaveBeenCalledWith(PROJECT_ID);
+
+    sessions.remove('pty-1');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'Drag test' }]);
+  });
+
+  it('records a name given after a rename cleared it', async () => {
+    const { sessions, history, repository } = setup();
+    sessions.add('pty-1', { hasUserInput: true, commandTerminalLabel: 'Fix the flaky drag test' });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+
+    sessions.change('pty-1', { commandTerminalLabel: null });
+    history.renameLabel('pty-1', null);
+    expect(repository.get('conversation-a')?.label).toBeNull();
+
+    sessions.change('pty-1', { commandTerminalLabel: 'Drag test' });
+    expect(repository.get('conversation-a')?.label).toBe('Drag test');
+  });
+
+  it("puts a rename made before the agent reported its id over a resumed row's old name", async () => {
+    const { sessions, history, repository } = setup();
+    repository.recordConversation({ agentSessionId: 'conversation-a', agentName: 'claude', cwd: '/projects/demo', label: 'Old name', touched: true });
+    repository.markEnded('conversation-a', new Date().toISOString());
+
+    // The resume seeds the old name; the user renames before the agent reports its id.
+    sessions.add('pty-2', { hasUserInput: true, commandTerminalLabel: 'Old name' });
+    sessions.change('pty-2', { commandTerminalLabel: 'New name' });
+    history.renameLabel('pty-2', 'New name');
+    sessions.reportAgentId('pty-2', 'conversation-a');
+
+    expect(repository.get('conversation-a')?.label).toBe('New name');
+    sessions.remove('pty-2');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'New name' }]);
+  });
+
+  it('forgets a rename made before the agent reported its id once the terminal is removed', () => {
+    const { sessions, history, repository } = setup();
+    repository.recordConversation({ agentSessionId: 'conversation-a', agentName: 'claude', cwd: '/projects/demo', label: 'Old name', touched: true });
+    repository.markEnded('conversation-a', new Date().toISOString());
+    const renameLabel = vi.spyOn(repository, 'renameLabel');
+
+    // The rename finds no row to write, so it waits for the id. The terminal is
+    // removed before its agent ever reports one.
+    sessions.add('pty-2', { hasUserInput: true, commandTerminalLabel: 'Old name' });
+    sessions.change('pty-2', { commandTerminalLabel: 'New name' });
+    history.renameLabel('pty-2', 'New name');
+    sessions.remove('pty-2');
+
+    // An id reaching the removed terminal's key afterwards records its row and
+    // writes nothing over the name it already holds. Re-adding the id stands in
+    // for any late report under it. The label the re-added session carries
+    // differs from the row's name, so a rename that survived the removal would
+    // replace 'Old name' with it.
+    sessions.add('pty-2', { hasUserInput: true, commandTerminalLabel: 'Name the late report carries' });
+    sessions.reportAgentId('pty-2', 'conversation-a');
+
+    expect(renameLabel).not.toHaveBeenCalled();
+    expect(repository.get('conversation-a')?.label).toBe('Old name');
+  });
+
+  it('releases the renames still waiting for an agent id when it is disposed', () => {
+    const { sessions, history } = setup();
+    // Private on purpose: a disposed record ignores every event and every call,
+    // so nothing public can show that a waiting rename was dropped. The check is
+    // that the set that held it is empty, as `heldBySession` and the first-prompt
+    // buffer are cleared beside it.
+    const waitingRenames = (history as unknown as { renamedBeforeRow: ReadonlySet<string> }).renamedBeforeRow;
+
+    sessions.add('pty-2', { hasUserInput: true });
+    history.renameLabel('pty-2', 'New name');
+    expect(waitingRenames.has('pty-2')).toBe(true);
+
+    history.dispose();
+    expect(waitingRenames.size).toBe(0);
+  });
+
   it('keeps the first prompt, on one line, for a conversation nothing named', async () => {
     const { sessions, history } = setup();
     sessions.add('pty-1', { hasUserInput: true });

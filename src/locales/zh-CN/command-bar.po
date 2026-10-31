@@ -108,6 +108,17 @@ msgstr "在新窗口中打开"
 msgid "Open project folder"
 msgstr "打开项目文件夹"
 
+#: src/renderer/components/command-bar/CommandTerminalContextMenu.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Rename"
+msgstr "重命名"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Rename terminal"
+msgstr ""
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Restore panel"
 msgstr "还原面板"

@@ -8063,6 +8063,11 @@ export interface ElectronAPI {
      *  Monitor row and a post-reload adopt agree with the pill. Last write
      *  wins, unlike the label: HEAD moves, and the newest reading is true. */
     setTransientBranch: (sessionId: string, branch: string) => Promise<void>;
+    /** The name the user gave a Command Terminal. It replaces the namer's
+     *  name and outlasts its later answer; a blank name clears it back to
+     *  "Command Terminal N". Main announces it on `session:status`, and its
+     *  Earlier row keeps it for a resume. */
+    setTransientLabel: (sessionId: string, label: string) => Promise<void>;
     /** A project's earlier Command Terminal conversations, newest first. */
     listCommandTerminalHistory: (projectId: string) => Promise<CommandTerminalHistoryEntry[]>;
     /** A project's earlier conversations changed: re-list them. */

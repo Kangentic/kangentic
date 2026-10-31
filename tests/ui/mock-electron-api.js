@@ -2950,6 +2950,23 @@
           session.commandTerminalBranch = trimmed;
         }
       },
+      setTransientLabel: async function (sessionId, label) {
+        // Mirrors main: the user's name replaces any name the terminal has, a
+        // blank one clears it, and the change is announced on session:status.
+        // Call log for assertions: window.__mockSetTransientLabelCalls.
+        if (typeof window !== 'undefined') {
+          window.__mockSetTransientLabelCalls = window.__mockSetTransientLabelCalls || [];
+          window.__mockSetTransientLabelCalls.push({ sessionId: sessionId, label: label });
+        }
+        var session = sessions.find(function (candidate) { return candidate.id === sessionId; });
+        if (!session || !session.transient) return;
+        var nextLabel = (label || '').trim() || null;
+        if ((session.commandTerminalLabel || null) === nextLabel) return;
+        session.commandTerminalLabel = nextLabel;
+        if (typeof window !== 'undefined' && window.__mockFireStatus) {
+          window.__mockFireStatus(sessionId, Object.assign({}, session));
+        }
+      },
       // A project's earlier Command Terminal conversations. Seed with
       // window.__mockCommandTerminalHistory = { [projectId]: CommandTerminalHistoryEntry[] };
       // nothing seeded answers an empty list, as a project with no ended

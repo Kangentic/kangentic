@@ -750,6 +750,10 @@ msgstr "Impossibile rimuovere l'attività"
 msgid "Couldn't rename task"
 msgstr "Impossibile rinominare il task"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

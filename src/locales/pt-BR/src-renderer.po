@@ -750,6 +750,10 @@ msgstr "Não foi possível remover a tarefa"
 msgid "Couldn't rename task"
 msgstr "Não foi possível renomear a tarefa"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

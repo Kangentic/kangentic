@@ -16,9 +16,9 @@ import { withoutSessionsIndexed } from './session-index';
  * key) so value-iterating consumers (the focused set, the removal subscriber)
  * can filter by project without parsing the key.
  *
- * The terminal's NAME is not here: main derives it and stamps it on the session
- * row (`Session.commandTerminalLabel`), which the window title reads from the
- * replica.
+ * The terminal's NAME is not here: main holds it on the session row
+ * (`Session.commandTerminalLabel`), the namer's or the one a rename sent it,
+ * and the window title reads it from the replica.
  */
 export interface TransientSessionEntry {
   projectId: string;
@@ -233,6 +233,10 @@ export interface TransientSessionSlice {
   /** Inject a live model/effort change into a transient session's PTY (no DB persistence).
    *  Surfaces a toast on failure; the live pill updates when the CLI echoes the new value. */
   injectTransientSettings: (input: SessionInjectSettingsInput) => Promise<void>;
+  /** Give a Command Terminal the user's name, or clear it with a blank one. Main
+   *  applies it and announces it, so the title changes when the replica does.
+   *  Surfaces a toast on failure. */
+  setTransientSessionLabel: (sessionId: string, label: string) => Promise<void>;
 }
 
 /**
@@ -496,6 +500,18 @@ export function createTransientSessionSlice(preserved: {
       } catch (error) {
         useToastStore.getState().addToast({
           title: i18n._(msg`Couldn't apply model or effort`),
+          message: asSentence(describeIpcError(error, '')),
+          variant: 'error',
+        });
+      }
+    },
+
+    setTransientSessionLabel: async (sessionId, label) => {
+      try {
+        await window.electronAPI.sessions.setTransientLabel(sessionId, label);
+      } catch (error) {
+        useToastStore.getState().addToast({
+          title: i18n._(msg`Couldn't rename terminal`),
           message: asSentence(describeIpcError(error, '')),
           variant: 'error',
         });

@@ -750,6 +750,10 @@ msgstr "Úlohu se nepodařilo odebrat"
 msgid "Couldn't rename task"
 msgstr "Úlohu nelze přejmenovat"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

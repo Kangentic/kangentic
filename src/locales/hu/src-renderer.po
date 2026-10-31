@@ -750,6 +750,10 @@ msgstr "Nem sikerült eltávolítani a feladatot"
 msgid "Couldn't rename task"
 msgstr "Nem sikerült átnevezni a feladatot"
 
+#: src/renderer/stores/session-store/transient-session-slice.ts
+msgid "Couldn't rename terminal"
+msgstr ""
+
 #: src/renderer/stores/workflow-store.ts
 #, fuzzy
 msgid "Couldn't rename the workflow"

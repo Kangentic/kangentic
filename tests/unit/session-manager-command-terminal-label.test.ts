@@ -1,5 +1,6 @@
 /**
- * Unit tests for SessionManager.setCommandTerminalLabel.
+ * Unit tests for SessionManager.setCommandTerminalLabel and
+ * renameCommandTerminalLabel.
  *
  * Main derives a Command Terminal's name (`CommandTerminalNamer`) and records it
  * here; an applied name is announced on 'session-changed', which is how the
@@ -7,7 +8,9 @@
  *
  * The guards matter because the namer is fire-and-forget: a session that ended
  * during the summarize, a task agent, or a second derivation must not corrupt
- * or overwrite a name the user already knows the terminal by.
+ * or overwrite a name the user already knows the terminal by. A rename is the
+ * user's, so it replaces any name, and the namer's first-write-wins then keeps
+ * it from coming back over the user's.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
@@ -119,5 +122,60 @@ describe('SessionManager.setCommandTerminalLabel', () => {
     manager.setCommandTerminalLabel('term-1', '   ');
 
     expect(announced).toEqual([{ id: 'term-1', label: 'Fix the parser' }]);
+  });
+});
+
+describe('SessionManager.renameCommandTerminalLabel', () => {
+  let manager: SessionManager;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    manager = new SessionManager();
+  });
+
+  it('replaces the name the namer gave the terminal', () => {
+    register(manager, { id: 'term-1' });
+    manager.setCommandTerminalLabel('term-1', 'Fix the parser');
+    expect(manager.renameCommandTerminalLabel('term-1', '  Parser work  ')).toBe(true);
+    expect(labelOf(manager, 'term-1')).toBe('Parser work');
+  });
+
+  it('keeps a rename made before the namer answers', () => {
+    register(manager, { id: 'term-1' });
+    manager.renameCommandTerminalLabel('term-1', 'Parser work');
+    expect(manager.setCommandTerminalLabel('term-1', 'Fix the parser')).toBe(false);
+    expect(labelOf(manager, 'term-1')).toBe('Parser work');
+  });
+
+  it('clears the name on a blank rename, so the terminal shows its slot again', () => {
+    register(manager, { id: 'term-1', commandTerminalLabel: 'Fix the parser' });
+    expect(manager.renameCommandTerminalLabel('term-1', '   ')).toBe(true);
+    expect(labelOf(manager, 'term-1')).toBeNull();
+  });
+
+  it('refuses an unchanged name, a task agent and an unknown session', () => {
+    register(manager, { id: 'term-1', commandTerminalLabel: 'Fix the parser' });
+    register(manager, { id: 'agent-1', transient: false });
+    expect(manager.renameCommandTerminalLabel('term-1', 'Fix the parser')).toBe(false);
+    expect(manager.renameCommandTerminalLabel('agent-1', 'Parser work')).toBe(false);
+    expect(labelOf(manager, 'agent-1')).toBeUndefined();
+    expect(manager.renameCommandTerminalLabel('gone', 'Parser work')).toBe(false);
+  });
+
+  it('announces an applied rename on session-changed and a refused one not at all', () => {
+    register(manager, { id: 'term-1' });
+    const announced: Array<{ id: string; label: string | null | undefined }> = [];
+    manager.on('session-changed', (id: string, session: { commandTerminalLabel?: string | null }) => {
+      announced.push({ id, label: session.commandTerminalLabel });
+    });
+
+    manager.renameCommandTerminalLabel('term-1', 'Parser work');
+    manager.renameCommandTerminalLabel('term-1', 'Parser work');
+    manager.renameCommandTerminalLabel('term-1', '');
+
+    expect(announced).toEqual([
+      { id: 'term-1', label: 'Parser work' },
+      { id: 'term-1', label: null },
+    ]);
   });
 });

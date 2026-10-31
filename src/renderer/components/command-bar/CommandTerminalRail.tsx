@@ -5,7 +5,7 @@
  *
  * Running lists the terminals behind the expanded one. Each row's mark is that
  * terminal's own Stop button, so one can be stopped without bringing it back,
- * and its title expands it instead.
+ * and its title expands it instead. A right-click on the row renames it.
  *
  * Earlier has no heading until a conversation has ended, then shows as many
  * rows as fit the rail and never scrolls: the list is a
@@ -26,7 +26,9 @@ import { isActive, requiresUserInteraction } from '../../../shared/activity-stat
 import { commandTerminalDisplayName, commandTerminalHistoryName } from '../../../shared/command-terminal-name';
 import { StopButtonIcon } from './StopButtonIcon';
 import { NewTerminalButton } from './NewTerminalButton';
+import { CommandTerminalContextMenu } from './CommandTerminalContextMenu';
 import { useCommandTerminalHistory } from './useCommandTerminalHistory';
+import { useCommandTerminalRename } from './useCommandTerminalRename';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
 
 /** A terminal behind the expanded one, as the Running list names it. */
@@ -94,6 +96,7 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
   const activity = useSessionStore((state) => (sessionId ? state.sessionActivity[sessionId] : undefined));
   const [stopping, setStopping] = useState(false);
   const name = commandTerminalDisplayName(label, terminal.slot);
+  const rename = useCommandTerminalRename(sessionId, label, name);
   const isThinking = sessionId !== null && isActive(activity);
   const isIdle = sessionId !== null && requiresUserInteraction(activity);
 
@@ -105,7 +108,12 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
   };
 
   return (
-    <div className="flex h-9 flex-shrink-0 items-center gap-2.5 rounded-md px-2 hover:bg-surface-hover" data-testid="command-terminal-running-row" data-command-slot={terminal.slot}>
+    <div
+      className="flex h-9 flex-shrink-0 items-center gap-2.5 rounded-md px-2 hover:bg-surface-hover"
+      onContextMenu={rename.onContextMenu}
+      data-testid="command-terminal-running-row"
+      data-command-slot={terminal.slot}
+    >
       <Tooltip label={t`Ends the terminal, and Earlier keeps its conversation if it was used`}>
         <button
           type="button"
@@ -120,17 +128,27 @@ function RunningRow({ projectId, terminal, onExpand, onStop }: RunningRowProps) 
           <StopButtonIcon isThinking={isThinking} isIdle={isIdle} stopping={stopping} />
         </button>
       </Tooltip>
-      <Tooltip label={name}>
-        <button
-          type="button"
-          onClick={() => onExpand(terminal.windowId)}
-          className="min-w-0 flex-1 truncate text-left text-[13px] text-fg"
-          aria-label={t`Expand ${name}`}
-          data-testid="command-terminal-running-expand"
-        >
-          {name}
-        </button>
-      </Tooltip>
+      {rename.isRenaming ? (
+        <input
+          {...rename.inputProps}
+          aria-label={t`Rename terminal`}
+          className="min-w-0 flex-1 bg-transparent border-b border-accent text-[13px] text-fg outline-none px-0.5"
+          data-testid="command-terminal-running-rename-input"
+        />
+      ) : (
+        <Tooltip label={name}>
+          <button
+            type="button"
+            onClick={() => onExpand(terminal.windowId)}
+            className="min-w-0 flex-1 truncate text-left text-[13px] text-fg"
+            aria-label={t`Expand ${name}`}
+            data-testid="command-terminal-running-expand"
+          >
+            {name}
+          </button>
+        </Tooltip>
+      )}
+      <CommandTerminalContextMenu position={rename.contextMenuAt} onRename={rename.startRename} onClose={rename.closeContextMenu} />
     </div>
   );
 }

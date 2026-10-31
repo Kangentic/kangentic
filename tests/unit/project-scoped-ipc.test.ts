@@ -71,6 +71,10 @@ const ALLOWLIST_CHANNELS = new Set([
   // re-derived by the renderer and mirrored onto the in-memory registry row.
   // A Command Terminal has no task and no project-scoped record.
   'SESSION_SET_TRANSIENT_BRANCH',
+  // By-session-id: the user's name for a Command Terminal, on its registry row.
+  // Its history row is found from the live terminal's own project, never the
+  // ambient one, so there is no project to stamp.
+  'SESSION_SET_TRANSIENT_LABEL',
 ]);
 
 interface InvokeCall {
