@@ -2613,15 +2613,18 @@ test.describe('Command Terminal', () => {
     return sessions;
   }
 
-  /** Wait until no terminal resize has reached a PTY for a beat, then forget the ones that did. */
-  async function settleResizes(page: Page): Promise<void> {
+  /**
+   * Wait until no terminal resize has reached a PTY for a beat (`quietMs`, 400 ms unless a
+   * caller knows a refit can trail by longer), then forget the ones that did.
+   */
+  async function settleResizes(page: Page, quietMs = 400): Promise<void> {
     let previousCount = -1;
     await expect.poll(async () => {
       const count = await page.evaluate(() => window.electronAPI.sessions.__resizeCalls.length);
       const settled = count === previousCount;
       previousCount = count;
       return settled;
-    }, { intervals: [400], timeout: 8000 }).toBe(true);
+    }, { intervals: [quietMs], timeout: 8000 + 2 * quietMs }).toBe(true);
     await page.evaluate(() => { window.electronAPI.sessions.__resizeCalls.length = 0; });
   }
 
@@ -3191,10 +3194,24 @@ test.describe('Command Terminal', () => {
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first, second } = await openTwoReady(page);
+        // A clean count first, so the seam's own refits are the only ones the wait below can see.
+        await settleResizes(page);
         await dragSeamBy(page, -200);
         await stillTerminals(page, [first, second]);
-        await settleResizes(page);
-        await expectNoFrameHold(page);
+        // The seam's release refits both terminals, each through a frame hold, and when those
+        // reach the PTY layer depends on the runner: measured 130 ms after the release locally,
+        // and 1.2 to 2 s after it, 800 ms apart, under a 20x CPU throttle. Two reads of an
+        // unchanged count cannot tell "no refit is coming" from "not yet", and a refit that
+        // missed the zeroing landed in the east drag below and read as a mid-drag one (CI
+        // failed on step 1 with resizes: 2 and the gate open). Wait for each terminal's refit.
+        for (const sessionId of [first, second]) {
+          await expect.poll(async () => (await resizesOf(page, sessionId)).length, { timeout: 10000, message: `the seam release refits ${sessionId}` })
+            .toBeGreaterThan(0);
+        }
+        await expectNoFrameHold(page, 10000);
+        // A frame hold's grid is sent again once xterm's own resize debounce fires, up to 1.5 s later under
+        // that throttle, so the count is zeroed only after a quiet beat longer than the default 400 ms.
+        await settleResizes(page, 1000);
         await watchFrameHolds(page);
 
         const widthsBefore = await page.evaluate(() => Array.from(document.querySelectorAll('[data-testid="command-terminal-panel"] [data-testid^="window-frame-"]'))
