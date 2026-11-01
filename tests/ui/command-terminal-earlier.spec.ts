@@ -117,6 +117,36 @@ async function openPanel(page: Page): Promise<void> {
   await page.keyboard.press('Control+Shift+P');
   await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
   await expect(page.getByTestId('command-terminal-earlier')).toBeVisible();
+  await waitForTerminalArrival(page);
+}
+
+/**
+ * Wait until the panel's terminal has finished arriving: its xterm is built and has taken the
+ * keyboard, AND its mount replay has asked the arrival-focus arbiter for the second time.
+ *
+ * The window mounts before its terminal does. The terminal then claims the keyboard twice: once
+ * when its deferred init runs (a frame after the spawn lands) and again one frame after its mount
+ * replay is done, about 40 ms later. Both are arrivals, and the arbiter allows both because the
+ * terminal's window is the focused one, wherever the keyboard is by then. A case that starts
+ * typing into the rail's search field right after the first one has its keystrokes taken by
+ * the second: the text lands in the agent's input and the field stays empty. So every case here
+ * starts only after the last arrival, read from the renderer's own trace (dev builds only,
+ * which is what the UI tier runs against).
+ */
+async function waitForTerminalArrival(page: Page): Promise<void> {
+  await expect
+    .poll(
+      async () => page.evaluate(() => {
+        const read = (window as unknown as { __kangenticTerminalTrace?: () => Array<{ event: string }> }).__kangenticTerminalTrace;
+        if (typeof read !== 'function') return false;
+        const trace = read();
+        const replayDone = trace.map((entry) => entry.event).lastIndexOf('replay-done');
+        return replayDone >= 0 && trace.slice(replayDone).some((entry) => entry.event === 'arrival-focus');
+      }),
+      { timeout: 8000, message: 'the terminal never finished arriving (no arrival-focus decision after its mount replay)' },
+    )
+    .toBe(true);
+  await expect(page.locator('[data-testid="command-terminal-window"] .xterm-helper-textarea')).toBeFocused();
 }
 
 function earlierRow(page: Page, agentSessionId: string) {
@@ -347,11 +377,15 @@ test.describe('Earlier list: search answers', () => {
       const field = page.getByTestId('command-terminal-earlier-search');
 
       await field.fill('apple');
+      await expect(field).toHaveValue('apple');
       await expect(page.locator('[data-agent-session-id="by-apple"] mark')).toHaveText('apple');
 
       // The new answer is held, so the stale one is the only text answer there is.
       await seedWindow(page, { __mockHoldCommandTerminalHistorySearch: true });
       await field.fill('appl');
+      // The field holds what was typed, so a row count below is about the query and not about
+      // keystrokes that went elsewhere or a list that was reset.
+      await expect(field).toHaveValue('appl');
       await expect(earlierRow(page, 'by-apple')).toHaveCount(0);
       await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
     } finally {
