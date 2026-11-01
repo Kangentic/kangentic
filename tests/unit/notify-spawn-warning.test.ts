@@ -67,7 +67,7 @@ describe('notifySpawnWarning', () => {
     __resetSpawnWarningCooldownsForTest();
   });
 
-  it('sends taskId, the verbatim message, and the EXPLICIT projectId', () => {
+  it('sends taskId, the verbatim message, the EXPLICIT projectId, and the default kind', () => {
     const send = vi.fn();
     const task = makeTask();
 
@@ -78,6 +78,7 @@ describe('notifySpawnWarning', () => {
       task.id,
       MESSAGE,
       'explicit-project',
+      'base-not-refreshed',
     );
   });
 
@@ -87,7 +88,22 @@ describe('notifySpawnWarning', () => {
 
     notifySpawnWarning(makeContext(send), task, MESSAGE, null, 'network');
 
-    expect(send).toHaveBeenCalledWith(IPC.TASK_SPAWN_WARNING, task.id, MESSAGE, 'ambient-project');
+    expect(send).toHaveBeenCalledWith(IPC.TASK_SPAWN_WARNING, task.id, MESSAGE, 'ambient-project', 'base-not-refreshed');
+  });
+
+  it('carries the kind it is given, which picks the toast title', () => {
+    const send = vi.fn();
+    const task = makeTask();
+
+    notifySpawnWarning(makeContext(send), task, 'init script exited with code 1', 'explicit-project', `setup-script-failed:${task.id}`, 'setup-script-failed');
+
+    expect(send).toHaveBeenCalledExactlyOnceWith(
+      IPC.TASK_SPAWN_WARNING,
+      task.id,
+      'init script exited with code 1',
+      'explicit-project',
+      'setup-script-failed',
+    );
   });
 
   it('suppresses a second warning for the same project and reason within the cooldown', () => {

@@ -227,7 +227,8 @@ Session PTY teardown in the main process (`src/main/pty/**` and its callers unde
 `src/main/transition-engine/**`, `src/main/agent/**`), the Claude adapter's probe PTY, and the
 Claude adapter's `~/.claude.json` writers. The respawn sibling drain in `session-spawn-flow.ts`
 keeps its direct kill: it only ever finds a row whose `pty` is already null, since every kill path
-nulls it first. Two more direct kills in that file kill with no grace for one reason: a spawn
+nulls it first, and `SessionManager.spawn` ends a task's hidden early agent through `kill()` before
+any other spawn for that task reaches it. Two more direct kills in that file kill with no grace for one reason: a spawn
 abandoned because a teardown overtook its host round trip (`abandonCancelledSpawn`), and one
 overtaken by the quit. The host started that PTY one round trip ago, before the agent reaches its
 boot canary. Not covered: a dev restart that terminates Electron without `before-quit`, which no

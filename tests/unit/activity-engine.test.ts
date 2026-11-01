@@ -1154,6 +1154,112 @@ describe('ActivityEngine', () => {
     });
   });
 
+  describe('restartIdleClock (an adopted early agent starts its wait over)', () => {
+    // An agent launched while its worktree's setup script runs sits idle the whole
+    // time, then is adopted by its task. Its idle clock must read "waiting since
+    // adoption", not "since launch", for the card and the idle-timeout sweep.
+    // The engine reads Date.now, which the fake timers drive, so advancing the
+    // timers moves the clock the restart reads.
+    const ELAPSED_MS = 60_000;
+
+    it('restamps idleTimestamp and needsUserSince to now for an idle session and returns true', () => {
+      engine.initSession(SESSION_ID);
+      const seededIdleAt = engine.getState(SESSION_ID)!.idleTimestamp;
+      const seededNeedsUserSince = engine.getState(SESSION_ID)!.needsUserSince;
+      expect(seededIdleAt).not.toBeNull();
+      expect(seededNeedsUserSince).not.toBeNull();
+
+      vi.advanceTimersByTime(ELAPSED_MS);
+      const restartedAt = Date.now();
+      expect(restartedAt - seededIdleAt!).toBe(ELAPSED_MS);
+
+      expect(engine.restartIdleClock(SESSION_ID)).toBe(true);
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('idle');
+      expect(state.idleTimestamp).toBe(restartedAt);
+      expect(state.needsUserSince).toBe(restartedAt);
+    });
+
+    it('pushes the idle activity again through onActivityChange, with a reason whose since is the new clock', () => {
+      engine.initSession(SESSION_ID);
+      transitions.length = 0;
+
+      vi.advanceTimersByTime(ELAPSED_MS);
+      const restartedAt = Date.now();
+      engine.restartIdleClock(SESSION_ID);
+
+      // The activity did not change, but the reason's `since` did, so the push is
+      // the only way the card learns the wait restarted.
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0].sessionId).toBe(SESSION_ID);
+      expect(transitions[0].activity).toBe('idle');
+      expect(transitions[0].reason).toEqual({ kind: 'idle', since: restartedAt });
+      // A later read of the reason agrees with what was pushed.
+      expect(engine.getActivityReason(SESSION_ID)).toEqual({ kind: 'idle', since: restartedAt });
+    });
+
+    it('restarts again from a later now on a second call', () => {
+      engine.initSession(SESSION_ID);
+      vi.advanceTimersByTime(ELAPSED_MS);
+      engine.restartIdleClock(SESSION_ID);
+      transitions.length = 0;
+
+      vi.advanceTimersByTime(ELAPSED_MS);
+      const secondRestartAt = Date.now();
+      expect(engine.restartIdleClock(SESSION_ID)).toBe(true);
+
+      expect(engine.getState(SESSION_ID)!.needsUserSince).toBe(secondRestartAt);
+      expect(transitions).toHaveLength(1);
+      expect(transitions[0].reason).toEqual({ kind: 'idle', since: secondRestartAt });
+    });
+
+    it('is a no-op returning false for a thinking session: no restamp, no push', () => {
+      engine.initSession(SESSION_ID, true);
+      expect(engine.getState(SESSION_ID)!.activity).toBe('thinking');
+      const before = {
+        idleTimestamp: engine.getState(SESSION_ID)!.idleTimestamp,
+        needsUserSince: engine.getState(SESSION_ID)!.needsUserSince,
+      };
+      transitions.length = 0;
+
+      // Stay under the stale-thinking watchdog so the session is still thinking.
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS / 2);
+      expect(engine.restartIdleClock(SESSION_ID)).toBe(false);
+
+      const state = engine.getState(SESSION_ID)!;
+      expect(state.activity).toBe('thinking');
+      expect(state.idleTimestamp).toBe(before.idleTimestamp);
+      expect(state.needsUserSince).toBe(before.needsUserSince);
+      expect(transitions).toHaveLength(0);
+    });
+
+    it('is a no-op returning false for a permission session: its park time is kept and nothing is pushed', () => {
+      // Permission also needs the user, but only an IDLE wait restarts: the
+      // permission prompt really has been waiting since it opened.
+      engine.initSession(SESSION_ID);
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission }));
+      expect(engine.getState(SESSION_ID)!.activity).toBe('permission');
+      const parkedAt = engine.getState(SESSION_ID)!.needsUserSince;
+      expect(parkedAt).not.toBeNull();
+      transitions.length = 0;
+
+      vi.advanceTimersByTime(TEST_STALE_TIMEOUT_MS / 2);
+      expect(engine.restartIdleClock(SESSION_ID)).toBe(false);
+
+      expect(engine.getState(SESSION_ID)!.needsUserSince).toBe(parkedAt);
+      expect(transitions).toHaveLength(0);
+    });
+
+    it('is a no-op returning false for an unknown session id: no push', () => {
+      expect(engine.restartIdleClock('unknown')).toBe(false);
+      expect(transitions).toHaveLength(0);
+      // It does not conjure state for the id either.
+      expect(engine.getState('unknown')).toBeUndefined();
+    });
+  });
+
   describe('ActivityReason discriminated union', () => {
     beforeEach(() => {
       engine.initSession(SESSION_ID);

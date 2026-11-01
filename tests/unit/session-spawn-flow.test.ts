@@ -1212,9 +1212,9 @@ describe('performSpawn - Windows cwd fixup write order', () => {
 describe('performSpawn - activity engine initialTurnActive seed (thinking vs idle)', () => {
   // The activity-indicator feature added a third argument to
   // telemetry.initSession: `initialTurnActive`. performSpawn derives it as
-  // `!input.resuming && !input.transient`. This suite pins that derivation so
-  // a future change to the expression (e.g. hardcoding true/false or dropping
-  // the transient guard) is caught immediately.
+  // `!input.resuming && !input.transient && input.seedIdle !== true`. This suite
+  // pins that derivation so a future change to the expression (e.g. hardcoding
+  // true/false or dropping the transient or seedIdle guard) is caught immediately.
   //
   // Red-green: change `!input.resuming && !input.transient` in
   // session-spawn-flow.ts to `false` and the fresh-spawn test goes red
@@ -1268,6 +1268,39 @@ describe('performSpawn - activity engine initialTurnActive seed (thinking vs idl
     expect(context.telemetry.initSession).toHaveBeenCalledOnce();
     const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(initArgs[2]).toBe(false);
+  });
+
+  // `seedIdle` is the early agent's flag: a fresh task spawn launched while its
+  // worktree's setup script runs carries no prompt, so seeding it thinking would
+  // show a working card for an agent that is parked at its input box.
+  //
+  // Red-green: drop `&& input.seedIdle !== true` from the initSession call in
+  // session-spawn-flow.ts and the seedIdle test goes red (initSession receives
+  // true, the thinking seed, instead of false).
+
+  it('a fresh task spawn with seedIdle passes initialTurnActive=false to telemetry (seeds idle)', async () => {
+    const context = makeContext();
+    const input = makeInput({ resuming: false, transient: false, seedIdle: true });
+
+    await performSpawn(input, context);
+
+    expect(context.telemetry.initSession).toHaveBeenCalledOnce();
+    const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initArgs[2]).toBe(false);
+  });
+
+  it('a fresh task spawn with seedIdle explicitly false still seeds thinking', async () => {
+    // Only `seedIdle: true` flips the seed. A caller that spreads the flag as
+    // false (or leaves it off, as the fresh-spawn test above does) keeps the
+    // thinking seed, so the flag cannot turn every spawn idle by being merely present.
+    const context = makeContext();
+    const input = makeInput({ resuming: false, transient: false, seedIdle: false });
+
+    await performSpawn(input, context);
+
+    expect(context.telemetry.initSession).toHaveBeenCalledOnce();
+    const initArgs = (context.telemetry.initSession as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(initArgs[2]).toBe(true);
   });
 });
 

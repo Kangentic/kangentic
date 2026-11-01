@@ -107,6 +107,36 @@ describe('pickOverridableSubset', () => {
     expect(result).toEqual({ theme: 'ember' });
   });
 
+  it('keeps a project override of git.holdPromptForInitScript, false included', () => {
+    // holdPromptForInitScript defaults to true, so `false` is the interesting
+    // value: it is a project's deliberate opt-out of holding the agent's prompt
+    // while the worktree script runs. A truthiness check anywhere in the pick
+    // would drop it, and the project would silently fall back to the default.
+    const optedOut = pickOverridableSubset({
+      git: { holdPromptForInitScript: false },
+    } as unknown as Parameters<typeof pickOverridableSubset>[0]);
+    expect(optedOut).toEqual({ git: { holdPromptForInitScript: false } });
+
+    const optedIn = pickOverridableSubset({
+      git: { holdPromptForInitScript: true },
+    } as unknown as Parameters<typeof pickOverridableSubset>[0]);
+    expect(optedIn).toEqual({ git: { holdPromptForInitScript: true } });
+  });
+
+  it('omits git.holdPromptForInitScript when the source does not set it', () => {
+    // An unset override must stay unset, not become an explicit value, so the
+    // project keeps following the global default.
+    const withOtherGitSettings = pickOverridableSubset({
+      git: { initScript: 'npm install', linkNodeModules: true },
+    } as unknown as Parameters<typeof pickOverridableSubset>[0]) as { git?: Record<string, unknown> };
+    expect(withOtherGitSettings.git).toEqual({ initScript: 'npm install', linkNodeModules: true });
+    expect(withOtherGitSettings.git).not.toHaveProperty('holdPromptForInitScript');
+
+    // With nothing else under `git` either, no git block is written at all.
+    const noGitBlock = pickOverridableSubset({ theme: 'ember' } as Parameters<typeof pickOverridableSubset>[0]);
+    expect(noGitBlock).not.toHaveProperty('git');
+  });
+
   it('preserves the full overridable key set when every setting is present', () => {
     const fullConfig = {
       theme: 'ocean',
