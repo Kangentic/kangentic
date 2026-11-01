@@ -671,6 +671,8 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    through the spawn's own Claude before the command is built. A quit stops nothing, so this is
    what stops a background session a terminal open at the quit left running, from either row:
    one that took no turn wrote no transcript, and Earlier offers only the conversation it left.
+   Measured in a `/preview` after an in-app restart: resuming that row left the background
+   session `stopped`, and the start took 1.8 s, against 0.3 s for an ordinary resume.
    A row that is the background session resumes by the id `resolveResumableSessionId` returns,
    claiming that one too, and refuses with `conversation-open` when another terminal holds it. A
    row the move left keeps its own id, by decision: its transcript holds the conversation up to
