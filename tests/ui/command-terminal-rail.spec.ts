@@ -164,6 +164,9 @@ async function edgeGrab(page: Page): Promise<{ x: number; y: number }> {
 
 test.describe('Command Terminal rail', () => {
   test('opens at 300px; an edge drag widens it live and the panel with it, saves once on release, and the terminals keep their size', async () => {
+    // A recorded edge drag: 8 s locally and 13.6 to 16 s on a CI runner, so the 15 s
+    // default has no room there.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
