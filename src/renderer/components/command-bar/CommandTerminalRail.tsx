@@ -52,9 +52,6 @@ import { useCommandTerminalRename } from './useCommandTerminalRename';
 import { useRailTerminalMenuActions, type RailCommandTerminal } from './useRailTerminalMenuActions';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
 
-/** A terminal in the panel, as the Running list and the strip name it. */
-export type RunningCommandTerminal = RailCommandTerminal;
-
 /** One Earlier row (44px) plus the 2px gap between rows. */
 const EARLIER_ROW_PITCH_PX = 46;
 const EARLIER_ROW_GAP_PX = 2;
@@ -123,7 +120,7 @@ const MARK_TONE_CLASS: Record<RailTerminalState, string> = {
 };
 
 /** One terminal's session, activity and name, for its row or its strip mark. */
-function useRailTerminal(projectId: string | null, terminal: RunningCommandTerminal) {
+function useRailTerminal(projectId: string | null, terminal: RailCommandTerminal) {
   const sessionId = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, terminal.slot)]?.sessionId ?? null : null);
   const rename = useCommandTerminalRename(sessionId, terminal.slot);
@@ -137,17 +134,17 @@ function useRailTerminal(projectId: string | null, terminal: RunningCommandTermi
 
 interface RunningRowProps {
   projectId: string | null;
-  terminal: RunningCommandTerminal;
+  terminal: RailCommandTerminal;
   /** This terminal is the one in front: the expanded one, else the focused tile. */
   front: boolean;
   onBringToFront: (windowId: string) => void;
-  onStop: (terminal: RunningCommandTerminal) => Promise<void>;
+  onStop: (terminal: RailCommandTerminal) => Promise<void>;
 }
 
 /** One terminal: its live Stop button, then its name, which brings it to the front. */
 function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: RunningRowProps) {
   const { t } = useLingui();
-  const { sessionId, rename, state } = useRailTerminal(projectId, terminal);
+  const { rename, state } = useRailTerminal(projectId, terminal);
   const [stopping, setStopping] = useState(false);
   const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const name = rename.displayName;
@@ -161,12 +158,13 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
     await onStop(terminal);
   };
 
-  const menuActions = useRailTerminalMenuActions(projectId, terminal, sessionId, {
+  const menuActions = useRailTerminalMenuActions(projectId, terminal, {
     onBringToFront,
     onStop: () => { void handleStop(); },
     stopping,
     // Here, in the row: the terminal stays where it is.
     onRename: rename.startEditing,
+    renameDisabledReason: rename.disabledReason,
   });
 
   return (
@@ -200,7 +198,7 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
         <CommandTerminalNameField
           initialName={name}
           slot={terminal.slot}
-          onCommit={(value) => rename.commit(value)}
+          onCommit={(value, byKey) => rename.commit(value, byKey)}
           onCancel={rename.cancel}
           className="text-[13px] leading-5"
           data-testid="command-terminal-running-name-field"
@@ -244,7 +242,7 @@ function RunningMark({ projectId, terminal, front, onBringToFront, onStop }: Run
   // Starting, there is no agent yet: the envelope's rest, muted.
   const mark = sessionId === null ? 'agent-idle' : agentActivityMark(activity, activityReason);
 
-  const menuActions = useRailTerminalMenuActions(projectId, terminal, sessionId, {
+  const menuActions = useRailTerminalMenuActions(projectId, terminal, {
     onBringToFront,
     onStop: () => {
       if (stopping) return;
@@ -257,6 +255,7 @@ function RunningMark({ projectId, terminal, front, onBringToFront, onStop }: Run
       onBringToFront(terminal.windowId);
       useSessionStore.getState().requestCommandTerminalWindowAction(projectId, terminal.slot, 'rename');
     },
+    renameDisabledReason: rename.disabledReason,
   });
 
   return (
@@ -374,7 +373,7 @@ interface CommandTerminalRailProps {
   /** Every terminal slot is taken. */
   atCap: boolean;
   /** Every terminal in the panel, in the order they tile. */
-  terminals: RunningCommandTerminal[];
+  terminals: RailCommandTerminal[];
   /** The terminal in front: the expanded one, else the focused tile. */
   frontWindowId: string | null;
   /** The width the terminals need beside the rail: the grid at the pane floor. */
@@ -383,7 +382,7 @@ interface CommandTerminalRailProps {
   onResume: (entry: CommandTerminalHistoryEntry) => void;
   /** Expand a terminal over the others while one is expanded; focus it while they tile. */
   onBringToFront: (windowId: string) => void;
-  onStop: (terminal: RunningCommandTerminal) => Promise<void>;
+  onStop: (terminal: RailCommandTerminal) => Promise<void>;
   /** Run a change that resizes the terminals so each holds its frame until it repaints. */
   onLayoutChange: (change: () => void) => void;
 }

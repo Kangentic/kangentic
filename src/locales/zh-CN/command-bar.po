@@ -31,8 +31,7 @@ msgstr "{name}（工作中）"
 msgid "Add terminal"
 msgstr "添加终端"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "终端启动后可用"

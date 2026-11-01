@@ -49,7 +49,7 @@ import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/term
 import type { AgentCommand, Session } from '../../../shared/types';
 import { useCommandTerminalLayer } from './command-terminal-context';
 import { CommandTerminalMenuItems } from './CommandTerminalMenuItems';
-import { runCommandTerminalShortcut } from './command-terminal-shortcuts';
+import { isHeaderShortcut, isMenuShortcut, runCommandTerminalShortcut } from './command-terminal-shortcuts';
 import { CommandTerminalNameField } from './CommandTerminalNameField';
 import { useCommandTerminalRename } from './useCommandTerminalRename';
 import { StopButtonIcon } from './StopButtonIcon';
@@ -210,20 +210,14 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   // tells the terminals apart, since every other fact in this header (agent,
   // model, branch, cwd) is the same for all of a project's terminals.
   const rename = useCommandTerminalRename(sessionId, slot);
-  const renameDisabledReason = sessionId ? null : t`Available once the terminal starts`;
+  const renameDisabledReason = rename.disabledReason;
   // The Commands palette anchors to its pill when visible, else to the kebab (so
   // it still opens after the pill has folded into the overflow menu).
   const kebabWrapRef = useRef<HTMLDivElement>(null);
 
-  const headerShortcuts = useMemo(
-    () => shortcuts.filter((action) => action.command && (!action.display || action.display === 'header' || action.display === 'both')),
-    [shortcuts],
-  );
+  const headerShortcuts = useMemo(() => shortcuts.filter(isHeaderShortcut), [shortcuts]);
 
-  const menuShortcuts = useMemo(
-    () => shortcuts.filter((action) => action.command && (!action.display || action.display === 'menu' || action.display === 'both')),
-    [shortcuts],
-  );
+  const menuShortcuts = useMemo(() => shortcuts.filter(isMenuShortcut), [shortcuts]);
 
   // Quick-access pills fold into the kebab in DESCENDING priority as the window
   // narrows, so the title always wins the space fight (useHeaderPillOverflow).
@@ -619,7 +613,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
               initialName={windowTitle}
               slot={slot}
               onCommit={(value, byKey) => {
-                rename.commit(value);
+                rename.commit(value, byKey);
                 if (byKey) focusThisTerminal();
               }}
               onCancel={() => {

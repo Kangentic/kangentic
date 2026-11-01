@@ -42,7 +42,7 @@ import { heldSplitSizes, TILE_GAP_PX } from '../../window-manager/tiling/resolve
 import { COMMAND_PANEL_HEADER_HEIGHT_PX, CommandTerminalPanel } from './CommandTerminalPanel';
 import { CommandTerminalRail } from './CommandTerminalRail';
 import { COMMAND_RAIL_COLLAPSED_WIDTH_PX, COMMAND_RAIL_DEFAULT_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
-import type { RunningCommandTerminal } from './CommandTerminalRail';
+import type { RailCommandTerminal } from './useRailTerminalMenuActions';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
@@ -349,7 +349,7 @@ function useArrangeOnPopulationChange(): void {
 /** Every terminal in the panel in the order they tile, for the rail's Running
  *  list and its strip, and the one in front: the expanded one, else the focused
  *  tile. A window not yet in the tile tree follows the placed ones. */
-function useRailTerminals(): { terminals: RunningCommandTerminal[]; frontWindowId: string | null } {
+function useRailTerminals(): { terminals: RailCommandTerminal[]; frontWindowId: string | null } {
   const windowIds = commandWindowManager.store(useShallow((state) => {
     const placed = windowIdsInReadingOrder(state.tileTree).filter((id) => state.windows[id] !== undefined);
     return [...placed, ...Object.keys(state.windows).filter((id) => !placed.includes(id))];
@@ -613,7 +613,7 @@ export function CommandTerminalLayer({ onHide, host = 'panel' }: { onHide: () =>
       document.querySelector<HTMLElement>(`[data-testid="window-frame-${windowId}"] .xterm-helper-textarea`)?.focus();
     });
   }, []);
-  const handleStopRunning = useCallback(async (terminal: RunningCommandTerminal) => {
+  const handleStopRunning = useCallback(async (terminal: RailCommandTerminal) => {
     await killCommandTerminalInSlot(terminal.slot);
     // The arrange bridge re-tiles the rest; with one left, nothing stays expanded.
     changeLayout(() => commandWindowManager.store.getState().closeWindow(terminal.windowId));

@@ -109,11 +109,15 @@ export function useCommandTerminalRail(
   const gestureRef = useRef<RailGesture | null>(null);
   const panelWidth = usePanelWidthChange();
 
-  // The row the rail shares with the terminals, measured as it changes.
+  // The row the rail shares with the terminals, measured as it changes. Not
+  // while the edge drags: the drag resizes the panel every frame, the rail
+  // shows the drag's own width meanwhile, and its end measures the row once.
   useLayoutEffect(() => {
     const row = railRef.current?.parentElement;
     if (!row) return;
-    const measure = (): void => setRowWidth(row.clientWidth);
+    const measure = (): void => {
+      if (!gestureRef.current) setRowWidth(row.clientWidth);
+    };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(row);

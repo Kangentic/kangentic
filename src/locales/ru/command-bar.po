@@ -32,8 +32,7 @@ msgstr "{name} (работает)"
 msgid "Add terminal"
 msgstr "Добавить терминал"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "Доступно после запуска терминала"
@@ -143,7 +142,7 @@ msgstr "Скрыть панель"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Hide rail"
-msgstr "Скрыть панель"
+msgstr "Скрыть боковую панель"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -179,7 +178,7 @@ msgstr "Открыть папку проекта"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Rail width"
-msgstr "Ширина панели"
+msgstr "Ширина боковой панели"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
@@ -226,7 +225,7 @@ msgstr "Показать изменения"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Show rail"
-msgstr "Показать панель"
+msgstr "Показать боковую панель"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

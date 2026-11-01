@@ -3,7 +3,9 @@
  * (`transient-session-slice.ts`): a row asks a slot to resume a conversation,
  * the slot's window takes the request exactly once, and a request no window
  * took is dropped when that slot's window closes, so the next terminal opened
- * there starts fresh instead of resuming a conversation nobody asked for.
+ * there starts fresh instead of resuming a conversation nobody asked for. The
+ * same slice also hands a slot's window the action a Running row's menu asked
+ * for (`requestCommandTerminalWindowAction`).
  */
 
 import { describe, it, expect, vi } from 'vitest';
@@ -74,5 +76,61 @@ describe('Command Terminal resume requests', () => {
     const before = getState().pendingCommandTerminalResumes;
     getState().dropCommandTerminalResumesExcept('proj-1', new Set(['slot-1']));
     expect(getState().pendingCommandTerminalResumes).toBe(before);
+  });
+});
+
+/**
+ * The Running row's menu hand-off to a Command Terminal window: a row asks a
+ * slot's window to do something once it is in front (rename, commands, switch
+ * branch, toggle changes), and the window takes the request exactly once.
+ */
+describe('Command Terminal window action requests', () => {
+  it('hands a slot its action once, and nothing after', () => {
+    const { slice, getState } = makeSliceStore();
+    slice.requestCommandTerminalWindowAction('proj-1', 'slot-2', 'rename');
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-2')).toBe('rename');
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-2')).toBeNull();
+    // Taking cleared the entry, it did not just report it.
+    expect(getState().pendingCommandTerminalWindowActions[transientKey('proj-1', 'slot-2')]).toBeUndefined();
+  });
+
+  it('answers null when nothing was requested', () => {
+    const { slice, getState } = makeSliceStore();
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-1')).toBeNull();
+    slice.requestCommandTerminalWindowAction('proj-1', 'slot-1', 'commands');
+    // Another project's slot of the same name has no request either.
+    expect(getState().takeCommandTerminalWindowAction('proj-2', 'slot-1')).toBeNull();
+  });
+
+  it('keeps two slots apart, each with its own entry', () => {
+    const { slice, getState } = makeSliceStore();
+    slice.requestCommandTerminalWindowAction('proj-1', 'slot-1', 'rename');
+    getState().requestCommandTerminalWindowAction('proj-1', 'slot-2', 'switch-branch');
+    const pending = getState().pendingCommandTerminalWindowActions;
+    expect(pending[transientKey('proj-1', 'slot-1')]).toEqual({ action: 'rename', nonce: 1 });
+    expect(pending[transientKey('proj-1', 'slot-2')]).toEqual({ action: 'switch-branch', nonce: 1 });
+
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-2')).toBe('switch-branch');
+    // Taking slot-2's action left slot-1's pending.
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-1')).toBe('rename');
+  });
+
+  it('a second ask for the same slot is a new request the window sees, with the later action', () => {
+    const { slice, getState } = makeSliceStore();
+    slice.requestCommandTerminalWindowAction('proj-1', 'slot-1', 'rename');
+    getState().requestCommandTerminalWindowAction('proj-1', 'slot-1', 'toggle-changes');
+    expect(getState().pendingCommandTerminalWindowActions[transientKey('proj-1', 'slot-1')])
+      .toEqual({ action: 'toggle-changes', nonce: 2 });
+    expect(getState().takeCommandTerminalWindowAction('proj-1', 'slot-1')).toBe('toggle-changes');
+  });
+
+  it('an ask for the same action twice still changes the entry, so a window watching the map sees it', () => {
+    const { slice, getState } = makeSliceStore();
+    slice.requestCommandTerminalWindowAction('proj-1', 'slot-1', 'rename');
+    const before = getState().pendingCommandTerminalWindowActions;
+    getState().requestCommandTerminalWindowAction('proj-1', 'slot-1', 'rename');
+    const after = getState().pendingCommandTerminalWindowActions;
+    expect(after).not.toBe(before);
+    expect(after[transientKey('proj-1', 'slot-1')]).toEqual({ action: 'rename', nonce: 2 });
   });
 });

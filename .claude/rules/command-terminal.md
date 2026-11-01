@@ -201,7 +201,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   (`normalizeCommandTerminalName`: one line, 64 characters, empty or the slot's own title clears)
   and marks the row `commandTerminalNamedByUser`. `setCommandTerminalLabel` refuses a marked row,
   which also drops a naming call in flight, and the namer returns before it spends an agent call or
-  a rate-limit slot on one. A clear keeps the namer off for that terminal. The history writes the
+  a rate-limit slot on one. A clear keeps the namer off for that terminal, and so does an Enter
+  on the name field of a terminal nobody named, which keeps its number (`useCommandTerminalRename`);
+  a click away with nothing changed sends nothing. The history writes the
   live label on every CHANGE of it, a clear included (`setLabel` is last write wins), never on an
   unchanged push, and holds a rename made before the agent's id arrives until the row exists.
   The kebab and the row menu render one item list (`CommandTerminalMenuItems`), so they cannot
@@ -378,7 +380,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `transient-session-rename-handler.test.ts`, and `tests/ui/command-terminal-rename.spec.ts` (the
   pencil, the kebab, the off state while starting, the Running row's menu).
 - **Test (rail):** `tests/unit/command-terminal-rail.test.ts` pins the resolved width (narrowed,
-  never written, the strip) and `tests/ui/command-terminal-rail.spec.ts` the 300px default, a drag
+  never written, the strip), `tests/unit/config-store-command-terminal-rail.test.ts` that a refetch
+  reads another window's rail write back and that adopting it writes nothing, and `tests/ui/command-terminal-rail.spec.ts` the 300px default, a drag
   that grows the panel by as much and refits no terminal, the panel at its minimum pushed out the
   same way, the maximized panel where the terminals give the room, Escape putting the rail and the
   panel back, the hold at 200, the live fold past 100 that shrinks the panel with no terminal

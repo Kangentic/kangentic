@@ -12,8 +12,6 @@
  */
 
 import { useMemo } from 'react';
-import { i18n } from '@lingui/core';
-import { msg } from '@lingui/core/runtime-macro';
 import { useBoardStore } from '../../stores/board-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useSessionStore } from '../../stores/session-store';
@@ -32,12 +30,13 @@ export interface RailCommandTerminal {
 export function useRailTerminalMenuActions(
   projectId: string | null,
   terminal: RailCommandTerminal,
-  sessionId: string | null,
   handlers: {
     onBringToFront: (windowId: string) => void;
     onStop: () => void;
     stopping: boolean;
     onRename: () => void;
+    /** The terminal's own (`useCommandTerminalRename`), so the header and the row menu say the same. */
+    renameDisabledReason: string | null;
   },
 ): CommandTerminalMenuActions {
   const rawProjectPath = useProjectStore((state) => state.currentProject?.path ?? null);
@@ -47,7 +46,7 @@ export function useRailTerminalMenuActions(
   const changesOpen = useSessionStore((state) => state.changesOpenTasks.has(commandTerminalChangesEntityId(terminal.slot)));
   const branch = useSessionStore((state) =>
     projectId ? state.transientSessions[transientKey(projectId, terminal.slot)]?.branch ?? null : null);
-  const { onBringToFront, onStop, stopping, onRename } = handlers;
+  const { onBringToFront, onStop, stopping, onRename, renameDisabledReason } = handlers;
 
   const bringUpAnd = (action: CommandTerminalWindowAction): void => {
     if (!projectId) return;
@@ -57,7 +56,7 @@ export function useRailTerminalMenuActions(
 
   return {
     onRename,
-    renameDisabledReason: sessionId ? null : i18n._(msg`Available once the terminal starts`),
+    renameDisabledReason,
     projectPath,
     onOpenFolder: () => { if (projectPath) window.electronAPI.shell.openPath(projectPath); },
     onCommands: () => bringUpAnd('commands'),

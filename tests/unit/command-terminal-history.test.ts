@@ -279,6 +279,27 @@ describe('CommandTerminalHistory', () => {
     expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'New name' }]);
   });
 
+  it('does not hold a derived name that arrives before the id, so a resumed conversation keeps its own', async () => {
+    const { sessions, history, repository } = setup();
+    // The conversation as it ended under the name its user gave it.
+    sessions.add('pty-1', { hasUserInput: true, commandTerminalLabel: 'Old name' });
+    sessions.reportAgentId('pty-1', 'conversation-a');
+    sessions.remove('pty-1');
+    expect(repository.get('conversation-a')?.label).toBe('Old name');
+
+    // The resumed terminal is seeded with the old name. Its label then changes to
+    // one the namer derived (no `commandTerminalNamedByUser`) before the agent
+    // reports the conversation's id: that is not a user's rename, so nothing is
+    // held to be replayed over the row once the id arrives.
+    sessions.add('pty-2', { hasUserInput: true, commandTerminalLabel: 'Old name' });
+    sessions.change('pty-2', { commandTerminalLabel: 'Derived name' });
+    sessions.reportAgentId('pty-2', 'conversation-a');
+    expect(repository.get('conversation-a')?.label).toBe('Old name');
+
+    sessions.remove('pty-2');
+    expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-a', label: 'Old name' }]);
+  });
+
   it('keeps the name of a conversation a renamed terminal resumes into', () => {
     const { sessions, repository } = setup();
     sessions.add('pty-1', { hasUserInput: true, commandTerminalLabel: 'Other conversation' });

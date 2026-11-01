@@ -27,7 +27,7 @@ Template variables available in shortcut commands (defined in `src/shared/templa
 | Variable | Value |
 |----------|-------|
 | `{{cwd}}` | Working directory (worktree path or project path) |
-| `{{branchName}}` | Git branch name |
+| `{{branchName}}` | Git branch name (shell-sanitized: git allows `;`, `$`, `&` and backticks in a ref name) |
 | `{{taskTitle}}` | Task title (shell-sanitized to prevent injection) |
 | `{{projectPath}}` | Project root directory path |
 

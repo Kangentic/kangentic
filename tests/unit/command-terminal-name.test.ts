@@ -23,6 +23,13 @@ describe('normalizeCommandTerminalName', () => {
     expect(normalizeCommandTerminalName(endsInSpaceAtCut, 'slot-1')).toBe('a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 1));
   });
 
+  it('never keeps half of an emoji the cut lands inside', () => {
+    const emojiAtCut = `${'a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 1)}\u{1F600}`;
+    expect(normalizeCommandTerminalName(emojiAtCut, 'slot-1')).toBe('a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 1));
+    const emojiBeforeCut = `${'a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 2)}\u{1F600}b`;
+    expect(normalizeCommandTerminalName(emojiBeforeCut, 'slot-1')).toBe(`${'a'.repeat(COMMAND_TERMINAL_NAME_MAX_LENGTH - 2)}\u{1F600}`);
+  });
+
   it('clears for an empty entry, null, and the slot\'s own title', () => {
     expect(normalizeCommandTerminalName('   ', 'slot-2')).toBeNull();
     expect(normalizeCommandTerminalName(null, 'slot-2')).toBeNull();

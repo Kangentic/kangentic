@@ -83,6 +83,21 @@ async function renameCalls(page: Page): Promise<Array<{ sessionId: string; name:
     .__mockRenameTransientCalls ?? []);
 }
 
+/** Whether the replica holds this slot's terminal as named by its user, which the status push carries. */
+async function terminalIsNamedByUser(page: Page, slot: string): Promise<boolean> {
+  return page.evaluate((slot) => {
+    const stores = (window as unknown as {
+      __zustandStores?: {
+        session?: {
+          getState: () => { sessions: Array<{ commandTerminalSlot?: string; commandTerminalNamedByUser?: boolean }> };
+        };
+      };
+    }).__zustandStores;
+    return (stores?.session?.getState().sessions ?? []).some((session) =>
+      session.commandTerminalSlot === slot && session.commandTerminalNamedByUser === true);
+  }, slot);
+}
+
 /** Whether keyboard focus sits in this terminal's xterm. */
 async function terminalHasFocus(page: Page, slot: string): Promise<boolean> {
   return page.evaluate((slot) => {
@@ -187,6 +202,115 @@ test.describe('Renaming a Command Terminal', () => {
     }
   });
 
+  test('an input method\'s Enter and Escape belong to its composition: the field neither saves nor cancels', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTerminals(page, 1);
+      const terminal = terminalOf(page, 'slot-1');
+      await terminal.getByTestId('command-bar-rename').click();
+      const field = terminal.getByTestId('command-bar-name-field');
+      await expect(field).toBeFocused();
+      // A changed name, so the outcome of the Enter below never rests on the
+      // unchanged-Enter save (an unnamed terminal's Enter saves its own number).
+      await page.keyboard.type('Auth refactor');
+      await expect(field).toHaveValue('Auth refactor');
+
+      // The Enter that picks an input method's candidate.
+      await field.evaluate((input) => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', isComposing: true, bubbles: true, cancelable: true }));
+      });
+      await expect(field).toBeVisible();
+      await expect(field).toHaveValue('Auth refactor');
+      expect(await renameCalls(page)).toEqual([]);
+
+      // The Escape that drops the composition does not close the field either.
+      await field.evaluate((input) => {
+        input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', isComposing: true, bubbles: true, cancelable: true }));
+      });
+      await expect(field).toBeVisible();
+      await expect(field).toHaveValue('Auth refactor');
+      expect(await renameCalls(page)).toEqual([]);
+
+      // The same key with no composition running commits, so the two above were
+      // held back by the composition and not by the field ignoring them.
+      await page.keyboard.press('Enter');
+      await expect(field).toHaveCount(0);
+      await expect(terminal.getByTestId('command-bar-label')).toHaveText('Auth refactor');
+      expect((await renameCalls(page)).map((call) => call.name)).toEqual(['Auth refactor']);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('Enter on a terminal nobody named saves its number as the user\'s choice, once; a click away with nothing changed sends nothing', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTerminals(page, 1);
+      const terminal = terminalOf(page, 'slot-1');
+      const pencil = terminal.getByTestId('command-bar-rename');
+      const field = terminal.getByTestId('command-bar-name-field');
+      const title = terminal.getByTestId('command-bar-label');
+      await expect(pencil).toBeEnabled({ timeout: 5000 });
+      expect(await terminalIsNamedByUser(page, 'slot-1')).toBe(false);
+
+      // Enter without typing: the field opened holding the slot's own title.
+      await pencil.click();
+      await expect(field).toHaveValue('Command Terminal 1');
+      await page.keyboard.press('Enter');
+      await expect(field).toHaveCount(0);
+      // One save, a clear (null: the slot's own title), so main marks the terminal
+      // named by its user and the auto-namer stands down. The title is unchanged.
+      expect(await renameCalls(page)).toEqual([{ sessionId: expect.any(String), name: null }]);
+      await expect(title).toHaveText('Command Terminal 1');
+
+      // Once main's push has marked it, there is nothing left to save.
+      await expect.poll(() => terminalIsNamedByUser(page, 'slot-1'), { timeout: 3000 }).toBe(true);
+      await pencil.click();
+      await expect(field).toHaveValue('Command Terminal 1');
+      await page.keyboard.press('Enter');
+      await expect(field).toHaveCount(0);
+      expect(await renameCalls(page)).toHaveLength(1);
+      await expect(title).toHaveText('Command Terminal 1');
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('a click elsewhere with nothing changed closes the field and sends nothing, and still saves a changed name', async () => {
+    const { browser, page } = await launch();
+    try {
+      await openTerminals(page, 1);
+      const terminal = terminalOf(page, 'slot-1');
+      const pencil = terminal.getByTestId('command-bar-rename');
+      const field = terminal.getByTestId('command-bar-name-field');
+      await expect(pencil).toBeEnabled({ timeout: 5000 });
+      // The Running heading: inside the rail, no control, so the click only moves focus off the field.
+      const runningHeading = page.getByTestId('command-terminal-running').locator('xpath=preceding-sibling::div[1]');
+      await expect(runningHeading).toHaveText('Running');
+
+      await pencil.click();
+      await expect(field).toHaveValue('Command Terminal 1');
+      await runningHeading.click();
+      // The click ended the edit (the blur committed), and the commit sent nothing.
+      await expect(field).toHaveCount(0);
+      expect(await renameCalls(page)).toEqual([]);
+      await expect(terminal.getByTestId('command-bar-label')).toHaveText('Command Terminal 1');
+      expect(await terminalIsNamedByUser(page, 'slot-1')).toBe(false);
+
+      // The same click after typing a name does save it, so the blur above was a
+      // commit that chose to send nothing and not a field that ignored the click.
+      await pencil.click();
+      await expect(field).toBeFocused();
+      await page.keyboard.type('Auth refactor');
+      await runningHeading.click();
+      await expect(field).toHaveCount(0);
+      await expect(terminal.getByTestId('command-bar-label')).toHaveText('Auth refactor');
+      expect((await renameCalls(page)).map((call) => call.name)).toEqual(['Auth refactor']);
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Rename is first in the ... menu and opens the same field', async () => {
     const { browser, page } = await launch();
     try {
@@ -278,8 +402,9 @@ test.describe('Renaming a Command Terminal', () => {
         }).__zustandStores;
         return Array.from(stores?.session?.getState().changesOpenTasks ?? []);
       }), { timeout: 3000 }).toContainEqual(expect.stringContaining('slot-2'));
-      // The one that was expanded now lists under Running.
-      await expect(runningRowOf(page, 'slot-1')).toHaveCount(1);
+      // Running moves its front mark to the terminal the menu brought up.
+      await expect(runningRowOf(page, 'slot-2')).toHaveAttribute('data-front', 'true');
+      await expect(runningRowOf(page, 'slot-1')).toHaveAttribute('data-front', 'false');
     } finally {
       await browser.close();
     }
@@ -310,7 +435,9 @@ test.describe('Renaming a Command Terminal', () => {
       const menu = page.getByTestId('command-terminal-row-menu');
       await expect(menu).toBeVisible();
       // The Running heading: inside the rail, outside the menu, and no control.
-      await page.getByTestId('command-terminal-running').click({ position: { x: 12, y: 6 } });
+      const runningHeading = page.getByTestId('command-terminal-running').locator('xpath=preceding-sibling::div[1]');
+      await expect(runningHeading).toHaveText('Running');
+      await runningHeading.click();
       await expect(menu).toHaveCount(0);
       await expect(page.getByTestId('command-terminal-window')).toHaveCount(2);
       await expect(frameOf(page, 'slot-1')).toHaveAttribute('data-expanded', 'true');

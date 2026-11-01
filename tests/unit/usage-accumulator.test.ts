@@ -610,6 +610,19 @@ describe('UsageAccumulator - rate-limit reset generations', () => {
     expect(cachedWindow('sess-a', 'seven-day')).toEqual({ usedPercentage: 45, generation: 0 });
   });
 
+  it('appends a window the session reports for the first time after the ones it already had, at the value just reported', () => {
+    // The mirror of the case above: an idle status carried only the seven-day window, and the
+    // next status brings the five-hour one too. The new window joins at the end, so the order
+    // is the one the windows were FIRST reported in, not the order of the latest report (which
+    // lists five-hour first).
+    usage.replaceSessionUsage('sess-a', statusWithSevenDay(40));
+    usage.replaceSessionUsage('sess-a', statusWithBothWindows(10, 45));
+    const windows = usage.getUsageCache()['sess-a']?.rateLimits ?? [];
+    expect(windows.map((rateLimitWindow) => rateLimitWindow.id)).toEqual(['seven-day', 'five-hour']);
+    expect(cachedWindow('sess-a', 'five-hour')).toEqual({ usedPercentage: 10, generation: 0 });
+    expect(cachedWindow('sess-a', 'seven-day')).toEqual({ usedPercentage: 45, generation: 0 });
+  });
+
   it('keeps both windows from a real busy status through a real idle one, Claude parser and all', () => {
     // The two rate_limits shapes a live Command Terminal wrote on 2026-10-30: after a turn, and idle.
     const statusJson = (rateLimits: Record<string, unknown>): string => JSON.stringify({

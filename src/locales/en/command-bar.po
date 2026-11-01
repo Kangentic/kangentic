@@ -27,8 +27,7 @@ msgstr "{name} (working)"
 msgid "Add terminal"
 msgstr "Add terminal"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
 msgid "Available once the terminal starts"
 msgstr "Available once the terminal starts"
 

@@ -6,8 +6,8 @@
  * row. `SessionManager.renameCommandTerminal` is tested on its own
  * (tests/unit/session-manager-command-terminal-label.test.ts), so this file is
  * what proves the `ipcMain.handle` registration exists, forwards the session id
- * and the name in that order, hands back whether the name changed, and passes a
- * clear through as null rather than whatever non-string arrived.
+ * and the name in that order, hands back whether the name changed, passes a
+ * clear through as null, and refuses a name that is neither a string nor null.
  *
  * Mocking pattern follows tests/unit/transient-session-set-branch-handler.test.ts.
  */
@@ -133,13 +133,22 @@ describe('SESSION_RENAME_TRANSIENT handler', () => {
     expect(context.sessionManager.renameCommandTerminal).toHaveBeenCalledWith('sess-1', 'Auth refactor');
   });
 
-  it('passes a clear, or anything that is not a string, through as null', () => {
+  it('passes a clear through as null', () => {
     const handler = getCapturedHandler();
 
     handler(null, 'sess-1', null);
-    handler(null, 'sess-1', 42);
 
-    expect(context.sessionManager.renameCommandTerminal).toHaveBeenNthCalledWith(1, 'sess-1', null);
-    expect(context.sessionManager.renameCommandTerminal).toHaveBeenNthCalledWith(2, 'sess-1', null);
+    expect(context.sessionManager.renameCommandTerminal).toHaveBeenCalledWith('sess-1', null);
+  });
+
+  it('refuses a name that is neither a string nor null, and a session id that is not a string', () => {
+    const handler = getCapturedHandler();
+
+    // Read as a clear, these would wipe the name and turn the namer off for good.
+    expect(handler(null, 'sess-1', 42)).toBe(false);
+    expect(handler(null, 'sess-1', undefined)).toBe(false);
+    expect(handler(null, 7, 'Auth refactor')).toBe(false);
+
+    expect(context.sessionManager.renameCommandTerminal).not.toHaveBeenCalled();
   });
 });

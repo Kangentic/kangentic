@@ -87,7 +87,14 @@ export const COMMAND_TERMINAL_NAME_MAX_LENGTH = 64;
  * whether a commit changed anything.
  */
 export function normalizeCommandTerminalName(raw: string | null | undefined, slot: string | null | undefined): string | null {
-  const line = (raw ?? '').replace(/\s+/g, ' ').trim().slice(0, COMMAND_TERMINAL_NAME_MAX_LENGTH).trim();
+  const line = (raw ?? '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, COMMAND_TERMINAL_NAME_MAX_LENGTH)
+    // The cap counts UTF-16 units, so a cut can land inside an emoji: drop the
+    // half it leaves, which would draw as a replacement character.
+    .replace(/[\uD800-\uDBFF]$/, '')
+    .trim();
   if (!line || line === commandTerminalTitle(slot)) return null;
   return line;
 }

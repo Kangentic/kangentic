@@ -32,8 +32,7 @@ msgstr "{name} (pracuje)"
 msgid "Add terminal"
 msgstr "Přidat terminál"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "Dostupné po spuštění terminálu"
@@ -143,7 +142,7 @@ msgstr "Skrýt panel"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Hide rail"
-msgstr "Skrýt panel"
+msgstr "Skrýt postranní lištu"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
@@ -179,7 +178,7 @@ msgstr "Otevřít složku projektu"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Rail width"
-msgstr "Šířka panelu"
+msgstr "Šířka postranní lišty"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
@@ -226,7 +225,7 @@ msgstr "Zobrazit změny"
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Show rail"
-msgstr "Zobrazit panel"
+msgstr "Zobrazit postranní lištu"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

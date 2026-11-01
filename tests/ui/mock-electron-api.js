@@ -2964,7 +2964,7 @@
         }
         var session = sessions.find(function (candidate) { return candidate.id === sessionId; });
         if (!session || !session.transient || session.workflowId) return false;
-        var line = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+        var line = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 64).replace(/[\uD800-\uDBFF]$/, '').trim();
         var slotMatch = /^slot-(\d+)$/.exec(session.commandTerminalSlot || '');
         var slotTitle = slotMatch ? 'Command Terminal ' + slotMatch[1] : 'Command Terminal';
         var label = !line || line === slotTitle ? null : line;

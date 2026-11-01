@@ -4854,7 +4854,7 @@ export interface AppConfig {
    *  always written whole. See src/renderer/components/command-bar/. */
   commandTerminalPanel: CommandTerminalPanelGeometry | null;
   /** GLOBAL width of the Command Terminal panel's rail, as the user dragged its
-   *  edge (200 to 400, 300 by default), and whether it is folded to its 36px
+   *  edge (200 to 400, 300 by default), and whether it is folded to its 37px
    *  strip. Shared across all projects and the detached Command Terminal window,
    *  and kept across restarts. A narrow window shows the rail narrower without
    *  rewriting it. Written by both the panel and the detached window, so the

@@ -31,5 +31,7 @@ describe('resolveFoldingEdgeDrag', () => {
   it('caps at a maximum the room allows, never under the minimum', () => {
     expect(resolveFoldingEdgeDrag({ raw: 380, minWidth: 200, maxWidth: 248 })).toEqual({ collapsed: false, width: 248 });
     expect(resolveFoldingEdgeDrag({ raw: 380, minWidth: 200, maxWidth: 200 })).toEqual({ collapsed: false, width: 200 });
+    // A room narrower than the minimum still leaves the panel at its minimum.
+    expect(resolveFoldingEdgeDrag({ raw: 380, minWidth: 200, maxWidth: 150 })).toEqual({ collapsed: false, width: 200 });
   });
 });

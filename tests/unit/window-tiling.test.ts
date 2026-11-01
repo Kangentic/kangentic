@@ -141,6 +141,40 @@ describe('resolveTileLayout', () => {
       expect(heldSplitSizes(tree, { width: 2200, height: 800 }, 0, FLOOR)).toEqual([]);
     });
 
+    it('names the floors scaled down together for an area too small for them, the way the layout shows them', () => {
+      // 800 wide holds one floor and a half of the 1120 two floors need.
+      const tree = hsplit('s1', [leaf('la', 'wa'), leaf('lb', 'wb')], [0.68, 0.32]);
+      const held = heldSplitSizes(tree, { width: 800, height: 600 }, 0, FLOOR);
+      expect(held).toHaveLength(1);
+      expect(held[0].splitId).toBe('s1');
+      expect(held[0].sizes[0]).toBeCloseTo(0.5, 6);
+      expect(held[0].sizes[1]).toBeCloseTo(0.5, 6);
+      // What it names is what resolveTileLayout draws there.
+      const shown = resolveTileLayout(tree, { width: 800, height: 600 }, 0, 0, { left: 0, top: 0 }, FLOOR);
+      expect(shown.rects.get('wa')!.width).toBeCloseTo(800 * held[0].sizes[0], 6);
+      expect(shown.rects.get('wb')!.width).toBeCloseTo(800 * held[0].sizes[1], 6);
+    });
+
+    it('scales the floors down in their own proportions, not evenly, when an area is too small for a pane and a pair', () => {
+      // A tall pane beside two side by side: floors of 560 and 1120 in 840, so 280 and 560.
+      const pair = hsplit('s2', [leaf('lb', 'wb'), leaf('lc', 'wc')], [0.5, 0.5]);
+      const tree = hsplit('s1', [leaf('la', 'wa'), pair], [0.5, 0.5]);
+      const held = heldSplitSizes(tree, { width: 840, height: 600 }, 0, FLOOR);
+      // The pair then gets 560 of the 1120 its floors need, split evenly as its own sizes
+      // already say, so only the outer split has anything to adopt.
+      expect(held).toHaveLength(1);
+      expect(held[0].splitId).toBe('s1');
+      expect(held[0].sizes[0]).toBeCloseTo(1 / 3, 6);
+      expect(held[0].sizes[1]).toBeCloseTo(2 / 3, 6);
+    });
+
+    it('names nothing for an area with no room at all', () => {
+      const tree = hsplit('s1', [leaf('la', 'wa'), leaf('lb', 'wb')], [0.68, 0.32]);
+      expect(heldSplitSizes(tree, { width: 0, height: 0 }, 0, FLOOR)).toEqual([]);
+      // And a lone pane has no split to name.
+      expect(heldSplitSizes(leaf('la', 'wa'), { width: 800, height: 600 }, 0, FLOOR)).toEqual([]);
+    });
+
     it('adopts a held split of three exactly, room moving past a pair', () => {
       const three = hsplit('s3', [leaf('lx', 'wx'), leaf('ly', 'wy'), leaf('lz', 'wz')], [0.1, 0.1, 0.8]);
       const held = heldSplitSizes(three, { width: 2000, height: 800 }, 0, FLOOR);
@@ -230,6 +264,48 @@ describe('tile tree-ops', () => {
     expect(seamPairRatio(tree, 'missing', 0)).toBeNull();
     expect(seamPairRatio(tree, 's1', 1)).toBeNull();
     expect(seamPairRatio(leaf('lone', 'wl'), 'lone', 0)).toBeNull();
+  });
+
+  it('setSplitSizes sets every child size of the split at once, normalized to sum to 1, immutably', () => {
+    const inner = vsplit('s2', [leaf('lb', 'wb'), leaf('lc', 'wc')], [0.5, 0.5]);
+    const tree = hsplit('s1', [leaf('la', 'wa'), inner], [0.5, 0.5]);
+
+    const next = setSplitSizes(tree, 's2', [1, 3]) as Split;
+    expect(next).not.toBe(tree);
+    expect(next.children[0]).toBe(tree.children[0]); // untouched subtree keeps its reference
+    expect((next.children[1] as Split).sizes).toEqual([0.25, 0.75]);
+    expect(next.sizes).toEqual([0.5, 0.5]); // the split above is not the target
+    // Original is untouched.
+    expect((tree.children[1] as Split).sizes).toEqual([0.5, 0.5]);
+
+    // A split of three takes all three at once, not a pair.
+    const three = hsplit('s3', [leaf('lx', 'wx'), leaf('ly', 'wy'), leaf('lz', 'wz')], [0.2, 0.3, 0.5]);
+    expect((setSplitSizes(three, 's3', [1, 1, 2]) as Split).sizes).toEqual([0.25, 0.25, 0.5]);
+  });
+
+  it('setSplitSizes returns the same tree for sizes it cannot adopt', () => {
+    const inner = vsplit('s2', [leaf('lb', 'wb'), leaf('lc', 'wc')], [0.5, 0.5]);
+    const tree = hsplit('s1', [leaf('la', 'wa'), inner], [0.5, 0.5]);
+
+    // A count that does not match the split's children, either way.
+    expect(setSplitSizes(tree, 's2', [1])).toBe(tree);
+    expect(setSplitSizes(tree, 's2', [1, 1, 1])).toBe(tree);
+    expect(setSplitSizes(tree, 's2', [])).toBe(tree);
+    expect(setSplitSizes(tree, 's1', [1, 1, 1])).toBe(tree);
+    // A size that is zero, negative or not a number.
+    expect(setSplitSizes(tree, 's2', [0, 1])).toBe(tree);
+    expect(setSplitSizes(tree, 's2', [-1, 2])).toBe(tree);
+    expect(setSplitSizes(tree, 's2', [1, Number.NaN])).toBe(tree);
+    expect(setSplitSizes(tree, 's1', [1, 0])).toBe(tree);
+  });
+
+  it('setSplitSizes returns the same tree when it holds no such split', () => {
+    const tree = hsplit('s1', [leaf('la', 'wa'), vsplit('s2', [leaf('lb', 'wb'), leaf('lc', 'wc')], [0.5, 0.5])], [0.5, 0.5]);
+    expect(setSplitSizes(tree, 'missing', [1, 1])).toBe(tree);
+    // A leaf's id is not a split's.
+    expect(setSplitSizes(tree, 'la', [1, 1])).toBe(tree);
+    const lone = leaf('lone', 'wl');
+    expect(setSplitSizes(lone, 'lone', [1])).toBe(lone);
   });
 
   it('clampTileRatio keeps ratios inside [MIN, MAX]', () => {

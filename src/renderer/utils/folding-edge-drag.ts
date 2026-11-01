@@ -18,7 +18,7 @@ export interface FoldingEdgeDrag {
   raw: number;
   /** The narrowest the panel shows open. */
   minWidth: number;
-  /** The widest it may go. Never under `minWidth`. */
+  /** The widest it may go. A cap under `minWidth` leaves the panel at `minWidth`. */
   maxWidth: number;
 }
 
@@ -34,5 +34,5 @@ export const FOLD_LINE_SHARE_OF_MINIMUM = 0.5;
 
 export function resolveFoldingEdgeDrag({ raw, minWidth, maxWidth }: FoldingEdgeDrag): FoldingEdgeStep {
   if (raw < minWidth * FOLD_LINE_SHARE_OF_MINIMUM) return { collapsed: true, width: minWidth };
-  return { collapsed: false, width: Math.round(Math.min(maxWidth, Math.max(minWidth, raw))) };
+  return { collapsed: false, width: Math.round(Math.max(minWidth, Math.min(maxWidth, raw))) };
 }

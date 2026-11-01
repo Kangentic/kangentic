@@ -32,8 +32,7 @@ msgstr "{name} (作業中)"
 msgid "Add terminal"
 msgstr "ターミナルを追加"
 
-#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
-#: src/renderer/components/command-bar/useRailTerminalMenuActions.ts
+#: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "ターミナルの起動後に利用できます"

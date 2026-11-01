@@ -31,13 +31,19 @@ export const CONTEXT_BAR_FOLD_ORDER = [
 export type ContextBarFoldId = typeof CONTEXT_BAR_FOLD_ORDER[number];
 
 /**
- * The width a bar keeps before anything outside the five gives up its room to
- * it. Under it, the next pill in the order folds; once only the five are left,
- * a bar narrows to its own minimum.
+ * The width a bar keeps before an optional pill (one of `OPTIONAL_FOLD_IDS`)
+ * gives up its room to it. Under it, the next pill in the order folds; once
+ * only the always-shown five are left (the agent, model, effort, rate limits
+ * and context), a bar narrows to its own minimum.
  */
 export const METER_COMFORT_TRACK_PX = 80;
 
-/** The pills outside the five that always show, the context counts included. */
+/**
+ * The optional pills: everything ahead of the rate limits in
+ * `CONTEXT_BAR_FOLD_ORDER`, the context counts included. They fold before the
+ * always-shown five (the agent, model, effort, rate limits and context) give
+ * up anything.
+ */
 const OPTIONAL_FOLD_IDS: ReadonlySet<ContextBarFoldId> = new Set(
   CONTEXT_BAR_FOLD_ORDER.slice(0, CONTEXT_BAR_FOLD_ORDER.indexOf('rate-limits')),
 );

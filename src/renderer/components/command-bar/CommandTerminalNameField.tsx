@@ -16,7 +16,9 @@ interface CommandTerminalNameFieldProps {
   initialName: string;
   /** The terminal's slot, whose title is the placeholder an empty field shows. */
   slot: string;
-  /** Save. `byKey` is true for Enter, false for a click elsewhere, which keeps its focus. */
+  /** Save. `byKey` is true for Enter, false for a click elsewhere, which keeps its focus.
+   *  Only Enter saves a name it did not change, so a terminal the user named its
+   *  own number stays that way (`useCommandTerminalRename`). */
   onCommit: (value: string, byKey: boolean) => void;
   /** Escape. */
   onCancel: () => void;
@@ -63,6 +65,9 @@ export function CommandTerminalNameField({ initialName, slot, onCommit, onCancel
       onClick={(event) => event.stopPropagation()}
       onKeyDown={(event) => {
         event.stopPropagation();
+        // An input method's own Enter (it picks a candidate) and Escape (it
+        // drops the composition) belong to the composition, not the field.
+        if (event.nativeEvent.isComposing) return;
         if (event.key === 'Enter') {
           event.preventDefault();
           finish('enter');

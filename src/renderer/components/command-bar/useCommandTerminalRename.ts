@@ -23,16 +23,26 @@ export interface CommandTerminalRename {
   /** What the terminal is called: its name, else "Command Terminal N". */
   displayName: string;
   editing: boolean;
+  /** Why Rename is off (the terminal has no session yet), or null when it is on. */
+  disabledReason: string | null;
   /** Open the name field. Nothing happens before the terminal has a session. */
   startEditing: () => void;
-  /** Save what the field holds; a value that changes nothing sends nothing. */
-  commit: (value: string) => void;
+  /**
+   * Save what the field holds. A value that changes nothing sends nothing,
+   * except an Enter (`byKey`) on a terminal the user has not named yet: that
+   * saves its own number as the user's choice, so the namer stands down. A
+   * click elsewhere never does, so opening the field and leaving it changes
+   * nothing.
+   */
+  commit: (value: string, byKey: boolean) => void;
   cancel: () => void;
 }
 
 export function useCommandTerminalRename(sessionId: string | null, slot: string): CommandTerminalRename {
   const storedLabel = useSessionStore((state) =>
     sessionId ? state.sessions.find((session) => session.id === sessionId)?.commandTerminalLabel ?? null : null);
+  const namedByUser = useSessionStore((state) =>
+    sessionId ? state.sessions.find((session) => session.id === sessionId)?.commandTerminalNamedByUser === true : false);
   const [editing, setEditing] = useState(false);
   // The committed name until the push carrying it lands. State set during
   // render (React's "information from previous renders" pattern), as the
@@ -47,15 +57,16 @@ export function useCommandTerminalRename(sessionId: string | null, slot: string)
 
   const cancel = useCallback(() => setEditing(false), []);
 
-  const commit = useCallback((value: string) => {
+  const commit = useCallback((value: string, byKey: boolean) => {
     setEditing(false);
     if (!sessionId) return;
     const next = normalizeCommandTerminalName(value, slot);
-    if (next === label) return;
+    if (next === label && (!byKey || namedByUser)) return;
     setPending({ label: next });
     window.electronAPI.sessions.renameTransient(sessionId, next)
       .then((changed) => {
-        // Main refused it (the terminal ended meanwhile): show what it holds.
+        // Main refused it (the terminal ended meanwhile), or the name stayed
+        // as it was: show what it holds.
         if (!changed) setPending(null);
       })
       .catch((error: unknown) => {
@@ -66,12 +77,13 @@ export function useCommandTerminalRename(sessionId: string | null, slot: string)
           variant: 'error',
         });
       });
-  }, [sessionId, slot, label]);
+  }, [sessionId, slot, label, namedByUser]);
 
   return {
     label,
     displayName: commandTerminalDisplayName(label, slot),
     editing,
+    disabledReason: sessionId ? null : i18n._(msg`Available once the terminal starts`),
     startEditing,
     commit,
     cancel,

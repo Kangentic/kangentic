@@ -18,13 +18,22 @@ export function runCommandTerminalShortcut(action: { command: string }, projectP
   window.electronAPI.shell.exec(resolved, cwd);
 }
 
+/** A runnable shortcut the ... menu lists (`display` unset, `menu` or `both`). */
+export function isMenuShortcut(action: ShortcutConfig): boolean {
+  return !!action.command && (!action.display || action.display === 'menu' || action.display === 'both');
+}
+
+/** A runnable shortcut the header shows as a pill (`display` unset, `header` or `both`). */
+export function isHeaderShortcut(action: ShortcutConfig): boolean {
+  return !!action.command && (!action.display || action.display === 'header' || action.display === 'both');
+}
+
 /**
  * Every shortcut a hidden terminal's row menu lists: the menu's own, then the
  * header-only ones, since none of that terminal's header pills are on screen.
  */
 export function rowMenuShortcuts(shortcuts: ShortcutConfig[]): ShortcutConfig[] {
-  const runnable = shortcuts.filter((action) => action.command);
-  const inMenu = runnable.filter((action) => !action.display || action.display === 'menu' || action.display === 'both');
-  const headerOnly = runnable.filter((action) => action.display === 'header');
+  const inMenu = shortcuts.filter(isMenuShortcut);
+  const headerOnly = shortcuts.filter((action) => isHeaderShortcut(action) && !isMenuShortcut(action));
   return [...inMenu, ...headerOnly];
 }

@@ -74,4 +74,12 @@ describe('resolveShortcutCommand', () => {
     expect(result).not.toContain(';');
     expect(result).toBe('echo " rm -rf / echo "');
   });
+
+  it('strips shell metacharacters from a branch name, which a cloned repo can carry', () => {
+    // Git allows `;`, `$`, `&` and backticks in a ref name, so a branch is not a
+    // controlled source the way the paths are.
+    const branchContext = { ...context, branchName: 'feature/x;touch${IFS}pwned&`id`' };
+    expect(resolveShortcutCommand('git log {{branchName}}', branchContext))
+      .toBe('git log feature/xtouchIFSpwnedid');
+  });
 });
