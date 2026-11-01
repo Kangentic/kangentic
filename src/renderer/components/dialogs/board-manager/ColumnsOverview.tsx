@@ -225,7 +225,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     {
       key: 'name',
       label: t({ message: 'Column', context: 'board overview column header' }),
-      width: 'w-[12%]',
+      width: 'w-[11%]',
       render: (row) => (
         <span className="flex items-center gap-2 min-w-0">
           <OverviewColumnIcon row={row} />
@@ -242,13 +242,13 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
       ),
     },
     { key: 'autoSpawn', label: t({ message: 'Start', context: 'board overview column header' }), width: 'w-[5%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
-    { key: 'agent', label: t({ message: 'Agent', context: 'board overview column header' }), width: 'w-[11%]', render: (row) => <OverviewCell value={row.agent} /> },
+    { key: 'agent', label: t({ message: 'Agent', context: 'board overview column header' }), width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
     { key: 'model', label: t({ message: 'Model', context: 'board overview column header' }), width: 'w-[9%]', render: (row) => <OverviewCell value={row.model} /> },
     { key: 'effort', label: t({ message: 'Effort', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewCell value={row.effort} /> },
-    { key: 'permission', label: t({ message: 'Permissions', context: 'board overview column header' }), width: 'w-[11%]', render: (row) => <OverviewCell value={row.permission} /> },
+    { key: 'permission', label: t({ message: 'Permissions', context: 'board overview column header' }), width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
     { key: 'handoff', label: t({ message: 'Handoff', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
     { key: 'session', label: t({ message: 'Conversation', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
-    { key: 'oneAtATime', label: t({ message: 'One at a time', context: 'board overview column header' }), width: 'w-[9%]', render: (row) => <OverviewToggle flag={row.oneAtATime} /> },
+    { key: 'oneAtATime', label: t({ message: 'One at a time', context: 'board overview column header' }), width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.oneAtATime} /> },
     {
       key: 'onEnter',
       label: t`On enter`,
