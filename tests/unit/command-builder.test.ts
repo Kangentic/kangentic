@@ -1967,13 +1967,14 @@ describe('Merged Settings -- Local Settings Merge', () => {
       .not.toContain('--allow-dangerously-skip-permissions');
   });
 
-  it('registers the plan approval hook on ExitPlanMode alone, reading this session\'s decision file', () => {
+  it('registers the plan approval hook on ExitPlanMode, and the tool approval entry on MCP tools and Artifact, both reading this session\'s decision file', () => {
     // Registered on every spawn, whatever the column says: the decision file
-    // decides at run time, so it must name THIS session's directory.
+    // decides at run time, so it must name THIS session's directory. The tool
+    // approval entry is on every spawn too, since a built-in Artifact read needs
+    // no allow rule (task #952).
     const sessionDir = path.join(tmpDir, '.kangentic', 'sessions', 'plan-sess');
     const builder = new CommandBuilder();
-    // A home with no settings: an MCP allow rule in the developer's own would
-    // add the tool approval entry, which runs the same bridge.
+    // A home with no settings, so the entries come from Kangentic alone.
     vi.spyOn(os, 'homedir').mockReturnValue(tmpDir);
     try {
       builder.buildClaudeCommand({
@@ -1993,11 +1994,12 @@ describe('Merged Settings -- Local Settings Merge', () => {
       hooks: Record<string, Array<{ matcher: string; hooks: Array<{ command: string }> }>>;
     };
     const approvers = merged.hooks.PermissionRequest.filter((entry) => entry.hooks.some((hook) => hook.command.includes('plan-approval-bridge')));
-    expect(approvers).toHaveLength(1);
-    expect(approvers[0].matcher).toBe('ExitPlanMode');
-    const command = approvers[0].hooks[0].command;
-    expect(command).toContain(path.join(sessionDir, 'plan-approval.json').replace(/\\/g, '/'));
-    expect(command).toContain(path.join(sessionDir, 'events.jsonl').replace(/\\/g, '/'));
+    expect(approvers.map((entry) => entry.matcher).sort()).toEqual(['ExitPlanMode', 'mcp__.*|Artifact']);
+    for (const approver of approvers) {
+      const command = approver.hooks[0].command;
+      expect(command).toContain(path.join(sessionDir, 'plan-approval.json').replace(/\\/g, '/'));
+      expect(command).toContain(path.join(sessionDir, 'events.jsonl').replace(/\\/g, '/'));
+    }
   });
 
   // Task #857: the background shell hint points at kangentic_mark_background_service,
