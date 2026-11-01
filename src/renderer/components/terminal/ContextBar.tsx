@@ -519,7 +519,7 @@ export function ContextBar({ sessionId, agentFallback = null }: ContextBarProps)
           {showProgressBar && (
             <span className="flex-1 h-1.5 bg-surface-hover rounded-full overflow-hidden">
               <span
-                className="block h-full w-full origin-left rounded-full"
+                className="block h-full w-full origin-left rounded-full transition-[transform,background-color] duration-300"
                 style={{ transform: `scaleX(${Math.min(pct, 100) / 100})`, backgroundColor: progressColor }}
               />
             </span>

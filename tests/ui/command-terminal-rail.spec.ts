@@ -344,6 +344,9 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('a drag past half the minimum folds the rail while it runs and the panel shrinks to it; back out it opens at 200 and grows the panel; the terminal never refits', async () => {
+    // A drag through the fold point and back, with a no-refit check: 9 s locally, so
+    // the 15 s default has no room on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 1);
@@ -399,6 +402,9 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('the footer button folds and opens the rail in place: Add terminal and the button keep their spots, and the panel shrinks and grows with it', async () => {
+    // Folds and opens the rail with a no-refit check: 7 s locally, so the 15 s default
+    // has no room on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
@@ -478,6 +484,9 @@ test.describe('Command Terminal rail', () => {
     ((await window.electronAPI.config.getGlobal()) as unknown as { commandTerminalPanel?: { w: number } | null }).commandTerminalPanel ?? null);
 
   test('past the room beside the terminals, an edge drag pushes the panel out: the terminals keep their size and refit nothing', async () => {
+    // An edge drag past the room, with a no-refit check: 5 s locally, so the 15 s
+    // default has no room on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);

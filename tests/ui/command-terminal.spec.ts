@@ -3035,6 +3035,9 @@ test.describe('Command Terminal', () => {
     }
 
     test('after a double-click evens the seam, a panel grown from its west edge fills with the terminals and the seam still drags its full range', async () => {
+      // Two terminals, a panel edge drag and a seam drag the full range, each recorded
+      // frame by frame: 7 s locally, so the 15 s default has no room on a CI runner.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
@@ -3148,6 +3151,9 @@ test.describe('Command Terminal', () => {
     });
 
     test('a panel grown back from its minimum gives the seam its full range again, both ways', async () => {
+      // Grows the panel from its minimum, then drags the seam both ways: 8 s locally,
+      // so the 15 s default has no room on a CI runner.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         await openTwoReady(page);
@@ -3179,6 +3185,9 @@ test.describe('Command Terminal', () => {
     });
 
     test('shrinking a panel with an uneven seam refits each terminal once on release, holds no frame mid-drag, and keeps the terminals filling it', async () => {
+      // Records every frame of a panel shrink: 10 s locally, so the 15 s default has
+      // no room on a CI runner.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first, second } = await openTwoReady(page);
@@ -3264,6 +3273,9 @@ test.describe('Command Terminal', () => {
     });
 
     test('growing a panel back keeps the terminals filling it and refits each once on release', async () => {
+      // Records every frame of growing the panel back: 5 s locally, so the 15 s default
+      // has no room on a CI runner.
+      test.setTimeout(45000);
       const { browser, page } = await launchWithState(multiTerminalPreConfig());
       try {
         const { first, second } = await openTwoReady(page);
