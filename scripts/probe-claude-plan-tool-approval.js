@@ -64,6 +64,13 @@
  *             rule, so a hook that should honor one has to leave the tool alone.
  *   Every PermissionRequest arrived with permission_mode "plan". The approving
  *   hook started 5 to 114 ms after the catch-all one.
+ *
+ * Measured 2026-10-31 on Claude Code 2.1.316, Windows, print mode, with a
+ * built-in tool and no allow rule (`--tool Write --matcher "mcp__.*|Write"`,
+ * task #952): control was refused, "Cannot write ... while in plan mode."; hook
+ * ran the call, 29 ms after the catch-all PermissionRequest. `--tool Artifact`
+ * cannot be measured here: the tool needs a claude.ai account, so the stand-in
+ * never lists it.
  */
 const path = require('node:path');
 const fs = require('node:fs');
@@ -73,7 +80,18 @@ const { spawn, spawnSync } = require('node:child_process');
 
 const RUNS = ['control', 'hook', 'subagent', 'ask'];
 const MODES = ['print', 'interactive'];
-const TOOL_NAME = 'mcp__probe__lookup';
+/**
+ * The tool the stand-in asks for. The probe's own MCP `lookup` by default;
+ * `--tool <name> --input <json> --matcher <regex>` asks for a built-in one
+ * instead (task #952: Artifact reads and publishes, or Write as a built-in plan
+ * mode always prompts for). A built-in call ran when its PostToolUse or
+ * PostToolUseFailure hook fired: a failure after the prompt was answered (an
+ * Artifact call with no claude.ai account behind it) still got past plan mode.
+ */
+const TOOL_NAME = argument('tool', 'mcp__probe__lookup');
+const TOOL_INPUT = JSON.parse(argument('input', '{"query":"probe"}'));
+const APPROVER_MATCHER = argument('matcher', 'mcp__.*');
+const IS_MCP_TOOL = TOOL_NAME.startsWith('mcp__');
 const PROBE_PATH = path.resolve(__filename).replace(/\\/g, '/');
 const PRINT_TIMEOUT_MS = 120000;
 const INTERACTIVE_TIMEOUT_MS = 60000;
@@ -287,7 +305,7 @@ class FakeAnthropicApi {
       return [{ kind: 'text', text: 'Done.' }];
     }
     if (toolNames.includes(TOOL_NAME)) {
-      return [{ kind: 'tool', name: TOOL_NAME, id: `toolu_probe_lookup_${scenario}_${Date.now()}`, input: { query: 'probe' } }];
+      return [{ kind: 'tool', name: TOOL_NAME, id: `toolu_probe_lookup_${scenario}_${Date.now()}`, input: TOOL_INPUT }];
     }
     if (toolNames.includes('ToolSearch') && !(lastResult && lastResult.tool_use_id.includes('_search_'))) {
       return [{ kind: 'tool', name: 'ToolSearch', id: `toolu_probe_search_${scenario}_${Date.now()}`, input: { query: `select:${TOOL_NAME}`, max_results: 1 } }];
@@ -367,10 +385,12 @@ function writeRunFiles(runDir, run) {
       Stop: recorder('stop'),
       PermissionRequest: [
         ...recorder('permission'),
-        ...(approves ? [{ matcher: 'mcp__.*', hooks: [{ type: 'command', command: hookCommand(hookLog, 'approver', 'allow') }] }] : []),
+        ...(approves ? [{ matcher: APPROVER_MATCHER, hooks: [{ type: 'command', command: hookCommand(hookLog, 'approver', 'allow') }] }] : []),
       ],
     },
   };
+  // A built-in call needs no allow rule: the hook's answer is the consent.
+  if (!IS_MCP_TOOL) settings.permissions.allow = [];
   const settingsPath = path.join(runDir, 'settings.json');
   fs.writeFileSync(settingsPath, JSON.stringify(settings, null, 2));
   const mcpConfigPath = path.join(runDir, 'mcp.json');
@@ -378,6 +398,12 @@ function writeRunFiles(runDir, run) {
     type: 'stdio', command: process.execPath, args: [PROBE_PATH, '--mcp-server', callsPath],
   } } }, null, 2));
   return { hookLog, callsPath, settingsPath, mcpConfigPath };
+}
+
+/** Whether the probed call ran: the MCP server saw it, or a built-in's own post-tool hook fired. */
+function probedToolRan(files) {
+  if (readJsonLines(files.callsPath).length > 0) return true;
+  return readJsonLines(files.hookLog).some((line) => (line.label === 'post-tool' || line.label === 'post-tool-failure') && line.tool === TOOL_NAME);
 }
 
 function runEnvironment(port) {
@@ -475,7 +501,7 @@ async function runInteractive(claude, files, environment, runDir, prompt) {
       terminal.write('\r');
       continue;
     }
-    if (readJsonLines(files.callsPath).length > 0 && /Done\./.test(text)) break;
+    if (probedToolRan(files) && /Done\./.test(text)) break;
     const dialogOpen = /Do you want to proceed/i.test(text.slice(-1500));
     if (dialogOpen && dialogFirstSeenAt === null) dialogFirstSeenAt = Date.now();
     if (dialogFirstSeenAt !== null && Date.now() - dialogFirstSeenAt > DIALOG_SETTLE_MS) break;
@@ -518,7 +544,8 @@ async function runOne(claude, api, port, mode, run, version) {
     version,
     mode,
     run,
-    toolRan: calls.length > 0,
+    tool: TOOL_NAME,
+    toolRan: probedToolRan(files),
     toolCalls: calls.length,
     lookupResults: api.lookupResults,
     permissionRequests: permissionLines.map((line) => ({ permissionMode: line.permissionMode, agentId: line.agentId, agentType: line.agentType })),

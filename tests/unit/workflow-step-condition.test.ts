@@ -10,9 +10,8 @@ import { DEFAULT_SWIMLANES } from '../../src/main/db/migrations/default-data';
 import {
   describeStepRoute,
   stepExitVerdict,
+  workflowBlockerConditions,
   workflowStepCondition,
-  workflowStepNeedsUserCondition,
-  workflowStepRunningCondition,
   type StepExitRow,
 } from '../../src/main/workflows/workflow-step-condition';
 import type { Swimlane, Task } from '../../src/shared/types';
@@ -167,38 +166,32 @@ describe('workflowStepCondition before the last column', () => {
   });
 });
 
-// The second ask, made only when the step is not done: why the agent stopped.
-// Its wording is measured with the Condition eval harness; these pin what
-// each question must say so an edit cannot drop a case it covers.
-describe('why a step that is not done stopped', () => {
-  it('asks whether the agent waits on work still running on its own, which wakes it by itself', () => {
-    const condition = workflowStepRunningCondition({ name: 'Executing' });
-    expect(condition).toContain('it is waiting for something other than the user to finish for the Executing step');
-    expect(condition).toContain('background');
-    // Measured: a bare "Waiting for the gate." read as no running work until CI
-    // and a gate were named, and until a bare wait was said to count. Naming
-    // them made a plain progress note ("still working through the failing
-    // tests") read as running, so the agent's own in-turn work is named as not this.
-    expect(condition).toContain('CI checks, a gate');
-    expect(condition).toContain('it will go on once that finishes');
-    expect(condition).toContain('only says it is waiting for the gate, the tests or CI counts');
-    expect(condition).toContain('work the agent itself was in the middle of');
+// The second ask, made only when the step is not done and nothing of the
+// agent's own is still running: what the reply says it is stuck on, so the
+// nudge can aim at it. Whether it needs the owner is the agent's own line, and
+// whether work still runs comes from the hook events, so neither is asked.
+describe('what a step that is not done is stuck on', () => {
+  it('asks one row per blocker the nudge has an instruction for, and nothing about the owner', () => {
+    const rows = workflowBlockerConditions({ name: 'Executing' }, 'main');
+    expect(rows.map((row) => row.blocker)).toEqual(['resource', 'main-fails-too']);
+    for (const row of rows) {
+      expect(row.condition).not.toMatch(/the user|the owner/i);
+    }
   });
 
-  // The workflow stops only on this yes, so it must be shown, never assumed.
-  // Measured: when the unsure answer stopped the workflow instead, 30 of a
-  // board's 311 not-done turn ends stopped wrongly, 5 of the 7 a person had to
-  // push on among them.
-  it('asks whether the agent needs what only the user can give, and names what is not that', () => {
-    const condition = workflowStepNeedsUserCondition({ name: 'Executing' });
-    expect(condition).toContain('asks the user for something it cannot get or decide on its own, and the Executing step cannot go on without it');
-    expect(condition).toContain('a choice between options that changes the result');
-    expect(condition).toContain('information or a secret that is not in the repository or the environment');
-    expect(condition).toContain('an approval for something outside the step\'s own work, such as deleting data');
-    // The one real question on that board's history asked to go on with the
-    // step's own work, and the person answered by moving the card on.
-    expect(condition).toContain('Asking whether to go ahead with the step\'s own work (commit, run the gate or the tests, open the pull request, move on) is not this.');
-    expect(condition).toContain('a list of next steps, a progress note, or a note that a tool or service failed');
+  it('reads a gate stopped for memory or load, and not a mistake in the code, as a resource blocker', () => {
+    const [resource] = workflowBlockerConditions({ name: 'Executing' }, 'main');
+    expect(resource.condition).toContain('the gate it ran for the Executing step was stopped, killed or failed');
+    expect(resource.condition).toContain('ran low on memory or was too busy');
+    // Claude Code's memory reaper, and a gate that failed on load beside other runs.
+    expect(resource.condition).toContain('a process reaper');
+    expect(resource.condition).toContain('other runs at the same time');
+    expect(resource.condition).toContain('not because of a mistake in the code');
+  });
+
+  it('names the task\'s own base branch for failures that also happen there', () => {
+    const [, mainFailsToo] = workflowBlockerConditions({ name: 'Testing' }, 'develop');
+    expect(mainFailsToo.condition).toContain('also happen on develop (the base branch, without this task\'s changes)');
   });
 
   it('leaves the measured first ask untouched by the second', () => {

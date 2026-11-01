@@ -13,12 +13,13 @@ import { hasFinalLine } from '../automations/row-guards';
 import {
   describeStepRoute,
   stepExitVerdict,
+  workflowBlockerConditions,
   workflowStepCondition,
-  workflowStepNeedsUserCondition,
-  workflowStepRunningCondition,
   type StepExitRow,
+  type WorkflowBlocker,
 } from './workflow-step-condition';
 import { workflowOfTask } from './workflow-home';
+import { needsOwnerQuestion } from '../../shared/workflow-needs-owner';
 
 /**
  * A workflow task's own step, at a turn end, after the column's turn-end rows.
@@ -38,12 +39,20 @@ import { workflowOfTask } from './workflow-home';
  * - With no Automation agent set up there is no one to judge, and the column is
  *   a human gate: a person drags the card on (the lock lets that drag through).
  *   It says so in the run log once a visit.
- * - Not done gets a second ask, of why the agent stopped
- *   (`workflowStepNeedsUserCondition`, `workflowStepRunningCondition`): a wait
- *   on the user, work still running, or, when it is neither or the check is
- *   unsure, a stall the caller nudges. The workflow stops only on the first.
- *   The first ask is never changed by it: it is the measured one, and only its
- *   yes moves the task.
+ * - A reply that ends on the `Needs owner:` line waits on the owner, with no
+ *   check to pay for (`needsOwnerQuestion`). Whether a stall needs the owner
+ *   is the agent's own call (owner's decision, 2026-10-31), and this line is
+ *   the only way a workflow task stops and notifies the owner: a change from
+ *   the plan, something the owner must weigh in on, or a decision to make.
+ * - Not done, with work of the agent's own still open by the hook events (a
+ *   background shell it holds, a subagent past its turn end), is still
+ *   working. It comes from `SessionManager.getOpenWork`, never from the
+ *   reply's wording: one gate read as still running at 04:47 and as not done
+ *   at 07:33, with nothing changed but the sentence.
+ * - Anything else not done is a stall the caller nudges. A second ask names
+ *   what the reply says it is stuck on (`workflowBlockerConditions`), so the
+ *   nudge can aim at it. The first ask is never changed by it: it is the
+ *   measured one, and only its yes moves the task.
  * - The answer goes to the run log either way (`recordWorkflowStep`), and so
  *   does a check that could not run, which judged nothing and is tried again.
  * - It returns its verdict, so the caller can recover the task when it does not
@@ -65,18 +74,20 @@ import { workflowOfTask } from './workflow-home';
  *   work ends with no turn end and no reply of its own (`abandoned-turns.ts`).
  */
 export const WORKFLOW_STEP_CHECK_ID = 'workflow-step';
-const WORKFLOW_STEP_NEEDS_USER_ID = 'workflow-step-needs-user';
-const WORKFLOW_STEP_RUNNING_ID = 'workflow-step-running';
+/** The second ask's rows, one per blocker it can name (`workflowBlockerConditions`). */
+const WORKFLOW_BLOCKER_ROW_ID_PREFIX = 'workflow-step-blocker:';
 
 /**
  * What a step check made of a finished turn.
  * - `done`: judged done, and moved on (or with nowhere left to go, or already
  *   moved elsewhere).
  * - `move-failed`: judged done, but the move threw.
- * - `working`: not done, and work the agent started is still running.
- * - `stopped`: not done, with nothing shown to wait on: the agent is nudged.
- * - `waiting`: not done, and the agent needs a decision, information or access
- *   only the user can give.
+ * - `working`: not done, and work the agent started is still open by its hook
+ *   events (a background shell it holds, a background subagent).
+ * - `stopped`: not done, with nothing of its own running: the agent is nudged,
+ *   at what `blockers` names when the reply named something.
+ * - `waiting`: the reply ends on the `Needs owner:` line: only the owner can
+ *   settle it.
  * - `check-failed`: the check could not run this time.
  * - `human-gate`: no Automation agent can judge it, so a person moves the card.
  */
@@ -90,6 +101,30 @@ export interface WorkflowStepResult {
   workSerial: number;
   /** A human gate's first word this visit, which is when it gets its notice. */
   firstThisVisit?: boolean;
+  /** On `stopped`: what the reply says the agent is stuck on, for the nudge to aim at. */
+  blockers?: WorkflowBlocker[];
+}
+
+/** The base branch a task's agent compares against, as the nudge and the blocker row name it. */
+export function taskBaseBranch(task: Pick<Task, 'resolved_base_branch' | 'base_branch'>): string {
+  return task.resolved_base_branch ?? task.base_branch ?? 'the base branch';
+}
+
+/**
+ * Work the agent left running that it will come back to, by its hook events:
+ * a held background shell, or a subagent still running past its turn end.
+ * A one-line description for the run log, or null when there is none.
+ */
+function openBackgroundWork(context: IpcContext, sessionId: string): string | null {
+  const openWork = context.sessionManager.getOpenWork(sessionId);
+  const shell = openWork.backgroundShells[0];
+  if (shell) {
+    const command = shell.command ? `: ${shell.command.replace(/\s+/g, ' ').slice(0, 120)}` : '';
+    return `a background command is still running${command}`;
+  }
+  const subagent = openWork.backgroundSubagents[0];
+  if (subagent) return `a background ${subagent.type ?? 'subagent'} is still running`;
+  return null;
 }
 
 /**
@@ -179,7 +214,7 @@ export async function runWorkflowStep(
     agentReply,
     rows,
   });
-  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit'> = {}): WorkflowStepResult => (
+  const result = (verdict: WorkflowStepVerdict, reason: string | null, extra: Pick<WorkflowStepResult, 'firstThisVisit' | 'blockers'> = {}): WorkflowStepResult => (
     { verdict, reason, workSerial: payload.workSerial, ...extra }
   );
   const record = (row: {
@@ -210,6 +245,21 @@ export async function runWorkflowStep(
     if (afterCheck === 'busy') return null;
     return { task: after.task };
   };
+
+  // The agent's own word that only the owner can settle it: the one wait that
+  // stops a workflow task and notifies the owner. Read in code, so it costs no
+  // check and no check can overrule it.
+  const ownerQuestion = needsOwnerQuestion(agentReply);
+  if (ownerQuestion !== null) {
+    // The reply read can take a while: a turn the user started meanwhile, a
+    // move or a Pause owns what happens next, as after a check.
+    const afterRead = settled();
+    if (afterRead === null) return;
+    if (afterRead === 'newer-turn') return afterRead;
+    const waitingReason = ownerQuestion || 'the agent needs the owner to decide something.';
+    record({ met: false, reason: null, detail: `Waiting on you: ${waitingReason}` });
+    return result('waiting', waitingReason);
+  }
 
   const outcome = await checkAutomationConditions(
     deps,
@@ -294,51 +344,41 @@ export async function runWorkflowStep(
   return result('done', answer.reason);
 
   /**
-   * Not done: ask why it stopped, so the caller can tell work still running,
-   * a stall it can nudge, and a wait on the user apart. A turn that wrote no
-   * reply asked nothing (a failed turn, a crash mid-tool), so it is a stall,
-   * with no second call.
+   * Not done. Work of the agent's own still open by its hook events is still
+   * working, with no second call. Anything else is a stall the caller nudges,
+   * and a second ask names what the reply says it is stuck on, so the nudge can
+   * aim at it. A turn that wrote no reply named nothing (a failed turn, a crash
+   * mid-tool), so it is a plain stall, with no second call either.
    */
   async function judgeWhyNotDone(): Promise<WorkflowStepResult | 'newer-turn' | undefined> {
     const notDone = answer.reason ?? 'the agent is not finished.';
+    const stillRunning = openBackgroundWork(context, payload.sessionId);
+    if (stillRunning) {
+      record({ met: false, reason: answer.reason, detail: `Not done yet, still working: ${stillRunning}.`, backgroundCallId: answerCallId });
+      return result('working', answer.reason);
+    }
     if (!agentReply?.trim()) {
       record({ met: false, reason: answer.reason, detail: `Not done yet: ${notDone}`, backgroundCallId: answerCallId });
-      return result('stopped', answer.reason);
+      return result('stopped', answer.reason, { blockers: [] });
     }
-    const why = await checkAutomationConditions(deps, ask([
-      { automationId: WORKFLOW_STEP_NEEDS_USER_ID, name: 'Needs the user', condition: workflowStepNeedsUserCondition(column) },
-      { automationId: WORKFLOW_STEP_RUNNING_ID, name: 'Still running', condition: workflowStepRunningCondition(column) },
-    ]), { signal: input.signal }, call);
+    const blockerRows = workflowBlockerConditions(column, taskBaseBranch(task));
+    const why = await checkAutomationConditions(deps, ask(blockerRows.map((row) => ({
+      automationId: `${WORKFLOW_BLOCKER_ROW_ID_PREFIX}${row.blocker}`,
+      name: `Blocker: ${row.blocker}`,
+      condition: row.condition,
+    }))), { signal: input.signal }, call);
     if (input.signal.aborted) return;
     const afterWhy = settled();
     if (afterWhy === null) return;
     if (afterWhy === 'newer-turn') return afterWhy;
-    if (!why.ok) {
-      if (why.cause === 'stopped') return;
-      // The step is judged not done, so the reply is judged; why it stopped is
-      // asked again on recovery's next try.
-      record({
-        met: false,
-        reason: answer.reason,
-        detail: `Not done yet: ${notDone} Why it stopped could not be checked: ${why.reason}`,
-        backgroundCallId: answerCallId,
-      });
-      return result('check-failed', why.reason);
-    }
-    const needsUser = why.answers.get(WORKFLOW_STEP_NEEDS_USER_ID);
-    if (needsUser?.met) {
-      const waitingReason = needsUser.reason ?? answer.reason;
-      record({ met: false, reason: answer.reason, detail: `Waiting on you: ${waitingReason ?? 'the agent asked something.'}`, backgroundCallId: answerCallId });
-      return result('waiting', waitingReason);
-    }
-    const running = why.answers.get(WORKFLOW_STEP_RUNNING_ID);
-    if (running?.met) {
-      record({ met: false, reason: answer.reason, detail: `Not done yet, still working: ${running.reason ?? notDone}`, backgroundCallId: answerCallId });
-      return result('working', running.reason ?? answer.reason);
-    }
-    // Anything the check could not show as a wait on the user or on running
-    // work is a stall: unsure, it carries on.
-    record({ met: false, reason: answer.reason, detail: `Not done yet: ${notDone}`, backgroundCallId: answerCallId });
-    return result('stopped', answer.reason);
+    // A blocker check that could not run still leaves a stall to nudge: the
+    // general nudge, rather than no nudge at all.
+    const blockers = why.ok
+      ? blockerRows.filter((row) => why.answers.get(`${WORKFLOW_BLOCKER_ROW_ID_PREFIX}${row.blocker}`)?.met).map((row) => row.blocker)
+      : [];
+    if (!why.ok && why.cause === 'stopped') return;
+    const named = blockers.length > 0 ? ` Stuck on: ${blockers.join(', ')}.` : '';
+    record({ met: false, reason: answer.reason, detail: `Not done yet: ${notDone}${named}`, backgroundCallId: answerCallId });
+    return result('stopped', answer.reason, { blockers });
   }
 }

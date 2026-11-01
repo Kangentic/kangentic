@@ -2,6 +2,7 @@ import type { AutoCommandMode } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
 import type { CommandVerifier } from '../../pty/terminal-submit';
+import { KeysReachedPermissionPromptError } from '../../pty/automated-keys-guard';
 
 /** What the run log says when the exit group's budget stops a message. */
 export const EXIT_BUDGET_ABORT_REASON = 'The message was not delivered before the exit budget ran out.';
@@ -78,6 +79,10 @@ export function deliverExitMessage(
         mode,
         verifier,
         onOutcome: (report: InjectionReport) => {
+          if (report.reachedPermissionPrompt) {
+            finish(new KeysReachedPermissionPromptError());
+            return;
+          }
           // `unconfirmed` is a success: eleven of twelve adapters have no
           // submission verifier, so treating "could not be checked" as a
           // failure would fail the row on every agent but Claude.

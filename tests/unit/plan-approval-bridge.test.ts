@@ -206,6 +206,9 @@ describe('plan-approval-bridge.js with a tool spec', () => {
     prefixes: ['mcp__context7__'],
     excludedTools: ['mcp__context7__resolve-library-id'],
     excludedPrefixes: ['mcp__kangentic__'],
+    inputJudgedTools: [
+      { tool: 'Artifact', inputField: 'tool_input', actionField: 'action', allow: ['read', 'list', 'publish'], whenMissing: 'publish' },
+    ],
   };
   const BARE_ALLOW = {
     hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } },
@@ -293,6 +296,42 @@ describe('plan-approval-bridge.js with a tool spec', () => {
   it('never answers the plan exit with a tool spec', () => {
     writeDecision({ approve: true, mode: 'auto', detail: null });
     expect(runBridge(permissionRequest('ExitPlanMode', PLAN_INPUT), toolSpec())).toBe('');
+  });
+
+  // Task #952: Planning agents waited minutes on the approval of an Artifact
+  // read. A built-in call that only reads or publishes is answered by what its
+  // input asks, with no allow rule; a delete keeps its prompt.
+  describe('a built-in call judged by its input', () => {
+    function artifactRequest(toolInput: unknown): string {
+      return JSON.stringify({ ...MCP_CAPTURED_REQUEST, tool_name: 'Artifact', tool_input: toolInput });
+    }
+
+    it.each(['read', 'list', 'publish'])('approves an Artifact %s with a bare allow, after its marker', (action) => {
+      writeDecision({ approve: true, mode: 'auto', detail: null });
+      expectBareAllow(runBridge(artifactRequest({ action, url: 'https://claude.ai/artifact/x' }), toolSpec()), 'Artifact');
+    });
+
+    it('approves an Artifact call that leaves its action out, which the tool documents as a publish', () => {
+      writeDecision({ approve: true, mode: 'auto', detail: null });
+      expectBareAllow(runBridge(artifactRequest({ file_path: '/tmp/page.html' }), toolSpec()), 'Artifact');
+    });
+
+    it.each(['delete', 'open', 'pin', 42])('never answers an Artifact call whose action is %s', (action) => {
+      writeDecision({ approve: true, mode: 'auto', detail: null });
+      expectNoAnswer(runBridge(artifactRequest({ action }), toolSpec()));
+    });
+
+    it('never answers an Artifact call with no input object, or outside plan mode', () => {
+      writeDecision({ approve: true, mode: 'auto', detail: null });
+      expectNoAnswer(runBridge(artifactRequest('read'), toolSpec()));
+      expectNoAnswer(runBridge(JSON.stringify({ ...JSON.parse(artifactRequest({ action: 'read' })), permission_mode: 'default' }), toolSpec()));
+    });
+
+    it('never answers it when a deny or ask rule names the tool', () => {
+      writeDecision({ approve: true, mode: 'auto', detail: null });
+      const excluded = encodeSpec(claudePlanToolApprovalSpec({ ...RULES, excludedTools: ['Artifact'] }));
+      expectNoAnswer(runBridge(artifactRequest({ action: 'read' }), excluded));
+    });
   });
 
   it('leaves the prompt to the user when there is no decision file', () => {

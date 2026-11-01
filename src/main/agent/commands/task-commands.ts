@@ -29,6 +29,7 @@ import {
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
+import { prReadinessNote } from '../../pr/pr-readiness-note';
 import { prNumberFromUrl } from '../../../shared/pr-url';
 import { WorktreeManager } from '../../git/worktree-manager';
 import { isGitRepo } from '../../git/git-checks';
@@ -799,8 +800,8 @@ export const handleLinkPr: CommandHandler = async (
   }
 
   const linkedTask = result.task;
-  // Same suffix shape as the linker's own log line, so the two stay in step.
-  const readinessNote = linkedTask?.pr_merge_readiness ? `, merge ${linkedTask.pr_merge_readiness}` : '';
+  // The linker's own suffix, so the two stay in step: none on a merged or closed PR.
+  const readinessNote = prReadinessNote(linkedTask?.pr_state, linkedTask?.pr_merge_readiness);
   switch (result.status) {
     case 'linked':
     case 'unchanged':

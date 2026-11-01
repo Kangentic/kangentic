@@ -44,6 +44,15 @@ const MAX_SENDS_PER_TARGET_PER_WINDOW = 30;
  */
 const MAX_HOP_DEPTH = 25;
 
+/**
+ * How long a `now` send's paste waits for the target to take keys before it
+ * fails as held. The send refuses at once when the target cannot take keys
+ * when it is made, so this only covers a tool call that opens in between,
+ * and failing then matches that refusal. Without it the sending agent's own
+ * tool call would wait for as long as the target's tool ran.
+ */
+export const NOW_SEND_CLEARANCE_MS = 30_000;
+
 /** How the caller wants the message delivered relative to the target's turn. */
 export type SessionSendDeliverWhen = 'now' | 'idle';
 
@@ -100,13 +109,15 @@ export interface SessionSendRequest {
 export interface SessionSendSessionManager {
   isWritable(sessionId: string): boolean;
   getActivityCache(): Record<string, ActivityState>;
+  /** Why automated keys may not go in now, or null (`SessionManager.automatedKeysBlocker`). */
+  automatedKeysBlocker(sessionId: string): string | null;
   on(event: string, listener: (...args: unknown[]) => void): unknown;
   off(event: string, listener: (...args: unknown[]) => void): unknown;
 }
 
 /** The slice of `TerminalSubmit` this module needs. */
 export interface SessionSendTerminalSubmit {
-  submitContent(sessionId: string, text: string, opts?: { source?: string }): Promise<void>;
+  submitContent(sessionId: string, text: string, opts?: { source?: string; automated?: boolean; clearanceTimeoutMs?: number }): Promise<void>;
 }
 
 export interface SessionSendDependencies {
@@ -230,8 +241,15 @@ export function createSessionSendCoordinator(
     return result;
   }
 
-  function deliver(sessionId: string, text: string): Promise<void> {
-    return runSerialized(sessionId, () => terminalSubmit.submitContent(sessionId, text, { source: 'mcp' }));
+  /**
+   * An agent's message is automated keys: it waits out a prompt or a tool
+   * call with no end before its Enter (`PasteOptions.automated`). A `now`
+   * send answers the sending agent's own tool call, so its wait before the
+   * write is bounded (`NOW_SEND_CLEARANCE_MS`); a held `idle` send has no
+   * caller waiting and holds for as long as the target needs.
+   */
+  function deliver(sessionId: string, text: string, clearanceTimeoutMs?: number): Promise<void> {
+    return runSerialized(sessionId, () => terminalSubmit.submitContent(sessionId, text, { source: 'mcp', automated: true, clearanceTimeoutMs }));
   }
 
   /**
@@ -410,11 +428,16 @@ export function createSessionSendCoordinator(
       // Scoped to 'now' deliberately: `deliverWhen: 'idle'` already holds for
       // this state a few lines below (isReadyForPrompt excludes 'permission'),
       // which is the outcome the refusal text points the caller at.
-      if (deliverWhen === 'now' && targetActivity === 'permission') {
+      //
+      // The guard is the shared one (`automated-keys-guard.ts`): a permission
+      // prompt, or a tool call with no end, whose prompt the engine's flag can
+      // have lost (a parallel subagent's start cleared it once).
+      const keysBlocker = deliverWhen === 'now' ? sessionManager.automatedKeysBlocker(targetSessionId) : null;
+      if (keysBlocker) {
         return refuse(
           'target-at-prompt',
-          `Session ${targetSessionId} is sitting at a permission prompt, where the submit path's Enter would confirm the highlighted option instead of sending your message. ` +
-            'Re-send with deliverWhen: "idle" to hold until the prompt clears, or resolve the prompt first.',
+          `Session ${targetSessionId} cannot take your message right now (${keysBlocker}): the submit path's Enter could confirm a prompt instead of sending it. ` +
+            'Re-send with deliverWhen: "idle" to hold until it clears, or resolve the prompt first.',
         );
       }
 
@@ -464,7 +487,7 @@ export function createSessionSendCoordinator(
       }
 
       try {
-        await deliver(targetSessionId, text);
+        await deliver(targetSessionId, text, NOW_SEND_CLEARANCE_MS);
       } catch (error) {
         rollBackHopDepth();
         const detail = error instanceof Error ? error.message : String(error);

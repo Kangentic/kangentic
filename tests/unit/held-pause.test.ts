@@ -40,8 +40,8 @@ describe('isHeldPause', () => {
     expect(isHeldPause(null)).toBe(false);
   });
 
-  it('lists exactly the user and auto sources', () => {
-    expect([...HELD_PAUSE_SOURCES].sort()).toEqual(['auto', 'user']);
+  it('lists exactly the user, idle-timeout and low-memory sources', () => {
+    expect([...HELD_PAUSE_SOURCES].sort()).toEqual(['auto', 'low_memory', 'user']);
   });
 });
 

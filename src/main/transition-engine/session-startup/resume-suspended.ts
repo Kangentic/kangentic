@@ -24,6 +24,7 @@ import { withTaskLock } from '../../ipc/task-lifecycle-lock';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
+import { sweepIntervalsOncePerLaunch } from '../../activity-engine/activity-interval-store';
 
 /** The optional parts of a recovery pass (`resumeSuspendedSessions`). */
 export interface ResumeSuspendedOptions {
@@ -99,11 +100,13 @@ export async function resumeSuspendedSessions(
   //    orphaning sessions that were JUST created and are actively running.
   //    A scoped recovery skips it: its sessions' exits were already recorded,
   //    and every other 'running' record belongs to a live session.
-  const liveTaskIds = new Set(
-    sessionManager.listSessions()
-      .filter((session) => session.status === 'running' || session.status === 'queued')
-      .map((session) => session.taskId),
-  );
+  const liveSessions = sessionManager.listSessions()
+    .filter((session) => session.status === 'running' || session.status === 'queued');
+  const liveTaskIds = new Set(liveSessions.map((session) => session.taskId));
+
+  // Task #952: the activity intervals the last quit or crash left open. A
+  // scoped recovery (a pty host loss) is mid-launch, so it sweeps nothing.
+  if (!onlySessionIds) sweepIntervalsOncePerLaunch(projectId, db, new Set(liveSessions.map((session) => session.id)));
   if (onlySessionIds) {
     // Nothing to orphan.
   } else if (liveTaskIds.size > 0) {
@@ -580,6 +583,10 @@ export async function resumeSuspendedSessions(
           // command is already built, so this flag does not alter it - it only
           // drives the seed and the resume overlay.
           resuming: !input.prompt,
+          // Kangentic brought this agent back after a quit, a crash or a pty
+          // host loss: its background commands died with the old process,
+          // which workflow recovery reads off the resume (`resumedBy`).
+          resumedBy: 'recovery',
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
           ...(restoredGrid ? { restoredGrid } : {}),
           shell: input.shell,
@@ -605,6 +612,8 @@ export async function resumeSuspendedSessions(
           exited_at: null,
           suspended_by: null,
           cli_target: serializeCliTarget(input.cliTarget),
+          // The same pass, recovered: it began where the record it replaces did.
+          start_head_sha: input.record.start_head_sha ?? null,
         });
         // Record what this resume applied (the `--model` / `--effort` flags land
         // on every resume) so a later column move diffs against the true value.

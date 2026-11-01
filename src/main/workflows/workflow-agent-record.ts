@@ -25,6 +25,7 @@ export function workflowAgentSessionRecord(input: {
     task_id: '',
     session_type: input.sessionType,
     isolated_swimlane_id: null,
+    start_head_sha: null,
     agent_session_id: input.agentSessionId,
     command: '',
     cwd: input.cwd,

@@ -40,9 +40,13 @@ import {
   cancelWorkflowRecovery,
   isUnderWorkflowRecovery,
   resetWorkflowRecoveryForTests,
+  WORKING_WAIT_MS,
 } from '../../src/main/workflows/workflow-recovery-state';
 import { markOwnCallSession } from '../../src/main/ipc/handlers/own-call-turn-wait';
+import { workflowMemoryGate } from '../../src/main/workflows/workflow-memory-gate';
+import type { OpenWork } from '../../src/main/activity-engine/open-work-ledger';
 import { openTestDatabase } from './helpers/test-database';
+import { GIBIBYTE, windowsSample } from './helpers/host-memory-sample';
 
 interface CheckInput {
   agentReply: string | null;
@@ -54,6 +58,10 @@ const hoisted = vi.hoisted(() => ({
   repos: null as unknown,
   rows: [] as unknown[],
   task: {} as Record<string, unknown>,
+  /** A second workflow task in the same column, for the tests that put two through the memory gate. */
+  otherTask: null as Record<string, unknown> | null,
+  /** The tasks of the workflow, as the recovery reads them to name the siblings whose PR landed. */
+  workflowTasks: vi.fn(),
   workflowState: 'running',
   check: vi.fn(),
   handleTaskMove: vi.fn(),
@@ -108,6 +116,11 @@ vi.mock('../../src/main/workflows/workflow-home', () => ({
   isInWorkflow: vi.fn(() => true),
 }));
 vi.mock('../../src/main/workflows/workflow-changed', () => ({ notifyWorkflowChanged: vi.fn(), notifyWorkflowOfTask: vi.fn() }));
+// Only the read the recovery makes for its siblings is replaced; the rest of the module stays real.
+vi.mock('../../src/main/workflows/workflow-tasks', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/workflows/workflow-tasks')>()),
+  workflowTasks: hoisted.workflowTasks,
+}));
 vi.mock('../../src/main/ipc/send-to-renderer', () => ({ sendToRenderer: vi.fn() }));
 
 const { registerTurnEndAutomations, catchUpAfterResume } = await import('../../src/main/automations/turn-end/turn-end-runner');
@@ -116,7 +129,6 @@ const {
   noteWorkflowTaskPaused,
   nudgeMessage,
   RECOVERY_DELAYS_MS,
-  WORKING_WAIT_MS,
   OUTAGE_RETRY_MS,
   HOLD_RECHECK_MS,
 } = await import('../../src/main/workflows/workflow-recovery');
@@ -125,7 +137,16 @@ const { sendToRenderer } = await import('../../src/main/ipc/send-to-renderer');
 const { checkForHungTurns, stopWorkflowHangCheck, INTERRUPT_LANDING_MS } = await import('../../src/main/workflows/workflow-hang-check');
 const { agentRegistry } = await import('../../src/main/agent/agent-registry');
 
+/** Below the 2 GB pressure threshold of a 64 GB commit limit. */
+const LOW_COMMIT_BYTES = 1 * GIBIBYTE;
+/** Past its 4 GB recovery line. */
+const RECOVERED_COMMIT_BYTES = 8 * GIBIBYTE;
+
 const SESSION_ID = 'session-1';
+/** The second task's session, for the tests that put two tasks through the memory gate. */
+const OTHER_SESSION_ID = 'session-other';
+/** Its turn's serial, apart from the first session's `workSerial`, which `startTurn` and `endTurn` move. */
+const OTHER_WORK_SERIAL = 7;
 const PROJECT_ID = 'project-1';
 const MARKER = 'Implementation: complete';
 const ANCHOR: TranscriptAnchor = { agentSessionId: 'agent-session-1', byteOffset: 1_000 };
@@ -135,14 +156,19 @@ const MINUTE = 60_000;
 const STALLED_REPLY = 'I could not finish: the service that approves shell commands stopped answering, so the last edits are '
   + 'uncommitted and the gate has not run.\n\n**To finish:** commit the working tree, run the gate, and fix what it finds.';
 const FINISHED_REPLY = `The gate passed on the committed tree.\n\n${MARKER}`;
+/** The agent's words while its gate runs: what holds it is the open shell, never these words. */
 const BACKGROUND_REPLY = 'The gate is still running in the background. I will report when it finishes.';
-const QUESTION_REPLY = 'Two layouts would work here. Which one do you want: the side panel or the drawer?';
+const OWNER_QUESTION = 'which layout do you want, the side panel or the drawer?';
+/** A real question, named the one way a workflow agent stops for the owner. */
+const QUESTION_REPLY = `Two layouts would work here, and they change what the user sees.\n\nNeeds owner: ${OWNER_QUESTION}`;
+/** A gate the memory reaper stopped: a resource blocker, which the nudge answers by itself. */
+const REAPED_REPLY = 'The gate was killed by the memory reaper while the machine was low on memory. I will not start it again on my own.';
 
 /**
  * The Automation agent, scripted: each Condition answered from the reply's
- * text. The step is done on the marker; the agent needs the user when the reply
- * asks which one; work is still running when the reply says so. Anything else
- * is a stall. `serviceDown` makes every check fail, as an outage does.
+ * text. The step is done on the marker. The blocker rows read a reaped gate
+ * and failures that also happen on main. Anything else is a stall with no
+ * blocker. `serviceDown` makes every check fail, as an outage does.
  */
 let serviceDown = false;
 function scriptedCheck(_deps: unknown, input: CheckInput): unknown {
@@ -155,12 +181,14 @@ function scriptedCheck(_deps: unknown, input: CheckInput): unknown {
     if (row.automationId === 'workflow-step') {
       const met = reply.includes(MARKER);
       answers.set(row.automationId, { met, reason: met ? 'It ends on the marker.' : 'It stopped before its marker; the gate has not passed' });
-    } else if (row.automationId === 'workflow-step-running') {
-      const met = reply.includes('still running');
-      answers.set(row.automationId, { met, reason: met ? 'The gate is still running in the background' : 'Nothing is left running.' });
+    } else if (row.automationId === 'workflow-step-blocker:resource') {
+      const met = reply.includes('low on memory');
+      answers.set(row.automationId, { met, reason: met ? 'The memory reaper killed the gate.' : 'Nothing was stopped for memory.' });
+    } else if (row.automationId === 'workflow-step-blocker:main-fails-too') {
+      const met = reply.includes('fail on main too');
+      answers.set(row.automationId, { met, reason: met ? 'The same tests fail on main.' : 'It names no failure on main.' });
     } else {
-      const met = reply.includes('Which one do you want');
-      answers.set(row.automationId, { met, reason: met ? 'It asks the user to choose a layout.' : 'It asks the user for nothing.' });
+      throw new Error(`An unexpected condition row: ${row.automationId}`);
     }
   }
   return { ok: true, answers, agentName: 'Scripted agent', callId: null };
@@ -176,6 +204,9 @@ interface FakeSessionManager extends EventEmitter {
   getSession: (sessionId: string) => unknown;
   getPendingDraft: (sessionId: string) => string | null;
   getFocusedSessions: () => Set<string>;
+  getLastUserInputAt: (sessionId: string) => number | null;
+  getOpenWork: (sessionId: string) => OpenWork;
+  automatedKeysBlocker: (sessionId: string) => string | null;
   listSessions: () => unknown[];
   getActivityReason: (sessionId: string) => unknown;
   getSessionAgentName: (sessionId: string) => string;
@@ -192,6 +223,10 @@ describe('a running workflow task whose turn ends without its step done', () => 
   let workingLane: Swimlane;
   let nextLane: Swimlane;
   let taskId: string;
+  /** The second task, once a test adds it (`addOtherWorkflowTask`), or null. */
+  let otherTaskId: string | null;
+  /** What the second session shows: idle by default, and nothing in these tests moves it. */
+  let otherActivity: string;
   let taskCounter = 0;
   let sessionManager: FakeSessionManager;
   let context: IpcContext;
@@ -201,6 +236,12 @@ describe('a running workflow task whose turn ends without its step done', () => 
   let replyAt: number;
   let draft: string | null;
   let focused: Set<string>;
+  /** The user typing into the terminal: their last input is always just now. */
+  let userTyping: boolean;
+  /** What the session's hook events still have open (`SessionManager.getOpenWork`). */
+  let openWork: OpenWork;
+  /** Why the session cannot take automated keys, or null (`automatedKeysBlocker`). */
+  let keysBlocker: string | null;
   let notifyDesktop: ReturnType<typeof vi.fn>;
   let notifyPhone: ReturnType<typeof vi.fn>;
   /** What the session shows it is working on; a busy turn by default once it thinks. */
@@ -271,8 +312,14 @@ describe('a running workflow task whose turn ends without its step done', () => 
     };
     nextLane = nextOnRoute(lanes, hoisted.task as never, workingLane.id)!;
     hoisted.rows = [];
+    hoisted.otherTask = null;
+    otherTaskId = null;
+    otherActivity = 'idle';
+    // The siblings the recovery reads: none, until a test lists some.
+    hoisted.workflowTasks.mockReset();
+    hoisted.workflowTasks.mockImplementation(() => []);
     hoisted.repos = {
-      tasks: { getById: () => hoisted.task, list: () => [] },
+      tasks: { getById: (id: string) => (hoisted.otherTask !== null && id === hoisted.otherTask.id ? hoisted.otherTask : hoisted.task), list: () => [] },
       swimlanes: { getById: (id: string) => lanes.find((lane) => lane.id === id) ?? null, list: () => lanes },
       automations: { getForTrigger: () => hoisted.rows },
       automationRuns: runs,
@@ -320,6 +367,10 @@ describe('a running workflow task whose turn ends without its step done', () => 
     replyAt = Date.now();
     draft = null;
     focused = new Set();
+    userTyping = false;
+    openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [] };
+    keysBlocker = null;
+    workflowMemoryGate.resetForTests();
     notifyDesktop = vi.fn();
     notifyPhone = vi.fn();
     activityReason = { kind: 'turn-active' };
@@ -329,17 +380,27 @@ describe('a running workflow task whose turn ends without its step done', () => 
     fs.writeFileSync(historyFile, '{}\n');
     stopWorkflowHangCheck();
     sessionManager = Object.assign(new EventEmitter(), {
-      getActivityCache: () => ({ [SESSION_ID]: activity }),
-      isLatestTurn: (sessionId: string, serial: number) => sessionId === SESSION_ID && serial === workSerial,
-      currentWorkSerial: () => workSerial,
+      getActivityCache: () => ({ [SESSION_ID]: activity, ...(otherTaskId !== null ? { [OTHER_SESSION_ID]: otherActivity } : {}) }),
+      isLatestTurn: (sessionId: string, serial: number) => (sessionId === SESSION_ID && serial === workSerial)
+        || (otherTaskId !== null && sessionId === OTHER_SESSION_ID && serial === OTHER_WORK_SERIAL),
+      currentWorkSerial: (sessionId: string) => (otherTaskId !== null && sessionId === OTHER_SESSION_ID ? OTHER_WORK_SERIAL : workSerial),
       currentTurnAnchor: () => ANCHOR,
       hadLeftPlanModeBy: () => false,
       isInternalAgentEvent: () => false,
-      getSession: (sessionId: string) => (sessionId === SESSION_ID
-        ? { id: SESSION_ID, taskId, projectId: PROJECT_ID, status: 'running', transient: false, workflowId: null, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null }
-        : undefined),
+      getSession: (sessionId: string) => {
+        if (sessionId === SESSION_ID) {
+          return { id: SESSION_ID, taskId, projectId: PROJECT_ID, status: 'running', transient: false, workflowId: null, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null };
+        }
+        if (otherTaskId !== null && sessionId === OTHER_SESSION_ID) {
+          return { id: OTHER_SESSION_ID, taskId: otherTaskId, projectId: PROJECT_ID, status: 'running', transient: false, workflowId: null, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null };
+        }
+        return undefined;
+      },
       getPendingDraft: () => draft,
       getFocusedSessions: () => focused,
+      getLastUserInputAt: () => (userTyping ? Date.now() : null),
+      getOpenWork: () => openWork,
+      automatedKeysBlocker: () => keysBlocker,
       listSessions: () => [{
         id: SESSION_ID, taskId, projectId: PROJECT_ID, status: 'running', transient: false, workflowId: null,
         agentSessionId: 'agent-session-1', cwd: historyDirectory,
@@ -404,6 +465,28 @@ describe('a running workflow task whose turn ends without its step done', () => 
   const nudges = (): string[] => hoisted.deliverMessageToSession.mock.calls.map((call) => (call[1] as { message: string }).message);
   const stallNotices = (): unknown[] => notifyDesktop.mock.calls.filter((call) => (call[0] as { kind: string }).kind === 'stalled');
   const recoveryRows = () => runs.listForTask(taskId).filter((run) => (run.type as string) === 'workflow_recovery');
+  /** The nudges tried for one task, a rejected delivery included. */
+  const deliveriesTo = (deliveredTaskId: string): number => hoisted.deliverMessageToSession.mock.calls
+    .filter((call) => (call[1] as { taskId: string }).taskId === deliveredTaskId).length;
+
+  /**
+   * A second workflow task in the same column, with its own session, idle and on
+   * its own turn serial. Its rows are written for the run log, whose foreign keys
+   * need the task. Returns its id.
+   */
+  function addOtherWorkflowTask(): string {
+    const id = `${taskId}-other`;
+    otherTaskId = id;
+    const database = hoisted.database as DatabaseType.Database;
+    database
+      .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(id, 'Add the export button', '', workingLane.id, 1, '2026-10-25T05:00:00.000Z', '2026-10-25T05:00:00.000Z');
+    database
+      .prepare('INSERT INTO task_moves (id, task_id, from_swimlane_id, to_swimlane_id, origin, reason, at) VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run(randomUUID(), id, null, workingLane.id, 'workflow', null, '2026-10-25T05:30:00.000Z');
+    hoisted.otherTask = { ...hoisted.task, id, title: 'Add the export button', session_id: OTHER_SESSION_ID };
+    return id;
+  }
 
   /** A check that ends because the task moved on: the step gives no verdict, so the pass arms nothing. */
   const NO_VERDICT_CHECK = { ok: false, reason: 'The condition check was stopped because the task moved on.', cause: 'stopped', callId: null };
@@ -441,8 +524,9 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()[0]).toContain(`The ${workingLane.name} step is not done yet`);
     expect(nudges()[0]).toContain('Carry on from where you stopped.');
     // It answers a "shall I go on?" rather than inviting one.
-    expect(nudges()[0]).toContain('Go ahead with this step\'s own work, such as committing or running the gate, without asking first.');
-    expect(nudges()[0]).toContain('Stop only for a decision, information or access that only the user can give.');
+    expect(nudges()[0]).toContain('Go ahead with this step\'s own work without asking first.');
+    // The one way to stop: the agent's own line, for the three things only the owner can settle.
+    expect(nudges()[0]).toContain('end your reply with the line "Needs owner: <the question>". Otherwise act on it.');
     expect(nudges()[0]).not.toContain('\n');
     expect(recoveryRows()).toEqual([expect.objectContaining({ status: 'succeeded', detail: 'Recovery 1 of 4: asked the agent to carry on.' })]);
 
@@ -558,9 +642,17 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()).toHaveLength(2);
   });
 
+  /** The gate the agent left running in the background, open in its hook events. */
+  function leaveGateRunning(): void {
+    openWork = { ...openWork, backgroundShells: [{ id: 'gate-shell', command: 'npm run verify', since: Date.now() }] };
+  }
+
   it('leaves an agent waiting on its own background job alone for an hour, then nudges it to check on it', async () => {
+    leaveGateRunning();
     await endTurn(41, BACKGROUND_REPLY);
     expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+    // Read from the open shell, with no second check about the wording.
+    expect(hoisted.check).toHaveBeenCalledTimes(1);
 
     await wait(RECOVERY_DELAYS_MS[0]);
     expect(nudges()).toHaveLength(0);
@@ -570,11 +662,23 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()[0]).toContain('Check on the work you left running');
   });
 
+  // Red before: "still working" came from the reply's wording, so the same
+  // words with nothing left running waited an hour on a gate that was gone.
+  it('nudges an agent whose reply says it waits on a gate that is not running, on the first step', async () => {
+    await endTurn(41, BACKGROUND_REPLY);
+
+    await wait(RECOVERY_DELAYS_MS[0]);
+    expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).toContain('Carry on from where you stopped.');
+  });
+
   it('judges the turn the background job woke the agent for, and does not nudge', async () => {
+    leaveGateRunning();
     await endTurn(41, BACKGROUND_REPLY);
     await wait(20 * MINUTE);
 
     // The gate finished and woke the agent, which ended on its marker.
+    openWork = { ...openWork, backgroundShells: [] };
     startTurn(42);
     await endTurn(42, FINISHED_REPLY);
 
@@ -583,16 +687,88 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()).toHaveLength(0);
   });
 
-  it('sends the notice at once for a real question, nudges nothing, and lets the idle sweep apply', async () => {
+  it('sends the notice at once for the agent\'s own Needs owner line, nudges nothing, and lets the idle sweep apply', async () => {
     await endTurn(41, QUESTION_REPLY);
 
     expect(notifyDesktop).toHaveBeenCalledTimes(1);
-    expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: 'It asks the user to choose a layout.' }));
-    expect(notifyPhone).toHaveBeenCalledWith(expect.objectContaining({ detail: 'Waiting on you: It asks the user to choose a layout.' }));
+    expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: OWNER_QUESTION }));
+    expect(notifyPhone).toHaveBeenCalledWith(expect.objectContaining({ detail: `Waiting on you: ${OWNER_QUESTION}` }));
     expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+    // Read in code: no check is paid for the line.
+    expect(hoisted.check).not.toHaveBeenCalled();
 
     await wait(3 * 60 * MINUTE);
     expect(nudges()).toHaveLength(0);
+  });
+
+  // The owner's rule: whether a stall needs the owner is the agent's own call.
+  // A question with no Needs owner line is a stall like any other, and its
+  // nudge tells the agent how to say so if only the owner can settle it.
+  it('nudges a question that does not end on the Needs owner line, and tells nobody', async () => {
+    await endTurn(41, 'Two layouts would work here. Which one do you want: the side panel or the drawer?');
+
+    expect(notifyDesktop).not.toHaveBeenCalled();
+    await wait(RECOVERY_DELAYS_MS[0]);
+    expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).toContain('"Needs owner: <the question>"');
+
+    // The agent names it the one way that stops the workflow: the notice goes out then.
+    startTurn(42);
+    await endTurn(42, QUESTION_REPLY);
+    expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', reason: OWNER_QUESTION }));
+    expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+  });
+
+  it('answers a gate the memory reaper stopped: memory is back, run it again, one run at a time', async () => {
+    await endTurn(41, REAPED_REPLY);
+    await wait(RECOVERY_DELAYS_MS[0]);
+
+    expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).toContain('The machine has memory to spare again');
+    expect(nudges()[0]).toContain('one run at a time');
+    // Never the general "carry on" when the blocker is known.
+    expect(nudges()[0]).not.toContain('Carry on from where you stopped.');
+  });
+
+  // The claim is the agent's own, so the nudge has it checked: a wrong claim
+  // told "not this step's to fix" would leave a regression the step made.
+  it('tells an agent whose failures it says also happen on main to check that, record those, and fix the rest', async () => {
+    hoisted.task = { ...hoisted.task, resolved_base_branch: 'main' };
+    await endTurn(41, 'Three tests fail, and two of them fail on main too on a clean checkout. The gate is not green.');
+    await wait(RECOVERY_DELAYS_MS[0]);
+
+    expect(nudges()[0]).toContain('Run the failing tests on a separate clean checkout of main to check, leaving this branch as it is.');
+    expect(nudges()[0]).toContain('Record the ones that fail there too, and that main fails them: those are not this step\'s to fix.');
+    expect(nudges()[0]).toContain('Fix any that pass on main, then carry on.');
+  });
+
+  it('holds a nudge while memory reads low, spends nothing, and sends it once memory recovers', async () => {
+    // The sampler's minute tick, as the app feeds the gate.
+    let remainingBytes = LOW_COMMIT_BYTES;
+    let sampling = true;
+    const tick = (): void => {
+      if (!sampling) return;
+      workflowMemoryGate.onSample(windowsSample(remainingBytes));
+      setTimeout(tick, MINUTE);
+    };
+    tick();
+    try {
+      await endTurn(41, REAPED_REPLY);
+      await wait(RECOVERY_DELAYS_MS[0] + 30 * MINUTE);
+
+      // Nothing typed into low memory, and one row says why.
+      expect(nudges()).toHaveLength(0);
+      expect(recoveryRows().filter((run) => run.detail?.includes('held while memory is low'))).toHaveLength(1);
+
+      // Memory recovers: the held nudge goes on the next look, as the first of four.
+      remainingBytes = RECOVERED_COMMIT_BYTES;
+      await wait(HOLD_RECHECK_MS + MINUTE);
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).toContain('(8.0 GB free)');
+      expect(recoveryRows().some((run) => run.detail === 'Recovery 1 of 4: asked the agent to carry on.')).toBe(true);
+    } finally {
+      sampling = false;
+    }
   });
 
   // The one question in a real board's workflow history asked to go on with
@@ -680,24 +856,71 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(nudges()).toHaveLength(2);
   });
 
-  it('holds a nudge off while the user is in the terminal, without holding off the schedule', async () => {
-    focused = new Set([SESSION_ID]);
+  it('holds a nudge off while the user is typing into the terminal, without holding off the schedule', async () => {
+    userTyping = true;
     await endTurn(41, STALLED_REPLY);
 
-    // Focused the whole night: every attempt is held through to the next one's
+    // Typing the whole night: every attempt is held through to the next one's
     // turn, the last through an hour, and the notice still goes out.
     const schedule = RECOVERY_DELAYS_MS.reduce((total, delay) => total + delay, 0);
     await wait(schedule + OUTAGE_RETRY_MS + 2 * MINUTE);
     expect(nudges()).toHaveLength(0);
     expect(stallNotices()).toHaveLength(1);
-    expect(recoveryRows().some((run) => run.detail?.includes('held off, its terminal was on screen'))).toBe(true);
+    expect(recoveryRows().some((run) => run.detail?.includes('held off, you typed into it in the last few minutes'))).toBe(true);
     // A held attempt reuses its verdict: the step was judged at the turn end only.
     expect(hoisted.check).toHaveBeenCalledTimes(2);
 
     // The user leaves: the next look nudges.
-    focused = new Set();
+    userTyping = false;
     await wait(OUTAGE_RETRY_MS);
     expect(nudges()).toHaveLength(1);
+  });
+
+  // Red before: a terminal left on screen held one task an hour overnight with
+  // nobody at the keys.
+  it('does not take a terminal left on screen for the user', async () => {
+    focused = new Set([SESSION_ID]);
+    await endTurn(41, STALLED_REPLY);
+    await wait(RECOVERY_DELAYS_MS[0]);
+    expect(nudges()).toHaveLength(1);
+  });
+
+  it('holds a nudge while the session cannot take keys, and tells the owner of a call left open on an idle agent', async () => {
+    // The lost prompt: the engine reads idle, and a tool call has no end.
+    openWork = { ...openWork, toolCalls: [{ id: 'artifact-call', tool: 'Artifact', since: Date.now() }] };
+    keysBlocker = 'the Artifact tool call has not ended';
+    await endTurn(41, STALLED_REPLY);
+
+    await wait(RECOVERY_DELAYS_MS[0]);
+    expect(nudges()).toHaveLength(0);
+    expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+    // Still open past ten minutes (`OPEN_CALL_NOTICE_MS`): most likely a
+    // prompt nobody answered. The owner is told, and nothing was ever typed
+    // into it.
+    await wait(6 * MINUTE);
+    expect(nudges()).toHaveLength(0);
+    expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({
+      kind: 'waiting',
+      reason: 'it may be waiting on a permission prompt for Artifact, which nothing has answered.',
+    }));
+    expect(isUnderWorkflowRecovery(taskId)).toBe(false);
+  });
+
+  it('records keys that reached a permission prompt as their own outcome, and does not count them', async () => {
+    const { KeysReachedPermissionPromptError } = await import('../../src/main/pty/automated-keys-guard');
+    hoisted.deliverMessageToSession.mockRejectedValueOnce(new KeysReachedPermissionPromptError());
+    await endTurn(41, STALLED_REPLY);
+    await wait(RECOVERY_DELAYS_MS[0]);
+
+    expect(recoveryRows()).toEqual([expect.objectContaining({
+      status: 'failed',
+      detail: 'Recovery 1 of 4: the nudge\'s keys reached a permission prompt, so they may have answered it. It does not count.',
+    })]);
+    // The next look comes a minute on, still as the first of four.
+    await wait(HOLD_RECHECK_MS + 1_000);
+    expect(nudges()).toHaveLength(2);
+    expect(recoveryRows().some((run) => run.detail === 'Recovery 1 of 4: asked the agent to carry on.')).toBe(true);
   });
 
   it('does not nudge while the user has text typed into the prompt', async () => {
@@ -733,30 +956,88 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(notifyDesktop).not.toHaveBeenCalled();
   });
 
-  it('after a restart, judges a parked task again within one step of its schedule', async () => {
+  it('after a person resumes a parked task, judges it again within one step of its schedule', async () => {
     await endTurn(41, STALLED_REPLY);
     expect(isUnderWorkflowRecovery(taskId)).toBe(true);
 
-    // The app quits: recovery's memory goes, the run log stays. Recovery at
-    // launch resumes the session, whose reply the step check already judged.
+    // Recovery's memory goes, the run log stays. A person resumes the
+    // session, whose reply the step check already judged.
     resetWorkflowRecoveryForTests();
     replyAt = Date.now() - MINUTE;
     await wait(10 * MINUTE);
-    await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial });
+    await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial, resumedBy: 'user' });
     await settle();
 
     expect(isUnderWorkflowRecovery(taskId)).toBe(true);
     await wait(RECOVERY_DELAYS_MS[0]);
     expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).not.toContain('Kangentic restarted');
   });
 
-  it('stops and sends the notice when low memory pauses a task under recovery', async () => {
+  // Red before: recovery kept each task's pre-quit "work left running" verdict
+  // and waited an hour on a gate that died with the quit.
+  it('after Kangentic restarts the agent, drops the old working verdict and nudges at once, saying its background commands stopped', async () => {
+    leaveGateRunning();
+    await endTurn(41, BACKGROUND_REPLY);
+    expect(nudges()).toHaveLength(0);
+
+    // The app quits and relaunches: the gate died with the old process, and
+    // the resumed session has nothing open.
+    resetWorkflowRecoveryForTests();
+    openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [] };
+    replyAt = Date.now() - MINUTE;
+    await wait(30 * MINUTE);
+    await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial, resumedBy: 'recovery' });
+    await settle();
+    await wait(1_000);
+
+    expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).toContain('Kangentic restarted, so the background commands you started before it (such as a gate run) were stopped. Start them again.');
+    // A fresh recovery, from its first step, with a row that says why.
+    expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_recovery_start'
+      && run.detail?.includes('Kangentic started this agent again after a restart'))).toBe(true);
+    expect(recoveryRows().some((run) => run.detail === 'Recovery 1 of 4: asked the agent to carry on.')).toBe(true);
+
+    // Said once: the next nudge does not repeat it.
+    startTurn(42);
+    await endTurn(42, STALLED_REPLY);
+    await wait(RECOVERY_DELAYS_MS[1]);
+    expect(nudges()).toHaveLength(2);
+    expect(nudges()[1]).not.toContain('Kangentic restarted');
+  });
+
+  // Red before (seen live): the resumed session's first idle armed the
+  // schedule's first step, the memory resume's catch-up kept that timer, and
+  // the nudge came five minutes after the agent was back.
+  it('after a memory resume, nudges at once even when the resumed session\'s first idle armed the schedule first', async () => {
+    await endTurn(41, STALLED_REPLY);
+    noteWorkflowTaskPaused(context, taskId);
+    replyAt = Date.now() - MINUTE;
+    await wait(10 * MINUTE);
+
+    // The resumed session commits idle before its catch-up has read the reply.
+    sessionManager.emit('activity', SESSION_ID, 'idle');
+    await settle();
+    expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+    await catchUpAfterResume(context, { sessionId: SESSION_ID, taskId, projectId: PROJECT_ID, agentSessionId: 'agent-session-1', isolatedSwimlaneId: null, workSerial, resumedBy: 'memory' });
+    await settle();
+    await wait(1_000);
+
+    expect(nudges()).toHaveLength(1);
+    expect(nudges()[0]).not.toContain('Kangentic restarted');
+  });
+
+  it('stops recovery quietly when low memory pauses a task under recovery: its agent comes back by itself', async () => {
     await endTurn(41, STALLED_REPLY);
 
     noteWorkflowTaskPaused(context, taskId);
 
     expect(isUnderWorkflowRecovery(taskId)).toBe(false);
-    expect(stallNotices()).toEqual([[expect.objectContaining({ kind: 'stalled', reason: expect.stringContaining('paused to free memory') })]]);
+    // No notice: a running workflow's task resumes on its own once memory recovers.
+    expect(stallNotices()).toHaveLength(0);
+    // A boundary, so the agent that comes back starts its recovery from the first step.
+    expect(runs.listForTask(taskId).some((run) => (run.type as string) === 'workflow_recovery_start'
+      && run.detail?.includes('Paused to free memory'))).toBe(true);
     await wait(2 * 60 * MINUTE);
     expect(nudges()).toHaveLength(0);
   });
@@ -788,7 +1069,8 @@ describe('a running workflow task whose turn ends without its step done', () => 
   // Red before: the attempt cleared the working wait before it held, so the
   // hold's re-check read a wait that was new and armed another hour.
   it('holds a working wait that ran out for a minute while the user is there, not for another hour', async () => {
-    focused = new Set([SESSION_ID]);
+    userTyping = true;
+    leaveGateRunning();
     await endTurn(41, BACKGROUND_REPLY);
 
     // The hour runs out with the user in the terminal: the nudge is held.
@@ -797,27 +1079,334 @@ describe('a running workflow task whose turn ends without its step done', () => 
     expect(isUnderWorkflowRecovery(taskId)).toBe(true);
 
     // The user leaves. The next look is a minute on, and it nudges.
-    focused = new Set();
+    userTyping = false;
     await wait(HOLD_RECHECK_MS + 1_000);
     expect(nudges()).toHaveLength(1);
     expect(nudges()[0]).toContain('Check on the work you left running');
+  });
+
+  // Red before: the attempt ended the working wait before any of its holds, not
+  // only the presence check's. A hold after that (the keys guard, the memory
+  // gate) left the next try reading a wait that was new, and armed another hour.
+  describe('a working wait that ran out, held by something after the presence check', () => {
+    const holds = [
+      {
+        name: 'memory reads low',
+        hold: (): void => workflowMemoryGate.onSample(windowsSample(LOW_COMMIT_BYTES)),
+        clear: (): void => workflowMemoryGate.onSample(windowsSample(RECOVERED_COMMIT_BYTES)),
+      },
+      {
+        name: 'the gate is busy with another task\'s nudge',
+        hold: (): void => { expect(workflowMemoryGate.tryAcquire('task:another').go).toBe(true); },
+        clear: (): void => workflowMemoryGate.release('task:another'),
+      },
+      {
+        name: 'the session cannot take keys',
+        hold: (): void => { keysBlocker = 'the Artifact tool call has not ended'; },
+        clear: (): void => { keysBlocker = null; },
+      },
+    ];
+
+    it.each(holds)('nudges within two minutes of the hold clearing, not an hour later, when $name', async ({ hold, clear }) => {
+      leaveGateRunning();
+      await endTurn(41, BACKGROUND_REPLY);
+      const presenceChecks = vi.spyOn(sessionManager, 'getPendingDraft');
+
+      // The hold is in place a second before the hour is up, so it is there when the wait runs out.
+      await wait(WORKING_WAIT_MS - 1_000);
+      hold();
+      presenceChecks.mockClear();
+      await wait(2_000);
+
+      // The attempt came, got past the presence check, and was held after it.
+      expect(presenceChecks).toHaveBeenCalled();
+      expect(nudges()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      clear();
+      await wait(2 * HOLD_RECHECK_MS);
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).toContain('Check on the work you left running');
+    });
+  });
+
+  // The user is taken to be there for five minutes after their last input
+  // (`PRESENCE_WINDOW_MS`). The ages are written out, one minute either side.
+  describe('the window in which the user\'s last input holds a nudge', () => {
+    /** The user last typed this long before the first attempt comes due. */
+    function userLastTypedBeforeTheFirstAttempt(milliseconds: number): ReturnType<typeof vi.fn> {
+      const typedAt = Date.now() + RECOVERY_DELAYS_MS[0] - milliseconds;
+      const lastInput = vi.fn(() => typedAt);
+      sessionManager.getLastUserInputAt = lastInput;
+      return lastInput;
+    }
+
+    it('does not hold a nudge for input six minutes old', async () => {
+      const lastInput = userLastTypedBeforeTheFirstAttempt(6 * MINUTE);
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(RECOVERY_DELAYS_MS[0] + 1_000);
+
+      expect(lastInput).toHaveBeenCalled();
+      expect(nudges()).toHaveLength(1);
+    });
+
+    it('holds a nudge for input four minutes old, and sends it once the input has aged past the window', async () => {
+      const lastInput = userLastTypedBeforeTheFirstAttempt(4 * MINUTE);
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(RECOVERY_DELAYS_MS[0] + 1_000);
+      expect(lastInput).toHaveBeenCalled();
+      expect(nudges()).toHaveLength(0);
+      expect(isUnderWorkflowRecovery(taskId)).toBe(true);
+
+      // The input is old enough two looks on, and nothing else holds the nudge.
+      await wait(3 * HOLD_RECHECK_MS);
+      expect(nudges()).toHaveLength(1);
+    });
+  });
+
+  // The siblings a nudge names (`landedSiblings`): tasks of the same workflow
+  // whose PR merged into this task's base branch since this step began.
+  describe('the siblings a nudge names as merged', () => {
+    /** Before this task entered its column (its first move into it is at 05:30), and after. */
+    const ARCHIVED_BEFORE_THE_VISIT = '2026-10-25T05:00:00.000Z';
+    const ARCHIVED_DURING_THE_VISIT = '2026-10-25T06:00:00.000Z';
+
+    /** A task of the same workflow, as the board lists it: merged into main and archived during the visit unless a field says otherwise. */
+    function sibling(fields: Record<string, unknown>): { projectId: string; task: Record<string, unknown> } {
+      return {
+        projectId: PROJECT_ID,
+        task: {
+          id: `sibling-${String(fields.display_id)}`,
+          title: 'A sibling',
+          pr_state: 'merged',
+          archived_at: ARCHIVED_DURING_THE_VISIT,
+          resolved_base_branch: 'main',
+          base_branch: 'main',
+          ...fields,
+        },
+      };
+    }
+
+    beforeEach(() => {
+      hoisted.task = { ...hoisted.task, resolved_base_branch: 'main', base_branch: 'main' };
+    });
+
+    it('names only a sibling that merged into this task\'s base branch since the visit began', async () => {
+      hoisted.workflowTasks.mockImplementation(() => [
+        sibling({ display_id: 11, title: 'Pipeline stages' }),
+        // The base is the resolved one, else the configured one.
+        sibling({ display_id: 12, title: 'Export button', resolved_base_branch: null }),
+        sibling({ display_id: 13, title: 'Develop work', resolved_base_branch: 'develop' }),
+        sibling({ display_id: 14, title: 'Archived early', archived_at: ARCHIVED_BEFORE_THE_VISIT }),
+        sibling({ display_id: 15, title: 'Still open', pr_state: 'open' }),
+        sibling({ display_id: 16, title: 'No PR', pr_state: null }),
+        sibling({ display_id: 17, title: 'On the board', archived_at: null }),
+        // This task itself, listed with its workflow's other tasks.
+        sibling({ display_id: 18, title: 'Rework the status badges', id: taskId }),
+      ]);
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0].match(/Task #\d+/g)).toEqual(['Task #11', 'Task #12']);
+      expect(nudges()[0]).toContain('Task #11 (Pipeline stages) merged into main since this step began.');
+      expect(nudges()[0]).toContain('Task #12 (Export button) merged into main since this step began.');
+      // A fact, not an order: the general instruction still goes with it.
+      expect(nudges()[0]).toContain('Carry on from where you stopped.');
+    });
+
+    it('reads the siblings from the project the workflow lives in', async () => {
+      hoisted.task = { ...hoisted.task, workflow_project_id: 'home-project' };
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(hoisted.workflowTasks).toHaveBeenCalledWith(context, 'home-project', 'workflow-1');
+    });
+
+    it('names a sibling once, and names a sibling that merged since at the next nudge', async () => {
+      const landedFirst = sibling({ display_id: 11, title: 'Pipeline stages' });
+      const landedLater = sibling({ display_id: 12, title: 'Export button', archived_at: '2026-10-25T06:30:00.000Z' });
+      let listed = [landedFirst];
+      hoisted.workflowTasks.mockImplementation(() => listed);
+      await endTurn(41, STALLED_REPLY);
+
+      // The first nudge, at 06:23, names the sibling that merged at 06:00.
+      await wait(RECOVERY_DELAYS_MS[0]);
+      expect(nudges()[0].match(/Task #\d+/g)).toEqual(['Task #11']);
+
+      // Another lands at 06:30, and the second nudge, at 06:38, names only that one.
+      listed = [landedFirst, landedLater];
+      startTurn(42);
+      await endTurn(42, STALLED_REPLY);
+      await wait(RECOVERY_DELAYS_MS[1]);
+      expect(nudges()).toHaveLength(2);
+      expect(nudges()[1].match(/Task #\d+/g)).toEqual(['Task #12']);
+    });
+
+    it('names none when the board cannot be read, and the nudge still goes', async () => {
+      hoisted.workflowTasks.mockImplementation(() => { throw new Error('the board could not be read'); });
+      await endTurn(41, STALLED_REPLY);
+
+      await wait(RECOVERY_DELAYS_MS[0]);
+
+      expect(nudges()).toHaveLength(1);
+      expect(nudges()[0]).not.toContain('merged into');
+      expect(nudges()[0]).toContain('Carry on from where you stopped.');
+      expect(console.warn).toHaveBeenCalledWith(expect.stringContaining('workflow siblings'), expect.any(Error));
+    });
+  });
+
+  // Two workflow tasks stall together and their nudges take turns in the
+  // memory gate: the second is typed only after the first one's turn is under
+  // way, and a minute after the first went (`PACE_MS`).
+  //
+  // The second stalls 30 seconds after the first, so the first is nudged at 300
+  // seconds and the second is due at 330. Stalled together, the second's re-check
+  // would fall exactly one pace after the first's release (`HOLD_RECHECK_MS` and
+  // `PACE_MS` are both a minute), and the pace would never be what held it.
+  describe('two stalled tasks, one nudge at a time', () => {
+    /** The first task stalls now, the second 30 seconds on. Returns the second's id. */
+    async function stallTwoTasksThirtySecondsApart(): Promise<string> {
+      const otherId = addOtherWorkflowTask();
+      await endTurn(41, STALLED_REPLY);
+      await wait(30_000);
+      sessionManager.emit('activity', OTHER_SESSION_ID, 'idle');
+      await settle();
+      expect(isUnderWorkflowRecovery(otherId)).toBe(true);
+      return otherId;
+    }
+
+    /** Runs to one second past the first task's nudge, at 301 seconds. */
+    async function runPastTheFirstNudge(): Promise<void> {
+      await wait(RECOVERY_DELAYS_MS[0] - 30_000 + 1_000);
+      expect(deliveriesTo(taskId)).toBe(1);
+    }
+
+    it('types the second task\'s nudge only once the first one\'s turn is under way and a minute has passed', async () => {
+      const otherId = await stallTwoTasksThirtySecondsApart();
+      await runPastTheFirstNudge();
+
+      // The first agent starts its turn, through the activity path the turn-end runner listens on.
+      sessionManager.emit('activity', SESSION_ID, 'thinking');
+      await settle();
+
+      // The second is due at 330 seconds. Nothing is in flight, but the first went only 30 seconds ago.
+      await wait(30_000);
+      expect(deliveriesTo(otherId)).toBe(0);
+
+      // Its next look, at 390 seconds, finds the pace passed. A held look spent nothing.
+      await wait(60_000);
+      expect(deliveriesTo(otherId)).toBe(1);
+      expect(deliveriesTo(taskId)).toBe(1);
+      expect(runs.listForTask(otherId).filter((run) => (run.type as string) === 'workflow_recovery').map((run) => run.detail))
+        .toEqual(['Recovery 1 of 4: asked the agent to carry on.']);
+    });
+
+    it('keeps the second task\'s nudge behind a first whose turn never starts, until the gate stops waiting for it', async () => {
+      const otherId = await stallTwoTasksThirtySecondsApart();
+      await runPastTheFirstNudge();
+
+      // Looks at 330, 390 and 450 seconds: the first went at 300 and has not started its turn.
+      await wait(150_000);
+      expect(deliveriesTo(otherId)).toBe(0);
+
+      // The look at 510 seconds is past the three minutes the gate waits for a turn to start (`TURN_WAIT_MS`).
+      await wait(60_000);
+      expect(deliveriesTo(otherId)).toBe(1);
+    });
+
+    it('does not hold the second task\'s nudge behind a first whose delivery failed', async () => {
+      const otherId = await stallTwoTasksThirtySecondsApart();
+      hoisted.deliverMessageToSession.mockRejectedValueOnce(new Error('the terminal was closed'));
+      await runPastTheFirstNudge();
+      expect(recoveryRows()).toEqual([
+        expect.objectContaining({ status: 'failed', detail: 'Recovery 1 of 4: the nudge was not delivered: the terminal was closed' }),
+      ]);
+
+      // Nothing was typed, so the gate moved on at once: the second goes when it is due, at 330 seconds.
+      await wait(30_000);
+      expect(deliveriesTo(otherId)).toBe(1);
+    });
   });
 
   describe('the nudge, typed into the agent\'s terminal', () => {
     // Red before: an Esc, a Ctrl+C or a paste marker in the reason (the
     // Automation agent's words about a reply that can quote anything), or in a
     // column's name, was typed into the agent as a keystroke.
+    const plainInput = {
+      columnName: 'Executing',
+      reason: null,
+      leftRunning: false,
+      blockers: [],
+      restarted: false,
+      memory: { low: false, freeBytes: null },
+      landedSiblings: [],
+      baseBranch: 'main',
+    };
+
     it('is one line with no control character, from the reason and the column name alike', () => {
-      const message = nudgeMessage(
-        'Code\x1b Review',
-        'It printed \x1b[201~ then \x03 and stopped\x7f\nbefore the \u009bgate.',
-        false,
-      );
+      const message = nudgeMessage({
+        ...plainInput,
+        columnName: 'Code\x1b Review',
+        reason: 'It printed \x1b[201~ then \x03 and stopped\x7f\nbefore the \u009bgate.',
+      });
 
       expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
       expect(message.startsWith(
         'The Code Review step is not done yet: It printed [201~ then and stopped before the gate. Carry on from where you stopped.',
       )).toBe(true);
+    });
+
+    // Red before: a reason cut at 200 characters lost its "..." to the period
+    // the sentence added, and read "free memor." to the agent.
+    it('keeps a cut reason\'s ellipsis rather than ending it mid-word with a period', () => {
+      const message = nudgeMessage({ ...plainInput, reason: 'The gate was stopped to free memory and the agent says it will not...' });
+      expect(message).toContain('not done yet: The gate was stopped to free memory and the agent says it will not... Carry on');
+    });
+
+    it('names each fact it knows and drops the general carry-on', () => {
+      const message = nudgeMessage({
+        ...plainInput,
+        restarted: true,
+        blockers: ['resource', 'main-fails-too'],
+        memory: { low: false, freeBytes: 12 * GIBIBYTE },
+        landedSiblings: [{ number: 69, title: 'Pipeline \x1b stages' }],
+        baseBranch: 'develop',
+      });
+
+      expect(message).toMatch(/^The Executing step is not done yet\. Kangentic restarted/);
+      expect(message).toContain('The machine has memory to spare again (12.0 GB free).');
+      expect(message).toContain('Run the failing tests on a separate clean checkout of develop to check, leaving this branch as it is.');
+      // A fact, not an order: the sibling's merge may have nothing to do with this step.
+      expect(message).toContain('Task #69 (Pipeline stages) merged into develop since this step began.');
+      expect(message).not.toContain('Merge develop into your branch');
+      expect(message).not.toContain('Carry on from where you stopped.');
+      expect(message).toContain('Go ahead with this step\'s own work without asking first.');
+      expect(message).not.toMatch(/[\u0000-\u001f\u007f-\u009f]/);
+    });
+
+    // Red before: the sibling line once was an order, so it stood in for the
+    // general one. As a fact, a nudge with only a sibling to name lost both
+    // the check's reason and "Carry on", and told the agent nothing to do.
+    it('keeps the reason and the general carry-on when a sibling\'s merge is the only fact it knows', () => {
+      const message = nudgeMessage({
+        ...plainInput,
+        reason: 'The tests were not run yet...',
+        landedSiblings: [{ number: 69, title: 'Pipeline stages' }],
+        baseBranch: 'develop',
+      });
+
+      expect(message).toContain('The Executing step is not done yet: The tests were not run yet...');
+      expect(message).toContain('Task #69 (Pipeline stages) merged into develop since this step began. Carry on from where you stopped.');
+    });
+
+    it('gives no free-memory figure where the platform reports a level, not bytes', () => {
+      const message = nudgeMessage({ ...plainInput, blockers: ['resource'], memory: { low: false, freeBytes: null } });
+      expect(message).toContain('The machine has memory to spare again. Run what was stopped');
     });
   });
 
@@ -1343,7 +1932,7 @@ describe('a running workflow task whose turn ends without its step done', () => 
       await wait(RECOVERY_DELAYS_MS[0]);
 
       expect(notifyDesktop).toHaveBeenCalledTimes(1);
-      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: 'It asks the user to choose a layout.' }));
+      expect(notifyDesktop).toHaveBeenCalledWith(expect.objectContaining({ kind: 'waiting', sessionId: SESSION_ID, reason: OWNER_QUESTION }));
       expect(nudges()).toHaveLength(0);
       expect(isUnderWorkflowRecovery(taskId)).toBe(false);
     });

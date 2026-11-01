@@ -21,7 +21,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | EventType key | JSONL value | Activity mapping | Notes |
 |---------------|-------------|------------------|-------|
 | `Prompt` | `prompt` | `thinking` | User submitted a prompt; agent is starting a turn |
-| `ToolStart` | `tool_start` | `thinking` | Agent began invoking a tool |
+| `ToolStart` | `tool_start` | `thinking` | Agent began invoking a tool. `launchesSubagent: true` marks a call that starts a subagent (the adapter's `markSubagentLaunch` directive; Claude names `Agent` and `Task`), so a `subagent_start` closes a permission prompt only when that call was the one awaited (see [Permission flag](predicate.md#permission-flag)). A stale bridge copy never sets it |
 | `ToolEnd` | `tool_end` | log-only | Tool returned; counters update and `lastSignalAt` refreshes (a `PostToolUse` hook proves the agent is alive, so `tool_end` is NOT in the engine's `LOG_ONLY_EVENTS` set), but the activity state does not change |
 | `Idle` | `idle` | `idle` | Agent finished its turn (Stop hook, prompt-regex, or silence timer). With `detail: 'permission'` it is instead a wait on the user, and its optional `waitKind` (`question` or `approval`) says which (see [The kind of a wait](activity-engine.md#the-kind-of-a-wait)) |
 | `Interrupted` | `interrupted` | `idle` | The user stopped the turn: Esc while a tool runs, or Ctrl+C; clears counters and commits idle. Esc BETWEEN tool calls fires no hook at all, so that turn ends through `idle_hint` instead (see "Turn ends" below) |
@@ -29,7 +29,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `TurnRetrying` | `turn_retrying` | conditional idle | `StopFailure` fired for a TRANSIENT, auto-retried error (overloaded/server_error/rate_limit/api_error), classified at the source (like `IdleHint`). Holds the session `thinking` through a live retry (preserving `subagentDepth` and deferring to the stale-thinking or stuck-subagent watchdog); idles immediately if the turn had already wound down or ended (see "Aborted-turn recovery") |
 | `SessionStart` | `session_start` | log-only | Session began; carries adapter session metadata |
 | `SessionEnd` | `session_end` | log-only | Session ended (CLI process exited) |
-| `SubagentStart` | `subagent_start` | `thinking` | Main agent spawned a child agent |
+| `SubagentStart` | `subagent_start` | `thinking` | Main agent spawned a child agent. Clears a pending permission prompt only when the awaited call carries `launchesSubagent` |
 | `SubagentStop` | `subagent_stop` | log-only | Subagent returned; depth counter decrements - EXCEPT an empty-string `detail` ("") which is a spurious inner-loop stop, and a stop whose `subagentId` has already stopped, which is a duplicate. Both are ignored (see [Subagent depth](predicate.md#subagent-depth)) |
 | `Notification` | `notification` | log-only | Informational notification from the agent |
 | `IdleHint` | `idle_hint` | conditional idle | "Waiting for your input" notification, classified at the source. Ends the turn only when no other holder remains; otherwise log-only (see "Idle hints" below) |
@@ -46,7 +46,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `ToolSelectionStart` | `tool_selection_start` | log-only | Agent is choosing the next tool |
 | `PlanApprovalSent` | `plan_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when it answers the plan prompt, before the agent acts on the answer, so it proves only that the answer was sent. `detail` says where the task goes. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
 | `PlanAutoApproved` | `plan_auto_approved` | log-only | Emitted by main's plan approval gate, never written to the file, right after the plan exit's `tool_end` that follows a `plan_approval_sent`. The Activity log draws it as a "Plan approved automatically" badge with `detail` "Moved to <column>" or "Stayed in <column>", and the engine re-stamps `turnStartedAt` on it |
-| `ToolApprovalSent` | `tool_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when, while a plan is approved automatically, it answers a plan-mode prompt for a tool the session's allow rules name. `tool` names it. Like `plan_approval_sent`, it proves only that the answer was sent. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
+| `ToolApprovalSent` | `tool_approval_sent` | log-only | Written to `events.jsonl` by `plan-approval-bridge.js` when, while a plan is approved automatically, it answers a plan-mode prompt for a tool the session's allow rules name, or for a Claude built-in call whose input only reads or publishes. `tool` names it. Like `plan_approval_sent`, it proves only that the answer was sent. Not rendered (see [Plan approval gate](#plan-approval-gate)) |
 
 "log-only" means the event is recorded for the activity feed and may update internal counters, but does not on its own change `ActivityState`. State changes only occur through the [predicate](predicate.md) or via direct `Idle` / `Interrupted` events.
 
@@ -82,10 +82,12 @@ A question the agent asks the user passes untouched.
 
 The same hook answers a plan-mode prompt for a tool the session's allow rules name, and writes
 `tool_approval_sent` with the tool's name (task #870). Claude's plan mode asks about an MCP tool
-with no `readOnlyHint` even when an allow rule names it. Its permission idle races that marker the same way: on
+with no `readOnlyHint` even when an allow rule names it. Since task #952 it also answers Claude's
+built-in `Artifact` call when its input only reads, lists or publishes, with no allow rule (see
+[Bridge scripts](../../integrations/agents/bridge-scripts.md#plan-approval-bridgejs)). Its permission idle races that marker the same way: on
 Claude Code 2.1.306 the approving hook started 5 to 114 ms after the catch-all one. So, for a
 session whose decision approves plans and a tool its adapter's `mayApprovePlanTool` names (for
-Claude, any MCP tool but Kangentic's own), or when that tool's marker already arrived first:
+Claude, any MCP tool but Kangentic's own, and `Artifact`), or when that tool's marker already arrived first:
 
 - The idle is held for `TOOL_APPROVAL_WAIT_MS` (1 s) for the marker, and released then if none
   came. A prompt the hook left alone shows that much late.

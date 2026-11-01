@@ -124,6 +124,7 @@ export async function deliverAgentMessageAndWait(
       await context.terminalSubmit.submitContent(input.sessionId, input.message, {
         source: 'automation',
         signal: input.signal,
+        automated: true,
       });
     } catch (error) {
       if (input.signal.aborted) throw new Error(abortReason, { cause: error });
@@ -307,6 +308,7 @@ async function runBackgroundPaste(
     await context.terminalSubmit.submitContent(input.sessionId, input.message, {
       source: `automation:${input.taskId.slice(0, 8)}`,
       signal,
+      automated: true,
     });
     report('unconfirmed');
   } catch (error) {

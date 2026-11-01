@@ -1,8 +1,8 @@
 ---
 type: Reference
 title: Resume
-description: Why Resume is refused for To Do, Done and archived tasks, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
-tags: [sessions, resume, expired-conversation, recap]
+description: Why Resume is refused for To Do, Done and archived tasks, assessResumeConversation's never-started, expired and unknown verdicts with the expired-conversation recap, the return recap a main conversation gets after an isolated column's session, who resumed a session (resumedBy), fork id reconcile, plan-exit continuation, auto_command escalation, and restore progress labels.
+tags: [sessions, resume, expired-conversation, recap, return-recap]
 sources:
   - resource: src/main/transition-engine/resume-conversation-guard.ts
   - resource: src/main/transition-engine/resume-id-reconcile.ts
@@ -16,6 +16,7 @@ sources:
   - resource: src/main/transition-engine/spawn-progress.ts
   - resource: src/main/automations/turn-end/recap-turns.ts
   - resource: src/main/transition-engine/resume-prompt-delivery.ts
+  - resource: src/main/transition-engine/return-recap.ts
 ---
 # Resume
 
@@ -26,6 +27,13 @@ with the session, task and project ids, the conversation it resumed, and its wor
 came back. A resume begins no turn, so the payload carries neither a turn start nor a transcript
 anchor. The turn-end runner uses it to give a workflow task the step check a Pause or a quit
 cut short (see [On agent turn end](../automations/triggers.md#on-agent-turn-end), "A resume catches up the workflow step").
+The payload also says who resumed the session (`resumedBy`, a `SessionResumer`), from
+`SpawnSessionInput.resumedBy`. A person's resume is `'user'`, the default. Startup recovery,
+which also brings agents back after a pty host loss (`resumeSuspendedSessions`), passes
+`'recovery'`. The workflow's memory resume passes `'memory'` through `resumeTaskSession` and
+`SpawnOverrides.resumedBy`. Workflow recovery reads it: an agent Kangentic restarted lost the
+background commands it started, so its recovery starts over at once (see
+[Workflow engine](../workflows/workflow-engine.md)).
 A transient session emits none. Turn ends themselves arrive as `'turn-ended'`, a separate event
 from `'activity'`; see [Activity event types](../activity/event-types.md#turn-ends-onturnended).
 
@@ -198,6 +206,58 @@ dropped there. A task recovered in a background project now gets its toast when 
 that project, rather than none. The queue keeps the latest notice per task and is cleared when the
 project is deleted. The take drops a notice whose task was deleted or archived while it waited,
 so a toast never names a task that is gone.
+
+## A return to the main conversation opens on a recap
+
+An isolated column's session runs in a conversation of its own (see
+[Isolated sessions](spawn-flow.md#isolated-sessions-per-column-session-model)). Its commits land
+in the shared worktree, but the main conversation never saw them. In an overnight workflow, Code
+Review ran in its own conversation, committed its fixes and ended Ready. Testing then resumed the
+main conversation, which ran its gate against a branch it believed it knew (task #952). So when
+`spawnAgent` resumes the task's main conversation, it tells the agent what the isolated sessions
+did (`src/main/transition-engine/return-recap.ts`). The recap is plain text in the opening
+message, so it works for every agent and every column setup.
+
+- **What ran.** `SessionRepository.listIsolatedSince` lists the task's isolated sessions that
+  started at or after the main conversation last ran: its record's suspend, else its exit, else
+  its start (`mainConversationLeftAt`). A column re-entered after a send-back counts, and so do two
+  isolated columns in a row.
+- **What it says.** The isolated columns by name. The first-parent commits since the earliest
+  session's `sessions.start_head_sha` (`readCommitsSince` in `src/main/git/worktree-head.ts`), at
+  most 20 of the newest with a count of the rest, and HEAD now. A merge of the base branch reads as
+  one commit. The final message of each of the latest three sessions, each cut to 1,500
+  characters. A move that carries its own message (a Move to column row's Message,
+  `kangentic_move_task`'s `message`, passed down as `moveCarriesMessage`) leaves the final
+  messages out, since that message is usually the same reply. With no commit and no message there
+  is no recap.
+- **Bounded.** It is built under the task lock. Each final-message read gets 2 s and the whole
+  recap 3 s, after which the resume goes without it.
+- **Only a resume of the same agent's main conversation.** A fresh spawn has nothing to catch up,
+  a handoff gets the other agent's history, an always-new column starts over, and a recovery move
+  out of Done sends nothing. A resume the engine started over (`SpawnOutcome.startOver`) drops it.
+
+How the recap opens the resume depends on the lead the column would send, and on whether messages
+held for the task go with it (`returnRecapOpeningFor`):
+
+- **Plain text** gets the recap ahead of it, in one turn (`prefix`). With no lead, held messages
+  take its place.
+- **A slash command** cannot have text ahead of it, because that stops the command running in
+  every agent CLI. The recap is then the resume's whole prompt and asks for a one-line reply
+  (`before-command`). The session is marked a `return` recap (`recap-turns.ts`), so that turn runs
+  no On agent turn end rows and no workflow step. The command, and any held messages, wait for that
+  turn to end (`whenRecapTurnEnds`) and then go as usual. After 20 minutes without a turn end (an
+  interrupted recap) they go anyway. A move of the task or the session leaving first sends nothing:
+  the column's message is reported cancelled and held messages are released.
+- **No lead and nothing held** makes the recap the whole prompt, which asks for a one-line reply
+  and then a wait (`acknowledge`). That turn is a `return` recap too, so it runs no rows and no
+  step. This is a send-back (Code Review moving the task to a column whose own message is off),
+  whose findings follow the move as its message once this turn ends, or a person who moved the task
+  to type the next instruction. A recap that told the agent to carry on had it working a whole turn
+  before the findings arrived.
+
+A recap the resume command line could not carry is typed ahead of the next message the start
+sends, never ahead of a slash command. Ahead of one it is typed on its own first, and if that
+delivery fails nothing waits on it.
 
 ## A restore reports progress instead of showing a Resume button
 

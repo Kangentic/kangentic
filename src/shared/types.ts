@@ -1406,12 +1406,16 @@ export type SessionRecordStatus = 'running' | 'queued' | 'suspended' | 'exited' 
 
 /**
  * Who suspended a session. `'user'`: the Pause button or a phone pause.
- * `'auto'`: Kangentic paused an agent that was waiting on the user, for low
- * memory or the idle timeout. `'system'`: a quit, a move or a settings
- * restart. `'user'` and `'auto'` hold the task paused until the user resumes
- * it (`isHeldPause`, `src/shared/held-pause.ts`); `'system'` holds nothing.
+ * `'auto'`: Kangentic's idle timeout paused an agent that was waiting on the
+ * user. `'low_memory'`: Kangentic's low-memory pause, its own value so a
+ * restart can still tell which workflow tasks come back by themselves once
+ * memory recovers (`workflow-memory-resume.ts`, task #952). `'system'`: a
+ * quit, a move or a settings restart. `'user'`, `'auto'` and `'low_memory'`
+ * hold the task paused until the user resumes it (`isHeldPause`,
+ * `src/shared/held-pause.ts`), apart from that memory resume; `'system'`
+ * holds nothing.
  */
-export type SuspendedBy = 'user' | 'system' | 'auto';
+export type SuspendedBy = 'user' | 'system' | 'auto' | 'low_memory';
 
 export interface SessionRecord {
   id: string;
@@ -1424,6 +1428,13 @@ export interface SessionRecord {
    * multiple independently-resumable sessions.
    */
   isolated_swimlane_id: string | null;
+  /**
+   * The worktree HEAD an isolated column's session started on (task #952). The
+   * task's main conversation, resumed after it, is told the commits since the
+   * first such session began. NULL for a main session, when HEAD could not be
+   * read, and for rows from before the column existed.
+   */
+  start_head_sha: string | null;
   agent_session_id: string | null;
   command: string;
   cwd: string;
@@ -2347,6 +2358,16 @@ export interface SessionEvent {
    * launch rides cannot carry the flag.
    */
   noActivityHold?: boolean;
+  /**
+   * On a `tool_start`: the call starts a subagent (Claude's Agent tool), so a
+   * `subagent_start` may be its own approved call running. The engine closes a
+   * permission prompt on a `subagent_start` only when the call it awaited
+   * carries this; a parallel subagent's start leaves the prompt open.
+   *
+   * Source: the adapter's `markSubagentLaunch` directive, which names its own
+   * subagent tools. Undefined means no report.
+   */
+  launchesSubagent?: boolean;
   /**
    * On an `idle` with `detail: IdleReason.Permission`, what the wait is for:
    * a question the agent asked or an approval it wants. Undefined means the
@@ -7108,6 +7129,9 @@ export type TranscriptBlock =
  */
 export type ExitSequenceStep = string | { delayMs: number };
 
+/** Who resumed a session (`SpawnSessionInput.resumedBy`): a person, or Kangentic itself. */
+export type SessionResumer = 'user' | 'recovery' | 'memory';
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7120,6 +7144,14 @@ export interface SpawnSessionInput {
   eventsOutputPath?: string; // path for the event bridge JSONL file (activity log)
   /** True when this session is resuming a previous Claude conversation. */
   resuming?: boolean;
+  /**
+   * Who started a resuming session, when it was not a person: `'recovery'`,
+   * Kangentic after a quit, a crash or a pty host loss; `'memory'`, a workflow
+   * task Kangentic paused for low memory and brought back. Rides the
+   * `'session-resumed'` event, so workflow recovery can tell that the agent's
+   * background commands died with the old process. Unset means a person.
+   */
+  resumedBy?: SessionResumer;
   /** True for ephemeral command terminal sessions. */
   transient?: boolean;
   /** Set for a workflow's own agent (transient, never a Command Terminal). See src/shared/session-owner.ts. */

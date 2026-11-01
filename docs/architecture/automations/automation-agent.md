@@ -55,42 +55,37 @@ A workflow step reads `unavailable` as a human gate, said once a visit. It recor
 retries it on its recovery's schedule (see
 [Workflow engine](../workflows/workflow-engine.md)), and writes nothing for `stopped`.
 
-## The workflow step's two asks
+## The workflow step's asks
+
+Before any ask, a reply whose last line is `Needs owner: <question>` waits on the owner. It is
+matched in code (`src/shared/workflow-needs-owner.ts`), so no check runs and none can overrule it.
 
 The first ask is `workflowStepCondition`: is the step done, with the agent not waiting on the user.
 It is the wording measured on 2026-10-04, and only its yes moves the task. A yes still moves
 nothing when the column's own Text match exit rows refuse the reply (`stepExitVerdict`, see
-[Workflow engine](../workflows/workflow-engine.md)). When it says no, or the rows refuse the reply, a
-second call asks two more Conditions (`workflow-step-condition.ts`):
+[Workflow engine](../workflows/workflow-engine.md)).
 
-1. Does the agent need something only the user can give, without which the step cannot go on (a
-   choice that changes the result, information or a secret it cannot find, an approval for
-   something outside the step, such as deleting data)? Asking whether to go ahead with the step's
-   own work is not this. A yes stops the workflow on that task and tells the user.
-2. Is work the agent started still running (a gate in the background)? A yes is left alone a while.
+When it says no, or the rows refuse the reply, the agent's open work decides first. A background
+shell it holds, or a subagent running past its turn end, by the hook events
+(`SessionManager.getOpenWork`), is still working, with no second call. Anything else is a stall,
+and recovery nudges it. A second call asks two blocker Conditions (`workflowBlockerConditions`),
+so the nudge can aim at what the reply says the agent is stuck on:
 
-Anything else is a stall, and recovery nudges it. The check answers yes only on facts, so a reply it
-is unsure of is nudged, never stopped on: a wrong nudge costs one paid turn, and a wrong stop holds
-the workflow until someone looks. A turn with no reply text is a stall with no second call.
+1. `resource`: a command, a test run, a build or the gate was stopped or failed because the
+   machine was low on memory or too busy, not because of the code.
+2. `main-fails-too`: the failures it is stuck on also happen on the task's base branch, which the
+   row names.
 
-Measured on 2026-10-25 with `scripts/eval-condition-check.mjs` (Haiku at low) on every not-done
-turn end of the one board with long workflow history: 311 of them. Each was labeled by what
-happened next: its own background work woke it, or a person typed "continue". No person ever
-answered a decision there.
+A yes changes only what the nudge says. Unsure answers no, as every Condition does, so a reply that
+names no blocker gets the general nudge. Both rows are one call. A turn with no reply text is a
+stall with no second call.
 
-- The earlier second ask, whose unsure answer was a wait on the user, stopped on 30 of the 311:
-  5 of the 7 a person had to push on, and all 4 replies the CLI wrote itself when a session
-  resumed mid-turn.
-- This one, written once and not revised against the cases, stopped on 1, and on 0 of 5 when that
-  case ran again.
-- Five runs each of the cases a stop turns on (every turn a person pushed on, every reply the CLI
-  wrote itself, and 13 written ones) scored 120 of 120. Every real question stopped. "Should I
-  commit and run the gate now?" and "Want me to open the pull request?" were nudged, and a bare
-  "Waiting for the gate." was left to run.
-- Where it errs, it nudges a wait it should have left alone: 42 of 300 background waits. The wait's
-  own wake usually comes before the 5-minute nudge.
-
-One person wrote the written cases and their labels.
+This replaced a second ask of whether the agent waited on the user or on running work (owner's
+decision, 2026-10-31). Measured on 2026-10-25 with `scripts/eval-condition-check.mjs` on 311
+not-done turn ends, that ask stopped on 1 and scored 120 of 120 on the cases a stop turns on. It
+still read running work from the reply's wording, which once judged one gate still running and,
+three hours later, not done. Waiting on the owner is now the agent's own call, made with the
+`Needs owner:` line.
 
 ## How a check runs
 

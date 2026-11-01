@@ -36,6 +36,8 @@ function facts(overrides: Partial<IdleAgentFacts> = {}): IdleAgentFacts {
     focused: false,
     hasPendingSubmit: false,
     hasPendingDelivery: false,
+    hasOpenBackgroundWork: false,
+    inWorkingWait: false,
     ...overrides,
   };
 }
@@ -115,6 +117,10 @@ describe('isPauseEligible', () => {
     ['an agent on screen', { focused: true }],
     ['an agent with keystrokes on their way', { hasPendingSubmit: true }],
     ['an agent with a column message on its way', { hasPendingDelivery: true }],
+    // The overnight case: the card read idle while the agent's own gate ran
+    // in the background, and the pause killed the CLI with the gate still going.
+    ['an agent waiting on its own background work', { hasOpenBackgroundWork: true }],
+    ['an agent a step check ruled still working', { inWorkingWait: true }],
     ['a session with no task', { taskId: '' }],
     ['a session with no project', { projectId: '' }],
   ])('never takes %s', (_label, overrides) => {

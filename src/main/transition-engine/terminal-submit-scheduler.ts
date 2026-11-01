@@ -61,6 +61,12 @@ export interface InjectionReport {
    * marked failed, since nothing of it reached the agent.
    */
   textReachedAgent?: false;
+  /**
+   * An Enter of this burst landed on a permission prompt the app had not
+   * heard of yet (`SubmitKeystrokesResult.reachedPermissionPrompt`), so it may
+   * have answered it. Its own outcome, never retried and never escalated.
+   */
+  reachedPermissionPrompt?: true;
 }
 
 /**
@@ -393,7 +399,24 @@ export class TerminalSubmitScheduler {
         interruptedTurn: result.interruptedTurn,
       };
 
-      if (result.outcome === 'failed') {
+      if (result.heldBy) {
+        // The session could not take keys (a permission prompt, a tool call
+        // with no end), so the burst stopped before the key that needed it. A
+        // restart would kill the very work it waited on: no escalation.
+        const typedNothing = result.deliveries.length === 0;
+        report = {
+          ...report,
+          reason: `Not sent: ${result.heldBy}.`,
+          ...(typedNothing ? { textReachedAgent: false as const } : {}),
+        };
+      } else if (result.reachedPermissionPrompt) {
+        report = {
+          ...report,
+          outcome: 'failed',
+          reason: 'An Enter reached a permission prompt, so it may have answered it.',
+          reachedPermissionPrompt: true,
+        };
+      } else if (result.outcome === 'failed') {
         report = await this.escalate(taskId, burst, entry, report, result.deliveries);
       }
     } catch (caughtError) {

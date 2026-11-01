@@ -48,6 +48,8 @@
  *   setTypeWhen                { whenTool?, nested?:[p,f], field?, equals, to }
  *                                 -> if (no whenTool or ctx.tool_name===whenTool) AND
  *                                    String(addressed field's value) === equals, event.type = to
+ *   markSubagentLaunch         { tools[] }          -> event.launchesSubagent = true when
+ *                                 ctx.tool_name is one of tools (the call starts a subagent)
  *   setToolWhen                { whenTool, toolField?, nested:[p,f], startsWith, to }
  *                                 -> if ctx[toolField || 'tool_name']===whenTool AND the addressed
  *                                    string field starts with `startsWith`,
@@ -399,6 +401,14 @@ function transformHookEvent(options) {
         if (container && typeof container === 'object' && String(container[field]) === payload.equals) {
           event.type = payload.to;
         }
+        break;
+      }
+      case 'markSubagentLaunch': {
+        // The tool that starts a subagent, named by the adapter, so the engine
+        // can tell a subagent its own approved call started from a parallel
+        // one: only the first may close a permission prompt it awaited.
+        if (!ctx || !Array.isArray(payload.tools)) break;
+        if (typeof ctx.tool_name === 'string' && payload.tools.includes(ctx.tool_name)) event.launchesSubagent = true;
         break;
       }
       case 'setToolWhen': {

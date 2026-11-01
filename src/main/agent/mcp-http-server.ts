@@ -403,7 +403,7 @@ export function buildConfiguredMcpServer(
   registerProfileTools(mcpServer, resolver);
   registerAutomationTools(mcpServer, resolver);
   registerWorkflowTools(mcpServer, resolver, { taskId: callerTaskId ?? null, sessionId: browser.callerSessionId ?? null });
-  registerSessionTools(mcpServer, resolver);
+  registerSessionTools(mcpServer, resolver, callerTaskId ?? null);
   registerProjectTools(mcpServer, resolver);
   registerSearchTools(mcpServer, resolver);
   registerUsageTools(mcpServer, resolver);

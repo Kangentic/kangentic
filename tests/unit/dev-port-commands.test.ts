@@ -29,6 +29,21 @@ vi.mock('../../src/main/dev-ports/dev-port-allocator', () => ({
   describeDevPorts: (...args: Parameters<typeof describeDevPorts>) => describeDevPorts(...args),
 }));
 
+/**
+ * The project's tasks, by what a caller may name them: `task-1` is #1, and
+ * `caller-task` is the task whose agent makes the call. resolveTask's own
+ * display-id-or-UUID rule, `#` included, is pinned in task-resolver's tests.
+ */
+const TASKS_BY_NAME: Record<string, { id: string }> = {
+  'task-1': { id: 'task-1' },
+  '1': { id: 'task-1' },
+  '#1': { id: 'task-1' },
+  'caller-task': { id: 'caller-task' },
+};
+vi.mock('../../src/main/agent/commands/task-resolver', () => ({
+  resolveTask: (_repository: unknown, taskId: string) => TASKS_BY_NAME[taskId],
+}));
+
 /** Shorthand for one probed port. */
 function status(
   port: number,
@@ -44,8 +59,12 @@ const { handleReserveDevPorts, handleCheckDevPorts } = await import(
 
 const context = {
   projectId: 'proj-1',
+  getProjectDb: () => ({}),
   getDevServerPortRange: () => ({ rangeStart: 7300, rangeEnd: 7499 }),
 } as unknown as CommandContext;
+
+/** The same project, asked by the agent of `caller-task`. */
+const callerContext = { ...context, callerTaskId: 'caller-task' } as unknown as CommandContext;
 
 beforeEach(() => {
   reserveDevPorts.mockReset();
@@ -74,16 +93,38 @@ describe('handleReserveDevPorts', () => {
   it('forwards the configured range rather than assuming the default', async () => {
     const narrow = {
       projectId: 'proj-1',
+      getProjectDb: () => ({}),
       getDevServerPortRange: () => ({ rangeStart: 9000, rangeEnd: 9010 }),
     } as unknown as CommandContext;
     await handleReserveDevPorts({ taskId: 'task-1', count: 2 }, narrow);
     expect(reserveDevPorts).toHaveBeenCalledWith('proj-1', 'task-1', 2, { rangeStart: 9000, rangeEnd: 9010 });
   });
 
-  it('names the tool that resolves a missing taskId', async () => {
+  it('names the tool that resolves a missing taskId, for a caller with no task', async () => {
     const result = await handleReserveDevPorts({}, context);
     expect(result.success).toBe(false);
     expect(result.error).toContain('kangentic_get_current_task');
+    expect(reserveDevPorts).not.toHaveBeenCalled();
+  });
+
+  // Task #952: an agent asked with its own task's display id, which the ledger
+  // took as the key, so the ports were held by no task. And it had to look its
+  // own task up first.
+  it('reserves under the task\'s UUID when it is named by display id, with or without #', async () => {
+    await handleReserveDevPorts({ taskId: '1' }, context);
+    await handleReserveDevPorts({ taskId: '#1' }, context);
+    expect(reserveDevPorts.mock.calls.map((call) => call[1])).toEqual(['task-1', 'task-1']);
+  });
+
+  it('defaults to the caller\'s own task, and a named task still wins', async () => {
+    await handleReserveDevPorts({}, callerContext);
+    await handleReserveDevPorts({ taskId: 'task-1' }, callerContext);
+    expect(reserveDevPorts.mock.calls.map((call) => call[1])).toEqual(['caller-task', 'task-1']);
+  });
+
+  it('refuses a task that is not in this project, naming what it was given', async () => {
+    const result = await handleReserveDevPorts({ taskId: '99' }, context);
+    expect(result).toMatchObject({ success: false, error: expect.stringContaining('"99"') });
     expect(reserveDevPorts).not.toHaveBeenCalled();
   });
 
@@ -152,6 +193,12 @@ describe('handleReserveDevPorts', () => {
 });
 
 describe('handleCheckDevPorts', () => {
+  it('reads the caller\'s own task when none is named, and resolves a display id to the UUID', async () => {
+    await handleCheckDevPorts({}, callerContext);
+    await handleCheckDevPorts({ taskId: '1' }, context);
+    expect(getDevPortsForTask.mock.calls.map((call) => call[0])).toEqual(['caller-task', 'task-1']);
+  });
+
   it('probes what the task holds, and never reserves', async () => {
     getDevPortsForTask.mockReturnValue([7300, 7301]);
     describeDevPorts.mockResolvedValue([status(7300, 'this-task', true), status(7301, 'this-task', false)]);

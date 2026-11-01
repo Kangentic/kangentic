@@ -44,8 +44,8 @@ msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents pa
 msgstr "{agentCount, plural, other {已暫停 # 個代理以釋放記憶體}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr "{agentCount, plural, other {在你恢復前，代理會維持暫停。}}"
+msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgid "{ahead} ahead, {behind} behind base branch"

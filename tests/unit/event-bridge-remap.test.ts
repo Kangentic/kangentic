@@ -29,7 +29,7 @@ import os from 'node:os';
 import { AgentTool, EventType } from '../../src/shared/types';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
 import { buildHooks as buildGeminiHooks } from '../../src/main/agent/adapters/gemini';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, markSubagentLaunch, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -76,6 +76,9 @@ const PRETOOLUSE_DIRECTIVES = [
   extractDetail(['shell_id', 'file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
   setTypeWhen({ whenTool: 'Bash', nested: ['tool_input', 'run_in_background'], equals: 'true', to: EventType.BackgroundShellStart }),
   setTypeWhen({ field: 'tool_name', equals: 'KillBash', to: EventType.BackgroundShellEnd }),
+  // The calls that start a subagent, so only their own approval lets a
+  // subagent's start close a permission prompt.
+  markSubagentLaunch(['Agent', 'Task']),
 ];
 
 /** The exact directive set Claude's PostToolUse hook wires after the
@@ -516,6 +519,16 @@ describe('event-bridge setTypeWhen directive (tool-scoping + shell safety)', () 
     const directive = setTypeWhen({ field: 'tool_name', equals: 'KillBash', to: EventType.BackgroundShellEnd });
     runBridge(JSON.stringify({ tool_name: 'KillBash' }), [outputFile, 'tool_start', extractTool('tool_name'), directive]);
     expect(readEvent().type).toBe('background_shell_end');
+  });
+
+  it('marks a call that starts a subagent, and only such a call', () => {
+    const directive = markSubagentLaunch(['Agent', 'Task']);
+    runBridge(JSON.stringify({ tool_name: 'Agent', tool_input: { subagent_type: 'Explore' } }), [outputFile, 'tool_start', extractTool('tool_name'), directive]);
+    expect(readEvent().launchesSubagent).toBe(true);
+
+    fs.rmSync(outputFile, { force: true });
+    runBridge(JSON.stringify({ tool_name: 'Artifact', tool_input: { action: 'read' } }), [outputFile, 'tool_start', extractTool('tool_name'), directive]);
+    expect(readEvent().launchesSubagent).toBeUndefined();
   });
 
   it('is shell-safe: a value containing ":" and spaces round-trips through the base64 payload', () => {

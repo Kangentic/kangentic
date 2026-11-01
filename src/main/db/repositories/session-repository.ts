@@ -15,8 +15,8 @@ import { writeTransaction } from '../transaction';
  * `cli_target` is optional: only a spawn whose CLI runs in a WSL distro passes one.
  */
 type SessionInsertInput = Omit<SessionRecord,
-  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target'
-> & { cli_target?: string | null };
+  'total_cost_usd' | 'total_input_tokens' | 'total_output_tokens' | 'model_id' | 'model_display_name' | 'applied_model' | 'applied_effort' | 'total_duration_ms' | 'tool_call_count' | 'lines_added' | 'lines_removed' | 'files_changed' | 'tool_breakdown' | 'compaction_count' | 'last_pty_cols' | 'last_pty_rows' | 'result_tokens_read_at' | 'transcript_path' | 'cli_target' | 'start_head_sha'
+> & { cli_target?: string | null; start_head_sha?: string | null };
 
 export interface SessionMetricsInput {
   totalCostUsd: number | null;
@@ -93,6 +93,9 @@ export type TaskReportSessionRecord = Pick<SessionRecord,
   | 'model_id' | 'model_display_name' | 'applied_effort'
   | 'tool_call_count' | 'compaction_count' | 'tool_breakdown'
 >;
+
+/** One isolated-column session the task's main conversation never saw (`listIsolatedSince`). */
+export type IsolatedRunRecord = Pick<SessionRecord, 'id' | 'isolated_swimlane_id' | 'agent_session_id' | 'start_head_sha' | 'started_at'>;
 
 /** What reading a conversation's transcript needs: the newest record of the task that names one. */
 export type LatestAgentSessionRecord = Pick<SessionRecord, 'session_type' | 'cwd' | 'cli_target'> & { agent_session_id: string };
@@ -171,8 +174,8 @@ export class SessionRepository {
       ).get(record.agent_session_id) as { transcript_path: string } | undefined)?.transcript_path ?? null
       : null;
     this.db.prepare(`
-      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO sessions (id, task_id, session_type, isolated_swimlane_id, agent_session_id, command, cwd, permission_mode, prompt, status, exit_code, started_at, suspended_at, exited_at, suspended_by, cli_target, transcript_path, start_head_sha)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       record.id,
       record.task_id,
@@ -191,10 +194,12 @@ export class SessionRepository {
       record.suspended_by,
       record.cli_target ?? null,
       inheritedTranscriptPath,
+      record.start_head_sha ?? null,
     );
     return {
       ...record,
       cli_target: record.cli_target ?? null,
+      start_head_sha: record.start_head_sha ?? null,
       total_cost_usd: null,
       total_input_tokens: null,
       total_output_tokens: null,
@@ -442,6 +447,19 @@ export class SessionRepository {
   }
 
   /**
+   * The task's isolated-column sessions that started at or after `sinceIso`,
+   * oldest first: what ran while the task's main conversation was away (task
+   * #952). A column re-entered after a send-back, and two isolated columns in a
+   * row, are each one of them.
+   */
+  listIsolatedSince(taskId: string, sinceIso: string): IsolatedRunRecord[] {
+    return this.db.prepare(
+      `SELECT id, isolated_swimlane_id, agent_session_id, start_head_sha, started_at
+       FROM sessions WHERE task_id = ? AND isolated_swimlane_id IS NOT NULL AND started_at >= ? ORDER BY started_at`
+    ).all(taskId, sinceIso) as IsolatedRunRecord[];
+  }
+
+  /**
    * Every record on a session track except one, oldest first. A track is the
    * task plus its isolated swimlane (null = the main session), across agents:
    * the records a resumed session continues from. The excluded id is the live
@@ -505,6 +523,28 @@ export class SessionRepository {
       WHERE s.status = 'suspended' AND s.suspended_by IN (${placeholders})
     `).all(...HELD_PAUSE_SOURCES) as Array<{ task_id: string }>;
     return new Set(rows.map(r => r.task_id));
+  }
+
+  /**
+   * Tasks whose latest session is a low-memory pause (`suspended_by =
+   * 'low_memory'`), with when it was paused, oldest first. For the workflow's
+   * memory resume, which brings a running workflow's tasks back one at a time
+   * once memory recovers (`workflow-memory-resume.ts`). Read on every memory
+   * sampler tick, so it starts from the suspended rows (`idx_sessions_status`)
+   * and checks each is its task's latest (`idx_sessions_task_started`), never
+   * grouping the whole table.
+   */
+  listMemoryPausedTasks(): Array<{ taskId: string; suspendedAt: string | null }> {
+    const rows = this.db.prepare(`
+      SELECT s.task_id, s.suspended_at FROM sessions s
+      WHERE s.status = 'suspended' AND s.suspended_by = 'low_memory'
+        AND NOT EXISTS (
+          SELECT 1 FROM sessions newer
+          WHERE newer.task_id = s.task_id AND newer.started_at > s.started_at
+        )
+      ORDER BY s.suspended_at ASC
+    `).all() as Array<{ task_id: string; suspended_at: string | null }>;
+    return rows.map((row) => ({ taskId: row.task_id, suspendedAt: row.suspended_at }));
   }
 
   /** Get all distinct session record IDs (for stale directory cleanup). */

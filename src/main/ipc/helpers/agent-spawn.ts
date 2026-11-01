@@ -52,6 +52,24 @@ import { checkAutomationConditions, type ConditionCheckDeps } from '../../automa
 import { automationAgentDeps } from './automation-agent-deps';
 import { backgroundCallSink } from './background-call-sink';
 import { readWorkflowPromptFacts } from '../../workflows/workflow-prompt-facts';
+import { readCommitsSince, readWorktreeHead } from '../../git/worktree-head';
+import type { IsolatedRunRecord } from '../../db/repositories/session-repository';
+import type { SessionRecord, SessionResumer } from '../../../shared/types';
+import type { InjectionReport } from '../../transition-engine/terminal-submit-scheduler';
+import { forgetRecapSession, markRecapSession, whenRecapTurnEnds } from '../../automations/turn-end/recap-turns';
+import { trackMessageDelivery } from '../../automations/turn-end/turn-end-passes';
+import { readSessionFinalReply } from '../../automations/turn-end/final-reply-reader';
+import {
+  formatReturnRecap,
+  gatherReturnRecap,
+  mainConversationLeftAt,
+  returnRecapOpeningFor,
+  RETURN_RECAP_BUDGET_MS,
+  RETURN_RECAP_REPLY_TIMEOUT_MS,
+  RETURN_RECAP_TURN_WAIT_MS,
+  withinBudget,
+  type ReturnRecapFacts,
+} from '../../transition-engine/return-recap';
 
 /**
  * Whether a column may spawn an agent at all, independent of its `auto_spawn`
@@ -155,6 +173,7 @@ export function createTransitionEngine(
       checkConditions: (input, limits, call) => checkAutomationConditions(conditionCheckDeps(context, projectPath), input, limits, call),
       recapSources: createExpiredRecapSources(projectId),
       onConversationExpired: (notice) => notifyConversationExpired(context, notice),
+      readStartHead: async (cwd) => (await readWorktreeHead(cwd)).sha,
     },
   );
 }
@@ -208,6 +227,13 @@ export interface AgentSpawnOptions {
    */
   suppressAutoCommand?: boolean;
   /**
+   * A message follows the move that started this agent (a Move to column row's
+   * Message, `kangentic_move_task`'s `message`), usually the reply the last
+   * column ended on. A return to the main conversation then leaves that reply
+   * out of its recap (`return-recap.ts`).
+   */
+  moveCarriesMessage?: boolean;
+  /**
    * The lane whose inherited settings the New Task / Edit dialog displayed
    * when the user configured the task. The Advanced override lock
    * (`lockAdvancedOverridesOnFirstSpawn`) resolves still-inherited fields
@@ -247,6 +273,13 @@ export interface AgentSpawnOptions {
    * Passed only by `resumeTaskSession`.
    */
   resumesEntry?: boolean;
+  /**
+   * Who resumes the conversation when it is not a person, for a `resumesEntry`
+   * start: the workflow's memory resume passes `'memory'`, which rides the
+   * resumed session's `session-resumed` event to workflow recovery. Unset means
+   * a person.
+   */
+  resumedBy?: SessionResumer;
 }
 
 /**
@@ -328,6 +361,97 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   let heldAfterLeadTurn = false;
   /** A plan continuation the resume could not carry on its command line, typed after the group. */
   let unsentContinuation: string | null = null;
+  /**
+   * Task #952: a return recap the resume could not carry on its command line,
+   * typed ahead of the next message this start sends (`return-recap.ts`).
+   */
+  let pendingRecap: string | null = null;
+  /**
+   * Task #952: set when the return recap is the resume's whole prompt ahead of
+   * a slash command. Resolves once the recap's turn ends (true) or the session
+   * leaves first (false). The column's message and held messages wait on it.
+   */
+  let recapTurnGate: Promise<boolean> | null = null;
+
+  /**
+   * Send now, or, behind a return recap, once its turn has ended. A move of the
+   * task meanwhile (`supersedeMessageDeliveries`), or the session leaving, sends
+   * nothing and calls `dropped` instead. Calls made in order send in order.
+   */
+  const afterRecapTurn = (send: (freshlySpawned: boolean) => void, dropped: () => void): void => {
+    const gate = recapTurnGate;
+    if (gate === null) {
+      send(true);
+      return;
+    }
+    const controller = new AbortController();
+    const release = trackMessageDelivery(task.id, controller);
+    let settled = false;
+    const settle = (proceed: boolean): void => {
+      if (settled) return;
+      settled = true;
+      controller.signal.removeEventListener('abort', onAbort);
+      release();
+      // The recap's turn is over and the session idles: no first edge to wait for.
+      if (proceed && !controller.signal.aborted) send(false);
+      else dropped();
+    };
+    // A move drops the message at once, not when the recap's turn ends, so
+    // its held messages are free for the next start.
+    const onAbort = (): void => settle(false);
+    controller.signal.addEventListener('abort', onAbort, { once: true });
+    void gate.then(settle);
+  };
+
+  /**
+   * What the task's isolated column sessions did while its main conversation
+   * was away, or null when none ran or none left anything to say. Bounded:
+   * this runs under the task lock.
+   */
+  const readReturnRecap = async (mainRecord: SessionRecord, current: Task): Promise<ReturnRecapFacts | null> => {
+    let isolatedRuns: IsolatedRunRecord[];
+    let columnName: (swimlaneId: string) => string | null;
+    try {
+      isolatedRuns = sessionRepo.listIsolatedSince(task.id, mainConversationLeftAt(mainRecord));
+      if (isolatedRuns.length === 0) return null;
+      const swimlanes = getProjectRepos(context, options.projectId).swimlanes;
+      columnName = (swimlaneId) => swimlanes.getById(swimlaneId)?.name ?? null;
+    } catch (error) {
+      console.warn(`[spawnAgent] Could not read the column sessions task ${task.id.slice(0, 8)} ran while its conversation was away:`, error);
+      return null;
+    }
+    const cwd = current.worktree_path ?? options.projectPath ?? mainRecord.cwd;
+    return withinBudget(gatherReturnRecap(
+      // A move that carries its own message usually carries this reply too.
+      { cwd, isolatedRuns, includeReplies: options.moveCarriesMessage !== true },
+      {
+        readCommitsSince,
+        readFinalReply: async (run) => {
+          const reply = await readSessionFinalReply(
+            { sessionId: run.id, agentSessionId: run.agent_session_id },
+            sessionRepo,
+            RETURN_RECAP_REPLY_TIMEOUT_MS,
+          );
+          return reply?.text ?? null;
+        },
+        columnName,
+      },
+    ), RETURN_RECAP_BUDGET_MS, null);
+  };
+
+  /** A message that waited on a return recap's turn and was not sent: the task moved, or the session ended. */
+  const droppedAfterRecapReport = (sessionId: string, message: string): InjectionReport => ({
+    taskId: task.id,
+    sessionId,
+    commands: [message],
+    outcome: 'cancelled',
+    unconfirmedCommands: [message],
+    discardedDraft: null,
+    interruptedTurn: false,
+    escalated: false,
+    reason: 'The task moved on, or its agent ended, before the recap turn was over, so the message was not sent.',
+    textReachedAgent: false,
+  });
 
   const run = async (): Promise<void> => {
   // Guard: if the target column doesn't want agents, no-op. An explicit user
@@ -695,13 +819,41 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     const continuation = !takesPromptSlot && canResumeDestination && !isHandoff ? options.continuationPrompt : undefined;
     const lead = takesPromptSlot ? message : continuation;
 
+    // Task #952: the task returns to its main conversation after an isolated
+    // column's session (Code Review, then Testing), so the conversation is told
+    // what that session did. Only on a resume of the same agent's main
+    // conversation: a fresh one has nothing to catch up, a handoff gets the
+    // other agent's history, and a recovery move out of Done sends nothing.
     // Messages held for the task join the opening message, after the lead,
     // wherever the spawn has a prompt slot. Claimed here, once, as the agent
-    // starts; a later start finds them gone.
+    // starts; a later start finds them gone. Behind a deferred lead they wait
+    // for its turn, as they do behind any slash command.
     if (heldClaim === null && options.projectId) heldClaim = claimHeldMessages(context, options.projectId, task.id);
-    const opening = promptSlotOpen
-      ? composeOpeningMessage(lead, heldClaim?.text)
-      : { prompt: lead, heldAfterTurn: false };
+
+    const recapFacts = canResumeDestination && destinationResumeRecord !== undefined
+      && destinationIsolatedSwimlaneId === null && !isHandoff && !options.suppressAutoCommand && !resolveForceFresh(toLane)
+      ? await readReturnRecap(destinationResumeRecord, beforeSpawn)
+      : null;
+    const recap = recapFacts !== null ? { facts: recapFacts, opening: returnRecapOpeningFor(lead, heldClaim !== null) } : null;
+    const recapOpening = recap?.opening ?? null;
+    const recapText = recap !== null ? formatReturnRecap(recap.facts, recap.opening) : null;
+    // Ahead of a slash command the recap is the whole prompt, and the command
+    // goes once the recap's turn ends, through `deliverToAgent`.
+    const recapDefersLead = recapOpening === 'before-command';
+    if (recapDefersLead) {
+      promptTakenFromRow = null;
+      pendingTaskOverride = overrideBeforeTake;
+    }
+    const hasLead = lead !== undefined && lead.trim() !== '';
+    // A prefix with no lead goes ahead of the held messages, which join it below.
+    const openingLead = recapText === null ? lead : (recapOpening === 'prefix' && hasLead ? `${recapText}\n\n${lead}` : recapText);
+    if (recapOpening !== null) {
+      console.log(`[spawnAgent] Task ${task.id.slice(0, 8)} returns to its main conversation after a column session of its own; its recap opens the resume (${recapOpening}).`);
+    }
+
+    const opening = recapDefersLead
+      ? { prompt: openingLead, heldAfterTurn: heldClaim !== null }
+      : (promptSlotOpen ? composeOpeningMessage(openingLead, heldClaim?.text) : { prompt: openingLead, heldAfterTurn: false });
     const heldInPrompt = heldClaim !== null && promptSlotOpen && !opening.heldAfterTurn;
 
     try {
@@ -711,7 +863,10 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         beforeSpawn, toLane.permission_mode, skipPromptTemplate, opening.prompt, signal,
         targetAgent,
         undefined,
-        resolveSpawnOverrides(beforeSpawn, toLane, project),
+        {
+          ...resolveSpawnOverrides(beforeSpawn, toLane, project),
+          ...(options.resumedBy ? { resumedBy: options.resumedBy } : {}),
+        },
       );
       startedAgentInGroup = true;
       // The agent deleted the conversation this move would have resumed, so
@@ -735,8 +890,49 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         promptTakenFromRow = null;
         pendingTaskOverride = overrideBeforeTake;
       }
-      if (continuation !== undefined && unsentPrompt !== null) unsentContinuation = continuation;
+      // A continuation the recap took the prompt from (it is a slash command)
+      // goes once the recap's turn ends too, with the remainder.
+      const continuationDeferred = recapDefersLead && !takesPromptSlot && recapText !== null && !outcome?.startOver;
+      if (continuation !== undefined && (unsentPrompt !== null || continuationDeferred)) unsentContinuation = continuation;
       const startedSessionId = tasks.getById(task.id)?.session_id;
+      // A resume that started over (its conversation never began) has no
+      // conversation to catch up: the recap goes nowhere, and the lead goes as
+      // it would have.
+      if (recapText !== null && startedSessionId && !outcome?.startOver) {
+        // A recap that is the whole opening and could not ride the command
+        // line is typed on its own at once, so the turn its mark names is the
+        // recap's and no message of this start's goes ahead of it. If it fails,
+        // nothing waits on it.
+        const typeRecapAlone = (): void => {
+          deliverAgentMessageInBackground(context, {
+            taskId: task.id,
+            sessionId: startedSessionId,
+            message: recapText,
+            mode: 'immediate',
+            verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
+            freshlySpawned: true,
+            onOutcome: (report) => {
+              if (report.outcome !== 'confirmed' && report.outcome !== 'unconfirmed') forgetRecapSession(startedSessionId, true);
+            },
+          });
+        };
+        if (recapDefersLead) {
+          markRecapSession(startedSessionId, 'return');
+          recapTurnGate = whenRecapTurnEnds(startedSessionId, RETURN_RECAP_TURN_WAIT_MS);
+          if (unsentPrompt !== null) typeRecapAlone();
+        } else if (recapOpening === 'acknowledge') {
+          // Answered in a line with nothing of this start behind it: its turn
+          // is a context turn too, so a send-back's findings, which follow the
+          // move once this turn ends, start the turn the rows and step judge.
+          // Held for the next message instead, the mark would name that
+          // message's turn, and its rows and step would not run.
+          markRecapSession(startedSessionId, 'return');
+          if (unsentPrompt !== null) typeRecapAlone();
+        } else if (unsentPrompt !== null) {
+          // A prefix goes ahead of the next message this start sends.
+          pendingRecap = recapText;
+        }
+      }
       if (heldClaim !== null && startedSessionId) {
         if (opening.heldAfterTurn) {
           heldAfterLeadTurn = true;
@@ -796,20 +992,34 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
         heldHandedOff = true;
       }
     }
+    // A return recap the resume's command line could not carry goes first, in
+    // the same message. Never ahead of a slash command, which it would stop:
+    // that waits for the remainder instead.
+    if (pendingRecap !== null && !isSlashCommand(outgoing)) {
+      outgoing = `${pendingRecap}\n\n${outgoing}`;
+      pendingRecap = null;
+    }
 
+    const sessionId = currentTask.session_id;
     // Keystrokes once the CLI is alive, or, for a message with line breaks, a
     // paste once the fresh agent's first turn ends, whatever the row's mode.
-    deliverAgentMessageInBackground(context, {
-      taskId: currentTask.id,
-      sessionId: currentTask.session_id,
-      message: outgoing,
-      mode,
-      verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
-      freshlySpawned: true,
-      onOutcome: (report) => {
-        reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
-        if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
-      },
+    // Behind a return recap, once the recap's turn has ended.
+    afterRecapTurn((freshlySpawned) => {
+      deliverAgentMessageInBackground(context, {
+        taskId: currentTask.id,
+        sessionId,
+        message: outgoing,
+        mode,
+        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, currentTask.id),
+        freshlySpawned,
+        onOutcome: (report) => {
+          reportAutoCommandOutcome(context, tasks, currentTask, report, options.projectId);
+          if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
+        },
+      });
+    }, () => {
+      reportAutoCommandOutcome(context, tasks, currentTask, droppedAfterRecapReport(sessionId, outgoing), options.projectId);
+      carried?.release({ flush: true });
     });
   };
 
@@ -826,28 +1036,33 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     if (!sessionId) return;
     const held = heldClaim !== null && !heldClaim.isSettled() && !heldHandedOff ? heldClaim : null;
     if (held !== null && heldAfterLeadTurn) {
-      pasteHeldAfterTurn(context, held, sessionId);
+      // Behind a return recap, the paste is queued once the recap's turn ends,
+      // after the lead, and waits out the lead's own turn as usual.
+      afterRecapTurn(() => pasteHeldAfterTurn(context, held, sessionId), () => held.release({ flush: true }));
       heldHandedOff = true;
     }
     const carried = held !== null && heldJoinsNextMessage ? held : null;
-    const remainder = [unsentContinuation, carried?.text].filter((part): part is string => Boolean(part?.trim())).join('\n\n');
+    const remainder = [pendingRecap, unsentContinuation, carried?.text].filter((part): part is string => Boolean(part?.trim())).join('\n\n');
     unsentContinuation = null;
+    pendingRecap = null;
     if (!remainder) return;
     if (carried) {
       heldJoinsNextMessage = false;
       heldHandedOff = true;
     }
-    deliverAgentMessageInBackground(context, {
-      taskId: task.id,
-      sessionId,
-      message: remainder,
-      mode: 'immediate',
-      verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
-      freshlySpawned: true,
-      onOutcome: (report) => {
-        if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
-      },
-    });
+    afterRecapTurn((freshlySpawned) => {
+      deliverAgentMessageInBackground(context, {
+        taskId: task.id,
+        sessionId,
+        message: remainder,
+        mode: 'immediate',
+        verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
+        freshlySpawned,
+        onOutcome: (report) => {
+          if (carried) settleClaimFromReport(carried, report, { flushOnRelease: true });
+        },
+      });
+    }, () => carried?.release({ flush: true }));
   };
 
   try {

@@ -7,6 +7,7 @@ import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import type { WorkflowXmlInput } from '../agent/shared/prompt-xml';
 import { applyProfileToLane } from '../transition-engine/column-strategy';
+import { resolveSessionTarget } from '../transition-engine/session-isolation';
 import { loadTaskProfile } from '../ipc/helpers/task-profile';
 import { workflowRuntimeContext } from './workflow-runtime';
 
@@ -70,11 +71,18 @@ export function readWorkflowPromptFacts(task: Task, projectId: string | null): W
     // route (`planExitTargetFor`), never to the column's own plan exit target.
     const current = asTaskRunsIt(ownLanes.find((lane) => lane.id === task.swimlane_id) ?? null, task, projectId, ownLanes);
     const planExitTo = current?.permission_mode === 'plan' ? nextOnRoute(ownLanes, task, current.id)?.name ?? null : null;
+    const route = routeColumns(ownLanes, task);
+    // Task #952: which columns run in a conversation of their own, as the task
+    // runs them, so an earlier column knows a later one continues its chat.
+    const ownConversation = route
+      .filter((lane) => resolveSessionTarget(lane.id === current?.id ? current : asTaskRunsIt(lane, task, projectId, ownLanes)) === 'isolated')
+      .map((lane) => lane.name);
     return {
       title: workflow.title,
-      route: [...routeColumns(ownLanes, task), ...(done ? [done] : [])].map((lane) => lane.name),
+      route: [...route, ...(done ? [done] : [])].map((lane) => lane.name),
       column: current?.name ?? null,
       planExitTo,
+      ownConversation,
       waitsFor,
       blocks,
     };

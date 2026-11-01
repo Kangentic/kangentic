@@ -9,6 +9,7 @@ sources:
   - resource: src/main/agent/commands/task-commands.ts
   - resource: src/main/agent/commands/task-ordering.ts
   - resource: src/main/agent/commands/move-message-limit.ts
+  - resource: src/main/pr/pr-readiness-note.ts
 ---
 # Task tools
 
@@ -136,7 +137,7 @@ Authoritatively resolve and link the pull request for a task through the reposit
 | `branch` | string | No | The remote branch the work was pushed to (the PR source branch). Recorded as the task's `pushed_branch` before resolving. A task with no worktree has nothing to search by until a push is recorded, so pass this when the auto-capture from the agent's own `git push` did not fire |
 | `project` | string | No | Project selector to target a different project |
 
-Returns the linked PR (number, url, state, merge readiness) on success. "Searched and found nothing" is a normal result naming the anchors it searched by. "Nothing to search by" (no PR number, worktree, branch, commit, or pushed branch on the task) is a refusal with `isError: true` that names the two remedies: pass `branch`, or set `prUrl` / `prNumber` with `kangentic_update_task`. A resolver that is unavailable or errored transiently is a refusal too.
+Returns the linked PR (number, url, state, merge readiness) on success. The reply's `, merge <readiness>` note is left off for a merged or closed PR (`prReadinessNote`, `src/main/pr/pr-readiness-note.ts`, shared with the linker's log line), since only an open or draft PR has a merge to be ready for. A merged PR used to read "merged, merge unknown", which an agent took as a merge still in doubt. "Searched and found nothing" is a normal result naming the anchors it searched by. "Nothing to search by" (no PR number, worktree, branch, commit, or pushed branch on the task) is a refusal with `isError: true` that names the two remedies: pass `branch`, or set `prUrl` / `prNumber` with `kangentic_update_task`. A resolver that is unavailable or errored transiently is a refusal too.
 
 ## kangentic_move_task
 
@@ -147,7 +148,7 @@ Move a task to a different column, optionally placing it at a chosen slot in tha
 | `taskId` | string | Yes | Task ID (numeric display ID or full UUID) |
 | `column` | string | Yes | Target column name (case-insensitive, e.g. `"Review"`, `"Done"`), or `"next"` for the column after the task's current one. A column literally named "next" wins. |
 | `position` | number | No | Zero-based ordinal slot among the column's tasks (not a raw stored position); the tasks at and below it shift down. Clamped to the column, so a value past the end lands last. Omit to append to the end of the column, which is the default. |
-| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. When no agent runs where the task lands (a column that starts none, a paused agent), the message is held for the task's next agent ([Held messages](../../architecture/sessions/held-messages.md)); a move into Done holds nothing and drops it. Refused on a move that stays in the task's column, except from the task's own agent (see below). |
+| `message` | string | No | A message for the agent in the destination column (up to 20,000 characters, line breaks kept). It is delivered once that agent's turn ends, after the column's own On task enter automations, so the move and its hand-off are one call: a separate `kangentic_send_session_message` cannot reach a session the move itself is suspending or starting. When no agent runs where the task lands (a column that starts none, a paused agent), the message is held for the task's next agent ([Held messages](../../architecture/sessions/held-messages.md)); a move into Done holds nothing and drops it. When the move resumes the task's main conversation after isolated column sessions, a message leaves those sessions' final messages out of the return recap, since it usually repeats the last one ([Resume](../../architecture/sessions/resume.md)). Refused on a move that stays in the task's column, except from the task's own agent (see below). |
 
 Naming the task's **current** column together with `position` repositions it in place. That path is
 presentation only: it does not change the task's column, session, worktree, or `session_id`, and it

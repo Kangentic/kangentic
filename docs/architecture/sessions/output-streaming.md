@@ -78,9 +78,13 @@ Now each renderer holds its own port to the host and main never relays a keystro
 - **One write queue, in the host.** A renderer's keystrokes and main's writes (an injected command,
   a paste, dictation) share the PTY's queue (`write-queue.ts`), so a key never lands inside a large
   paste. The prompt-draft ledger records each write in queue order and the host reports changes
-  (`promptDraft`), which main mirrors for `getPendingDraft`. The host also reports the first write
-  that carries a human's key or text (`userInput`, once per session), which is how main learns a
-  Command Terminal was used when the keys never crossed it. Keystroke injection asks the host
+  (`promptDraft`), which main mirrors for `getPendingDraft`. The host also reports a write that
+  carries a human's key or text (`userInput`, with `at`, epoch ms), which is how main learns a
+  Command Terminal was used when the keys never crossed it. It reports the first one at once, then
+  at most once every 10 s, so `at` can trail the last keystroke by up to 10 s. Main keeps `at` as
+  `getLastUserInputAt`, never moved by a write Kangentic makes: workflow recovery reads input in
+  the last 5 minutes as the user being there, and a phone's prompt answer logs whether someone
+  typed after its call began. Keystroke injection asks the host
   instead (`readPendingDraft`), so a key that reached the host on a port just before is counted.
   `drain()` is a host request. Every
   place main drops a session's PTY handle calls `sealUserInput()` first, so the host stops writing a

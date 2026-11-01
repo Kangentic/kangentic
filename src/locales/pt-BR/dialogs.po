@@ -53,9 +53,8 @@ msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents pa
 msgstr "{agentCount, plural, one {Agente pausado para liberar memória} many {# de agentes pausados para liberar memória} other {# agentes pausados para liberar memória}}"
 
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
-#, fuzzy
-msgid "{agentCount, plural, one {It stays paused until you resume it.} other {They stay paused until you resume them.}}"
-msgstr "{agentCount, plural, one {Ele permanece pausado até você retomá-lo.} many {Eles permanecem pausados até você retomá-los.} other {Eles permanecem pausados até você retomá-los.}}"
+msgid "{agentCount, plural, one {It stays paused until you resume it. A workflow's task comes back on its own once memory recovers.} other {They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers.}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

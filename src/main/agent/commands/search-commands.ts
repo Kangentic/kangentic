@@ -7,6 +7,7 @@ import type { Task, BacklogTask } from '../../../shared/types';
 import { parseTicketQuery, matchesTicketPrefix } from '../../../shared/ticket-query';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
 import { taskKnowledgeFor } from './task-knowledge-lines';
+import { sliceKeepingPairs } from '../shared/slice-keeping-pairs';
 
 /** One matched task as the task reads print it. */
 function taskLine(task: Task, column: string): string {
@@ -21,6 +22,30 @@ function taskLine(task: Task, column: string): string {
   if (task.automations_disabled) parts.push('automations paused');
   parts.push(`#${task.display_id}, id: ${task.id}`);
   return `- ${parts.join(' | ')}`;
+}
+
+/** A lone match's description is printed up to this many characters (task #952). */
+export const TASK_DESCRIPTION_CHARS_ALONE = 4_000;
+/** Each of several matches' descriptions is cut to this many characters. */
+export const TASK_DESCRIPTION_CHARS_AMONG_MANY = 400;
+
+/** How much of each description a search shows: more for a lone match. */
+export function descriptionCharsFor(matchCount: number): number {
+  return matchCount === 1 ? TASK_DESCRIPTION_CHARS_ALONE : TASK_DESCRIPTION_CHARS_AMONG_MANY;
+}
+
+/**
+ * A task's description under its line, indented, cut at `maxChars` with how
+ * much was left out. The agent reads the message, never `data`, so a task
+ * looked up for what it asks needs its description here. Nothing for none.
+ */
+export function taskDescriptionLines(task: Pick<Task, 'description'>, maxChars: number): string[] {
+  const description = task.description.trim();
+  if (!description) return [];
+  const shown = description.length > maxChars ? sliceKeepingPairs(description, maxChars).trimEnd() : description;
+  const lines = ['  Description:', ...shown.split('\n').map((line) => `    ${line}`.trimEnd())];
+  if (shown.length < description.length) lines.push(`    ... (${description.length - shown.length} more characters not shown)`);
+  return lines;
 }
 
 export type SearchScope = 'board' | 'backlog' | 'both';
@@ -254,9 +279,10 @@ export const handleFindTask: CommandHandler = async (
 
   if (taskMatches.length > 0) {
     if (backlogMatches.length > 0) sections.push(`\nBoard (${taskMatches.length}):`);
+    const descriptionChars = descriptionCharsFor(taskMatches.length);
     const lines = taskMatches.map((task) => {
       const column = task.archived_at !== null ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown');
-      return [taskLine(task, column), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+      return [taskLine(task, column), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
     });
     sections.push(lines.join('\n'));
   }
@@ -395,8 +421,9 @@ export const handleGetCurrentTask: CommandHandler = async (
     matches.map((task) => ({ id: task.id, finished: task.archived_at !== null || doneLaneIds.has(task.swimlane_id) })),
   );
   const columnOf = (task: Task): string => (task.archived_at ? 'Done' : (swimlaneMap.get(task.swimlane_id) ?? 'Unknown'));
+  const descriptionChars = descriptionCharsFor(matches.length);
   const blockOf = (task: Task): string =>
-    [taskLine(task, columnOf(task)), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
+    [taskLine(task, columnOf(task)), ...taskDescriptionLines(task, descriptionChars), ...(knowledge.linesByTask.get(task.id) ?? [])].join('\n');
   const withKnowledge = (task: Task) => ({ ...toData(task), knowledge: knowledge.knowledgeByTask.get(task.id) ?? null });
   const notes = knowledge.notes.length > 0 ? `\n${knowledge.notes.join('\n')}` : '';
 

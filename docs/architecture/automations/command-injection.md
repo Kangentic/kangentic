@@ -1,13 +1,14 @@
 ---
 type: Reference
 title: Command injection
-description: "How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, outcomes, awaited exit delivery, test coverage and the file map."
+description: "How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, the automated keystrokes guard, outcomes, awaited exit delivery, test coverage and the file map."
 tags: [command-injection, keystrokes, verifier, delivery]
 sources:
   - resource: src/main/transition-engine/injection-plan.ts
   - resource: src/main/transition-engine/terminal-submit-scheduler.ts
   - resource: src/main/transition-engine/turn-completion.ts
   - resource: src/main/pty/terminal-submit.ts
+  - resource: src/main/pty/automated-keys-guard.ts
   - resource: src/main/pty/prompt-draft-ledger.ts
   - resource: src/main/pty/output-settle.ts
   - resource: src/main/ipc/helpers/auto-command-outcome.ts
@@ -263,7 +264,9 @@ For a verifiable command, each attempt polls the verifier for 400ms; up to 5 att
 
 **The watermark is the first Enter, for every poll of that command.** It used to be re-stamped on each retry, and that made every later attempt blind to the first one's success. The backward scan stops at the first entry older than its watermark, and a submission stamped between two Enters has newer siblings between it and the tail (Claude writes a `command_permissions` attachment in the same instant as a skill invocation's user turn, and a `pr-link` a moment later), so a retry's scan returned false on a sibling before it could reach the entry. Claude also stamps the user turn at submit but flushes it ~780ms or ~1830ms later (see [Measured flush latency](command-injection-measurements.md#measured-flush-latency)), which is why attempt 1's 400ms window rarely saw it in the first place. The two together turned a delivered `/merge-pull-request` into `failed` on every observed move (#682).
 
-**After the last retry the burst keeps polling for a 2000ms grace without pressing Enter** (`LATE_FLUSH_GRACE_MS`). The retry cadence answers "did a picker eat the Enter?" and the evidence horizon answers "has the transcript caught up?"; tying the second to the first is what made the budget 2000ms when the slow flush mode plus a skill's expansion exceeds it. A sixth Enter would buy nothing (the prompt is empty if the command went in) and risks answering whatever the started turn has since put on screen. The horizon is now ~4s.
+**After the last retry the burst keeps polling for a 2000ms grace without pressing Enter** (`LATE_FLUSH_GRACE_MS`). The retry cadence answers "did a picker eat the Enter?" and the evidence horizon answers "has the transcript caught up?"; tying the second to the first is what made the budget 2000ms when the slow flush mode plus a skill's expansion exceeds it. A sixth Enter would buy nothing (the prompt is empty if the command went in) and risks answering whatever the started turn has since put on screen. That made the horizon ~4s. Task #952 added a further 8000ms of polling with no Enter (`PASSIVE_EVIDENCE_GRACE_MS`), so it is now ~12s.
+
+**The prompt hook is evidence too.** Under load the transcript and the hooks both land late: one overnight nudge's prompt hook arrived 3.1s after its first Enter, and the "unconfirmed" warning had already gone out 1s after that, for a delivery that had worked. So a `submitted` command also confirms on a `prompt` event from the agent's own hook (Claude's `UserPromptSubmit`, never the PTY tracker's synthesized one) dated at or after its first Enter. It counts only when nothing else sat in the prompt to be submitted with the command: the burst cleared the prompt, or a fresh spawn had no draft. A `command-match` write still needs the transcript. Waiting costs only the passive window, and only when neither signal has come.
 
 On exhaustion the code does **not** write `Ctrl+C`. If the command actually did submit and verification merely lagged, that Ctrl+C would kill the turn it just started, and it was the only path that could produce two consecutive Ctrl+C presses and exit the CLI. Exhaustion reports a failure alongside one `CommandDelivery` record per command (its text, its first-Enter `firstSentAt`, whether it confirmed; positional, so two identical commands in a burst keep separate records), and the scheduler escalates.
 
@@ -290,6 +293,19 @@ Fresh-spawn auto_command paths just consumed the CLI prompt arg (e.g. `claude --
 Main reads the draft two ways. Keystroke injection asks the host (`SessionManager.readPendingDraft`, the `getPromptDraft` request), so a key typed on the renderer's port just before a burst is counted. The idle and low-memory pause checks read main's mirror (`getPendingDraft`), which the host's `promptDraft` event keeps, since they ask again on their next sweep.
 
 It is deliberately **not** load-bearing for correctness: a warm session clears unconditionally, so a stale or missed entry degrades the message the user sees, never the delivery. It changes behavior in exactly one place - the fresh-spawn path, where it only ever *adds* a clear that would otherwise be skipped.
+
+## The automated keystrokes guard
+
+A permission prompt takes typed keys as its answer, so an automated Enter approves a tool call nobody saw. Every key Kangentic types on its own asks one gate first (`src/main/pty/automated-keys-guard.ts`, task #952): a column message, a workflow recovery nudge, the Enter of an automated paste, and an agent's message to another session. The gate reads `SessionManager.automatedKeysBlocker`, which refuses while the session is in `permission` or while a tool call has no end in the [open-work ledger](../activity/activity-engine.md#open-work). The second signal is there because the first can be lost: a parallel subagent's start once cleared the permission flag 4ms after a prompt opened, and a recovery nudge's Enter then approved the call. Each refusal is logged once per session and reason (`[automated-keys]`).
+
+- **A keystroke burst** (`submitKeystrokes`) asks before it types, before each Esc and Enter, and again right before the Enter that follows an Esc's settle. A refusal waits for the session to clear, re-checking on each of its events and activity changes, however long that takes (`waitUntilAutomatedKeysClear`), and logs every 10 minutes that it still holds (`AUTOMATED_KEYS_HOLD_LOG_MS`). A message for an agent busy in a long foreground tool call goes once the call ends. An earlier 10-minute bound dropped it as "Not sent", where before the guard the CLI took it after the tool. Only the caller's signal (a move superseded the delivery) or the session exiting ends the wait early. A session that exits returns `failed` with `heldBy` naming it, and the scheduler records "Not sent: <reason>." with no escalation.
+- **An automated paste** (`PasteOptions.automated`) waits the same way: before it writes, with no bound but its signal or the caller's `clearanceTimeoutMs` (before the paste's own timeout starts), and within that timeout before each Enter. Only the MCP `now` send passes a bound (30 s), because its caller's own tool call waits on it. One whose session exits during the wait throws `PasteSubmitError` with code `held`, and one whose signal ends it throws code `aborted`, both with nothing typed. The column message paste after a turn end and `kangentic_send_session_message` set it. A paste a person sends from the phone, dictation or the Browser pane never waits.
+- **An agent's `deliverWhen: 'now'` send** is refused at once with `target-at-prompt`, which names the reason and points the caller at `deliverWhen: "idle"`.
+- **Workflow recovery** asks the gate before it nudges and holds the nudge while it refuses (see [Workflow engine](../workflows/workflow-engine.md)).
+
+The cost is deliberate: a message meant for a running agent waits while a foreground tool runs, and goes in between tool calls instead.
+
+**Keys that reached a prompt anyway.** A burst watches the session's hook events while it runs (`BurstHookWatch`). A permission hook that arrives within 2s after an Enter, dated no more than 100ms after it, with no prompt hook for the command, means the prompt was on screen when the Enter landed, and the Enter most likely answered it. The burst stops typing and its result carries `reachedPermissionPrompt`. The scheduler records that as its own outcome: `failed`, with "An Enter reached a permission prompt, so it may have answered it.", never retried and never escalated. The exit path rejects with `KeysReachedPermissionPromptError` for it, and workflow recovery logs it as an attempt that does not count.
 
 ## Per-command verification modes
 
@@ -328,7 +344,7 @@ Every scheduled injection ends in exactly one recorded outcome, persisted on the
 | Context | Caller | What gets verified | Latency |
 |---------|--------|-------------------|---------|
 | `'paste'` | `TerminalSubmit.submitContent` (browser captures, single auto-command paste, and a column message of more than one line or over 1,000 characters that is not a slash command) | "the agent acknowledged this prompt" | 100-500ms |
-| `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~4s worst case (five 400ms windows plus the 2000ms grace) |
+| `'command-injection'` | `TerminalSubmit.submitKeystrokes` (chained slash commands) | "this exact command was processed as a discrete invocation" | 50-150ms typical, ~12s worst case (five 400ms windows plus the 2000ms grace and the 8000ms passive window) |
 
 The two contexts solve different problems: `'paste'` confirms one-shot paste submissions of arbitrary user prompts, while `'command-injection'` confirms each link in a multi-command chain landed cleanly. They share an interface (`getSubmissionVerifier`) so adapters declare what they support per context, and the renderer/IPC layer never has to branch on agent name.
 
@@ -341,7 +357,9 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 
 - `tests/unit/injection-load-rig.test.ts` - the delivery-rate rig and its recorded before/after.
 - `tests/unit/injection-tui-simulator.ts` - the shared TUI model (not a test file).
-- `tests/unit/terminal-submit.test.ts` - byte contract, prompt-state policy, verification modes, retry recovery, that exhaustion never writes Ctrl+C, and the late-flush cases (a submission visible only 900ms or 2300ms after the Enter confirms on a later attempt or in the grace; five swallowed Enters still fail).
+- `tests/unit/terminal-submit.test.ts` - byte contract, prompt-state policy, verification modes, retry recovery, that exhaustion never writes Ctrl+C, the late-flush cases (a submission visible only 900ms or 2300ms after the Enter confirms on a later attempt or in the grace; five swallowed Enters still fail), the prompt hook's confirmation, a burst held by the keys guard, and an Enter that reached a permission prompt.
+- `tests/unit/paste-engine.test.ts` - an automated paste's wait for the keys guard before it writes and before each Enter, and that a person's paste never waits.
+- `tests/unit/mcp-session-send.test.ts` - the `now` refusal on an open prompt or an open tool call.
 - `tests/unit/terminal-submit-scheduler.test.ts` - scheduling, the FIFO queue (no silent drop), deferred mode, escalation, outcome reporting, and the late confirmation at the escalation gate (a verifier that confirms during the wait or on the final check cancels the restart; one that never confirms still restarts; one that throws is a miss on the poll and on the final check alike; a cancelled burst stops polling).
 - `tests/unit/turn-completion.test.ts` - the two-signal predicate, including the sustained false-idle cases.
 - `tests/unit/prompt-draft-ledger.test.ts` - draft accounting.
@@ -366,6 +384,7 @@ The two contexts solve different problems: `'paste'` confirms one-shot paste sub
 - `src/main/automations/turn-end/agent-message-delivery.ts` - the one paste-or-type decision every column message path asks (`shouldPaste`: more than one line or over 1,000 characters, and not a slash command), and the paste after the agent's turn ends.
 - `src/main/transition-engine/turn-completion.ts` - the shared turn-completion predicate.
 - `src/main/pty/terminal-submit.ts` - byte-level engine: `submitContent` (bracketed paste) + `submitKeystrokes` (handshake chain, prompt-state policy, per-command verification).
+- `src/main/pty/automated-keys-guard.ts` - the one gate every automated keystroke asks (`automatedKeysRefusal`, `waitForAutomatedKeysClearance`) and `KeysReachedPermissionPromptError`.
 - `src/main/pty/output-settle.ts` - the settle primitive, shared with `paste-engine.ts`.
 - `src/main/pty/prompt-draft-ledger.ts` - unsent-user-text accounting.
 - `src/main/ipc/helpers/auto-command-outcome.ts` - persists the outcome and rations the notice.

@@ -1,11 +1,12 @@
 ---
 type: Reference
 title: Activity engine
-description: "How Kangentic decides a session is thinking, idle or in permission: the hook-to-ActivityEngine pipeline, ActivityState and ActivityReason, the kind of a wait (question or approval), strategy variants per adapter, the 400ms stability window, heartbeat recovery and idle provenance, Ctrl+C synthesis, the debug overlay and trace labels."
+description: "How Kangentic decides a session is thinking, idle or in permission: the hook-to-ActivityEngine pipeline, ActivityState and ActivityReason, the kind of a wait (question or approval), strategy variants per adapter, the 400ms stability window, heartbeat recovery and idle provenance, Ctrl+C synthesis, the open-work ledger, the debug overlay and trace labels."
 tags: [activity, engine, state-machine, hooks]
 sources:
   - resource: src/main/activity-engine/engine/
   - resource: src/main/activity-engine/session-telemetry.ts
+  - resource: src/main/activity-engine/open-work-ledger.ts
   - resource: src/main/activity-engine/user-interrupt-coordinator.ts
   - resource: src/main/activity-engine/pty-activity-tracker.ts
   - resource: src/main/activity-engine/activity-interval-recorder.ts
@@ -19,7 +20,7 @@ sources:
   - resource: src/renderer/components/board/activity-reason-text.ts
   - resource: src/renderer/components/board/agent-wait.ts
   - resource: src/shared/types.ts
-    title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind
+    title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind, SessionEvent.launchesSubagent
 ---
 # Activity engine
 
@@ -96,6 +97,7 @@ Surrounding infrastructure:
 | File | Role |
 |------|------|
 | `src/main/activity-engine/session-telemetry.ts` | Wires the engine to event ingestion + PTY tracker + watchers + user-interrupt coordinator |
+| `src/main/activity-engine/open-work-ledger.ts` | What each session still has open (tool calls, background shells, background subagents), from its hook events and closed only by a real end (see [Open work](#open-work)) |
 | `src/main/activity-engine/user-interrupt-coordinator.ts` | 3-second settle timer for Ctrl+C; synthesizes Interrupted if engine still hot |
 | `src/main/activity-engine/usage-accumulator.ts` | Per-tool usage stats (call count, run time paired by `toolId`, calls that waited on the user, cost, tokens) and the per-session usage cache. Stamps each reported rate-limit window with its reset generation before caching it, and brings sibling caches up when a reset opens. A report that leaves a window out keeps the session's last value for it (an idle Claude status carried only the seven-day window, measured), so the cache a renderer reload rebuilds its rate-limit snapshot from still holds both |
 | `src/main/activity-engine/rate-limit-ledger.ts` | Per-session rate-limit history that stamps each window's reset `generation`, so a free usage reset (usage falls, `resetsAt` stays) replaces stale sibling reports |
@@ -105,12 +107,12 @@ Surrounding infrastructure:
 | `src/main/activity-engine/background-shell/watcher.ts` | Process-tree-based natural-exit detector |
 | `src/main/activity-engine/background-shell/process-tree.ts` | Cross-platform descendant enumeration; `listAllProcesses` shared once per cycle |
 | `src/main/activity-engine/background-shell/looks-like-shell-id.ts` | Shell-id shape gate |
-| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
+| `src/main/agent/event-bridge.js` | Generic hook-to-JSONL bridge; decodes typed `<kind>:<base64(JSON)>` directives (extractTool, extractToolId, extractSubagentId, extractPlanMode, extractDetail, setTypeWhen, markSubagentLaunch, ...) built by `src/main/agent/shared/directive-builders.ts`. The events-path argument is either a literal path or the sentinel `env:<NAME>`, resolved from the hook process environment at run time - used by adapters whose CLI has no per-session settings mechanism (Grok): one static per-cwd hook file routes each session's events via that session's own spawn env, and a session without the variable (the user's own manual CLI run) is a silent no-op |
 | `src/main/agent/adapters/claude/hook-manager.ts` | Claude Code hook configuration |
 | `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
 | `src/main/activity-engine/plan-approval-gate.ts` | Runs first in `SessionTelemetry.ingestEvents`: drops or holds the permission idle of the plan prompt, and of an allowed tool the adapter's hook answers, for a plan Kangentic approves, and emits `plan_auto_approved` (see [Plan approval gate](event-types.md#plan-approval-gate)) |
 | `src/main/activity-engine/plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move |
-| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode` |
+| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode`, `SessionEvent.launchesSubagent` |
 
 ## ActivityState
 
@@ -193,8 +195,9 @@ event-bridge directive (`setWaitKind`, `setWaitKindWhen`, `appendPermissionWaitF
 agents report it, and from what signal, is each agent's doc.
 
 The engine keeps it as `permissionWaitKind` beside `permissionPending`, set by the wait that raised
-the flag (the newest wait wins) and cleared at every site that clears the flag: the depth-0 tool
-clear, Prompt, Interrupted, TurnFailed, SubagentStart, a non-permission Idle, `forceThinking`,
+the flag (the newest wait wins) and cleared at every site that clears the flag: the awaited call's
+own start or end, a depth-0 tool event the engine cannot tell apart from it, Prompt, Interrupted,
+TurnFailed, a SubagentStart the awaited call started, a non-permission Idle, `forceThinking`,
 `forceIdle`, a rejection read from the transcript and a terminal TurnRetrying. The permission
 reason carries it as `waitKind`, absent rather than null when the agent did not say, and the debug
 overlay shows it as Wait kind. The phone's wire carries it too (protocol 0.26.0):
@@ -205,7 +208,8 @@ reason has one, and the `input-required` push seals the snapshot's `permissionWa
 Every new wait an adapter reports needs an end the engine already clears on, and the end must not
 fake a turn end: a plain non-permission Idle from a parser is read as the agent's own Stop
 (`turnEndSource === 'stop'`) and runs the column's turn-end automations. A wait must also land
-AFTER its own tool's `tool_start`, since a depth-0 tool start clears it. The PTY tracker leaves a
+AFTER its own tool's `tool_start`. Before it the engine cannot name the awaited call, and a depth-0
+tool start clears a wait whose call it cannot name. The PTY tracker leaves a
 wait alone (its silence timer fires only while `thinking`, and PTY output forces thinking only from
 `idle`), but a `detectIdle` prompt match does end it.
 
@@ -213,15 +217,24 @@ A parallel sibling that finishes does not end a wait. A live `/preview` run show
 a ToolSearch beside AskUserQuestion, the question opened, and the search ended 30 ms later. The
 engine took the stack top (the search, which started second) as the awaited tool, and a depth-0
 ToolEnd cleared the wait anyway, so the card showed thinking under an open question. The envelope
-had the same gap before the kind existed. Two rules in `updatePermissionFlag` close it:
+had the same gap before the kind existed. The rules in `updatePermissionFlag` close it:
 
 - The awaited tool (`permissionAwaitedToolId`) is the newest pending entry the event's `tool`
   names, and the stack top only when the event names none or names no pending call. Claude, Qwen
   and the appended Codex and Antigravity waits carry `tool`. The usage accumulator credits the waited call by the
   same rule.
 - The other pending ids at that moment are the wait's siblings (`permissionSiblingToolIds`,
-  engine-internal). A depth-0 ToolEnd of a sibling leaves the wait open and drops that id. A
-  depth-0 ToolStart still clears it: a new call after the wait opened is the agent moving on.
+  engine-internal). A depth-0 ToolEnd of a sibling leaves the wait open and drops that id.
+- Another call's depth-0 ToolStart or ToolEnd clears the wait only when the engine cannot tell it
+  from the awaited call: the event carries no `toolId`, or the awaited call has none. With both ids
+  known, the wait stays open until its own call starts or ends, the transcript poll reads a denial,
+  or the turn ends (task #952).
+- A SubagentStart clears it only when the awaited call is one that starts subagents. The adapter
+  marks those calls on their `tool_start` (`SessionEvent.launchesSubagent`, from the
+  `markSubagentLaunch` directive; Claude names `Agent` and `Task`), and the engine keeps the mark
+  on the pending entry (`PendingTool.launchesSubagent`). A parallel subagent started in the same
+  batch says nothing about the prompt (see [Permission flag](predicate.md#permission-flag) for the
+  overnight case that showed it).
 
 `activity-engine-wait-kind.test.ts` replays the captured four events.
 
@@ -256,6 +269,15 @@ the CLOSED `'active'` intervals in a window behind `usage:getDashboardStats`, ba
 column. Those two travel together because this ledger covers FEWER sessions than `usage_history`
 does - per-interval recording shipped later - so the average is over the sessions with coverage,
 never over the Sessions count.
+
+A quit or a crash leaves the interval it was in open (`ended_ms IS NULL`). Overnight, such rows
+read as agents still waiting hours after their sessions had ended. So the first open of a project
+in a launch closes them (`ActivityIntervalStore.closeIntervalsLeftOpen`, called from
+`resumeSuspendedSessions` before it starts any session, task #952). A row closes at its session's
+recorded suspend or exit time with `exit_trigger` `app-quit`, and with neither recorded at its own
+start with `app-crash`, so the sweep never adds time the session may not have spent. A session this
+launch already runs (a phone started it, the project was open before) keeps its row. Readers still
+filter open rows.
 
 Priority ladder: `permission > tool > subagent > background-shell > turn-active > idle`. Anchored to `state.activity` for consistency - when forced paths (Interrupted, forceIdle) commit a transition that diverges from the bare predicate (e.g. clearing all counters on Esc), the reason follows the committed state.
 
@@ -319,6 +341,41 @@ When the user presses Ctrl+C in a session terminal, the renderer fires the `noti
 If Claude's hooks already recovered the engine state during the settle window, the synthetic is a no-op (state isn't hot). Multiple rapid Ctrl+C presses collapse to one - the existing timer is cleared and re-armed each time.
 
 Without this path, hook-drop scenarios on Ctrl+C have to wait for the 5-minute stuck-pending-tools watchdog to fire.
+
+## Open work
+
+The engine's counters exist to paint the card, and a reset that is right for a card says nothing
+about whether the work ended: the background-shell hatch drops a shell after five quiet minutes, and
+a watchdog or a non-permission idle empties the pending tool stack. Overnight, three failures came
+from reading a reset as an end. A recovery nudge typed into a permission prompt the engine had
+lost. The low-memory pause stopped agents whose own gate was still running in the background. The
+workflow step check judged a session by its reply's wording, with the same gate running each time.
+
+`OpenWorkLedger` (`open-work-ledger.ts`, task #952) keeps its own record from the same hook events.
+`SessionTelemetry` feeds it each event after the engine has seen it, and only an event that says the
+work ended closes an entry:
+
+- **A tool call** opens on its `tool_start` and closes on its own `tool_end` (by id, else the newest
+  open call of that name), on its move to a background shell, on `interrupted` or `turn_failed` (a
+  synthesized interrupt included), on the main agent's turn end, on a denial read from the
+  transcript, and at the session's end. A `subagent_start`, a `prompt`, an `idle_hint` or a reset
+  closes nothing.
+- **A background shell** opens when the engine starts holding a named shell, so an exempt service
+  never opens. It closes on an end that names it, a PID exit or transcript drain the watcher
+  applied, being marked a service, and the session's end. The hatch and the output-quiescence
+  reclaim close nothing.
+- **A subagent** opens on its `subagent_start` and closes on its named `subagent_stop`,
+  `interrupted`, `turn_failed` and the session's end. One started before the main agent's latest
+  turn end is background work.
+
+`SessionManager.getOpenWork(sessionId)` reads it. Each spawn starts the session's ledger empty, so a
+resumed agent carries nothing its old process left open. Three readers act on it: the automated
+keystrokes guard, where an open tool call holds every automated key (see
+[Command injection](../automations/command-injection.md#the-automated-keystrokes-guard)); the
+low-memory pause, which skips an agent with an open background shell or background subagent; and
+the workflow step check, which reads open background work as still working. A lost end fails safe:
+Kangentic types nothing and pauses nothing while an entry is open, and the workflow's working wait
+bounds how long it waits.
 
 ## Resume reconciliation (deliberately none)
 

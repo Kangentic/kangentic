@@ -22,7 +22,12 @@ import type { RequestResolver } from './project-resolver';
  * project's DB. query_db runs read-only SQL against the target
  * project's per-project SQLite file.
  */
-export function registerSessionTools(server: McpServer, resolver: RequestResolver): void {
+export function registerSessionTools(
+  server: McpServer,
+  resolver: RequestResolver,
+  /** The task whose agent made the request, which the dev-port tools default to. Rides the context, never the params. */
+  callerTaskId: string | null = null,
+): void {
   // --- kangentic_list_sessions ---
   server.registerTool(
     'kangentic_list_sessions',
@@ -265,14 +270,14 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
     {
       description: 'Reserve free TCP ports before you start a dev server, so two agents working at the same time never bind the same one. Kangentic does NOT decide what your ports should be - your project already does, in angular.json, a vite config, a compose file - so nothing is reserved until you ask. What Kangentic can do that your project cannot is see every task and every project on this machine at once. Ask ONLY when your configured port might already be taken (several tasks in one column run concurrently, and they all default to the same port). Request every port you are about to bind in ONE call: a project needing an API and a frontend asks for 2, because asking twice leaves a window where another task takes the second. Each returned port has been probed as genuinely free, not merely unclaimed. Fewer ports than requested means the range ran out - fall back to your project\'s own configured ports for the rest. Ports stay reserved for the task until it is deleted, so a restart reuses the same ones.',
       inputSchema: z.object({
-        taskId: z.string().describe('The task reserving the ports (numeric display ID or UUID). Resolve it with kangentic_get_current_task.'),
+        taskId: z.string().optional().describe('The task reserving the ports (numeric display ID or UUID). Defaults to your own task.'),
         count: z.number().int().min(1).max(10).optional().describe('How many ports you are about to bind. Default 1. Ask for all of them at once.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
     async ({ taskId, count, project }) => withProject(resolver, project, (ctx) =>
-      callHandler('reserve_dev_ports', { taskId, count }, ctx, 'Failed to reserve dev ports')),
+      callHandler('reserve_dev_ports', { taskId, count }, { ...ctx, callerTaskId }, 'Failed to reserve dev ports')),
   );
 
   // --- kangentic_check_dev_ports ---
@@ -281,21 +286,21 @@ export function registerSessionTools(server: McpServer, resolver: RequestResolve
     {
       description: 'Report what Kangentic has reserved for a task AND whether anything is actually listening on those ports right now. Every port is probed, so this also answers the case the reservation ledger cannot: a dev server started outside Kangentic, on a port Kangentic never handed out. Pass `ports` to ask about specific numbers - your project\'s own configured 4200 or 3000, say - and each comes back as reserved-by-you, reserved-by-another-task, in-use-outside-Kangentic, or free. Use it to recover ports you were given earlier in a session (after a resume, or before restarting a server) instead of reserving again, and to check a port before binding it. Reserves nothing.',
       inputSchema: z.object({
-        taskId: z.string().describe('Task ID (numeric display ID or UUID).'),
+        taskId: z.string().optional().describe('Task ID (numeric display ID or UUID). Defaults to your own task.'),
         ports: z.array(z.number().int().min(1).max(65535)).max(20).optional().describe('Extra ports to check alongside this task\'s own reservations, for example the ports your project config pins. Each is probed, so ask about the ones you are about to bind.'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: READ_ONLY_ANNOTATIONS,
     },
     async ({ taskId, ports, project }) => withProject(resolver, project, (ctx) =>
-      callHandler('check_dev_ports', { taskId, ports }, ctx, 'Failed to check dev ports')),
+      callHandler('check_dev_ports', { taskId, ports }, { ...ctx, callerTaskId }, 'Failed to check dev ports')),
   );
 
   // --- kangentic_query_db ---
   server.registerTool(
     'kangentic_query_db',
     {
-      description: 'Run a read-only SQL query against the current project database. Only SELECT, PRAGMA, and WITH (CTE) statements are allowed. Returns up to 100 rows as a markdown table. Useful for debugging, inspecting internal state, and answering questions about sessions, tasks, transcripts, handoffs, and other project data. Key tables: tasks, swimlanes, sessions, session_transcript_chunks, handoffs, actions, swimlane_transitions, backlog_items. tasks columns: id (uuid), display_id (numeric, the "#N" shown in UI), title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name (NOT "branch"), pr_number, pr_url, base_branch, use_worktree, labels (JSON array), priority, archived_at, created_at, updated_at. sessions columns: id (PTY/Kangentic session UUID, drives the .kangentic/sessions/<id>/ directory name), task_id, session_type (e.g. "claude", "codex"), agent_session_id (the agent CLI resume id - NOT named "claude_session_id"), command, cwd, permission_mode, prompt, status (running/suspended/exited/queued), exit_code, started_at, suspended_at, exited_at, suspended_by, plus metrics: total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed. To read on-disk session files, prefer kangentic_get_session_files / kangentic_get_session_events instead of constructing paths manually. Use PRAGMA table_info(<table>) to discover columns of any other table. Pass `project` to query a different project\'s DB.',
+      description: 'Run a read-only SQL query against the current project database. Only SELECT, PRAGMA, and WITH (CTE) statements are allowed. Returns up to 100 rows as a markdown table. Useful for debugging, inspecting internal state, and answering questions about sessions, tasks, transcripts, handoffs, and other project data. Key tables: tasks, swimlanes, sessions, session_transcript_chunks, handoffs, actions, swimlane_transitions, backlog_items. tasks columns: id (uuid), display_id (numeric, the "#N" shown in UI), title, description, swimlane_id, position, agent, session_id, worktree_path, branch_name (NOT "branch"), pr_number, pr_url, base_branch, use_worktree, labels (JSON array), priority, archived_at, created_at, updated_at. sessions columns: id (PTY/Kangentic session UUID, drives the .kangentic/sessions/<id>/ directory name), task_id, session_type (e.g. "claude", "codex"), agent_session_id (the agent CLI resume id - NOT named "claude_session_id"), command, cwd, permission_mode, prompt, status (running/suspended/exited/queued), exit_code, started_at, suspended_at, exited_at, suspended_by, isolated_swimlane_id, start_head_sha, plus metrics: total_cost_usd, total_input_tokens, total_output_tokens, model_id, model_display_name, total_duration_ms, tool_call_count, lines_added, lines_removed, files_changed. Each session row is one run of an agent conversation, and a resume adds a row: total_cost_usd and total_duration_ms are cumulative for the whole conversation as of that run, so take the latest row of a conversation (same agent_session_id), never a SUM across its rows; kangentic_list_sessions reports the share of each row. A long value is cut in a result of several rows; select one row to read it whole. To read on-disk session files, prefer kangentic_get_session_files / kangentic_get_session_events instead of constructing paths manually. Use PRAGMA table_info(<table>) to discover columns of any other table. Pass `project` to query a different project\'s DB.',
       inputSchema: z.object({
         sql: z.string().describe('SQL query to execute. Must be a SELECT, PRAGMA, or WITH statement. Examples: "SELECT session_id, COUNT(*), SUM(chars) FROM session_transcript_chunks GROUP BY session_id", "SELECT name, sql FROM sqlite_master WHERE type=\'table\'", "PRAGMA table_info(sessions)"'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),

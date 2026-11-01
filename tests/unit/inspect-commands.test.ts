@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { handleGetTranscript, handleQueryDb } from '../../src/main/agent/commands/inspect-commands';
+import { handleGetTranscript, handleQueryDb, MAX_CELL_CHARS_MANY_ROWS, MAX_CELL_CHARS_ONE_ROW } from '../../src/main/agent/commands/inspect-commands';
 import type { CommandContext } from '../../src/main/agent/commands/types';
 import type { TranscriptEntry } from '../../src/shared/types';
 import type { AgentAdapter, ParsedTranscript } from '../../src/main/agent/agent-adapter';
@@ -1184,10 +1184,10 @@ describe('handleQueryDb', () => {
     expect(result.message).toContain('0 rows');
   });
 
-  it('truncates long cell values', () => {
-    const longValue = 'x'.repeat(200);
+  it('truncates long cell values, and names the columns it cut', () => {
+    const longValue = 'x'.repeat(MAX_CELL_CHARS_MANY_ROWS + 100);
     const db = createMockDb({
-      queryResults: [{ id: '1', content: longValue }],
+      queryResults: [{ id: '1', content: longValue }, { id: '2', content: 'short' }],
     });
     const context = createMockContext(db);
 
@@ -1196,6 +1196,30 @@ describe('handleQueryDb', () => {
     expect(result.success).toBe(true);
     expect(result.message).toContain('...');
     expect(result.message).not.toContain(longValue);
+    expect(result.message).toContain(`Values longer than ${MAX_CELL_CHARS_MANY_ROWS} characters were cut (content).`);
+  });
+
+  // Task #952: a flat 120 cut the very value an agent asked for, a run's
+  // detail or a task's description, and gave no way to read the rest.
+  it('keeps a long value whole in a one-row result, up to the one-row cap', () => {
+    const detail = `Not done yet: ${'the gate failed on load. '.repeat(40)}`;
+    const db = createMockDb({ queryResults: [{ id: '1', detail }] });
+
+    const result = handleQueryDb({ sql: 'SELECT id, detail FROM automation_runs WHERE id = 1' }, createMockContext(db));
+
+    expect(detail.length).toBeGreaterThan(120);
+    expect(result.message).toContain(detail.trim());
+    expect(result.message).not.toContain('were cut');
+  });
+
+  it('cuts a one-row value only past the one-row cap', () => {
+    const huge = 'y'.repeat(MAX_CELL_CHARS_ONE_ROW + 1);
+    const db = createMockDb({ queryResults: [{ id: '1', content: huge }] });
+
+    const result = handleQueryDb({ sql: 'SELECT * FROM data' }, createMockContext(db));
+
+    expect(result.message).not.toContain(huge);
+    expect(result.message).toContain(`Values longer than ${MAX_CELL_CHARS_ONE_ROW} characters were cut (content).`);
   });
 
   it('escapes a pre-existing backslash before escaping a pipe, so the two cannot combine into an unescaped pipe', () => {
@@ -1233,10 +1257,10 @@ describe('handleQueryDb', () => {
   });
 
   it('escapes pipes and newlines in the truncation branch too, not only in the untruncated path', () => {
-    // Over 120 characters, with a pipe and a newline inside the first 117
-    // (the truncation slice), so the truncation branch's escaping is what is
-    // under test, not the plain-value path already covered above.
-    const longValue = 'a|b\nc' + 'x'.repeat(150);
+    // Over the one-row cap, with a pipe and a newline inside the slice kept, so
+    // the truncation branch's escaping is what is under test, not the
+    // plain-value path already covered above.
+    const longValue = 'a|b\nc' + 'x'.repeat(MAX_CELL_CHARS_ONE_ROW);
     const db = createMockDb({
       queryResults: [{ id: '1', content: longValue }],
     });
@@ -1250,11 +1274,11 @@ describe('handleQueryDb', () => {
 
     // Structural check: an un-escaped newline inside the cell would split the
     // row across two lines, changing the message's total line count (header,
-    // separator, row, blank, summary = 5). An un-escaped pipe would also
-    // split whichever line it lands in into an extra cell. Either bug is
-    // caught by the two assertions below without needing to special-case
-    // which one fired.
-    expect(lines).toHaveLength(5);
+    // separator, row, blank, summary, the cut note = 6). An un-escaped pipe
+    // would also split whichever line it lands in into an extra cell. Either
+    // bug is caught by the two assertions below without needing to
+    // special-case which one fired.
+    expect(lines).toHaveLength(6);
     const rowLine = lines[2];
     expect(rowLine).toBeDefined();
     expect(rowLine).toContain('...');

@@ -17,6 +17,7 @@ import type { CommandContext, CommandResponse } from './types';
 import type { SessionRecord } from '../../../shared/types';
 import { resolveWorkflow, WorkflowRequestError } from '../../workflows/workflow-service';
 import { workflowAgentSessionRecord } from '../../workflows/workflow-agent-record';
+import { sliceKeepingPairs } from '../shared/slice-keeping-pairs';
 
 type TranscriptFormat = 'structured' | 'raw';
 
@@ -273,6 +274,10 @@ function rawTranscriptResponse(
 
 /** Maximum rows returned by query_db to prevent accidental large result sets. */
 const MAX_QUERY_ROWS = 100;
+/** A cell's cap when the result is one row (task #952). */
+export const MAX_CELL_CHARS_ONE_ROW = 20_000;
+/** A cell's cap when the result has several rows. */
+export const MAX_CELL_CHARS_MANY_ROWS = 1_000;
 
 /** Strip a trailing `;` (and surrounding whitespace) so the SQL can be wrapped
  *  in a `SELECT * FROM (<sql>) LIMIT n` subquery without a syntax error. */
@@ -344,6 +349,11 @@ export function handleQueryDb(
     const truncated = rows.length > MAX_QUERY_ROWS;
     const displayRows = truncated ? rows.slice(0, MAX_QUERY_ROWS) : rows;
     const columns = Object.keys(displayRows[0]);
+    // A cell's cap: generous for one row, which is how an agent reads a long
+    // value (a run's detail, a description), tighter across many, so a wide
+    // result stays readable. The old flat 120 cut the very values asked for.
+    const cellChars = displayRows.length === 1 ? MAX_CELL_CHARS_ONE_ROW : MAX_CELL_CHARS_MANY_ROWS;
+    const cutColumns = new Set<string>();
 
     // Format as markdown table
     const lines: string[] = [];
@@ -359,7 +369,10 @@ export function handleQueryDb(
         // half and leave the row-splitting pipe behind. Truncating the raw
         // value and escaping the slice means every emitted cell is fully
         // escaped, whichever branch produced it.
-        if (stringValue.length > 120) return escapeMarkdownCell(stringValue.slice(0, 117)) + '...';
+        if (stringValue.length > cellChars) {
+          cutColumns.add(column);
+          return escapeMarkdownCell(sliceKeepingPairs(stringValue, cellChars - 3)) + '...';
+        }
         return escapeMarkdownCell(stringValue);
       });
       lines.push(`| ${values.join(' | ')} |`);
@@ -370,6 +383,10 @@ export function handleQueryDb(
       : `${rows.length} row(s).`;
     lines.push('');
     lines.push(summary);
+    if (cutColumns.size > 0) {
+      const named = [...cutColumns].join(', ');
+      lines.push(`Values longer than ${cellChars} characters were cut (${named}). Select one row for up to ${MAX_CELL_CHARS_ONE_ROW}, or substr(column, start, length) for any part.`);
+    }
 
     return {
       success: true,

@@ -259,6 +259,8 @@ export interface ActivityEngineOptions {
 export interface PendingTool {
   id?: string;
   name: string;
+  /** The call starts a subagent (`SessionEvent.launchesSubagent`). */
+  launchesSubagent?: boolean;
 }
 
 /**

@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { summaryInputHash, type SummaryInput } from './summary-prompt';
 import { commitSubjectOf } from '../commit/commit-record';
-import { CHANGE_HEADER } from '../change/change-record';
+import { CHANGE_HEADER, pathWords } from '../change/change-record';
 
 /**
  * What each finished task's summary is written from, read from the project
@@ -48,8 +48,47 @@ export function lastAssistantMessage(text: string): string | null {
 export function changedFilesOf(changeText: string): string[] {
   return changeText
     .split('\n')
-    .map((line) => line.replace(/ \([^()]*\)$/, '').trim())
+    .map((line) => pathOfChangeLine(line.trim()))
     .filter((line) => line.length > 0 && line !== CHANGE_HEADER);
+}
+
+/**
+ * The path a change line names: the line less its ` (<path words>)` suffix
+ * (`changeRecordChunks`). The suffix is matched against the words the path
+ * itself makes, so a path whose words hold parentheses, such as a route group
+ * `app/(auth)/page.tsx`, loses exactly its suffix (task #952). A pattern for a
+ * trailing group with no parentheses inside left such a path mangled.
+ *
+ * A line written when the words were made another way matches no candidate,
+ * and loses its last balanced group instead. A path that ends in one of its
+ * own always has words, so it always has a suffix after it. A line with no
+ * suffix is the path itself.
+ */
+function pathOfChangeLine(line: string): string {
+  if (!line.endsWith(')')) return line;
+  for (let index = line.lastIndexOf(' ('); index > 0; index = line.lastIndexOf(' (', index - 1)) {
+    const candidate = line.slice(0, index);
+    const words = pathWords(candidate);
+    if (words.length > 0 && line === `${candidate} (${words.join(' ')})`) return candidate;
+  }
+  return stripLastBalancedGroup(line);
+}
+
+/**
+ * A line written before the path words changed: the line less its last
+ * balanced ` (...)` group, walked back from the closing parenthesis it ends
+ * on. A group with no space before it is part of the path, and stays.
+ */
+function stripLastBalancedGroup(line: string): string {
+  let depth = 0;
+  for (let index = line.length - 1; index > 0; index -= 1) {
+    if (line[index] === ')') depth += 1;
+    else if (line[index] === '(') depth -= 1;
+    if (depth > 0) continue;
+    // The group opens here.
+    return line[index - 1] === ' ' ? line.slice(0, index - 1).trimEnd() : line;
+  }
+  return line;
 }
 
 /**

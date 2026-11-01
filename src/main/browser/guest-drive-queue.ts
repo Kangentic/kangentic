@@ -22,9 +22,10 @@ import PQueue from 'p-queue';
  * A mutex serializes COMMANDS, not INTENT. It cannot stop caller A navigating
  * away from the page caller B is midway through verifying - only separate
  * guests do that. And it cannot unwedge the transport: `captureScreenshot`
- * races its command against a timeout and ABANDONS rather than cancels it, so a
- * capture against a non-composited guest still head-of-line-blocks Electron's
- * own per-guest CDP queue no matter what this lock does.
+ * races its command against a timeout and ABANDONS rather than cancels it. On
+ * Electron 41 a capture against a non-composited guest then head-of-line-blocked
+ * the per-guest CDP queue, whatever this lock did. On Electron 45 the next
+ * command still answers (measured, task #952; see `cdp.ts`).
  *
  * ## Why acquisition is bounded
  *

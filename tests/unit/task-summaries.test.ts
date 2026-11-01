@@ -195,6 +195,18 @@ describe('reading a finished task', () => {
     ]);
   });
 
+  // Task #952: a path whose words hold parentheses kept its suffix, and an agent
+  // read "app/(auth)/page.tsx (app (auth) page)" as the path.
+  it('reads a path with parentheses of its own whole, losing exactly its words', () => {
+    const files = [
+      { path: 'src/app/(auth)/login/page.tsx', changes: 2 },
+      { path: 'docs/notes (draft).md', changes: 1 },
+      { path: 'src/app/[slug]/(group)/layout.tsx', changes: 1 },
+    ];
+    const text = changeRecordChunks(files, null).map((chunk) => chunk.text).join('\n');
+    expect(changedFilesOf(text)).toEqual(files.map((file) => file.path));
+  });
+
   it('reads every file of a document whose chunks were joined, and never takes the header a later chunk opens with for a file', () => {
     // Enough files that the record does not fit one 1,600-character chunk. The
     // readers join a document's chunks with a newline, and every chunk opens

@@ -13,6 +13,7 @@ import type {
   ColumnAutomation,
   ConversationExpiredNotice,
   NotificationInput,
+  SessionResumer,
 } from '../../shared/types';
 import { runAutomations, SENT_WITH_THE_MOVE, type AgentStartReport, type AutomationRunSummary } from '../automations/automation-runner';
 import { automationNeedsAgent, canTaskRunAutomations } from '../../shared/automation-manifest';
@@ -102,6 +103,11 @@ export interface SpawnOverrides {
    * an 'always_spawn_new' column. Defaults to false (resume if one exists).
    */
   forceFresh?: boolean;
+  /**
+   * Who resumes the session when it is not a person (`SpawnSessionInput.resumedBy`):
+   * the workflow's memory resume passes `'memory'`.
+   */
+  resumedBy?: SessionResumer;
 }
 
 /**
@@ -124,6 +130,12 @@ export interface TransitionEngineServices {
   recapSources?: ExpiredConversationRecapSources;
   /** Told once a session has started fresh because the agent deleted its conversation. */
   onConversationExpired?: (notice: ConversationExpiredNotice) => void;
+  /**
+   * The HEAD commit of the checkout an isolated column's session starts in, or
+   * null when it cannot be read (`SessionRecord.start_head_sha`). Absent, no
+   * start HEAD is recorded.
+   */
+  readStartHead?: (cwd: string) => Promise<string | null>;
 }
 
 /**
@@ -852,6 +864,18 @@ export class TransitionEngine {
       throw error;
     }
 
+    // Where an isolated column's pass begins, so the main conversation, resumed
+    // after it, can be told the commits it made. Read before the spawn: the
+    // agent may commit within its first seconds. Never fails the spawn.
+    let startHeadSha: string | null = null;
+    if (isolatedSwimlaneId !== null && this.services.readStartHead) {
+      try {
+        startHeadSha = await this.services.readStartHead(cwd);
+      } catch {
+        startHeadSha = null;
+      }
+    }
+
     console.log(`[spawnAgent] Spawning PTY session for ${agentName}...`);
     const session = await this.sessionManager.spawn({
       id: ptySessionId,
@@ -863,6 +887,7 @@ export class TransitionEngine {
       statusOutputPath,
       eventsOutputPath,
       resuming: canResume,
+      ...(canResume && spawnOverrides?.resumedBy ? { resumedBy: spawnOverrides.resumedBy } : {}),
       agentParser: adapter,
       agentName: adapter.name,
       agentSessionId,
@@ -911,6 +936,7 @@ export class TransitionEngine {
         exited_at: null,
         suspended_by: null,
         cli_target: serializeCliTarget(cliTarget),
+        start_head_sha: startHeadSha,
       });
 
       // Record the model/effort this spawn/resume actually applied via the CLI

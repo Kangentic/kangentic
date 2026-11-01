@@ -100,8 +100,19 @@ function makeEngine(options: Partial<ActivityEngineOptions> = {}): {
   return { engine, transitions, syntheticEvents };
 }
 
-function event(type: EventType, opts?: { detail?: string; tool?: string; toolId?: string }): SessionEvent {
-  return { ts: Date.now(), type, detail: opts?.detail, tool: opts?.tool, toolId: opts?.toolId };
+function event(
+  type: EventType,
+  opts?: { detail?: string; tool?: string; toolId?: string; subagentId?: string; launchesSubagent?: boolean },
+): SessionEvent {
+  return {
+    ts: Date.now(),
+    type,
+    detail: opts?.detail,
+    tool: opts?.tool,
+    toolId: opts?.toolId,
+    ...(opts?.subagentId ? { subagentId: opts.subagentId } : {}),
+    ...(opts?.launchesSubagent ? { launchesSubagent: true } : {}),
+  };
 }
 
 const SESSION_ID = 'session-1';
@@ -829,6 +840,53 @@ describe('ActivityEngine', () => {
       engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'PowerShell', toolId: 'tool-awaited' }));
       expect(engine.getState(SESSION_ID)?.permissionPending).toBe(false);
       expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    });
+
+    it('a parallel subagent starting does NOT clear a prompt for another call (the lost Artifact prompt)', () => {
+      // Captured overnight: an Artifact read went out in one batch with three
+      // background Explore subagents. The prompt opened, a subagent started
+      // 36 ms later and cleared it, the card read working then idle, and a
+      // recovery nudge's Enter approved the read nobody saw.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Artifact', toolId: 'tool-artifact' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Agent', toolId: 'tool-explore', launchesSubagent: true }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission, tool: 'Artifact' }));
+      expect(engine.getState(SESSION_ID)?.permissionAwaitedToolId).toBe('tool-artifact');
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'Explore', subagentId: 'agent-1' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('permission');
+    });
+
+    it('a subagent starting DOES clear the prompt when the awaited call is the one that starts it', () => {
+      // Approving an Agent call is what starts its subagent, so its start is
+      // the answer. The adapter tags the call (`launchesSubagent`).
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Agent', toolId: 'tool-agent', launchesSubagent: true }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission, tool: 'Agent' }));
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.SubagentStart, { detail: 'Explore', subagentId: 'agent-1' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(false);
+      expect(engine.getState(SESSION_ID)?.activity).toBe('thinking');
+    });
+
+    it('a depth-0 sibling call starting or ending with its own id does NOT clear the prompt', () => {
+      // Both ids are known, so the call is told apart from the awaited one:
+      // it is a parallel sibling, not the answer.
+      engine.processEvent(SESSION_ID, event(EventType.Prompt));
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Artifact', toolId: 'tool-artifact' }));
+      engine.processEvent(SESSION_ID, event(EventType.Idle, { detail: IdleReason.Permission, tool: 'Artifact' }));
+      transitions.length = 0;
+
+      engine.processEvent(SESSION_ID, event(EventType.ToolStart, { tool: 'Read', toolId: 'tool-read' }));
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'Read', toolId: 'tool-read' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+
+      // Its own end still answers it.
+      engine.processEvent(SESSION_ID, event(EventType.ToolEnd, { tool: 'Artifact', toolId: 'tool-artifact' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(false);
     });
 
     it('no-toolId permission: permissionAwaitedToolId is null and depth-0 ToolEnd still clears (id-less adapter no-regression)', () => {

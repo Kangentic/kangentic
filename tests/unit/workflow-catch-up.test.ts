@@ -150,6 +150,8 @@ describe('requestWorkflowCatchUp: the caller\'s gates', () => {
       agentSessionId: null,
       isolatedSwimlaneId: null,
       workSerial: LIVE_WORK_SERIAL,
+      // A person's Resume: no restart line, and the schedule's own pace.
+      resumedBy: 'user',
     });
   });
 
@@ -166,6 +168,7 @@ describe('requestWorkflowCatchUp: the caller\'s gates', () => {
       agentSessionId: 'agent-session-9',
       isolatedSwimlaneId: 'lane-review',
       workSerial: LIVE_WORK_SERIAL,
+      resumedBy: 'user',
     });
   });
 

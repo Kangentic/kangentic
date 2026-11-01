@@ -81,8 +81,28 @@ export interface PlanToolApprovalHookSpec {
   excludedTools: string[];
   /** Tools never answered when their name starts with one of these. */
   excludedPrefixes: string[];
+  /**
+   * Calls answered by what their input asks, with no allow rule: a CLI's own
+   * tool whose call only reads or publishes for one value of an input field
+   * and edits or deletes for another. An excluded tool is never answered.
+   */
+  inputJudgedTools?: PlanToolInputJudgedCall[];
   /** What the hook prints to approve. No placeholders: the tool's input is not echoed. */
   reply: PlanApprovalReplyValue;
+}
+
+/** One tool the bridge answers by its input (`PlanToolApprovalHookSpec.inputJudgedTools`). */
+export interface PlanToolInputJudgedCall {
+  /** The tool's name, exactly. */
+  tool: string;
+  /** The stdin field holding the tool's input object. */
+  inputField: string;
+  /** The field inside that input object that says what the call does (`Artifact`'s `action`). */
+  actionField: string;
+  /** The values of `actionField` the bridge answers. Anything else is left to the user. */
+  allow: string[];
+  /** What the call does when `actionField` is absent, as the tool documents it, or null to leave such a call alone. */
+  whenMissing: string | null;
 }
 
 /**

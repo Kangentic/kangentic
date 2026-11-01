@@ -109,6 +109,31 @@ describe('buildWorkflowXml background command line', () => {
   });
 });
 
+// Task #952: an Executing agent that knew Testing resumes its conversation, and
+// Code Review does not, leaves what each needs in the right place.
+describe('buildWorkflowXml conversation marks', () => {
+  const ROUTE = ['Planning', 'Executing', 'Code Review', 'Testing', 'Done'];
+  const base = { title: 'Usage budgets', route: ROUTE, planExitTo: null, waitsFor: [], blocks: [] };
+
+  it('tells a main-conversation column which columns run in a conversation of their own', () => {
+    const xml = buildWorkflowXml({ ...base, column: 'Executing', ownConversation: ['Code Review'] });
+    expect(xml).toContain('- Code Review runs in a conversation of its own and does not see this one. The route\'s other columns continue this conversation');
+  });
+
+  it('tells an isolated column that its final message is what the main conversation is told', () => {
+    const xml = buildWorkflowXml({ ...base, column: 'Code Review', ownConversation: ['Code Review'] });
+    expect(xml).toContain('- Code Review runs in a conversation of its own. The task\'s other columns continue its main conversation, which sees only the commits you make and is told your final message');
+  });
+
+  it('joins several isolated columns, and says nothing when every column shares one conversation', () => {
+    expect(buildWorkflowXml({ ...base, column: 'Executing', ownConversation: ['Code Review', 'Testing'] }))
+      .toContain('- Code Review and Testing run in a conversation of their own and do not see this one.');
+    const shared = buildWorkflowXml({ ...base, column: 'Executing', ownConversation: [] });
+    expect(shared).not.toContain('conversation of its own');
+    expect(buildWorkflowXml({ ...base, column: 'Executing' })).toBe(shared);
+  });
+});
+
 describe('buildBriefXml', () => {
   it('lays out the source task\'s number, title and multi-line description', () => {
     expect(buildBriefXml({ sourceTaskNumber: 409, title: 'Usage budgets', description: 'Cap spend per task.\n\nShow it on the card.' })).toBe([

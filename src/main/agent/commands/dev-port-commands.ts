@@ -5,6 +5,8 @@ import {
   type DevPortStatus,
 } from '../../dev-ports/dev-port-allocator';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
+import { TaskRepository } from '../../db/repositories/task-repository';
+import { resolveTask } from './task-resolver';
 
 /** Bounded so a single call cannot drain the range. */
 const MAX_PORTS_PER_REQUEST = 10;
@@ -18,6 +20,24 @@ const MAX_PORTS_PER_REQUEST = 10;
 const MAX_PORTS_PER_QUERY = 20;
 
 const MAX_PORT_NUMBER = 65535;
+
+/**
+ * The task a port call is about: the one `taskId` names (a `#N` display id or
+ * a UUID), else the caller's own (task #952). Always the task's UUID, the key
+ * the ledger is held under: a display id used as the key reserved ports under
+ * a task that does not exist.
+ */
+function resolvePortTask(params: Record<string, unknown>, context: CommandContext): { taskId: string } | { error: string } {
+  // `resolveTask` reads a `#N` display id as well as a bare one.
+  const named = typeof params.taskId === 'string' && params.taskId.trim() ? params.taskId.trim() : null;
+  const lookup = named ?? context.callerTaskId ?? null;
+  if (!lookup) return { error: 'taskId is required here: this call comes from no task. Resolve it with kangentic_get_current_task first.' };
+  const task = resolveTask(new TaskRepository(context.getProjectDb()), lookup);
+  if (!task) {
+    return { error: named ? `No task found for "${named}" in this project.` : 'Your own task is not in this project. Pass taskId, or the project your task is in.' };
+  }
+  return { taskId: task.id };
+}
 
 /**
  * Reserve free dev-server ports.
@@ -35,10 +55,9 @@ export const handleReserveDevPorts: CommandHandler = async (
   params: Record<string, unknown>,
   context: CommandContext,
 ): Promise<CommandResponse> => {
-  const taskId = typeof params.taskId === 'string' && params.taskId ? params.taskId : null;
-  if (!taskId) {
-    return { success: false, error: 'taskId is required. Resolve it with kangentic_get_current_task first.' };
-  }
+  const resolved = resolvePortTask(params, context);
+  if ('error' in resolved) return { success: false, error: resolved.error };
+  const { taskId } = resolved;
 
   // Rejected rather than coerced, and the offending value is named. Flooring
   // 2.5 to 2 would hand back one fewer port than asked for with nothing in the
@@ -112,11 +131,11 @@ function describeStatus(status: DevPortStatus): string {
  */
 export const handleCheckDevPorts: CommandHandler = async (
   params: Record<string, unknown>,
+  context: CommandContext,
 ): Promise<CommandResponse> => {
-  const taskId = typeof params.taskId === 'string' && params.taskId ? params.taskId : null;
-  if (!taskId) {
-    return { success: false, error: 'taskId is required. Resolve it with kangentic_get_current_task first.' };
-  }
+  const resolved = resolvePortTask(params, context);
+  if ('error' in resolved) return { success: false, error: resolved.error };
+  const { taskId } = resolved;
 
   const requested = params.ports === undefined ? [] : params.ports;
   if (!Array.isArray(requested)) {

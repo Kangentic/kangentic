@@ -1,4 +1,4 @@
-import type { PlanToolApprovalHookSpec } from '../../shared/plan-approval-hook';
+import type { PlanToolApprovalHookSpec, PlanToolInputJudgedCall } from '../../shared/plan-approval-hook';
 
 /**
  * Which MCP tools Kangentic's plan approval hook answers for a Claude session
@@ -40,6 +40,26 @@ import type { PlanToolApprovalHookSpec } from '../../shared/plan-approval-hook';
  * tools already pass through their `readOnlyHint`.
  */
 
+/**
+ * Claude built-in calls the hook answers by what their input asks, with no
+ * allow rule: only reading or publishing. `Artifact` publishes when its
+ * `action` is left out, as its own description says.
+ *
+ * Task #952: an overnight workflow's Planning agents waited 2 to 9 minutes each
+ * on the approval of an `Artifact` read. The call is judged by its input, never
+ * by its name alone, so an `Artifact` delete keeps its prompt, and no tool that
+ * edits files or runs commands is ever in the table. A deny or ask rule naming
+ * the tool still wins. Measured on Claude Code 2.1.316, Windows, `claude -p`,
+ * with the probe's built-in mode (`--tool`): plan mode refused a built-in
+ * `Write` with "Cannot write ... while in plan mode" with no hook, and ran it
+ * when a PermissionRequest hook answered allow, with no allow rule. `Artifact`
+ * itself needs a claude.ai account, which the probe's local API stand-in
+ * cannot be.
+ */
+export const CLAUDE_PLAN_INPUT_JUDGED_TOOLS: readonly PlanToolInputJudgedCall[] = [
+  { tool: 'Artifact', inputField: 'tool_input', actionField: 'action', allow: ['read', 'list', 'publish'], whenMissing: 'publish' },
+];
+
 /** The `permissions` lists one settings file carries. Every other key is ignored. */
 export interface ClaudePermissionLists {
   allow?: unknown;
@@ -53,17 +73,19 @@ export interface PlanToolApprovalRules {
   prefixes: string[];
   excludedTools: string[];
   excludedPrefixes: string[];
+  /** The input-judged built-ins no deny or ask rule names. */
+  inputJudgedTools: PlanToolInputJudgedCall[];
 }
 
 const MCP_TOOL_PREFIX = 'mcp__';
 const KANGENTIC_TOOLS_PREFIX = 'mcp__kangentic__';
 
 /**
- * The hook's matcher: every MCP tool. Claude reads a matcher with anything but
- * letters, digits and `|` as a regular expression. The bridge decides which of
- * them it answers.
+ * The hook's matcher: every MCP tool, and the input-judged built-ins. Claude
+ * reads a matcher with anything but letters, digits and `|` as a regular
+ * expression. The bridge decides which of them it answers.
  */
-export const CLAUDE_PLAN_TOOL_APPROVAL_MATCHER = `${MCP_TOOL_PREFIX}.*`;
+export const CLAUDE_PLAN_TOOL_APPROVAL_MATCHER = [`${MCP_TOOL_PREFIX}.*`, ...CLAUDE_PLAN_INPUT_JUDGED_TOOLS.map((entry) => entry.tool)].join('|');
 
 type McpRule = { kind: 'tool'; name: string } | { kind: 'prefix'; prefix: string };
 
@@ -110,7 +132,13 @@ function exclusionsIn(list: unknown): McpRule[] {
   return list.flatMap((rule): McpRule[] => {
     const parsed = parseMcpRule(rule);
     if (parsed) return [parsed];
-    if (typeof rule !== 'string' || !rule.startsWith(MCP_TOOL_PREFIX)) return [];
+    if (typeof rule !== 'string') return [];
+    // A built-in rule: `Artifact`, or `Artifact(...)` with any specifier. Either
+    // keeps the whole tool from the hook, since its allow would outrank the
+    // rule, and a rule read too widely costs a prompt, never a call.
+    const builtIn = CLAUDE_PLAN_INPUT_JUDGED_TOOLS.find((entry) => rule === entry.tool || rule.startsWith(`${entry.tool}(`));
+    if (builtIn) return [{ kind: 'tool', name: builtIn.tool }];
+    if (!rule.startsWith(MCP_TOOL_PREFIX)) return [];
     const literalEnd = rule.search(/[*(]/);
     return [{ kind: 'prefix', prefix: literalEnd < 0 ? rule : rule.slice(0, literalEnd) }];
   });
@@ -118,7 +146,8 @@ function exclusionsIn(list: unknown): McpRule[] {
 
 /**
  * The rules for one session, from every settings layer Claude applies to it,
- * or null when no allow rule names a tool the hook may answer.
+ * or null when the hook may answer nothing: no allow rule names an MCP tool,
+ * and a deny or ask rule names every input-judged built-in.
  */
 export function planToolApprovalRules(layers: Array<ClaudePermissionLists | undefined>): PlanToolApprovalRules | null {
   const tools = new Set<string>();
@@ -142,12 +171,14 @@ export function planToolApprovalRules(layers: Array<ClaudePermissionLists | unde
   // and kept still loses the tools an exclusion inside it names.
   for (const name of [...tools]) if (excluded(name)) tools.delete(name);
   for (const prefix of [...prefixes]) if (excluded(prefix)) prefixes.delete(prefix);
-  if (tools.size === 0 && prefixes.size === 0) return null;
+  const inputJudgedTools = CLAUDE_PLAN_INPUT_JUDGED_TOOLS.filter((entry) => !excluded(entry.tool));
+  if (tools.size === 0 && prefixes.size === 0 && inputJudgedTools.length === 0) return null;
   return {
     tools: [...tools],
     prefixes: [...prefixes],
     excludedTools: [...excludedTools],
     excludedPrefixes: [...excludedPrefixes],
+    inputJudgedTools: inputJudgedTools.map((entry) => ({ ...entry, allow: [...entry.allow] })),
   };
 }
 
@@ -166,7 +197,12 @@ export function claudePlanToolApprovalSpec(rules: PlanToolApprovalRules): PlanTo
   };
 }
 
-/** Any MCP tool but Kangentic's own: the most any session's rules can name. */
+/**
+ * Any MCP tool but Kangentic's own, and the input-judged built-ins: the most
+ * any session's hook can answer. The bridge still judges each call's input, so
+ * an `Artifact` delete is held only as long as the bridge takes to decline it.
+ */
 export function mayApproveClaudePlanTool(toolName: string): boolean {
+  if (CLAUDE_PLAN_INPUT_JUDGED_TOOLS.some((entry) => entry.tool === toolName)) return true;
   return toolName.startsWith(MCP_TOOL_PREFIX) && !toolName.startsWith(KANGENTIC_TOOLS_PREFIX);
 }

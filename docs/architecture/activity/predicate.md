@@ -58,15 +58,16 @@ Set when an `Idle` event fires with `detail: 'permission'`. The engine also reco
 - `Prompt` (user typed something new)
 - `Interrupted` (Esc)
 - `TurnFailed` and a terminal `TurnRetrying` (a turn that ended in an API error)
-- `SubagentStart` (main agent spawning a child)
+- `SubagentStart`, only when the awaited call starts subagents (its pending entry carries `launchesSubagent`, from `SessionEvent.launchesSubagent`): approving that call is what started this subagent. A parallel subagent's start leaves the prompt open (task #952)
 - `Idle` with non-permission detail (agent ended turn)
-- `ToolStart` at `subagentDepth === 0` (main agent activity)
-- `ToolEnd` at `subagentDepth === 0`, unless it ends a sibling: a call already running beside the awaited one when the prompt opened (Claude's ToolSearch beside AskUserQuestion) says nothing about the answer, so its end only drops it from the sibling set. See [The kind of a wait](activity-engine.md#the-kind-of-a-wait)
+- `ToolStart` or `ToolEnd` at `subagentDepth === 0` that cannot be told apart from the awaited call: the event has no `toolId`, or `permissionAwaitedToolId` is null. With both ids known, another call's start or end is a parallel sibling and leaves the prompt open until its own call starts or ends. A sibling already running when the prompt opened (Claude's ToolSearch beside AskUserQuestion) only drops from the sibling set when it ends. See [The kind of a wait](activity-engine.md#the-kind-of-a-wait)
 - `ToolStart`/`ToolEnd` carrying `permissionAwaitedToolId`, at ANY depth (the prompt was approved and that exact tool ran - e.g. a tool inside a subagent; without this the flag stays stuck until the subagent stops, since the PTY net deliberately exempts `'permission'`)
 
 That list is every HOOK-driven clear. A manual REJECTION fires no hook at all, so it clears through a separate, out-of-band path instead - the transcript poll described below.
 
 Unrelated subagent-tool events at depth>0 (different or absent toolId) do NOT clear permission (parallel-subagent tool churn must not dismiss a prompt that is still awaiting approval). The approved-tool clear is pinned by the `session-010` replay fixture (task #194's stuck 77s window).
+
+The narrower depth-0 and `SubagentStart` clears came from an overnight workflow. A parallel subagent's start cleared an `Artifact` prompt 4 ms after it opened, the stale-thinking watchdog later committed idle with the prompt still on screen, and a recovery nudge's Enter approved the call. A prompt held open longer this way costs a card that reads `permission` until the call's own end. Kangentic's automated keys never rely on the flag alone: they also wait out a tool call with no end in the [open-work ledger](activity-engine.md#open-work).
 
 **Resume restores `turnActive`.** A permission pause begins with `Idle{detail:'permission'}`, which clears `turnActive` (Idle is a turn-ending event). When the pause resolves, the wake is typically a depth-0 `ToolEnd` (e.g. the `AskUserQuestion` / `ExitPlanMode` tool ending after the user answers/approves) - a non-turn-initiating event that clears `permissionPending` but does not re-arm `turnActive`. The resumed turn emits no fresh `Prompt`/`ToolStart` hook, so without intervention the predicate would see no holder and drop to **idle** until the PTY force-thinking net catches up seconds later. To avoid that, `processEvent` restores `turnActive = true` whenever `permissionPending` transitions `true -> false` on a non-turn-ending event (i.e. not `Idle`/`Interrupted`, which are genuine end-of-turn). This is classified by the generic permission-clear shape, not by tool or agent name, so it covers every permission-class pause. Pinned by the `session-006`/`session-007` replay fixtures.
 
@@ -76,7 +77,7 @@ The recovery is a poll against the durable transcript, mirroring the bg-shell tr
 
 ## Tool tracking (stack with correlation IDs + LIFO-by-name fallback)
 
-`pendingToolStack: Array<{ id?: string; name: string }>` records in-flight tools in start order. `currentTool` always reflects the top of the stack and is exposed via `ActivityReason` for the TaskCard hover tooltip ("Running Bash").
+`pendingToolStack: Array<{ id?: string; name: string; launchesSubagent?: boolean }>` records in-flight tools in start order. `currentTool` always reflects the top of the stack and is exposed via `ActivityReason` for the TaskCard hover tooltip ("Running Bash").
 
 ToolEnd matching priority:
 1. **By correlation id** - when both events carry `event.toolId` (Claude's `tool_use_id` extracted via the `extractToolId` directives, top-level and nested), exact removal regardless of stack position. Solves the duplicate-name and out-of-order cases.

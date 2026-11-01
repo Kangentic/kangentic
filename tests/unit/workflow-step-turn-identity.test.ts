@@ -35,6 +35,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { TurnEndedPayload } from '../../src/main/pty/session-manager';
 import type { ColumnAutomation } from '../../src/shared/types';
+import type { OpenWork } from '../../src/main/activity-engine/open-work-ledger';
 
 const hoisted = vi.hoisted(() => ({
   checkAutomationConditions: vi.fn(),
@@ -116,8 +117,11 @@ describe('the workflow step and the turn it judged', () => {
   /** The session's current work serial, which new work the agent reports moves. */
   let currentWorkSerial: number;
   let context: IpcContext;
+  /** What the session's hook events show still open (`SessionManager.getOpenWork`). */
+  let openWork: OpenWork;
 
   beforeEach(() => {
+    openWork = { toolCalls: [], backgroundShells: [], backgroundSubagents: [] };
     vi.clearAllMocks();
     hoisted.workflowState = 'running';
     hoisted.turnEndRows = [];
@@ -159,6 +163,7 @@ describe('the workflow step and the turn it judged', () => {
         getActivityCache: () => activity,
         isLatestTurn: (sessionId: string, workSerial: number) =>
           sessionId === SESSION_ID && workSerial === currentWorkSerial,
+        getOpenWork: () => openWork,
       },
       projectRepo: { getById: () => ({ path: '/mock/project' }) },
     } as unknown as IpcContext;
@@ -513,27 +518,32 @@ describe('the workflow step and the turn it judged', () => {
     });
   });
 
-  // Not done gets a second ask of why the agent stopped, so recovery can tell a
-  // question it must not nudge, and work still running, from a stall it nudges.
+  // Task #952: classify narrowly, unblock broadly. Only the agent's own
+  // `Needs owner:` line waits on the owner; "still working" comes from the hook
+  // events, never the wording; anything else is a stall, with a second ask that
+  // names what it is stuck on so the nudge can aim at it.
   describe('the verdict on a turn that did not finish its step', () => {
-    /** The first ask says not done; the second answers `needsUser` and `running`. */
-    function answers(needsUser: boolean, running: boolean): void {
-      hoisted.checkAutomationConditions
-        .mockImplementationOnce(async () => ({
-          ok: true,
-          answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'The gate has not been run.' }]]),
-          agentName: 'Mock agent',
-          callId: 'call-first',
-        }))
-        .mockImplementationOnce(async () => ({
-          ok: true,
-          answers: new Map([
-            ['workflow-step-needs-user', { met: needsUser, reason: needsUser ? 'It asks which option the user wants.' : 'It asks the user for nothing.' }],
-            ['workflow-step-running', { met: running, reason: running ? 'The gate is still running in the background.' : 'Nothing is running.' }],
-          ]),
-          agentName: 'Mock agent',
-          callId: 'call-second',
-        }));
+    function firstAskNotDone(): void {
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: true,
+        answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'The gate has not been run.' }]]),
+        agentName: 'Mock agent',
+        callId: 'call-first',
+      }));
+    }
+
+    /** The first ask says not done; the second names the blockers given. */
+    function answers(blockers: { resource: boolean; mainFailsToo: boolean }): void {
+      firstAskNotDone();
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: true,
+        answers: new Map([
+          ['workflow-step-blocker:resource', { met: blockers.resource, reason: blockers.resource ? 'The gate was stopped for memory.' : 'Nothing about load.' }],
+          ['workflow-step-blocker:main-fails-too', { met: blockers.mainFailsToo, reason: blockers.mainFailsToo ? 'main fails them too.' : 'Nothing about main.' }],
+        ]),
+        agentName: 'Mock agent',
+        callId: 'call-second',
+      }));
     }
 
     function runWithReply(reply: string | null): ReturnType<typeof runWorkflowStep> {
@@ -545,16 +555,16 @@ describe('the workflow step and the turn it judged', () => {
       });
     }
 
-    it('says stopped when the agent needs nothing from the user and nothing is running (the incident)', async () => {
-      answers(false, false);
+    it('says stopped, naming no blocker, when the reply names nothing the rows know (the incident)', async () => {
+      answers({ resource: false, mainFailsToo: false });
 
       const result = await runWithReply("I couldn't finish: a service stopped answering. To finish: commit the working tree and run the gate.");
 
-      expect(result).toEqual({ verdict: 'stopped', reason: 'The gate has not been run.', workSerial: TURN_WORK_SERIAL });
-      // One call for the step, one for why it stopped, carrying both questions.
+      expect(result).toEqual({ verdict: 'stopped', reason: 'The gate has not been run.', workSerial: TURN_WORK_SERIAL, blockers: [] });
+      // One call for the step, one for what it is stuck on, carrying every blocker row.
       expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(2);
       const secondRows = (hoisted.checkAutomationConditions.mock.calls[1][1] as { rows: Array<{ automationId: string }> }).rows;
-      expect(secondRows.map((row) => row.automationId)).toEqual(['workflow-step-needs-user', 'workflow-step-running']);
+      expect(secondRows.map((row) => row.automationId)).toEqual(['workflow-step-blocker:resource', 'workflow-step-blocker:main-fails-too']);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
         met: false,
@@ -564,33 +574,126 @@ describe('the workflow step and the turn it judged', () => {
       expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
     });
 
-    it('says working when work the agent started is still running', async () => {
-      answers(false, true);
+    it('names the blockers the reply describes, for the nudge to aim at (a gate killed on load that main fails too)', async () => {
+      answers({ resource: true, mainFailsToo: true });
+
+      await expect(runWithReply('Two of the three failing tests also fail on a clean main, and other runs were loading the machine.'))
+        .resolves.toMatchObject({ verdict: 'stopped', blockers: ['resource', 'main-fails-too'] });
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        detail: 'Not done yet: The gate has not been run. Stuck on: resource, main-fails-too.',
+      }));
+    });
+
+    it('names the task\'s own base branch in the main-fails-too row, never a literal main', async () => {
+      hoisted.task = { ...hoisted.task, base_branch: 'develop', resolved_base_branch: null };
+      answers({ resource: false, mainFailsToo: false });
+      await runWithReply('Stopped.');
+      const secondRows = (hoisted.checkAutomationConditions.mock.calls[1][1] as { rows: Array<{ automationId: string; condition: string }> }).rows;
+      expect(secondRows.find((row) => row.automationId === 'workflow-step-blocker:main-fails-too')?.condition).toContain('develop');
+    });
+
+    it('says working, with no second ask, when the hook events show a background command still open', async () => {
+      openWork.backgroundShells = [{ id: 'shell-1', command: 'npm run test:unit', since: 1 }];
+      firstAskNotDone();
+
+      await expect(runWithReply('I will report when it finishes.'))
+        .resolves.toMatchObject({ verdict: 'working', reason: 'The gate has not been run.' });
+      expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+        met: false,
+        detail: 'Not done yet, still working: a background command is still running: npm run test:unit.',
+      }));
+    });
+
+    it('says working for a background subagent still running past the turn end', async () => {
+      openWork.backgroundSubagents = [{ id: 'agent-1', type: 'Explore', since: 1 }];
+      firstAskNotDone();
+
+      await expect(runWithReply('Waiting on the explorer.')).resolves.toMatchObject({ verdict: 'working' });
+    });
+
+    it('never reads "still working" from the wording: a reply that says it waits, with nothing open, is a stall', async () => {
+      answers({ resource: false, mainFailsToo: false });
 
       await expect(runWithReply('The gate is running in the background; I will report when it finishes.'))
-        .resolves.toMatchObject({ verdict: 'working', reason: 'The gate is still running in the background.' });
+        .resolves.toMatchObject({ verdict: 'stopped' });
+    });
+
+    it('waits on the owner when the reply ends on its Needs owner line, with no paid check', async () => {
+      await expect(runWithReply('I compared both layouts.\n\nNeeds owner: keep the old export, or drop it?'))
+        .resolves.toMatchObject({ verdict: 'waiting', reason: 'keep the old export, or drop it?' });
+      expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
         met: false,
-        detail: 'Not done yet, still working: The gate is still running in the background.',
+        detail: 'Waiting on you: keep the old export, or drop it?',
       }));
     });
 
-    it('says waiting on the user only when the check shows a need the user alone can meet', async () => {
-      answers(true, false);
-
-      await expect(runWithReply('Which of the two layouts do you want?'))
-        .resolves.toMatchObject({ verdict: 'waiting', reason: 'It asks which option the user wants.' });
+    it('waits on the owner with a stand-in reason when the Needs owner line names no question', async () => {
+      await expect(runWithReply('Done with the analysis.\nNeeds owner:')).resolves.toEqual({
+        verdict: 'waiting',
+        reason: 'the agent needs the owner to decide something.',
+        workSerial: TURN_WORK_SERIAL,
+      });
+      expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
+      expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
         met: false,
-        detail: 'Waiting on you: It asks which option the user wants.',
+        detail: 'Waiting on you: the agent needs the owner to decide something.',
       }));
     });
 
-    it('lets a need of the user outrank running work: a question is never left to wait out a gate', async () => {
-      answers(true, true);
+    // Reading the reply can take a while, as a check does. Whatever overtakes the
+    // turn meanwhile owns what happens next, and the owner is not told to answer
+    // a question from a turn that is no longer the agent's latest word.
+    describe('when the turn is overtaken while the reply is read', () => {
+      const NEEDS_OWNER_REPLY = 'I compared both layouts.\n\nNeeds owner: keep the old export, or drop it?';
 
-      await expect(runWithReply('The gate is running. Meanwhile: should the export include archived tasks?'))
+      /** Runs the step on a Needs owner reply, with `whileReading` happening as the reply is read. */
+      function runReadingReply(whileReading: () => void): ReturnType<typeof runWorkflowStep> {
+        return runWorkflowStep(context, {
+          payload: PAYLOAD,
+          columnId: 'lane-executing',
+          signal: new AbortController().signal,
+          readAgentReply: async () => {
+            whileReading();
+            return NEEDS_OWNER_REPLY;
+          },
+        });
+      }
+
+      it('waits on the owner when nothing overtook it (the control)', async () => {
+        await expect(runReadingReply(() => undefined)).resolves.toMatchObject({ verdict: 'waiting' });
+        expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
+          detail: 'Waiting on you: keep the old export, or drop it?',
+        }));
+      });
+
+      it.each([
+        // Said so, as after a check, so the runner can judge the reply again.
+        ['a newer turn starts', 'newer-turn', () => { currentWorkSerial = NEXT_TURN_WORK_SERIAL; }],
+        ['the task moves to another column', undefined, () => { moveTaskTo('lane-review'); }],
+        ['the agent picks up work again', undefined, () => { activity[SESSION_ID] = 'thinking'; }],
+        ['the workflow is paused', undefined, () => { hoisted.workflowState = 'paused'; }],
+      ] as const)('reports no waiting verdict and writes no Waiting on you row when %s', async (_label, expected, whileReading) => {
+        const result = await runReadingReply(whileReading);
+
+        expect(result).toBe(expected);
+        expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
+        expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
+        expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+      });
+    });
+
+    it('lets the Needs owner line outrank running work: a question is never left to wait out a gate', async () => {
+      openWork.backgroundShells = [{ id: 'shell-1', command: 'npm test', since: 1 }];
+      await expect(runWithReply('The gate is running.\nNeeds owner: should the export include archived tasks?'))
         .resolves.toMatchObject({ verdict: 'waiting' });
+    });
+
+    it('does not wait on a question asked any other way: the nudge tells the agent how to ask', async () => {
+      answers({ resource: false, mainFailsToo: false });
+      await expect(runWithReply('Which of the two layouts do you want?')).resolves.toMatchObject({ verdict: 'stopped' });
     });
 
     it('calls a turn with no reply a stall, with no second ask', async () => {
@@ -601,22 +704,30 @@ describe('the workflow step and the turn it judged', () => {
         callId: 'call-first',
       }));
 
-      await expect(runWithReply(null)).resolves.toMatchObject({ verdict: 'stopped' });
+      await expect(runWithReply(null)).resolves.toMatchObject({ verdict: 'stopped', blockers: [] });
       expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(1);
     });
 
-    it('reports a failed second ask as a check that failed, with the step recorded as not done', async () => {
-      hoisted.checkAutomationConditions
-        .mockImplementationOnce(async () => ({
-          ok: true,
-          answers: new Map([[WORKFLOW_STEP_CHECK_ID, { met: false, reason: 'Not finished.' }]]),
-          agentName: 'Mock agent',
-          callId: 'call-first',
-        }))
-        .mockImplementationOnce(async () => ({ ok: false, reason: 'The Automation agent could not check the condition: overloaded', cause: 'failed', callId: 'call-second' }));
+    it('still nudges when the blocker ask fails: a stall with the general nudge, recorded as not done', async () => {
+      firstAskNotDone();
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({ ok: false, reason: 'The Automation agent could not check the condition: overloaded', cause: 'failed', callId: 'call-second' }));
 
-      await expect(runWithReply('Still going.')).resolves.toMatchObject({ verdict: 'check-failed' });
+      await expect(runWithReply('Still going.')).resolves.toMatchObject({ verdict: 'stopped', blockers: [] });
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({ met: false }));
+    });
+
+    it('reports no verdict and writes nothing when the blocker ask was stopped because the task moved on', async () => {
+      firstAskNotDone();
+      hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
+        ok: false,
+        reason: 'The condition check was stopped because the task moved on.',
+        cause: 'stopped',
+      }));
+
+      // The move owns what happens next, so there is nothing to nudge.
+      await expect(runWithReply('Still going.')).resolves.toBeUndefined();
+      expect(hoisted.checkAutomationConditions).toHaveBeenCalledTimes(2);
+      expect(hoisted.recordWorkflowStep).not.toHaveBeenCalled();
     });
   });
 
@@ -659,13 +770,13 @@ describe('the workflow step and the turn it judged', () => {
       }));
     }
 
-    /** The second ask, of why the agent stopped: `needsUser`, and nothing running. */
-    function whyStopped(needsUser: boolean): void {
+    /** The second ask, of what the agent is stuck on: no blocker the rows know. */
+    function whyStopped(): void {
       hoisted.checkAutomationConditions.mockImplementationOnce(async () => ({
         ok: true,
         answers: new Map([
-          ['workflow-step-needs-user', { met: needsUser, reason: needsUser ? 'It asks whether to review another branch.' : 'It asks the user for nothing.' }],
-          ['workflow-step-running', { met: false, reason: 'Nothing is running.' }],
+          ['workflow-step-blocker:resource', { met: false, reason: 'Nothing about load.' }],
+          ['workflow-step-blocker:main-fails-too', { met: false, reason: 'Nothing about main.' }],
         ]),
         agentName: 'Mock agent',
         callId: 'call-second',
@@ -685,12 +796,12 @@ describe('the workflow step and the turn it judged', () => {
     it('does not move on a reply no row matches, and nudges it as a stall (the incident)', async () => {
       hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
       checkSaysDone();
-      whyStopped(false);
+      whyStopped();
 
       const result = await reviewWithReply(NO_CHANGES_REPLY);
 
       const reason = 'the final line, "No changes to review.", is not one Code Review moves the task on from';
-      expect(result).toEqual({ verdict: 'stopped', reason, workSerial: TURN_WORK_SERIAL });
+      expect(result).toEqual({ verdict: 'stopped', reason, workSerial: TURN_WORK_SERIAL, blockers: [] });
       expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledTimes(1);
       expect(hoisted.recordWorkflowStep).toHaveBeenCalledWith(expect.objectContaining({
@@ -723,7 +834,7 @@ describe('the workflow step and the turn it judged', () => {
       // nothing, and the step must not send the task forward in its place.
       hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
       checkSaysDone();
-      whyStopped(false);
+      whyStopped();
 
       const result = await reviewWithReply('1. src/main/a.ts:4: commit the extraction\nVerdict: Blocked');
 
@@ -757,13 +868,22 @@ describe('the workflow step and the turn it judged', () => {
       expect(hoisted.handleTaskMove).toHaveBeenCalledTimes(1);
     });
 
-    it('stops for the user when the reply no row matches asks a real question', async () => {
+    it('stops for the owner when the reply no row matches ends on its Needs owner line', async () => {
+      hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
+
+      await expect(reviewWithReply('The branch matches main.\nNeeds owner: review the release branch instead?'))
+        .resolves.toMatchObject({ verdict: 'waiting', reason: 'review the release branch instead?' });
+      expect(hoisted.checkAutomationConditions).not.toHaveBeenCalled();
+      expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
+    });
+
+    it('nudges a question the reply asks any other way as a stall', async () => {
       hoisted.turnEndRows = [BACK_FOR_REVISIONS, ON_TO_DONE];
       checkSaysDone();
-      whyStopped(true);
+      whyStopped();
 
       await expect(reviewWithReply('The branch matches main. Should I review the release branch instead?'))
-        .resolves.toMatchObject({ verdict: 'waiting', reason: 'It asks whether to review another branch.' });
+        .resolves.toMatchObject({ verdict: 'stopped' });
       expect(hoisted.handleTaskMove).not.toHaveBeenCalled();
     });
 
@@ -796,7 +916,7 @@ describe('the workflow step and the turn it judged', () => {
       it('does not count a row that moves nothing, so its Text match cannot send the task on', async () => {
         hoisted.turnEndRows = [WAIT_FOR_CI, ON_TO_DONE];
         checkSaysDone();
-        whyStopped(false);
+        whyStopped();
 
         // The line the Send message row matches is not one a row that moves the
         // task matches, so the one real exit (On to Done) refuses it.
@@ -857,7 +977,7 @@ describe('the workflow step and the turn it judged', () => {
         // forward row beside it does not match: nothing moves the task on from here.
         hoisted.turnEndRows = [exitRow('Nowhere', 'No changes to review.', 'No such column', null), ON_TO_DONE];
         checkSaysDone();
-        whyStopped(false);
+        whyStopped();
 
         const result = await reviewWithReply('No changes to review.');
 

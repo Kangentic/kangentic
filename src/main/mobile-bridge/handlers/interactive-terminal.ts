@@ -58,6 +58,14 @@ export function handleInteractiveTerminal(
     return { type: 'capability-response', requestId: request.requestId, ok: true, payload: toWireJson(responsePayload) };
   }
 
+  // Task #952: a stray "1" reached an agent's input overnight. A phone write
+  // while a permission prompt reads open is logged, by length only: what a
+  // person types into a terminal can be a password.
+  const snapshot = context.sessionManager.getActivityStatsSnapshot(payload.sessionId);
+  if (snapshot?.permissionPending) {
+    console.log(`[mobile-bridge] Phone typed ${payload.data.length} byte(s) into session ${payload.sessionId.slice(0, 8)} while a permission prompt read open (tool ${snapshot.permissionAwaitedToolId?.slice(0, 12) ?? 'unknown'}).`);
+  }
+
   // A phone typing into the terminal is the same human input as the desktop
   // keyboard, so it feeds the prompt-draft ledger identically.
   context.sessionManager.write(payload.sessionId, payload.data, 'user');

@@ -1,13 +1,14 @@
 ---
 type: Reference
 title: Workflow engine
-description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
+description: "How the workflow engine runs linked tasks: the pure core and its main-process host, wake-ups coalesced to 150 ms with no polling, the boot probe that opens only boards a workflow touches, starts as handleTaskMove with origin workflow, step checks and the recovery of a step that did not finish, the memory gate its nudges wait in, the memory resume of paused tasks, the hung-turn check, the move lock, one task's own hold, and project-delete cleanup."
 tags: [workflows, engine, scheduling]
 sources:
   - resource: src/main/workflows/
   - resource: src/shared/workflow-route.ts
   - resource: src/shared/workflow-lock.ts
   - resource: src/shared/workflow-refusals.ts
+  - resource: src/shared/workflow-needs-owner.ts
 ---
 # Workflow engine
 
@@ -30,9 +31,12 @@ src/main/workflows/
   workflow-lock-check.ts     # reads the databases and config the lock predicate needs
   workflow-step.ts           # a workflow task's own step at a turn end (the Automation agent judges it), and its verdict
   workflow-step-condition.ts # the step's built-in condition, told the route (the last column asks only "waiting on you?"),
-                             #   the second ask of why a step that is not done stopped, and the column's exit rows' verdict
+                             #   the second ask of what a stalled agent is stuck on, and the column's exit rows' verdict
   workflow-recovery.ts       # a task whose step did not finish: re-judge, nudge, or one notice, on a schedule that ends
-  workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep and Pause
+  workflow-recovery-state.ts # the tasks under recovery, with no imports, for the move path, the idle sweep, the
+                             #   low-memory pause and Pause
+  workflow-memory-gate.ts    # one queue for nudges and memory resumes: none while memory reads low, one at a time, paced
+  workflow-memory-resume.ts  # a running workflow's memory-paused tasks back one at a time once memory recovers
   workflow-hang-check.ts     # a turn shown working that has written nothing past its agent's limit: interrupt, or tell
   workflow-task-hold.ts      # one task's own hold (its automations switch): what putting it on and taking it off does
   workflow-service.ts        # create, save the plan, start, pause, resume, link, route, remove, delete
@@ -174,14 +178,33 @@ src/main/workflows/
 - **A step** finishes at a turn end the Automation agent judges done and the column's own exit rows
   accept (after the column's own turn-end rows; see below), at plan approval, or when the task's own
   agent moves it. The answer is recorded in
-  `automation_runs` as a `workflow_step` row. A step that is not done gets a second ask of why it
-  stopped, so `runWorkflowStep` returns one verdict: `done`, `move-failed`, `waiting` (a decision,
-  information or access only the user can give), `working` (work it started is still running),
-  `stopped` (neither, or the check is unsure), `check-failed`, or `human-gate` (no Automation
-  agent). The workflow stops a task only on `waiting`: a reply the check is unsure of is nudged,
-  since a wrong nudge costs one paid turn and a wrong stop holds the workflow until someone looks.
+  `automation_runs` as a `workflow_step` row. `runWorkflowStep` returns one verdict: `done`,
+  `move-failed`, `waiting` (only the owner can settle it), `working` (work of the agent's own is
+  still open), `stopped` (a stall to nudge), `check-failed`, or `human-gate` (no Automation agent).
   A check that could not run is recorded too, with `condition_met` NULL, so it never counts as
   having judged the reply. A failed move is reported, not thrown.
+  - **Only the agent's own word stops a task** (owner's decision, 2026-10-31). A reply whose last
+    line is `Needs owner: <question>` is `waiting`, matched in code before any check runs
+    (`needsOwnerQuestion`, `src/shared/workflow-needs-owner.ts`). It costs no check, and it works
+    in a human gate too. Case and markdown marks are forgiven, and the label ends at a colon or a
+    spaced dash, so a last sentence that only starts with the words is not the line. The
+    `<workflow>` block and every nudge tell the agent to end on that line only for a change from the
+    plan, something the owner must weigh in on, or a decision between options, and to act on
+    anything else. No other wording in a reply stops a task.
+  - **Still working comes from the hook events, never from the reply.** A step judged not done
+    whose agent still holds a background shell, or a subagent running past its turn end
+    (`SessionManager.getOpenWork`, the activity engine's open-work ledger), is `working`, with no
+    second call. Read from the reply, one gate was still running at 04:47 and not done at 07:33,
+    with nothing changed but the sentence.
+  - **Anything else not done is `stopped`.** A second ask names what the reply says the agent is
+    stuck on (`workflowBlockerConditions`), so the nudge can aim at it: `resource` (a run was
+    stopped or failed because the machine was low on memory or too busy) and `main-fails-too`
+    (the same failures happen on the task's base branch, which the row names). Both rows are one
+    call. A blocker ask that could not run still gives `stopped`, with no blockers, so the general
+    nudge goes out. A turn with no reply text is a plain stall, with no second call. This ask
+    replaced the one that chose between a wait on the user and work still running.
+    `main-fails-too` is there because one agent, nudged that its gate was not green, spent two
+    hours fixing a race the base branch fixed on its own.
   - **A column's own exit rows outrank the check's yes** (`stepExitVerdict`). Exit rows are the
     column's enabled turn-end rows whose type moves the task (the manifest's `endsGroup`) behind a
     Text match, each with its target resolved by `resolveMoveTarget`, as the row's own move resolves
@@ -208,13 +231,59 @@ src/main/workflows/
     catch-up never judges one (`judgeCurrentTurn`). That reply belongs to the last column. Judged
     as this column's, a reply that read done moved a card a person dragged on past work it never
     did. The attempt reads it as a stall and nudges, with no paid check.
-  - A nudge is one line typed into the terminal, only while nobody is there: no draft, no focused
-    terminal, nothing on its way, the agent idle on the judged turn. It tells the agent to go ahead
-    with the step's own work (commit, run the gate) without asking first, and to stop only for
-    what the user alone can give (`nudgeMessage`). On the board measured, every message a person
-    typed into a stopped workflow task said to keep going.
+  - A nudge is one line typed into the terminal, only while nobody is there: no draft, no input
+    typed into it in the last 5 minutes (`getLastUserInputAt`, `PRESENCE_WINDOW_MS`), nothing on
+    its way, the agent idle on the judged turn, and keys allowed (`automatedKeysRefusal`: no
+    permission prompt pending and no tool call open). A terminal on screen is not a person: one
+    left on screen held a task an hour overnight with nobody typing.
+  - The nudge (`nudgeMessage`) is aimed at what the agent is stuck on, each blocker with its own
+    instruction. Memory is back, with the GB free, so run what was stopped again, one run at a
+    time. The base branch fails the same tests: the agent's own claim, so the nudge has it run the
+    failing tests on a separate clean checkout of the base (never by switching its own branch),
+    record the ones that fail there too, and fix any that pass, since a wrong claim told "not this
+    step's to fix" would leave a regression the step made. Kangentic restarted, so start the
+    background commands again. A sibling task's PR merged into the base branch since the step
+    began: said as a fact for the agent to weigh, not an order to merge, since the sibling may have
+    nothing to do with the step. A fact is not an instruction, so a nudge that names only a
+    sibling, or none of these, quotes the check's reason, cut at a word boundary, and says to carry
+    on. Every nudge says to go ahead with the step's own work without asking, and
+    ends with the `Needs owner:` line. On the board measured, every message a person typed into a
+    stopped workflow task said to keep going.
+  - A sibling is named only when its PR merged, it was archived after the visit began (or after
+    the last nudge that named siblings), and it has the same base branch. Reaching Done is not
+    enough: some routes end at Done with no PR, and some siblings target another base.
   - `working` gets one 60-minute wait first. On the board measured, 300 turn ends were woken by
     the agent's own background work, none more than 30 minutes later.
+  - **One at a time, and never into low memory.** Every nudge waits its turn in the workflow's
+    memory gate (`workflow-memory-gate.ts`), one first-in, first-out queue it shares with memory
+    resumes (below). Nothing goes while memory reads low, on the low-memory pause's own latch
+    (`evaluateMemoryRelief`). A reading older than 3 minutes is not low, so a sampler that stopped
+    holds nothing. One item goes at a time: the next waits until the last one's session goes
+    thinking, the last one typed nothing after all, or 3 minutes pass. At most one goes every 60 s
+    (`PACE_MS`), about one sampler tick, so the next reads memory with the last one's load on it.
+    The pacing holds even while memory reads fine. A hold for memory spends no attempt, and the run
+    log says so once per low spell. A task has one place in the queue (`workflowTaskGateKey`),
+    shared by its memory resume and its nudges, so the nudge a resume exists for continues the
+    resume's place after the pace. A resume starts no turn of its own, so with places of their own
+    the nudge waited out the full 3 minutes behind its own resume. A memory resume that no longer
+    asks for its place (its task was resumed by hand, or moved) leaves the line at once
+    (`withdraw`). Measured overnight: three nudges sent within four seconds started three gates at
+    once, and all three failed on load. A nudge that said to rerun a gate Claude Code's memory
+    reaper had stopped sent one back at 3.7 GB free, to be killed again.
+  - **After Kangentic restarts an agent, at once.** A session Kangentic resumed after a quit, a
+    crash or a pty host loss (`resumedBy: 'recovery'` on the `session-resumed` event) lost its
+    background commands with the old process. Its recovery starts over, with a run-log row that
+    says so, and its first attempt comes at once, with the restart line. Before, each mid-step
+    task kept its pre-quit `working` verdict and waited an hour on a gate that no longer existed.
+    A memory resume (`'memory'`) gets its first attempt at once too. The resumed session's first
+    idle has usually armed the schedule's first step already, and the resume replaces that timer:
+    kept, the nudge came five minutes after the agent was back (seen live).
+  - The keys refusal holds the nudge a minute at a time. An idle agent whose tool call has had no
+    end for 10 minutes (`OPEN_CALL_NOTICE_MS`) is most likely at a prompt the engine lost, so
+    recovery stops and the owner gets the waiting notice ("it may be waiting on a permission
+    prompt for <tool>"). A nudge whose keys reached a permission prompt
+    (`KeysReachedPermissionPromptError`) is recorded as failed, since its keys may have answered
+    the prompt, and spends nothing.
   - Only a nudge whose turn ran counts toward the 4. A check that failed, or a nudged turn that
     failed, spends nothing, and after the schedule an outage is re-judged hourly for up to a day.
   - The stall notice goes out once a recovery, on desktop (`DesktopNotifier.notifyWorkflowTask`,
@@ -228,17 +297,43 @@ src/main/workflows/
     it for up to the day the hourly re-checks run. That keeps its agent alive overnight (about
     1.15 GB of commit on Windows), so the service coming back can move it on; the low-memory
     pause still applies.
-  - A wait on the user is noticed at once and ends the recovery. A running workflow task's plain
+  - A `waiting` verdict is noticed at once and ends the recovery. A running workflow task's plain
     idle raises neither the desktop idle notice nor the phone's `turn-complete`.
   - It is armed by a turn end's verdict, by a resume whose reply was already judged (a restart; the
     engine's own boot pass runs before any session resumes, so it cannot see who is idle), by a
     commit to idle with nothing armed (a turn that failed with no Stop), and by sending a nudge.
   - It is stopped by a move (`supersedeTurnEndWork`), the workflow's Pause, pausing the task's own
     automations (the same supersede), removing the task or deleting the workflow, and a low-memory
-    pause (which sends the notice). The idle sweep leaves a task under recovery alone
-    (`isUnderWorkflowRecovery`).
+    pause. That pause notifies nobody: it writes a recovery start ("Paused to free memory"), so
+    the agent that comes back gets a recovery of its own. The idle sweep leaves a task under
+    recovery alone (`isUnderWorkflowRecovery`). The low-memory pause leaves alone an agent with
+    open background work, and one in a `working` wait under 60 minutes old (`isInWorkingWait`):
+    five of seven pauses overnight hit agents waiting on their own background gate, which left the
+    gate's processes running and its results unread for 45 to 110 minutes.
   - A start that keeps failing for 30 minutes sends the same stall notice through
     `announceWorkflowStall`, and its retries go on.
+- **Memory resume** (`workflow-memory-resume.ts`). #873 holds a low-memory pause until the user
+  resumes it, and that still holds outside a workflow. A running workflow's task comes back by
+  itself (owner's decision, 2026-10-31): overnight, two workflow tasks whose agents really were
+  idle were paused at 01:39 and 04:05 and sat until morning with memory long recovered.
+  - The pause records `suspended_by = 'low_memory'`, its own source, so a restart still knows which
+    tasks those are (`SessionRepository.listMemoryPausedTasks`).
+  - Each memory sampler tick, while memory does not read low, the task paused longest comes back,
+    if it is in a running workflow whose step applies (not held), in a working column (not To Do or
+    Done), and not waiting on the owner. One at a time, through the memory gate, and only into a
+    free agent slot. A task a person is resuming at that moment is skipped (`isResumeInFlight`):
+    the Resume path cancels a resume already under way, and the person's must win.
+  - It comes back through the Resume button's own path (`resumeTaskSession`) with
+    `resumedBy: 'memory'`, which reaches the spawn on both of its branches (a plain resume, and a
+    column entered while paused through `spawnAgent`). The resume's catch-up hands the turn to
+    recovery, whose first attempt comes at once.
+  - A task paused again within 30 minutes of an auto-resume waits 30 minutes from that pause,
+    doubled for each further auto-resume in the last day. After 3 in a day it stays paused for the
+    user, with one stall notice, until the oldest of those resumes is a day old. Only a resume that
+    ran counts: one that failed waits 30 minutes, doubled for each failure in a row, and one that
+    found the agent already live counts nothing. Each resume reloads the conversation: one
+    overnight resume read 73M tokens before its first tool call. The counts live in main-process
+    memory, so a restart forgets them.
 - **A hung turn** (`workflow-hang-check.ts`) ends no turn, so recovery never sees it. Once a minute,
   main looks at each running workflow task whose agent shows working on a turn still in progress
   (a tool, a subagent or the turn itself; never a turn a background shell holds, and never a

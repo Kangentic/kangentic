@@ -698,12 +698,21 @@ export class AutomationRunRepository {
    * same project open, unawaited, beside the pass. Pruned, the task's enter
    * automations would run again at the next launch. One row per such task; it
    * goes once the task has a session record, moves on, or is archived.
+   *
+   * And every run of a task in one of `keepWorkflowIds`: a workflow still going,
+   * or done for less than a day (`workflowIdsKeepingRuns`, task #952), so the
+   * night a workflow ran can still be read the morning after.
    */
-  pruneTo(limit = AUTOMATION_RUN_RETENTION): number {
+  pruneTo(limit = AUTOMATION_RUN_RETENTION, keepWorkflowIds: readonly string[] = []): number {
     const result = this.db
       .prepare(`
         DELETE FROM automation_runs
         WHERE id NOT IN (SELECT id FROM automation_runs ORDER BY started_at DESC LIMIT ?)
+          AND NOT (
+            automation_runs.task_id IN (
+              SELECT id FROM tasks WHERE workflow_id IN (SELECT value FROM json_each(?))
+            )
+          )
           AND NOT (
             ${EXECUTED_STATUSES_SQL}
             AND automation_id IN (SELECT id FROM column_automations WHERE max_runs IS NOT NULL)
@@ -733,9 +742,45 @@ export class AutomationRunRepository {
             LIMIT 1
           )
       `)
-      .run(limit);
+      .run(limit, JSON.stringify(keepWorkflowIds));
     return Number(result.changes ?? 0);
   }
+
+  /**
+   * The workflows whose tasks' runs the prune keeps whole (task #952): one
+   * still going (running or paused), or done for less than
+   * `WORKFLOW_RUNS_KEPT_AFTER_DONE_MS`. Overnight, the newest 200 rows were a
+   * few hours of one workflow, and the morning's investigation found the night
+   * pruned. A workflow lives in its home project's database: one homed here is
+   * read from this one, and one homed elsewhere is asked of `keptElsewhere`.
+   */
+  workflowIdsKeepingRuns(now: number, keptElsewhere: (homeProjectId: string, workflowId: string) => boolean): string[] {
+    const members = this.db.prepare(`
+      SELECT DISTINCT task.workflow_id AS workflow_id, task.workflow_project_id AS home_project_id,
+             workflow.state AS state, workflow.finished_at AS finished_at
+        FROM tasks task
+        LEFT JOIN workflows workflow ON workflow.id = task.workflow_id
+       WHERE task.workflow_id IS NOT NULL
+    `).all() as Array<{ workflow_id: string; home_project_id: string | null; state: string | null; finished_at: string | null }>;
+    const kept = new Set<string>();
+    for (const member of members) {
+      const keeps = member.state !== null
+        ? workflowKeepsRuns(member.state, member.finished_at, now)
+        : member.home_project_id !== null && keptElsewhere(member.home_project_id, member.workflow_id);
+      if (keeps) kept.add(member.workflow_id);
+    }
+    return [...kept];
+  }
+}
+
+/** How long a done workflow's tasks keep all their runs (task #952). */
+export const WORKFLOW_RUNS_KEPT_AFTER_DONE_MS = 24 * 60 * 60_000;
+
+/** Whether a workflow in this state still keeps its tasks' runs whole. */
+export function workflowKeepsRuns(state: string, finishedAt: string | null, now: number): boolean {
+  if (state !== 'done') return true;
+  const finishedMs = finishedAt ? Date.parse(finishedAt) : Number.NaN;
+  return !Number.isFinite(finishedMs) || now - finishedMs < WORKFLOW_RUNS_KEPT_AFTER_DONE_MS;
 }
 
 /** A stored outcome this build does not know reads as failed, the way the

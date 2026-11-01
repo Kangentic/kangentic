@@ -23,6 +23,7 @@ import {
   noteRecoveryAttemptDropped,
   noteRecoveryTurnEnded,
   noteRecoveryTurnFailed,
+  noteWorkflowSessionActivity,
   resumeWorkflowRecovery,
   runRecoveryAttempt,
   setRecoveryAttemptRunner,
@@ -37,7 +38,7 @@ import { moveTaskFromRow } from './move-from-row';
 import { readSessionFinalReply, tryReadSessionFinalReply } from './final-reply-reader';
 import { trackTurnEndGroup } from './turn-end-passes';
 import { isSessionInOwnCall } from '../../ipc/handlers/own-call-turn-wait';
-import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt } from './recap-turns';
+import { forgetRecapSession, isRecapTurn, noteRecapSessionIdle, noteRecapSessionPrompt, recapKindOf } from './recap-turns';
 import {
   forgetAbandonedTurnSession,
   hasAbandonedTurn,
@@ -51,7 +52,7 @@ import {
 } from './abandoned-turns';
 import { dispositionOf } from '../../../shared/activity-state';
 import { EventType, PromptReason } from '../../../shared/types';
-import type { ActivityState, SessionEvent } from '../../../shared/types';
+import type { ActivityState, SessionEvent, SessionResumer } from '../../../shared/types';
 import type { TranscriptAnchor } from '../../agent/shared/transcript-anchor';
 
 /**
@@ -149,6 +150,8 @@ interface PassRequest {
   payload: TurnEndedPayload;
   /** A resume's catch-up: the workflow step alone, on the reply no check judged. */
   catchUp: boolean;
+  /** A catch-up's: who resumed the session (a person, or Kangentic after a restart or a memory pause). */
+  resumedBy?: SessionResumer;
   /**
    * A workflow recovery attempt (`runRecoveryAttempt`): the step judged again
    * on the session's current turn, then a nudge or a notice. Ranks like a
@@ -229,6 +232,9 @@ export function registerTurnEndAutomations(context: IpcContext): void {
     if (activity === 'idle') {
       setImmediate(() => armWorkflowRecoveryOnIdle(context, sessionId));
     }
+    // A nudge or a memory resume waiting on this session's turn has it under
+    // way: the workflow's memory gate lets the next one go.
+    noteWorkflowSessionActivity(sessionId, activity);
   });
   context.sessionManager.on('event', (sessionId: string, event: SessionEvent) => {
     // A prompt the agent received, not PTY output standing in for one: after
@@ -261,16 +267,19 @@ export function registerTurnEndAutomations(context: IpcContext): void {
   });
   setHoldReleaseRecoveryStart(startWorkflowRecoveryOver);
   context.sessionManager.on('session-removed', (sessionId: string) => {
-    forgetRecapSession(sessionId);
+    // Gone before its recap turn ended: what waited on it is not sent.
+    forgetRecapSession(sessionId, false);
     forgetAbandonedTurnSession(sessionId);
   });
 }
 
 /** Judge the reply a resumed session's step check never judged. Exported for its test. */
 export function catchUpAfterResume(context: IpcContext, resumed: SessionResumedPayload): Promise<void> {
+  const { resumedBy, ...turn } = resumed;
   return schedulePass(context, {
-    payload: { ...resumed, turnStartedAt: null, transcriptAnchor: null },
+    payload: { ...turn, turnStartedAt: null, transcriptAnchor: null },
     catchUp: true,
+    resumedBy,
     userWorkMarkAtTurnEnd: userWorkMark(resumed.sessionId),
     turnEndMarkAtTurnEnd: turnEndMark(resumed.sessionId),
   });
@@ -442,7 +451,7 @@ async function schedulePass(context: IpcContext, request: PassRequest): Promise<
       state.pending = null;
       try {
         if (next.recovery) await runRecovery(context, next.payload);
-        else await (next.catchUp ? runCatchUp(context, next.payload) : runPass(context, next));
+        else await (next.catchUp ? runCatchUp(context, next.payload, next.resumedBy ?? 'user') : runPass(context, next));
       } catch (error) {
         console.error(`[turn-end] Pass failed for task ${next.payload.taskId.slice(0, 8)}:`, error);
       }
@@ -514,6 +523,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   const { payload } = request;
   // Judged before any early return, so the mark ends with the one turn it was for.
   const recapTurn = isRecapTurn(payload.sessionId, payload.turnStartedAt);
+  const recapKind = recapTurn ? recapKindOf(payload.sessionId) : null;
   if (recapTurn) forgetRecapSession(payload.sessionId);
   const subject = resolveSubject(context, payload);
   if (!subject) return;
@@ -529,12 +539,15 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
   if (rows.length === 0 && !stepApplies) return;
 
   if (recapTurn) {
-    // No run record: the recap asks the agent to wait for the user, so the
-    // user acts next and the turn that answers runs the rows. Nobody waits on
-    // this one. Logged so the skip can still be traced.
+    // No run record. An expired recap asks the agent to wait for the user, so
+    // the user acts next and the turn that answers runs the rows. A return
+    // recap is answered in a line, and the column's own message, sent once this
+    // turn ended, starts the turn that does. Logged so the skip can be traced.
     console.log(
       `[turn-end] Skipped the recap turn for task ${task.id.slice(0, 8)} in ${column.name}: `
-      + 'it answered an expired conversation\'s recap, which asks the agent to wait for the user.',
+      + (recapKind === 'return'
+        ? 'it answered the recap of the column session that ran while its conversation was away; the column\'s message follows.'
+        : 'it answered an expired conversation\'s recap, which asks the agent to wait for the user.'),
     );
     return;
   }
@@ -640,7 +653,7 @@ async function runPass(context: IpcContext, request: PassRequest): Promise<void>
  * when it is from this visit and no step row follows it. Never the column's
  * rows: they answer a turn end, and a resume ends no turn.
  */
-async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promise<void> {
+async function runCatchUp(context: IpcContext, payload: TurnEndedPayload, resumedBy: SessionResumer): Promise<void> {
   // The cheap gate first: most resumed tasks are in no workflow.
   let repos: ReturnType<typeof getProjectRepos>;
   try {
@@ -682,15 +695,20 @@ async function runCatchUp(context: IpcContext, payload: TurnEndedPayload): Promi
     if (subject.repos.automationRuns.hasWorkflowStepSince(task.id, column.id, new Date(reply.ts).toISOString())) {
       // Judged before the session went away, and parked since: a restart
       // would otherwise leave it parked for good. Recovery picks up from the
-      // run log and judges it again within one step of its schedule.
+      // run log and judges it again within one step of its schedule, or at
+      // once when Kangentic itself brought the agent back.
       if (task.workflow_id) {
-        resumeWorkflowRecovery(context, { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: task.workflow_id });
+        resumeWorkflowRecovery(
+          context,
+          { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId: column.id, workflowId: task.workflow_id },
+          { resumedBy },
+        );
       }
       return;
     }
 
     const step = await runWorkflowStep(context, { payload, columnId: column.id, signal: controller.signal, readAgentReply: async () => reply.text });
-    if (step && step !== 'newer-turn') handOnStepVerdict(context, payload, task, column.id, step);
+    if (step && step !== 'newer-turn') handOnStepVerdict(context, payload, task, column.id, step, resumedBy);
   } finally {
     releaseGroup();
   }
@@ -708,13 +726,21 @@ async function runRecovery(context: IpcContext, payload: TurnEndedPayload): Prom
 }
 
 /** Hand a step's verdict to recovery, which arms, notifies or stops. */
-function handOnStepVerdict(context: IpcContext, payload: TurnEndedPayload, task: Task, columnId: string, step: WorkflowStepResult): void {
+function handOnStepVerdict(
+  context: IpcContext,
+  payload: TurnEndedPayload,
+  task: Task,
+  columnId: string,
+  step: WorkflowStepResult,
+  resumedBy: SessionResumer = 'user',
+): void {
   if (!task.workflow_id) return;
   afterWorkflowStep(
     context,
     { projectId: payload.projectId, taskId: task.id, sessionId: payload.sessionId, columnId, workflowId: task.workflow_id },
     step,
     payload.turnStartedAt,
+    { resumedBy },
   );
 }
 

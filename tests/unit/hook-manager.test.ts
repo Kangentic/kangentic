@@ -52,10 +52,10 @@ describe('hook-manager', () => {
       expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['']);
     });
 
-    it('adds the tool approver on MCP tools only, after the plan approver (task #870)', () => {
+    it('adds the tool approver on MCP tools and the input-judged built-ins, after the plan approver (tasks #870, #952)', () => {
       const toolApprover = APPROVER.replace('e30=', 'eyJ0b29scyI6W119');
       const hooks = buildHooks(EVENT_BRIDGE, EVENTS_PATH, {}, { planApprovalCommand: APPROVER, planToolApprovalCommand: toolApprover });
-      expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['', 'ExitPlanMode', 'mcp__.*']);
+      expect(hooks.PermissionRequest.map((entry) => entry.matcher)).toEqual(['', 'ExitPlanMode', 'mcp__.*|Artifact']);
       expect(hooks.PermissionRequest[2].hooks[0].command).toBe(toolApprover);
       // Still Kangentic's, so a cleanup of the user's settings removes it.
       expect(isKangenticHookCommand(toolApprover)).toBe(true);

@@ -25,6 +25,18 @@ import {
   planToolApprovalRules,
 } from '../../src/main/agent/adapters/claude/plan-tool-approval';
 
+/** The MCP half of a session's rules: what its allow rules let the hook answer. */
+function mcpLists(rules: ReturnType<typeof planToolApprovalRules>): { tools: string[]; prefixes: string[] } {
+  return { tools: rules?.tools ?? [], prefixes: rules?.prefixes ?? [] };
+}
+
+const NO_MCP_TOOLS = { tools: [], prefixes: [] };
+
+/** The input-judged built-ins every session's hook answers unless a rule names them (task #952). */
+const ARTIFACT_READS_AND_PUBLISHES = [
+  { tool: 'Artifact', inputField: 'tool_input', actionField: 'action', allow: ['read', 'list', 'publish'], whenMissing: 'publish' },
+];
+
 describe('planToolApprovalRules', () => {
   it('reads the three MCP rule forms: a server, a server wildcard, one tool', () => {
     const rules = planToolApprovalRules([{ allow: ['mcp__docs__search', 'mcp__context7', 'mcp__github__*'] }]);
@@ -38,14 +50,32 @@ describe('planToolApprovalRules', () => {
     expect(rules?.tools).toEqual(['mcp__claude_ai_Claude_Docs__batch']);
   });
 
-  it('ignores every rule that is not an MCP form, so built-in tools never reach the hook', () => {
-    expect(planToolApprovalRules([{
+  it('ignores every allow rule that is not an MCP form: a built-in reaches the hook only by its input', () => {
+    const rules = planToolApprovalRules([{
       allow: ['Edit', 'Read', 'Bash(npm test)', 'WebFetch(domain:example.com)', 'mcp__srv__get_*', 'mcp__*', 'mcp__srv__tool(x)', 'mcp__', 42, null],
-    }])).toBeNull();
+    }]);
+    expect(mcpLists(rules)).toEqual(NO_MCP_TOOLS);
+    // No tool that edits files or runs commands, whatever the allow rules say.
+    expect(rules?.inputJudgedTools).toEqual(ARTIFACT_READS_AND_PUBLISHES);
+  });
+
+  it('answers the input-judged built-ins with no allow rule at all (task #952)', () => {
+    const rules = planToolApprovalRules([undefined, {}]);
+    expect(mcpLists(rules)).toEqual(NO_MCP_TOOLS);
+    expect(rules?.inputJudgedTools).toEqual(ARTIFACT_READS_AND_PUBLISHES);
+  });
+
+  it.each(['Artifact', 'Artifact(read)'])('leaves a built-in out when a deny or ask rule names it: %s', (rule) => {
+    expect(planToolApprovalRules([{ ask: [rule] }])).toBeNull();
+    expect(planToolApprovalRules([{ deny: [rule] }])).toBeNull();
+    // An MCP allow rule still registers the hook, without the built-in.
+    const rules = planToolApprovalRules([{ allow: ['mcp__docs'], deny: [rule] }]);
+    expect(rules?.inputJudgedTools).toEqual([]);
+    expect(rules?.excludedTools).toContain('Artifact');
   });
 
   it('never approves Kangentic\'s own tools, even when allowed', () => {
-    expect(planToolApprovalRules([{ allow: ['mcp__kangentic', 'mcp__kangentic__kangentic_move_task'] }])).toBeNull();
+    expect(mcpLists(planToolApprovalRules([{ allow: ['mcp__kangentic', 'mcp__kangentic__kangentic_move_task'] }]))).toEqual(NO_MCP_TOOLS);
     const rules = planToolApprovalRules([{ allow: ['mcp__kangentic', 'mcp__docs'] }]);
     expect(rules?.prefixes).toEqual(['mcp__docs__']);
     expect(rules?.excludedPrefixes).toContain('mcp__kangentic__');
@@ -64,7 +94,7 @@ describe('planToolApprovalRules', () => {
   });
 
   it('drops a server allowed in one layer and denied in another', () => {
-    expect(planToolApprovalRules([{ allow: ['mcp__docs'] }, { deny: ['mcp__docs__*'] }])).toBeNull();
+    expect(mcpLists(planToolApprovalRules([{ allow: ['mcp__docs'] }, { deny: ['mcp__docs__*'] }]))).toEqual(NO_MCP_TOOLS);
   });
 
   it('merges every layer it is given', () => {
@@ -73,8 +103,12 @@ describe('planToolApprovalRules', () => {
     expect(rules?.prefixes).toEqual(['mcp__context7__']);
   });
 
-  it('returns null when no layer has an allow list', () => {
-    expect(planToolApprovalRules([undefined, {}, { allow: 'mcp__docs' }])).toBeNull();
+  it('names no MCP tool when no layer has an allow list', () => {
+    expect(mcpLists(planToolApprovalRules([undefined, {}, { allow: 'mcp__docs' }]))).toEqual(NO_MCP_TOOLS);
+  });
+
+  it('returns null when nothing is left to answer: no MCP allow rule, and the built-in denied', () => {
+    expect(planToolApprovalRules([{ allow: ['mcp__kangentic'], deny: ['Artifact'] }])).toBeNull();
   });
 
   it('excludes the text before the wildcard of a partial wildcard ask rule, and keeps the server', () => {
@@ -92,7 +126,7 @@ describe('planToolApprovalRules', () => {
   });
 
   it('drops every allowed server when an ask rule wildcards all of mcp__', () => {
-    expect(planToolApprovalRules([{ allow: ['mcp__docs'], ask: ['mcp__*'] }])).toBeNull();
+    expect(mcpLists(planToolApprovalRules([{ allow: ['mcp__docs'], ask: ['mcp__*'] }]))).toEqual(NO_MCP_TOOLS);
   });
 
   it('excludes the text before the specifier of a deny rule that has one', () => {
@@ -117,19 +151,26 @@ describe('planToolApprovalRules', () => {
     { description: 'a partial wildcard tool', rejected: 'mcp__srv__a*' },
     { description: 'a specifier', rejected: 'mcp__srv(x)' },
   ])('rejects an allow rule with $description: $rejected', ({ rejected }) => {
-    expect(planToolApprovalRules([{ allow: [rejected] }])).toBeNull();
+    expect(mcpLists(planToolApprovalRules([{ allow: [rejected] }]))).toEqual(NO_MCP_TOOLS);
     expect(planToolApprovalRules([{ allow: [rejected, 'mcp__ok__tool'] }])).toEqual({
       tools: ['mcp__ok__tool'],
       prefixes: [],
       excludedTools: [],
       excludedPrefixes: ['mcp__kangentic__'],
+      inputJudgedTools: ARTIFACT_READS_AND_PUBLISHES,
     });
   });
 });
 
 describe('claudePlanToolApprovalSpec', () => {
   it('answers in plan mode alone with a bare allow and the session\'s lists', () => {
-    const spec = claudePlanToolApprovalSpec({ tools: ['mcp__a__b'], prefixes: ['mcp__c__'], excludedTools: ['mcp__c__d'], excludedPrefixes: ['mcp__kangentic__'] });
+    const spec = claudePlanToolApprovalSpec({
+      tools: ['mcp__a__b'],
+      prefixes: ['mcp__c__'],
+      excludedTools: ['mcp__c__d'],
+      excludedPrefixes: ['mcp__kangentic__'],
+      inputJudgedTools: ARTIFACT_READS_AND_PUBLISHES,
+    });
     expect(spec).toEqual({
       toolField: 'tool_name',
       modeField: 'permission_mode',
@@ -138,21 +179,26 @@ describe('claudePlanToolApprovalSpec', () => {
       prefixes: ['mcp__c__'],
       excludedTools: ['mcp__c__d'],
       excludedPrefixes: ['mcp__kangentic__'],
+      inputJudgedTools: ARTIFACT_READS_AND_PUBLISHES,
       reply: { hookSpecificOutput: { hookEventName: 'PermissionRequest', decision: { behavior: 'allow' } } },
     });
   });
 });
 
 describe('mayApprovePlanTool', () => {
-  it('names any MCP tool but Kangentic\'s, and never a built-in tool or a question', () => {
+  it('names any MCP tool but Kangentic\'s and the input-judged built-ins, and never another built-in or a question', () => {
     const adapter = new ClaudeAdapter();
-    for (const tool of ['mcp__docs__search', 'mcp__claude_ai_Claude_Docs__batch']) {
+    for (const tool of ['mcp__docs__search', 'mcp__claude_ai_Claude_Docs__batch', 'Artifact']) {
       expect(mayApproveClaudePlanTool(tool)).toBe(true);
       expect(adapter.mayApprovePlanTool(tool)).toBe(true);
     }
-    for (const tool of ['mcp__kangentic__kangentic_move_task', 'Bash', 'Edit', 'AskUserQuestion', 'ExitPlanMode']) {
+    for (const tool of ['mcp__kangentic__kangentic_move_task', 'Bash', 'Edit', 'Write', 'AskUserQuestion', 'ExitPlanMode']) {
       expect(adapter.mayApprovePlanTool(tool)).toBe(false);
     }
+  });
+
+  it('matches the input-judged built-ins in the hook\'s matcher, beside every MCP tool', () => {
+    expect(CLAUDE_PLAN_TOOL_APPROVAL_MATCHER).toBe('mcp__.*|Artifact');
   });
 });
 
@@ -240,8 +286,14 @@ describe('the plan tool approval hook in the merged settings', () => {
     });
   });
 
-  it('registers nothing when no allow rule names another server\'s tool', () => {
+  it('registers the built-in approver alone when no allow rule names another server\'s tool', () => {
     writeSettings(projectDir, 'settings.json', { permissions: { allow: ['Edit', 'Bash(npm test)', 'mcp__kangentic'] } });
+    const approver = toolApprover(buildPlanSession().entries);
+    expect(decodedSpec(approver!.hooks[0].command)).toMatchObject({ tools: [], prefixes: [], inputJudgedTools: ARTIFACT_READS_AND_PUBLISHES });
+  });
+
+  it('registers nothing when no allow rule names another server\'s tool and a project rule asks for Artifact', () => {
+    writeSettings(projectDir, 'settings.json', { permissions: { allow: ['mcp__kangentic'], ask: ['Artifact'] } });
     expect(toolApprover(buildPlanSession().entries)).toBeUndefined();
   });
 
@@ -272,13 +324,14 @@ describe('the plan tool approval hook in the merged settings', () => {
     // make a file whose whole content is `null`, an array, a string or a number.
     const NOT_AN_OBJECT = ['null', '["x"]', '"x"', '7'];
 
-    it.each(NOT_AN_OBJECT)('reads %s as empty: the build runs and registers no tool approver', (raw) => {
+    it.each(NOT_AN_OBJECT)('reads %s as empty: the build runs and registers the built-in approver alone', (raw) => {
       writeRawSettings(homeDir, 'settings.json', raw);
       let entries: HookEntry[] = [];
       expect(() => { entries = buildPlanSession().entries; }).not.toThrow();
-      // The build got as far as its hooks, and none of them is the MCP approver.
+      // The build got as far as its hooks, and the approver names no MCP tool.
       expect(entries.find((entry) => entry.matcher === 'ExitPlanMode')).toBeDefined();
-      expect(entries.filter((entry) => entry.matcher.startsWith('mcp__'))).toEqual([]);
+      const approver = toolApprover(entries);
+      expect(decodedSpec(approver!.hooks[0].command)).toMatchObject({ tools: [], prefixes: [] });
     });
 
     it.each(NOT_AN_OBJECT)('beside %s, a project allow rule still registers the approver', (raw) => {

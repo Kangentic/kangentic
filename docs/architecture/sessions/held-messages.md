@@ -119,7 +119,13 @@ keystroke burst would. Every agent reaches `idle` for that wait, through its hoo
 silence timer of `ActivityDetection.pty`.
 
 A start that opened on an expired conversation's recap delivers none of them: they wait for the
-next start, as the column's messages do.
+next start, as the column's messages do. A return recap holds nothing back (see
+[Resume](resume.md#a-return-to-the-main-conversation-opens-on-a-recap)). Ahead of a plain-text
+lead it rides the same opening message, before the lead and the held messages. Ahead of a slash
+command it is the resume's whole prompt, so the command goes once the recap's turn ends and the
+held messages are pasted once the command's own turn ends, as behind any slash command. A move of
+the task, or the session leaving, before the recap's turn ends releases them with a flush: they
+stay held, and go to the task's agent at once if one is live.
 
 ## The claim
 

@@ -7,9 +7,11 @@
  * PTY suspend, with the record written before the PTY goes down.
  *
  * The suspend is recorded as the USER's by default (`suspended_by = 'user'`).
- * A pause Kangentic made records `'auto'`. Both are held pauses
- * (`isHeldPause`): neither a restart nor an auto-spawn column starts the task
- * again by itself (`autoSpawnForTask`'s held-pause check). A pause never reaps
+ * A pause Kangentic made records `'auto'` (the idle timeout) or `'low_memory'`.
+ * All are held pauses (`isHeldPause`): neither a restart nor an auto-spawn
+ * column starts the task again by itself (`autoSpawnForTask`'s held-pause
+ * check). The workflow's memory resume is the one exception, for a
+ * `'low_memory'` pause of a running workflow's task. A pause never reaps
  * the task's leftover processes: the task is parked, not finished
  * (task-process-tag.md).
  *
@@ -45,7 +47,7 @@ export interface PauseTaskSessionOptions {
    * on `resumeTaskSession`'s.
    */
   onAccepted?: () => void;
-  /** Who is pausing. Defaults to `'user'`; a pause Kangentic made passes `'auto'`. */
+  /** Who is pausing. Defaults to `'user'`; a pause Kangentic made passes `'auto'` or `'low_memory'`. */
   suspendedBy?: SuspendedBy;
   /**
    * For a pause Kangentic decides on its own. Re-checked under the task lock

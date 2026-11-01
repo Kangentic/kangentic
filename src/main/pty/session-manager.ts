@@ -18,6 +18,8 @@ import { SessionQueue } from './session-queue';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
+import type { OpenWork } from '../activity-engine/open-work-ledger';
+import { forgetAutomatedKeysSession } from './automated-keys-guard';
 import type { TranscriptSink } from './buffer/transcript-writer';
 import { SessionIdManager } from './lifecycle/session-id-manager';
 import { SessionFileManager } from './lifecycle/session-file-manager';
@@ -63,6 +65,7 @@ import type {
   ActivityState,
   ActivityReason,
   SessionEvent,
+  SessionResumer,
   SpawnSessionInput,
   PerToolStat,
   PtyResizeOrigin,
@@ -236,7 +239,10 @@ export interface TurnEndedPayload {
  * resume moves it (`SessionManager.isLatestTurn`). A resume begins no turn, so
  * it has no turn start and no transcript anchor.
  */
-export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt' | 'transcriptAnchor'>;
+export type SessionResumedPayload = Omit<TurnEndedPayload, 'turnStartedAt' | 'transcriptAnchor'> & {
+  /** Who resumed it: a person, or Kangentic after a restart (`'recovery'`) or a memory pause (`'memory'`). */
+  resumedBy: SessionResumer;
+};
 
 /** Per-session pipeline numbers for the dev terminal-pipeline route. */
 export interface SessionPipelineStats {
@@ -480,6 +486,8 @@ export class SessionManager extends EventEmitter {
    * auto_command never concatenates onto a draft.
    */
   private promptDraftMirror = new Map<string, string>();
+  /** When a person last typed into each session (epoch ms), from the host's `userInput` reports. */
+  private lastUserInputAt = new Map<string, number>();
   /** Renderers that hold a direct port to the host, to re-issue on a host restart. */
   private portRenderers = new Set<number>();
   /**
@@ -914,6 +922,8 @@ export class SessionManager extends EventEmitter {
       // sends a null `promptDraft` on its own exit; this covers a lost host,
       // whose PTYs exit here with nothing to send it.
       this.promptDraftMirror.delete(sessionId);
+      this.lastUserInputAt.delete(sessionId);
+      forgetAutomatedKeysSession(sessionId);
       // Nothing left to reshape either: a respawn spawns at the desktop grid.
       this.cancelRestingGridRestore(sessionId);
       // A deferred force-kill whose PTY exited on its own inside the grace has
@@ -947,6 +957,9 @@ export class SessionManager extends EventEmitter {
         // A renderer types on its own port to the host, so main hears of a
         // human's first key or text here, not through write().
         this.markUserInput(event.sessionId);
+        // Only here, never in `markUserInput`: a paste Kangentic sends marks
+        // the session used too, and must not read as a person at the keys.
+        this.lastUserInputAt.set(event.sessionId, event.at ?? Date.now());
         return;
       case 'tap':
         // Raw output for a session someone subscribed to (subscribeDataTap):
@@ -1928,7 +1941,9 @@ export class SessionManager extends EventEmitter {
       // park, as on any switch).
       if (session.status === 'running') this.reconsiderRestingGrid(id);
       if (session.status === 'running') this.armAgentReadyCeiling(id);
-      if (session.status === 'running' && input.resuming && !input.transient) this.announceResumed(id, input.agentSessionId ?? null);
+      if (session.status === 'running' && input.resuming && !input.transient) {
+        this.announceResumed(id, input.agentSessionId ?? null, input.resumedBy ?? 'user');
+      }
       return session;
     } catch (error) {
       // A spawn that never became a session (a teardown overtook it, the quit
@@ -1953,7 +1968,7 @@ export class SessionManager extends EventEmitter {
    * The conversation's id is the one the resume named until the session
    * reports its own.
    */
-  private announceResumed(sessionId: string, resumedAgentSessionId: string | null): void {
+  private announceResumed(sessionId: string, resumedAgentSessionId: string | null, resumedBy: SessionResumer): void {
     const session = this.registry.get(sessionId);
     if (!session) return;
     const payload: SessionResumedPayload = {
@@ -1963,6 +1978,7 @@ export class SessionManager extends EventEmitter {
       agentSessionId: session.agentSessionId ?? resumedAgentSessionId,
       isolatedSwimlaneId: session.isolatedSwimlaneId ?? null,
       workSerial: this.telemetry.getWorkSerial(sessionId) ?? 0,
+      resumedBy,
     };
     try {
       this.emit('session-resumed', payload);
@@ -2132,6 +2148,16 @@ export class SessionManager extends EventEmitter {
    */
   getPendingDraft(sessionId: string): string | null {
     return this.promptDraftMirror.get(sessionId) ?? null;
+  }
+
+  /**
+   * When a person last typed into this session (epoch ms), or null, from the
+   * host's `userInput` reports: at most ten seconds behind a keystroke, and
+   * never moved by a write Kangentic makes. Workflow recovery reads it as the
+   * user being there, where a terminal merely on screen is not.
+   */
+  getLastUserInputAt(sessionId: string): number | null {
+    return this.lastUserInputAt.get(sessionId) ?? null;
   }
 
   /**
@@ -3846,6 +3872,33 @@ export class SessionManager extends EventEmitter {
   /** Return cached events for a specific session (survives renderer reloads). */
   getEventsForSession(sessionId: string): SessionEvent[] {
     return this.telemetry.getEventsForSession(sessionId);
+  }
+
+  /**
+   * What the session still has open: tool calls with no end, background shells
+   * it waits on, subagents left running past a turn end. Read from the hook
+   * events, never from the activity engine's display state, whose resets are
+   * not evidence that any of it ended (`open-work-ledger.ts`).
+   */
+  getOpenWork(sessionId: string): OpenWork {
+    return this.telemetry.getOpenWork(sessionId);
+  }
+
+  /**
+   * Why Kangentic may not type into this session right now, or null when it
+   * may. Every automated keystroke asks first (`automated-keys-guard.ts`): a
+   * permission prompt takes typed keys as its answer, so an Enter would approve
+   * a tool call nobody saw. The engine's permission flag is one signal, and a
+   * tool call with no end is the other: the flag has been cleared early (a
+   * parallel subagent's start) with the prompt still on screen.
+   */
+  automatedKeysBlocker(sessionId: string): string | null {
+    // activity-state-ok: granular, a permission prompt is the one state that
+    // must never take keys.
+    if (this.telemetry.getSessionActivity(sessionId) === 'permission') return 'a permission prompt is open';
+    const openCall = this.telemetry.getOpenWork(sessionId).toolCalls[0];
+    if (openCall) return `the ${openCall.tool} tool call has not ended`;
+    return null;
   }
 
   /**

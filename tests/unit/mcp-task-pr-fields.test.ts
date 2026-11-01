@@ -981,4 +981,14 @@ describe('handleLinkPr: reports merge readiness', () => {
     expect(response.message).not.toMatch(/merge/);
     expect((response.data as Record<string, unknown>).prMergeReadiness).toBeNull();
   });
+
+  // Task #952: "merged, merge unknown" read as a merge still in doubt.
+  it.each(['merged', 'closed'])('says nothing of merge readiness on a %s PR, whatever the stored value', async (state) => {
+    mockLinkPRForTask.mockResolvedValue({ status: 'unchanged', task: linkedTask({ pr_state: state, pr_merge_readiness: 'unknown' }) });
+
+    const response = await handleLinkPr({ taskId: 'task-uuid-1' }, makeContext());
+
+    expect(response.message).toContain(`(${state})`);
+    expect(response.message).not.toMatch(/merge unknown/);
+  });
 });

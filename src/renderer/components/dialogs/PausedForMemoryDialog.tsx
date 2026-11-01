@@ -73,7 +73,11 @@ function PausedForMemoryDialogBody({ entries, onClose }: { entries: HostMemoryAg
     >
       <div className="flex flex-col gap-1.5">
         <p className="mb-2 text-sm text-fg-muted">
-          <Plural value={agentCount} one="It stays paused until you resume it." other="They stay paused until you resume them." />
+          <Plural
+            value={agentCount}
+            one="It stays paused until you resume it. A workflow's task comes back on its own once memory recovers."
+            other="They stay paused until you resume them. A workflow's tasks come back on their own once memory recovers."
+          />
         </p>
         {/* Keyed by the pause too: a task paused again gets a fresh row, without
             the earlier one's own-click Running. */}

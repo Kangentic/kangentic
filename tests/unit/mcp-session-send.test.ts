@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import {
   createSessionSendCoordinator,
+  NOW_SEND_CLEARANCE_MS,
   type SessionSendOutcome,
 } from '../../src/main/agent/mcp-http/session-send';
 import type { ActivityState } from '../../src/shared/types';
@@ -14,11 +15,20 @@ function createFakeSessionManager(initial: { writable?: string[]; activity?: Rec
   const listeners = new Map<string, Array<(...args: unknown[]) => void>>();
   const writable = new Set(initial.writable ?? []);
   const activity: Record<string, ActivityState> = { ...(initial.activity ?? {}) };
+  /** Open tool calls per session, as the open-work ledger reports them. */
+  const openToolCalls = new Map<string, string>();
   return {
     writable,
     activity,
+    openToolCalls,
     isWritable: (sessionId: string) => writable.has(sessionId),
     getActivityCache: () => activity,
+    // The real manager's answer: a permission prompt, or a tool call with no end.
+    automatedKeysBlocker: (sessionId: string): string | null => {
+      if (activity[sessionId] === 'permission') return 'a permission prompt is open';
+      const tool = openToolCalls.get(sessionId);
+      return tool ? `the ${tool} tool call has not ended` : null;
+    },
     on(event: string, listener: (...args: unknown[]) => void) {
       const existing = listeners.get(event) ?? [];
       existing.push(listener);
@@ -79,7 +89,7 @@ describe('session-send coordinator', () => {
     expect(submitContent).toHaveBeenCalledTimes(1);
     const [sessionId, text, options] = submitContent.mock.calls[0];
     expect(sessionId).toBe('target');
-    expect(options).toEqual({ source: 'mcp' });
+    expect(options).toEqual({ source: 'mcp', automated: true, clearanceTimeoutMs: NOW_SEND_CLEARANCE_MS });
     // No in-band attribution. A prefix costs tokens on every send and reads to
     // the receiving agent as injected content asserting its own authority,
     // which made it refuse messages sent this way (verified live 2026-07-25).
@@ -303,6 +313,33 @@ describe('session-send coordinator', () => {
     coordinator.dispose();
   });
 
+  it('refuses an immediate send while a tool call has no end, whatever the engine reads', async () => {
+    // The engine's flag can be lost with the prompt still on screen: a
+    // parallel subagent's start once cleared it 4 ms after it opened. The
+    // tool call with no end is the evidence the guard reads instead.
+    const sessionManager = createFakeSessionManager({ writable: ['target'], activity: { target: 'idle' } });
+    sessionManager.openToolCalls.set('target', 'Artifact');
+    const submitContent = vi.fn(() => Promise.resolve());
+    const coordinator = createSessionSendCoordinator({ sessionManager, terminalSubmit: { submitContent } });
+
+    const outcome = await coordinator.send({ targetSessionId: 'target', message: 'carry on', deliverWhen: 'now' });
+
+    expect(isFailure(outcome) && outcome.error).toMatch(/Artifact tool call has not ended/);
+    expect(submitContent).not.toHaveBeenCalled();
+    coordinator.dispose();
+  });
+
+  it('marks its paste as automated, so the paste engine guards its Enter', async () => {
+    const sessionManager = createFakeSessionManager({ writable: ['target'], activity: { target: 'idle' } });
+    const submitContent = vi.fn((_sessionId: string, _text: string, _opts?: { source?: string; automated?: boolean }) => Promise.resolve());
+    const coordinator = createSessionSendCoordinator({ sessionManager, terminalSubmit: { submitContent } });
+
+    await coordinator.send({ targetSessionId: 'target', message: 'go', deliverWhen: 'now' });
+
+    expect(submitContent).toHaveBeenCalledWith('target', 'go', expect.objectContaining({ automated: true }));
+    coordinator.dispose();
+  });
+
   it('QUEUES rather than refuses when deliverWhen is "idle" and the target is at a prompt', async () => {
     // The immediate-path refusal tells the caller to re-send with "idle", so
     // "idle" must actually hold for this state instead of refusing too.
@@ -318,6 +355,25 @@ describe('session-send coordinator', () => {
     sessionManager.emit('activity', 'target', 'idle');
     await flushMicrotasks();
     expect(submitContent).toHaveBeenCalledTimes(1);
+    coordinator.dispose();
+  });
+
+  // A `now` send answers the sender's own tool call, so a tool call that opens
+  // after its check fails the send rather than holding the sender's turn for
+  // as long as the target's tool runs. A held `idle` send has no caller waiting.
+  it('bounds a now send\'s wait for the target to take keys, and leaves a held idle send unbounded', async () => {
+    const sessionManager = createFakeSessionManager({ writable: ['target'], activity: { target: 'thinking' } });
+    const submitContent = vi.fn((_sessionId: string, _text: string, _opts?: { clearanceTimeoutMs?: number }) => Promise.resolve());
+    const coordinator = createSessionSendCoordinator({ sessionManager, terminalSubmit: { submitContent } });
+
+    await coordinator.send({ targetSessionId: 'target', message: 'now', deliverWhen: 'now' });
+    await coordinator.send({ targetSessionId: 'target', message: 'later', deliverWhen: 'idle' });
+    sessionManager.emit('activity', 'target', 'idle');
+    await flushMicrotasks();
+
+    const optionsByText = new Map(submitContent.mock.calls.map((call) => [call[1], call[2]]));
+    expect(optionsByText.get('now')?.clearanceTimeoutMs).toBe(NOW_SEND_CLEARANCE_MS);
+    expect(optionsByText.get('later')?.clearanceTimeoutMs).toBeUndefined();
     coordinator.dispose();
   });
 

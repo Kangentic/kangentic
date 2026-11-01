@@ -143,6 +143,40 @@ export class ActivityIntervalStore {
       .run(endedMs, new Date(endedMs).toISOString(), endedMs, exitTrigger, sessionId);
   }
 
+  /**
+   * Close every interval a quit or a crash left open, once per project per
+   * launch (task #952). Overnight, open rows from quits read as agents still
+   * waiting, hours after their sessions had ended. Each closes at its session's
+   * own end: its suspend or exit time (`app-quit`), or, with neither recorded,
+   * at the interval's start (`app-crash`), so nothing invents time the session
+   * may not have spent. A session in `liveSessionIds` is still running in this
+   * launch (a phone started it, the project was open before) and keeps its row.
+   * Returns how many rows it closed.
+   */
+  closeIntervalsLeftOpen(liveSessionIds: ReadonlySet<string>): number {
+    const rows = this.db.prepare(
+      `SELECT intervals.id, intervals.session_id, intervals.started_ms, sessions.suspended_at, sessions.exited_at
+         FROM session_activity_intervals intervals
+         LEFT JOIN sessions ON sessions.id = intervals.session_id
+        WHERE intervals.ended_ms IS NULL`,
+    ).all() as Array<{ id: number; session_id: string; started_ms: number; suspended_at: string | null; exited_at: string | null }>;
+    const close = this.db.prepare(
+      `UPDATE session_activity_intervals
+          SET ended_ms = ?, ended_at = ?, duration_ms = ? - started_ms, exit_trigger = ?
+        WHERE id = ? AND ended_ms IS NULL`,
+    );
+    let closed = 0;
+    for (const row of rows) {
+      if (liveSessionIds.has(row.session_id)) continue;
+      const recordedEnd = row.suspended_at ?? row.exited_at;
+      const recordedEndMs = recordedEnd ? Date.parse(recordedEnd) : Number.NaN;
+      const endedMs = Number.isFinite(recordedEndMs) && recordedEndMs >= row.started_ms ? recordedEndMs : row.started_ms;
+      const trigger = Number.isFinite(recordedEndMs) ? 'app-quit' : 'app-crash';
+      closed += close.run(endedMs, new Date(endedMs).toISOString(), endedMs, trigger, row.id).changes;
+    }
+    return closed;
+  }
+
   /** A task's activity intervals (both dispositions), oldest first. */
   getForTask(taskId: string): SessionActivityInterval[] {
     const rows = this.db
@@ -205,4 +239,29 @@ export class ActivityIntervalStore {
        WHERE ${clauses.join(' AND ')}
     `).get(...params) as { activeMs: number; sessionsCovered: number };
   }
+}
+
+/** Projects whose quit-left activity intervals this launch already closed (task #952). */
+const intervalSweptProjects = new Set<string>();
+
+/**
+ * Close the activity intervals the last quit or crash left open
+ * (`closeIntervalsLeftOpen`), once per project per launch, before startup
+ * recovery starts new sessions. A session this launch already runs keeps its
+ * row. Logs and carries on when it cannot.
+ */
+export function sweepIntervalsOncePerLaunch(projectId: string, db: Database.Database, liveSessionIds: ReadonlySet<string>): void {
+  if (intervalSweptProjects.has(projectId)) return;
+  intervalSweptProjects.add(projectId);
+  try {
+    const closed = new ActivityIntervalStore(db).closeIntervalsLeftOpen(liveSessionIds);
+    if (closed > 0) console.log(`[activity-intervals] Closed ${closed} activity interval(s) left open by the last quit or crash.`);
+  } catch (error) {
+    console.warn('[activity-intervals] Could not close the activity intervals left open:', error);
+  }
+}
+
+/** Test-only: sweep every project's intervals again on its next recovery. */
+export function resetIntervalSweepForTests(): void {
+  intervalSweptProjects.clear();
 }

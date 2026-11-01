@@ -428,6 +428,22 @@ export class SimulatedSessionManager extends EventEmitter {
     this.userInputMarks.push(sessionId);
   }
 
+  /**
+   * What `SessionManager.automatedKeysBlocker` answers: null (keys may go in)
+   * unless a test sets it. Clearing it emits an `'activity'`, as the real
+   * manager does when a prompt closes, so a waiting burst re-checks.
+   */
+  keysBlocker: string | null = null;
+
+  automatedKeysBlocker(): string | null {
+    return this.keysBlocker;
+  }
+
+  setKeysBlocker(reason: string | null): void {
+    this.keysBlocker = reason;
+    this.emit('activity', this.sessionId, reason ? 'permission' : 'idle');
+  }
+
   drain(sessionId: string): Promise<void> {
     if (sessionId !== this.sessionId) return Promise.resolve();
     if (this.pending.length === 0 && this.flushTimer === null) return Promise.resolve();

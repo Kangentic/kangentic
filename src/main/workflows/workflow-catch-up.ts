@@ -33,5 +33,7 @@ export function requestWorkflowCatchUp(context: IpcContext, liveSession: Session
     agentSessionId: liveSession.agentSessionId ?? null,
     isolatedSwimlaneId: liveSession.isolatedSwimlaneId ?? null,
     workSerial,
+    // A person's Resume of the workflow or of the task's automations.
+    resumedBy: 'user',
   });
 }

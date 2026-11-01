@@ -8,6 +8,6 @@
 
 ## Message delivery
 
-* [Command injection](command-injection.md) - How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, outcomes, awaited exit delivery, test coverage and the file map.
+* [Command injection](command-injection.md) - How a column message reaches a live agent: the settings delta that restarts instead of typing /model, the verifier contract, the four-rung delivery ladder, handshake keystrokes (Ctrl+U, one Esc, retried Enter), the prompt-draft ledger, the automated keystrokes guard, outcomes, awaited exit delivery, test coverage and the file map.
 * [Command injection support matrix](command-injection-support-matrix.md) - Which adapters verify delivery (verified, confirm-only or none), why escalation needs a measurement plus an in-app proof, the recipe for graduating an adapter, per-adapter limits (OpenCode remote, Copilot global history, Aider), delivery modes, and the measured delivery rate.
 * [Command injection measurements](command-injection-measurements.md) - Why a verifier must be measured before it is written, the paired short and long turn trial in measure-injection-flush.mjs, and the live flush latency per agent (Claude, Codex, Qwen, Cursor, Gemini, Droid) against the 4000 ms delivery budget, with each verdict.

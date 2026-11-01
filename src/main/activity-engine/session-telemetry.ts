@@ -21,6 +21,7 @@ import { PushCommandDetector } from './push-command-detector';
 import { PlanModeTrail } from './plan-mode-trail';
 import { PlanApprovalGate } from './plan-approval-gate';
 import { UserInterruptCoordinator } from './user-interrupt-coordinator';
+import { OpenWorkLedger, type OpenWork } from './open-work-ledger';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -220,6 +221,8 @@ export class SessionTelemetry {
   private readonly prCommandDetector = new PRCommandDetector();
   private readonly pushCommandDetector = new PushCommandDetector();
   private readonly planModeTrail = new PlanModeTrail();
+  /** What each session still has open, from its hook events (`open-work-ledger.ts`). */
+  private readonly openWork = new OpenWorkLedger();
   private readonly planApprovalGate: PlanApprovalGate;
   /**
    * Live snapshot writer. Recreated on demand when the resolver returns a
@@ -406,6 +409,8 @@ export class SessionTelemetry {
             };
             this.pushEvent(sessionId, syntheticEvent);
             this.activityEngine.markBackgroundShellEnded(sessionId, shellId);
+            // The shell's own process exited: a real end.
+            this.openWork.closeShells(sessionId, [shellId]);
           },
           onNamedShellLikelyExited: (sessionId, shellId) => {
             // Watcher reclaimed a PID-less named bg shell whose output file has
@@ -413,6 +418,10 @@ export class SessionTelemetry {
             // a persistent deficit (its `background_shell_end` hook was dropped).
             // Drain it by id, same as a Tier A PID exit - the engine's named
             // drain is identity-aware.
+            //
+            // The open-work ledger keeps it: a gate that prints nothing for
+            // minutes while other worktrees churn the process count reads the
+            // same way, and its real end (the transcript's notice) closes it.
             const syntheticEvent: SessionEvent = {
               ts: Date.now(),
               type: EventType.BackgroundShellEnd,
@@ -460,6 +469,7 @@ export class SessionTelemetry {
             };
             this.pushEvent(sessionId, syntheticEvent);
             this.activityEngine.markBackgroundShellEnded(sessionId, shellId, { source: 'transcript' });
+            this.openWork.closeShells(sessionId, [shellId]);
           },
         },
       });
@@ -593,6 +603,8 @@ export class SessionTelemetry {
       const rejectedIds = this.callbacks.reportRejectedPermissionTools?.(sessionId, [toolId], sinceMs) ?? [];
       if (rejectedIds.includes(toolId)) {
         this.activityEngine.markPermissionRejected(sessionId, toolId);
+        // A denied call never runs, so its end never comes.
+        this.openWork.closeToolCallById(sessionId, toolId);
       }
     }
   }
@@ -803,6 +815,8 @@ export class SessionTelemetry {
     if (agentParser) {
       this.sessionParsers.set(sessionId, agentParser);
     }
+    // A new process: nothing the last one left open is still running under it.
+    this.openWork.forget(sessionId);
     this.activityEngine.initSession(sessionId, initialTurnActive);
     this.ptyTracker.clearSession(sessionId);
     this.notifySessionSpawned(sessionId);
@@ -877,6 +891,7 @@ export class SessionTelemetry {
    */
   clearSessionTracking(sessionId: string): void {
     this.activityEngine.deleteSession(sessionId);
+    this.openWork.forget(sessionId);
     this.ptyTracker.clearSession(sessionId);
     // A suspend ends the agent's process; a resume reports its mode afresh.
     this.planModeTrail.removeSession(sessionId);
@@ -895,6 +910,7 @@ export class SessionTelemetry {
     this.usage.removeSession(sessionId);
     this.earlierToolCallCounts.delete(sessionId);
     this.activityEngine.deleteSession(sessionId);
+    this.openWork.forget(sessionId);
     this.ptyTracker.clearSession(sessionId);
     this.eventCache.delete(sessionId);
     this.sessionParsers.delete(sessionId);
@@ -1112,6 +1128,7 @@ export class SessionTelemetry {
       }
 
       this.activityEngine.processEvent(sessionId, event);
+      this.noteOpenWork(sessionId, event);
 
       // Tier A PID capture: a named bg-shell start lets the watcher try to
       // resolve the shell's OS PID (tree-diff or the foreground-tool memo) so
@@ -1229,7 +1246,17 @@ export class SessionTelemetry {
 
   /** See `ActivityEngine.markBackgroundShellsAsServices`. Null for a session the engine does not track. */
   markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
-    return this.activityEngine.markBackgroundShellsAsServices(sessionId, shellIds);
+    const outcomes = this.activityEngine.markBackgroundShellsAsServices(sessionId, shellIds);
+    // A service is left running on purpose: it is not work anyone waits on.
+    if (outcomes) {
+      this.openWork.closeShells(sessionId, outcomes.filter((entry) => entry.outcome !== 'pending').map((entry) => entry.shellId));
+    }
+    return outcomes;
+  }
+
+  /** What the session still has open, from its hook events (`open-work-ledger.ts`). */
+  getOpenWork(sessionId: string): OpenWork {
+    return this.openWork.get(sessionId);
   }
 
   /**
@@ -1288,7 +1315,25 @@ export class SessionTelemetry {
     let events = this.eventCache.get(sessionId);
     if (!events) { events = []; this.eventCache.set(sessionId, events); }
     events.push(event);
+    // The one synthesized event that ends open work: an interrupt that fired no
+    // hook (a Ctrl+C or Esc between tool calls) ends every call in flight. Every
+    // other synthesized event (a PTY idle, a watcher's guess) says nothing about it.
+    if (event.type === EventType.Interrupted) this.openWork.noteInterrupted(sessionId);
     this.callbacks.onEvent(sessionId, event);
+  }
+
+  /**
+   * Feed the open-work ledger one admitted event. After the engine has seen
+   * it, so a named background shell can be told apart from an exempt service:
+   * only a shell the engine holds is work the agent waits on.
+   */
+  private noteOpenWork(sessionId: string, event: SessionEvent): void {
+    this.openWork.observe(sessionId, event);
+    if (event.type === EventType.BackgroundShellStart && looksLikeShellId(event.detail)) {
+      if (this.activityEngine.getState(sessionId)?.activeBackgroundShellIds.has(event.detail)) {
+        this.openWork.noteHoldingShell(sessionId, event.detail, event.ts);
+      }
+    }
   }
 
   /**

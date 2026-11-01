@@ -43,6 +43,7 @@ export async function moveTaskFromRow(
   // A workflow task's Next column is the next one on its route.
   const target = resolveMoveTarget(repos.swimlanes.list(), fromColumn.id, move.column, routeOf(task));
   if (!target.ok) throw new Error(target.reason);
+  const message = move.message?.trim() ?? '';
 
   await handleTaskMove(
     context,
@@ -50,7 +51,12 @@ export async function moveTaskFromRow(
     'automation',
     projectId,
     projectPath,
-    { moveReason: move.reason, fromTurnEndGroup: input.fromTurnEndGroup, expectedFromSwimlaneId: fromColumn.id },
+    {
+      moveReason: move.reason,
+      fromTurnEndGroup: input.fromTurnEndGroup,
+      expectedFromSwimlaneId: fromColumn.id,
+      ...(message ? { carriesMessage: true } : {}),
+    },
   );
 
   const moved = repos.tasks.getById(task.id);
@@ -58,7 +64,6 @@ export async function moveTaskFromRow(
     throw new Error(`The move to ${target.column.name} did not complete.`);
   }
 
-  const message = move.message?.trim() ?? '';
   if (message) void deliverMessageAfterMove(context, projectId, task.id, target.column.name, message);
   return { columnName: target.column.name };
 }

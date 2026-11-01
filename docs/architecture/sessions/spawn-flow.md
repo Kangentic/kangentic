@@ -72,6 +72,7 @@ sessions bypass all of this (not task agents).
    - If fresh: generate new UUID for `agent_session_id`, use `--session-id`, include prompt
    - Create session directory at `.kangentic/sessions/<agentSessionId>/`
    - Build agent CLI command via `CommandBuilder`
+   - For an isolated column's session, read the checkout's HEAD (`TransitionEngineServices.readStartHead`) before the spawn, since the agent may commit in its first seconds, and record it as `sessions.start_head_sha`. A failed read records NULL and never fails the spawn. The main conversation's return recap counts commits from it ([Resume](resume.md#a-return-to-the-main-conversation-opens-on-a-recap)); startup recovery copies it onto the record it writes
    - Call `SessionManager.spawn()`
 3. `SessionManager.spawn()`:
    - Check concurrency limit; queue if full (returns `queued` placeholder)
@@ -123,14 +124,14 @@ Both fields are enums so future tracks/strategies need no schema migration.
 
 **An isolated session is context-isolated.** It does NOT inherit the main session's conversation. This is the point of the feature: pairing `session_target: isolated` (with the default `always_spawn_new`) and `auto_command: /code-review` yields an independent reviewer that judges the current diff without the generator's reasoning trail. (This is distinct from Claude Code's own `/fork` / `--fork-session`, which *inherit* the conversation; we deliberately do not.) "Restart the conversation" within a session is otherwise left to the agent's native `/clear` / `/compact`.
 
-**One active PTY per task** is preserved. The worktree is shared across a task's sessions (same `task.worktree_path`), so an isolated session's edits are real and persist; the main session sees the changed tree but not the isolated conversation.
+**One active PTY per task** is preserved. The worktree is shared across a task's sessions (same `task.worktree_path`), so an isolated session's edits are real and persist; the main session sees the changed tree but not the isolated conversation. When the main conversation resumes after one, its opening message says what the isolated sessions committed and the final message each ended on (the return recap, see [Resume](resume.md#a-return-to-the-main-conversation-opens-on-a-recap)).
 
 **`always_spawn_new` applies on column entry only.** An app restart / pause-resume of an in-progress session still resumes it (the recovery path is unaffected), so a crash never discards active work. The Resume path (`resumeTaskSession`) and the in-place settings restart (`restartSessionForSettingsChange`) pass `forceFresh: false` over what `resolveSpawnOverrides` derives from the column. They used to forward the column's `true`, so a Resume in a reviewer column retired the paused conversation and started a blank one.
 
 Lifecycle on task move (`task-move.ts`, the session switch branch inside Priority 3):
 
 - **Enter an isolated column from a live main session**: suspend the main session (preserve `agent_session_id`), then Phase 3 spawns/resumes the isolated session and runs its `auto_command`. With `always_spawn_new` (the isolated default) it spawns fresh each entry, retiring the prior pass.
-- **Leave an isolated column for a normal column**: suspend the isolated session (resumable), then Phase 3 resumes the **main** session.
+- **Leave an isolated column for a normal column**: suspend the isolated session (resumable), then Phase 3 resumes the **main** session, which opens on the return recap when the isolated session left a commit or a final message.
 - **Reset-main / recycle**: an `always_spawn_new` column forces a fresh spawn on its target track even when the live session is already on that track, so the switch fires on `resolveForceFresh(toLane)`, not only on a target change.
 - The target + spawn policy are derived from the destination column in `resolveSpawnOverrides`, threaded through `SpawnOverrides.isolatedSwimlaneId` / `SpawnOverrides.forceFresh` into `resolveSpawnIntent` (which retires the prior record on a forced-fresh entry) and `sessionRepo.insert`. The terminal tab badges an isolated session as "Isolated" vs "Main".
 - **A switch the live session asked for itself** (its own `kangentic_move_task`, the way a main session sends its task to Code Review) suspends that session only once the turn that made the move ends, so the move stays in its conversation. The new track's spawn waits behind it. See [A call that ends the caller's own session](suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session).

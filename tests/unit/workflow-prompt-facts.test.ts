@@ -104,6 +104,22 @@ describe('readWorkflowPromptFacts', () => {
     expect(executing).toMatchObject({ column: 'Executing', planExitTo: null });
   });
 
+  // Task #952: the block says which route columns run in a conversation of their own.
+  it('names the route\'s columns that run in a conversation of their own', () => {
+    const workflows = new WorkflowRepository(getProjectDb('home'));
+    const workflow = workflows.create({ title: 'Usage budgets' });
+    workflows.markStarted(workflow.id);
+    const task = workflowTask('home', 'Executing', 'Build the budgets', workflow.id, 'home');
+    expect(readWorkflowPromptFacts(task, 'home')?.ownConversation).toEqual([]);
+
+    const swimlanes = new SwimlaneRepository(getProjectDb('home'));
+    const isolatedLane = swimlanes.list().find((lane) => lane.role === null && lane.name !== 'Executing' && lane.name !== 'Planning');
+    expect(isolatedLane).toBeDefined();
+    swimlanes.update({ id: isolatedLane!.id, session_target: 'isolated' });
+
+    expect(readWorkflowPromptFacts(task, 'home')?.ownConversation).toEqual([isolatedLane!.name]);
+  });
+
   it('follows the route past a skipped column for the plan column\'s approval', () => {
     const workflows = new WorkflowRepository(getProjectDb('home'));
     const workflow = workflows.create({ title: 'Usage budgets' });

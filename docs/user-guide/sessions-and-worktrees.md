@@ -7,6 +7,7 @@ sources:
   - resource: src/main/git/worktree-manager.ts
   - resource: src/main/pty/session-queue.ts
   - resource: src/main/diagnostics/low-memory-agent-pauser.ts
+  - resource: src/main/diagnostics/idle-agent-pause.ts
 ---
 # Sessions and worktrees
 
@@ -78,9 +79,11 @@ is room. Each platform reads its own signal:
 
 Only an agent that has waited on you for at least 5 minutes, idle or at a permission prompt, is
 paused. Never an agent that is working, one with text typed into its prompt, one whose terminal is
-on screen, or one with a column command or message on its way to it. Command Terminals and a
-workflow's own agent are never paused. An agent paused at a permission prompt does not run the tool
-it was asking about.
+on screen, or one with a column command or message on its way to it. Never one waiting on its own
+work either: a background command it started, or a subagent still running past its turn, even
+when its card reads idle. A workflow task its step check found still working in the last hour is
+left alone too. Command Terminals and a workflow's own agent are never paused. An agent paused at a
+permission prompt does not run the tool it was asking about.
 
 **When idle** (off by default). Pauses any agent that has waited on you for the minutes you set (30
 by default). It counts idle waits only, not a permission prompt. It never pauses a Command
@@ -91,13 +94,20 @@ neither does memory recovering or a move into a column that starts agents. Resum
 or its task window, as you would one you paused yourself. The conversation picks up where it
 stopped. Pausing frees a slot, so a queued task can start in it.
 
+A running workflow's task is the one exception. Nobody is there overnight to resume it, so once
+memory recovers Kangentic brings its memory-paused tasks back by itself, one at a time and only
+into a free agent slot. A task waiting on you, or one you are resuming yourself, is left alone. A
+task paused again soon after waits longer each time, and after three times in a day it stays
+paused, with one notice, until you resume it or the first of those returns is a day old. See
+[Workflows](workflows.md).
+
 A memory pause says so: a toast reads "Idle agent paused", and as more are paused it counts them
 ("3 idle agents paused") in place rather than stacking. Its **Review** button lists them, longest
 wait first, with each project's name when they come from more than one. Each row has its own
 **Resume**, which brings that agent back without opening the task, and the row then reads Running.
 There is no Resume all, since bringing every agent back at once would fill the memory that was
-just freed. The toast counts down as agents come back, from its list or from a card, window or
-move, and as their tasks move to To Do or are deleted. It closes once none on it is still paused.
+just freed. The toast counts down as agents come back, from its list, from a card, window or
+move, or by themselves in a running workflow, and as their tasks move to To Do or are deleted. It closes once none on it is still paused.
 An open list stays up until you close it. Closing the toast yourself clears the list too, and the
 next pause starts a new one. An idle timer pause shows a short "Agent paused" toast for its task
 instead.

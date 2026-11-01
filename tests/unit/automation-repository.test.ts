@@ -13,8 +13,9 @@ import { describe, it, expect, afterEach } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
 import { AutomationRepository } from '../../src/main/db/repositories/automation-repository';
-import { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
+import { AutomationRunRepository, WORKFLOW_RUNS_KEPT_AFTER_DONE_MS } from '../../src/main/db/repositories/automation-run-repository';
 import { SwimlaneRepository } from '../../src/main/db/repositories/swimlane-repository';
+import { WorkflowRepository } from '../../src/main/db/repositories/workflow-repository';
 import type { AutomationWriteInput } from '../../src/main/db/repositories/automation-repository';
 
 import { openTestDatabase } from './helpers/test-database';
@@ -559,6 +560,72 @@ describe('AutomationRunRepository', () => {
     database.prepare('UPDATE tasks SET archived_at = ? WHERE id = ?').run('2026-01-02T00:00:00.000Z', taskId);
     runs.pruneTo(4);
     expect(runs.listForTask(taskId)).toEqual([]);
+  });
+
+  // Task #952: the newest 200 rows were a few hours of one workflow, so the
+  // night it ran was pruned before anyone could read it.
+  describe('a workflow still going, or done for less than a day', () => {
+    const DAY_MS = WORKFLOW_RUNS_KEPT_AFTER_DONE_MS;
+
+    /** A workflow in `state`, finished at `finishedAt`: created by the repository, then set as given. */
+    function seedWorkflow(database: DatabaseType.Database, id: string, state: string, finishedAt: string | null): void {
+      const created = new WorkflowRepository(database).create({ title: id });
+      database.prepare('UPDATE workflows SET id = ?, state = ?, finished_at = ? WHERE id = ?').run(id, state, finishedAt, created.id);
+    }
+
+    it('names the workflows whose tasks keep every run: going, or done within a day, or homed elsewhere and so asked', () => {
+      const { database, runs, columnId } = setup();
+      const now = Date.parse('2026-10-31T12:00:00.000Z');
+      seedWorkflow(database, 'running', 'running', null);
+      seedWorkflow(database, 'paused', 'paused', null);
+      seedWorkflow(database, 'done-recently', 'done', new Date(now - DAY_MS + 60_000).toISOString());
+      seedWorkflow(database, 'done-long-ago', 'done', new Date(now - DAY_MS - 60_000).toISOString());
+      const member = (taskId: string, workflowId: string, homeProjectId: string | null) => database
+        .prepare('INSERT INTO tasks (id, title, description, swimlane_id, position, workflow_id, workflow_project_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)')
+        .run(taskId, taskId, '', columnId, 5, workflowId, homeProjectId, '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z');
+      member('task-running', 'running', null);
+      member('task-paused', 'paused', null);
+      member('task-done-recently', 'done-recently', null);
+      member('task-done-long-ago', 'done-long-ago', null);
+      member('task-elsewhere-kept', 'elsewhere-kept', 'home-project');
+      member('task-elsewhere-gone', 'elsewhere-gone', 'home-project');
+      const asked: string[] = [];
+
+      const kept = runs.workflowIdsKeepingRuns(now, (homeProjectId, workflowId) => {
+        asked.push(`${homeProjectId}/${workflowId}`);
+        return workflowId === 'elsewhere-kept';
+      });
+
+      expect(kept.sort()).toEqual(['done-recently', 'elsewhere-kept', 'paused', 'running']);
+      expect(asked.sort()).toEqual(['home-project/elsewhere-gone', 'home-project/elsewhere-kept']);
+    });
+
+    it('keeps every run of a kept workflow\'s tasks, archived or not, in any column, and prunes the rest as before', () => {
+      const { database, runs, columnId, taskId } = setup();
+      const otherColumnId = new SwimlaneRepository(database).list()[1].id;
+      database.prepare('UPDATE tasks SET workflow_id = ?, archived_at = ? WHERE id = ?').run('workflow-1', '2026-01-02T00:00:00.000Z', taskId);
+      const stamp = (id: string, second: number) => database
+        .prepare('UPDATE automation_runs SET started_at = ? WHERE id = ?')
+        .run(`2026-01-01T00:00:${String(second).padStart(2, '0')}.000Z`, id);
+      runs.start({ id: 'workflow-old', automation: automation('a1', otherColumnId), taskId });
+      stamp('workflow-old', 0);
+      for (let index = 0; index < 4; index += 1) {
+        runs.start({ id: `newer-${index}`, automation: automation('a1', columnId), taskId: 'task-1' });
+        stamp(`newer-${index}`, 10 + index);
+      }
+      database.prepare('UPDATE tasks SET workflow_id = NULL WHERE id = ?').run(taskId);
+
+      // Not kept: the old row goes, as it always did.
+      runs.pruneTo(4);
+      expect(runs.listForTask(taskId).map((row) => row.id)).not.toContain('workflow-old');
+
+      // Kept: nothing of the task's goes, whatever the limit.
+      database.prepare('UPDATE tasks SET workflow_id = ? WHERE id = ?').run('workflow-1', taskId);
+      runs.start({ id: 'workflow-again', automation: automation('a1', otherColumnId), taskId });
+      stamp('workflow-again', 1);
+      expect(runs.pruneTo(0, ['workflow-1'])).toBe(0);
+      expect(runs.listForTask(taskId)).toHaveLength(5);
+    });
   });
 
   // The startup pass hands a task that never had an agent to the board path,

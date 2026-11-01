@@ -17,6 +17,7 @@ import { createDeferredDegrade } from './shared/pr-dispatch';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { TaskRepository } from '../db/repositories/task-repository';
 import type { AppConfig, Task, PRState, PRMergeReadiness, PRLinkStatus, TaskUpdateInput } from '../../shared/types';
+import { prReadinessNote } from './pr-readiness-note';
 import type { IpcContext } from '../ipc/ipc-context';
 
 export interface PRLinkResult {
@@ -896,7 +897,7 @@ export async function linkPRForTask(taskId: string, deps: PRLinkDeps): Promise<P
       }
     }
     if (prChanged && next) {
-      const readinessNote = nextMergeReadiness ? `, merge ${nextMergeReadiness}` : '';
+      const readinessNote = prReadinessNote(next.state, nextMergeReadiness);
       console.log(`[pr-linking] Linked PR #${next.number} (${next.state ?? 'unknown'}${readinessNote}) to "${task.title}": ${next.url}`);
       // Adoption signal on a real or refreshed link only: the automatic sweeps
       // that return early above and the stale-link clear below are not uses.

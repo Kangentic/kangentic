@@ -1,6 +1,7 @@
 import type { SessionManager } from './session-manager';
 import type { SubmissionVerifier } from '../../shared/types';
 import { waitForOutputSettle, type OutputSettleResult } from './output-settle';
+import { automatedKeysRefusal, waitForAutomatedKeysClearance, waitUntilAutomatedKeysClear } from './automated-keys-guard';
 
 /**
  * PasteEngine: deterministic paste-and-submit for TUI agents. Private
@@ -62,6 +63,25 @@ export interface PasteOptions {
    *  disabled - useful in unit tests that want to assert a specific
    *  evidence path fired in isolation. Default true. */
   allowAnyDataFallback?: boolean;
+  /**
+   * True for a paste Kangentic sends on its own (a column message, a held
+   * message, an agent's message to another), never one a person sent from
+   * the phone, dictation or the Browser pane. Such a paste waits, before it
+   * writes and again before each Enter, until the session can take automated
+   * keys (`automated-keys-guard.ts`): no permission prompt, and no tool call
+   * with no end. The wait comes before the paste's own timeout starts and is
+   * bounded by `signal`.
+   */
+  automated?: boolean;
+  /**
+   * A bound on an automated paste's wait before it writes; past it the paste
+   * throws `held`. Omitted, that wait has no bound but `signal`, so a message
+   * is held behind a long tool call rather than dropped. A caller whose own
+   * request waits on the paste passes one: an agent's `now` send checks the
+   * target first, and a tool call that opens after that check should fail the
+   * send, not hold the sender's turn for as long as the tool runs.
+   */
+  clearanceTimeoutMs?: number;
 }
 
 export interface PasteEngine {
@@ -69,7 +89,8 @@ export interface PasteEngine {
 }
 
 export class PasteSubmitError extends Error {
-  readonly code: 'aborted' | 'timeout' | 'no-submission-evidence';
+  /** `held`: an automated paste the session could not take (see `PasteOptions.automated`). */
+  readonly code: 'aborted' | 'timeout' | 'no-submission-evidence' | 'held';
   constructor(code: PasteSubmitError['code'], message: string) {
     super(message);
     this.name = 'PasteSubmitError';
@@ -328,6 +349,29 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
       const verifier = options.verifier;
       const allowAnyDataFallback = options.allowAnyDataFallback ?? true;
 
+      /**
+       * Wait until the session may take this automated paste's keys, then
+       * return; throw `held` when it never could. A person's paste skips it.
+       * Before the write the wait has no bound but `signal` (or the caller's
+       * `clearanceTimeoutMs`): a message is held behind a long tool call,
+       * never dropped. Between the write and the Enter the paste's own total
+       * timeout bounds it (`timeoutMs`).
+       */
+      const awaitClearance = async (stage: string, signal: AbortSignal | undefined, timeoutMs: number | null): Promise<void> => {
+        if (!options.automated) return;
+        if (automatedKeysRefusal(sessionManager, sessionId, source) === null) return;
+        const cleared = timeoutMs === null
+          ? await waitUntilAutomatedKeysClear(sessionManager, sessionId, { signal, source })
+          : await waitForAutomatedKeysClearance(sessionManager, sessionId, { signal, timeoutMs, source });
+        if (cleared === 'clear') return;
+        if (cleared === 'aborted') throw new PasteSubmitError('aborted', `paste-engine: ${source} aborted while the session could not take keys`);
+        const reason = cleared === 'exited'
+          ? 'the session exited'
+          : (sessionManager.automatedKeysBlocker(sessionId) ?? 'the session could not take keys in time');
+        throw new PasteSubmitError('held', `paste-engine: ${source} held before ${stage}: ${reason}`);
+      };
+      await awaitClearance('writing', options.signal, options.clearanceTimeoutMs ?? null);
+
       const timeoutController = new AbortController();
       const timeoutTimer = setTimeout(() => timeoutController.abort(), totalTimeoutMs);
       const { signal: linkedSignal, dispose: disposeLink } = linkSignals(
@@ -384,6 +428,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
         // but does not submit (paste content commits, but the Enter handler
         // sees stale state). Routing through the queue + draining gives
         // ConPTY a clean separation between the close marker and \r.
+        await awaitClearance('Enter', linkedSignal, totalTimeoutMs);
         const tWriteEnter = Date.now();
         sessionManager.write(sessionId, '\r');
         await sessionManager.drain(sessionId);
@@ -410,6 +455,7 @@ export function createPasteEngine(sessionManager: SessionManager): PasteEngine {
               `paste-engine: ${source} sent paste but agent disabled bracketed-paste mode (modal/prompt focused). Skipped retry to avoid confirming a destructive action.`,
             );
           }
+          await awaitClearance('the retry Enter', linkedSignal, totalTimeoutMs);
           retried = true;
           const tRetryEnter = Date.now();
           sessionManager.write(sessionId, '\r');

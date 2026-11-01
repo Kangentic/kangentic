@@ -19,6 +19,17 @@ Run a read-only SQL query against the project database. The connection uses `PRA
 |-----------|------|----------|-------------|
 | `sql` | string | Yes | SQL query to execute |
 
+It returns up to 100 rows as a markdown table. A cell is cut at 20,000 characters when the result
+is one row, which is how an agent reads a long value such as a run's detail or a description, and
+at 1,000 across several rows. When any cell was cut, the last line names the columns and says to
+select one row or use `substr(column, start, length)`. The flat 120-character cut before task #952
+cut the very values an agent asked for.
+
+The tool description also tells the agent that each `sessions` row is one run of a conversation
+and that a resume adds a row. `total_cost_usd` and `total_duration_ms` are cumulative for the whole
+conversation as of that run, so the latest row of an `agent_session_id` is its total, never a SUM
+across its rows. It lists `isolated_swimlane_id` and `start_head_sha` among the `sessions` columns.
+
 ## kangentic_tail_logs
 
 Read recent lines from the kangentic console log at `<projectRoot>/.kangentic/logs/<YYYY-MM-DD>.log`, merged with the app's global fallback at `<configDir>/logs/<YYYY-MM-DD>.log` (where the log mirror writes while no project is open, so a global subsystem such as the mobile bridge keeps its trace across the gap). The two files are combined and sorted by timestamp before the filters apply. Errors and warnings are always captured; `info`, `debug`, and `log` levels are captured only when `developer.persistConsoleLogs` is on. Useful for diagnosing "the action didn't work" or following up on a `console.error` trace. Returns formatted text lines plus structured `items: LogEntry[]` for typed access.

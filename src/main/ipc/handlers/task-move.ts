@@ -339,6 +339,11 @@ export async function handleTaskMove(
   // column once the lock lets it through. A Move to column row resolves its
   // target from its own column outside the lock, so a move that landed while
   // this one waited must not send the task on from a column it has left.
+  //
+  // `carriesMessage` says a message follows the move to the agent (a Move to
+  // column row's Message, `kangentic_move_task`'s `message`). It usually holds
+  // the reply the last column ended on, so a return to the main conversation
+  // does not repeat that reply in its recap (`return-recap.ts`).
   options?: {
     continuationPrompt?: string;
     onCommitted?: () => void;
@@ -347,6 +352,7 @@ export async function handleTaskMove(
     moverIsTaskAgent?: boolean;
     moverSessionId?: string;
     expectedFromSwimlaneId?: string;
+    carriesMessage?: boolean;
   },
 ): Promise<void> {
   // A workflow task's lock, asked BEFORE anything below aborts work in flight:
@@ -1712,7 +1718,7 @@ export async function handleTaskMove(
           const sessionRepoPhase3 = new SessionRepository(dbPhase3);
           const engine = createTransitionEngine(context, automationsPhase3, automationRunsPhase3, tasksPhase3, sessionRepoPhase3, attachmentsPhase3, resolvedProjectId, resolvedProjectPath);
           if (toLane) {
-            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3 });
+            await spawnAgent({ context, engine, tasks: tasksPhase3, sessionRepo: sessionRepoPhase3, task: current, fromSwimlaneId, toLane, skipPromptTemplate, signal, projectId: resolvedProjectId, projectPath: resolvedProjectPath, continuationPrompt, suppressAutoCommand, settingsSourceLane: fromLane ?? null, attachments: attachmentsPhase3, moveCarriesMessage: options?.carriesMessage === true });
           }
         } finally {
           clearSpawnProgress(context.mainWindow, task.id);

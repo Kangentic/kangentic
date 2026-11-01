@@ -26,8 +26,10 @@ import { useToastStore } from './toast-store';
  *   and reads Running. The list clears once neither the toast nor Review shows
  *   it (`keepListWhileShown`), so a dialog the user is looking at never
  *   unmounts under them, and the next pause after that starts again at 1.
- *   Recovery leaves the toast alone: the agents stay paused until the user
- *   resumes them, so what it says stays true.
+ *   Recovery leaves the toast alone: an agent outside a workflow stays paused
+ *   until the user resumes it, and a running workflow's task that main brings
+ *   back once memory recovers (`workflow-memory-resume.ts`) comes back like
+ *   any other route, so the count goes down in place and what it says stays true.
  *
  * There is no `load*`/`sync*` here (the truth is a push, not something to
  * re-fetch on HMR), so it needs no `vite:afterUpdate` registration.

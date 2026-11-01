@@ -103,6 +103,8 @@ describe('SessionManager session-resumed', () => {
       agentSessionId: 'agent-session-1',
       isolatedSwimlaneId: null,
       workSerial: 0,
+      // A spawn that names no resumer is the user's (task #952).
+      resumedBy: 'user',
     }]);
     // The serial it carries is the one isLatestTurn compares against.
     expect(manager.isLatestTurn(session.id, resumedEvents[0].workSerial)).toBe(true);

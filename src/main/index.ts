@@ -15,7 +15,9 @@ import { drainQueuedAppendsSync } from './diagnostics/async-file-queue';
 import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
-import { createLowMemoryAgentPauser, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { createLowMemoryAgentPauser, sampleAsRead, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { workflowMemoryGate } from './workflows/workflow-memory-gate';
+import { resumeMemoryPausedWorkflowTasks } from './workflows/workflow-memory-resume';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { createPreviewClone, fillPreviewClone, registerEphemeralProjectDevIpc } from '../devtools/main/ephemeral-projects';
@@ -2016,6 +2018,21 @@ app.whenReady().then(async () => {
         lowMemoryAgentPauser.onSample(sample);
       } catch (error) {
         console.error('[idle-agent-pause] Tick failed:', error);
+      }
+      // The workflow's nudges and memory resumes wait their turn on the same
+      // reading (`workflow-memory-gate.ts`), and the paused tasks come back
+      // one at a time once it clears (`workflow-memory-resume.ts`).
+      try {
+        workflowMemoryGate.onSample(sampleAsRead(sample));
+        const ipcContext = getOptionalIpcContext();
+        if (ipcContext) {
+          // Async: this try cannot see its rejection.
+          resumeMemoryPausedWorkflowTasks(ipcContext).catch((error: unknown) => {
+            console.error('[workflow-memory-gate] Memory resume failed:', error);
+          });
+        }
+      } catch (error) {
+        console.error('[workflow-memory-gate] Tick failed:', error);
       }
     },
     onPressure: (sample, activeAgentCount) => {

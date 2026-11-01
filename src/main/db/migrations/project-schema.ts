@@ -1238,9 +1238,12 @@ export function runProjectMigrations(db: Database.Database): void {
   // belongs to exactly one session). This table's durability is the entire
   // point: an interval must outlive the session row that produced it, the
   // same way the token ledger outlives the transcript file it was read from.
-  // A session that crashes mid-interval leaves it permanently open
-  // (`ended_ms IS NULL`); consumers filter that out rather than the engine
-  // attempting reconciliation on restart.
+  // A quit or a crash leaves the interval it was in open (`ended_ms IS NULL`).
+  // Since task #952 the first open of a project in a launch closes those
+  // (`ActivityIntervalStore.closeIntervalsLeftOpen`, from
+  // `resumeSuspendedSessions`): at the session's own suspend or exit time,
+  // `app-quit`, else at the interval's start, `app-crash`. A session the
+  // registry still holds live is left alone. Consumers still filter open rows.
   // started_ms/ended_ms are the epoch-ms columns the store's duration_ms
   // arithmetic and started_ms index actually use (matching
   // conversation_turn_usage's `ts INTEGER` above). started_at/ended_at are a
@@ -2086,6 +2089,17 @@ export function runProjectMigrations(db: Database.Database): void {
   }
   db.exec('CREATE INDEX IF NOT EXISTS idx_session_messages_sent_session_id ON session_messages_sent(session_id)');
   db.exec('CREATE INDEX IF NOT EXISTS idx_session_messages_sent_task_status ON session_messages_sent(task_id, status)');
+
+  // Task #952: the worktree HEAD an isolated column's session started on. When
+  // the task returns to its main conversation, the commits since the first
+  // such session began are what that conversation never saw (Code Review's own
+  // commits, read by Testing). NULL for a main session, and for every row
+  // written before this column existed.
+  const hasStartHeadSha = (db.pragma('table_info(sessions)') as Array<{ name: string }>)
+    .some((column) => column.name === 'start_head_sha');
+  if (!hasStartHeadSha) {
+    db.exec('ALTER TABLE sessions ADD COLUMN start_head_sha TEXT DEFAULT NULL');
+  }
 }
 
 /**

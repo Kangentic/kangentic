@@ -42,6 +42,50 @@ export async function readWorktreeHeadUnqueued(worktreePath: string): Promise<{ 
   }
 }
 
+/** The commits a checkout gained since one commit (`readCommitsSince`). */
+export interface CommitsSince {
+  /** HEAD now, abbreviated. */
+  head: string;
+  /** At most `limit` of them, the newest ones, oldest first. */
+  commits: Array<{ sha: string; subject: string }>;
+  /** How many older ones `limit` left out. */
+  omitted: number;
+}
+
+/**
+ * The first-parent commits from `fromSha` (exclusive) to the checkout's HEAD:
+ * the history an isolated column's session added (task #952). First-parent,
+ * so a merge of the base branch reads as one commit, not as everything the
+ * base gained. After a rebase `fromSha` is no ancestor of HEAD, and the list is
+ * everything reachable from HEAD and not from it, which is what changed.
+ *
+ * Null on any git error, or for a `fromSha` that is not a plain hex object
+ * name. Never throws. Queued through the global read cap, as its siblings are.
+ */
+export async function readCommitsSince(worktreePath: string, fromSha: string, limit: number): Promise<CommitsSince | null> {
+  if (!HEX_SHA_PATTERN.test(fromSha)) return null;
+  return viaGitRead(async () => {
+    try {
+      const git = gitAt(worktreePath);
+      const range = `${fromSha}..HEAD`;
+      const head = (await git.revparse(['--short', 'HEAD'])).trim();
+      const total = Number.parseInt((await git.raw(['rev-list', '--count', '--first-parent', range])).trim(), 10);
+      if (!head || Number.isNaN(total)) return null;
+      const commits = total === 0 ? [] : (await git.raw(['log', '--first-parent', '--reverse', `-n${limit}`, '--format=%h%x09%s', range]))
+        .split('\n')
+        .map((line) => line.trim())
+        .filter((line) => line !== '')
+        .map((line) => {
+          const tab = line.indexOf('\t');
+          return tab < 0 ? { sha: line, subject: '' } : { sha: line.slice(0, tab), subject: line.slice(tab + 1) };
+        });
+      return { head, commits, omitted: Math.max(0, total - commits.length) };
+    } catch {
+      return null;
+    }
+  });
+}
+
 /**
  * The tip commit of a LOCAL branch by name, read from the main repo, or null
  * when the branch does not exist or cannot be read.

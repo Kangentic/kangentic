@@ -27,6 +27,8 @@ The predicate uses `set.size + anonymousCount > 0` so both modes coexist.
 
 Which mode a start-event lands in is decided purely by the SHAPE of its `detail` (`looksLikeShellId`): id-shaped (1-64 chars of `[\w-]`) is named, anything else - typically the long command string Claude falls back to at PreToolUse - is anonymous.
 
+These sets paint the card, so a hold that gives up drops a shell from them while it may still run. Whether the agent still waits on a shell is the [open-work ledger](activity-engine.md#open-work)'s answer instead: a named shell the engine holds stays open there until an end that names it, a PID exit or transcript drain, or a service mark (task #952). The low-memory pause and the workflow step check read that, never these sets.
+
 ## Opting a background shell out of the hold
 
 A third set, **`exemptBackgroundShellIds: Set<string>`**, holds shells that do not hold the session. The predicate never sums it, so those shells contribute nothing to activity.

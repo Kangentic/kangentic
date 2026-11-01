@@ -493,6 +493,8 @@ describe('handleFindTask - Knowledge Graph lines', () => {
     expect(readTaskKnowledge).toHaveBeenCalledWith(['task-alpha']);
     expect(result.message).toContain([
       '- "alpha-search board task" [To Do] | #1, id: task-alpha',
+      '  Description:',
+      '    on the board',
       '  changed files (1, most-changed first): src/alpha.ts',
     ].join('\n'));
     // The backlog item sits in its own section, with no knowledge under it.
@@ -508,6 +510,8 @@ describe('handleFindTask - Knowledge Graph lines', () => {
 
     expect(result.message).toContain([
       '- "beta unrelated" [Done] | #2, id: task-beta',
+      '  Description:',
+      '    alpha-search shows up only in body',
       '  summary (2026-09-20): Finished the beta work.',
       '  commits: none linked to this task',
     ].join('\n'));
@@ -560,9 +564,31 @@ describe('handleFindTask - Knowledge Graph lines', () => {
     expect(result.message).not.toContain('  summary');
   });
 
-  it('prints only the task line when the context has no reader', async () => {
+  it('prints only the task line and its description when the context has no reader', async () => {
     const result = await handleFindTask({ displayId: 2 }, makeContext());
-    expect(result.message).toBe('Found 1 match(es):\n- "beta unrelated" [Done] | #2, id: task-beta');
+    expect(result.message).toBe('Found 1 match(es):\n- "beta unrelated" [Done] | #2, id: task-beta\n  Description:\n    alpha-search shows up only in body');
+  });
+
+  // Task #952: an agent that looked its task up read no description, because
+  // the agent reads the message and the description sat in `data` alone.
+  it('cuts each description short when several tasks match, and says how much it left out', async () => {
+    const longDescription = 'word '.repeat(200).trim();
+    const manyTasks = Array.from({ length: 2 }, (_unused, index) => ({
+      id: `task-long-${index}`,
+      display_id: 200 + index,
+      title: `long-description task ${index}`,
+      description: longDescription,
+      swimlane_id: 'lane-todo',
+      archived_at: null,
+      labels: [],
+    }));
+    mockTaskRepoList.mockImplementation((swimlaneId: string) => (swimlaneId === SWIMLANE_TODO.id ? manyTasks : []));
+    mockTaskRepoListArchived.mockReturnValue([]);
+
+    const result = await handleFindTask({ title: 'long-description' }, makeContext());
+
+    expect(result.message).toContain(`... (${longDescription.length - longDescription.slice(0, 400).trimEnd().length} more characters not shown)`);
+    expect(result.message).not.toContain(longDescription);
   });
 
   it('does not read the index for a lookup that matches no board task', async () => {

@@ -17,6 +17,7 @@ class FakeSessionManager extends EventEmitter {
   resize = vi.fn(() => ({ colsChanged: true }));
   getLastDesktopDimensions = vi.fn((): { cols: number; rows: number } | null => ({ cols: 120, rows: 30 }));
   reconsiderRestingGridAfterMobileRelease = vi.fn();
+  getActivityStatsSnapshot = vi.fn((): { permissionPending: boolean; permissionAwaitedToolId: string | null } | null => null);
 }
 
 function fakeContext(sessionManager: FakeSessionManager): IpcContext {
@@ -38,6 +39,24 @@ describe('handleInteractiveTerminal', () => {
     expect(response.ok).toBe(true);
     expect(response.payload).toEqual({ written: true });
     expect(sessionManager.write).toHaveBeenCalledWith('sess-1', 'npm login\r', 'user');
+  });
+
+  // Task #952: a stray "1" reached an agent's input. A write while a prompt
+  // reads open is logged by its length, never its text, which can be a password.
+  it('logs a write made while a permission prompt reads open, by length only, and still writes it', () => {
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const sessionManager = new FakeSessionManager();
+      sessionManager.getActivityStatsSnapshot.mockReturnValue({ permissionPending: true, permissionAwaitedToolId: 'toolu_abc' });
+      handleInteractiveTerminal(fakeRequest({ sessionId: 'sess-1', data: 'hunter2\r' }), fakeContext(sessionManager), new SubscriptionRegistry());
+
+      expect(sessionManager.write).toHaveBeenCalledWith('sess-1', 'hunter2\r', 'user');
+      const lines = log.mock.calls.map((call) => String(call[0]));
+      expect(lines.some((line) => line.includes('typed 8 byte(s)') && line.includes('toolu_abc'))).toBe(true);
+      expect(lines.some((line) => line.includes('hunter2'))).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('rejects (never reports written:true) when the session exists but has no live PTY', () => {

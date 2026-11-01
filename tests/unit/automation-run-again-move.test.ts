@@ -127,8 +127,9 @@ describe('runAutomationAgain: a Move to column row', () => {
       'proj-test',
       '/mock/project',
       // Not the turn-end group's own move: a re-run's move stops any turn-end work the task has going.
-      // And only from the row's own column, checked again inside the move's lock.
-      { moveReason: 'On to Testing', fromTurnEndGroup: false, expectedFromSwimlaneId: 'lane-review' },
+      // And only from the row's own column, checked again inside the move's lock. The row
+      // carries a message, which the move is told so a return recap does not repeat it.
+      { moveReason: 'On to Testing', fromTurnEndGroup: false, expectedFromSwimlaneId: 'lane-review', carriesMessage: true },
     );
     expect(hoisted.taskColumn).toBe('lane-testing');
     // The row's message follows the task to where it lands.

@@ -134,7 +134,7 @@ Because nothing is prepended, the stored `message` matches the transcript turn i
 **Guards.** These are circuit breakers against unattended token spend (two agents ping-ponging overnight), not a permission policy - deliberate multi-agent orchestration is meant to pass through unobstructed:
 
 - A session cannot send to itself.
-- A `deliverWhen: "now"` send into a target sitting at a **permission prompt** is refused. The submit path ends in `\r` (and retries it), which a modal prompt reads as confirming its highlighted option, so an ordinary steer could silently approve a tool call nobody sanctioned. The paste engine's own modal safety net cannot cover this: it detects bracketed-paste-mode-off from the terminal `data` stream, which is only forwarded while the session is subscribed, and an MCP send targets a background session by construction. `deliverWhen: "idle"` is not refused for this state - it holds the message until the prompt clears, which is what the refusal points you at.
+- A `deliverWhen: "now"` send into a target sitting at a **permission prompt** is refused. The submit path ends in `\r` (and retries it), which a modal prompt reads as confirming its highlighted option, so an ordinary steer could silently approve a tool call nobody sanctioned. The paste engine's own modal safety net cannot cover this: it detects bracketed-paste-mode-off from the terminal `data` stream, which is only forwarded while the session is subscribed, and an MCP send targets a background session by construction. `deliverWhen: "idle"` is not refused for this state - it holds the message until the prompt clears, which is what the refusal points you at. The check is the shared automated-keys guard (`src/main/pty/automated-keys-guard.ts`, `SessionManager.automatedKeysBlocker`), so a `now` send is also refused while the target has a tool call with no end in its hook events, whose prompt the engine's `permission` state can have lost. The refusal names which. Every message this tool delivers is sent as automated keys, so the paste waits again before it writes and before each Enter until the session can take keys, and goes in between tool calls. A `now` send waits at most 30 s before it writes (`NOW_SEND_CLEARANCE_MS`), since it answers the sending agent's own call: a tool call that opened after the check fails the send as held rather than holding the sender's turn while the tool runs. A held `idle` send has nobody waiting on it and waits for as long as the target needs.
 - An explicit `sessionId` naming a session in a **different project** is refused. Liveness is checked against the global PTY registry, so such a send would otherwise deliver while its provenance row silently vanished into the wrong project's database. Pass `project` naming the session's own project.
 - Each target accepts at most 30 messages per rolling 5 minutes. A genuine orchestration hop costs the receiving agent a whole turn, so only a runaway loop approaches this.
 - A steer chain deeper than 25 hops is refused as a loop. Depth is tracked server-side from the caller's session id rather than a tool parameter; it is deliberately not a low cap, because a legitimate A -> B -> C -> D -> E chain must work. The depth is one scalar per session (the most recent inbound hop), so two independent chains converging on one target overwrite each other's count - fine for a runaway backstop, but not an exact per-chain measure.
@@ -254,9 +254,15 @@ common framework defaults - 3000, 4200, 4321, 5000, 5173, 8000, 8080.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | Yes | The task reserving the ports. Resolve it with `kangentic_get_current_task`. |
+| `taskId` | string | No | The task reserving the ports, as a display ID (`42` or `#42`) or a UUID. Defaults to the caller's own task. |
 | `count` | number | No | How many ports to reserve (1-10). Default 1. Ask for all of them at once. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
+
+Both port tools resolve `taskId` to the task's UUID before they touch the ledger
+(`resolvePortTask`), since the ledger is keyed by UUID. Before task #952 a display ID was used as the
+key as given, and reserved ports under a task that does not exist. With no `taskId`, the caller's own
+task comes from the MCP request's caller segment, not from the parameters. A call from no task, or
+from a task that is not in the target project, is refused with a line saying to pass `taskId`.
 
 ## kangentic_check_dev_ports
 
@@ -284,7 +290,7 @@ is. An empty result is the normal state for a task using its project's own confi
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|
-| `taskId` | string | Yes | Task ID. |
+| `taskId` | string | No | Task ID (display ID, `#N`, or UUID). Defaults to the caller's own task, resolved as for `kangentic_reserve_dev_ports`. |
 | `ports` | number[] | No | Extra ports to check alongside the task's own reservations (at most 20). Each is probed. |
 | `project` | string | No | Project selector (name or UUID). Defaults to the URL-path project. |
 

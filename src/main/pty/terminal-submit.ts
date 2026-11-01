@@ -1,7 +1,9 @@
 import type { SessionManager } from './session-manager';
 import type { PasteEngine, PasteOptions } from './paste-engine';
 import { sanitizeForPty } from '../../shared/paths';
+import { EventType, IdleReason, PromptReason, type SessionEvent } from '../../shared/types';
 import { waitForOutputSettle } from './output-settle';
+import { automatedKeysRefusal, waitUntilAutomatedKeysClear } from './automated-keys-guard';
 
 /**
  * Re-export the PasteEngine error class so callers (`browser.ts`) can catch
@@ -121,6 +123,20 @@ export interface SubmitKeystrokesResult {
    * command sent mid-turn is queued by the CLI rather than cutting it off.
    */
   interruptedTurn: boolean;
+  /**
+   * Why the burst stopped before a key it needed, when the session could not
+   * take automated keys (`automated-keys-guard.ts`): a permission prompt, or a
+   * tool call with no end. The outcome is then `failed`, and nothing past that
+   * point was typed.
+   */
+  heldBy?: string;
+  /**
+   * True when an Enter landed while a permission prompt the app had not heard
+   * of yet was open: its hook arrived after the Enter, dated before it, with
+   * no prompt of ours behind it. The Enter most likely answered the prompt.
+   * The guard makes this rare; this is the record when it happens anyway.
+   */
+  reachedPermissionPrompt?: boolean;
 }
 
 /** Manual-keystroke delivery options. */
@@ -200,6 +216,23 @@ const MAX_SUBMIT_ATTEMPTS = 5;
  * not by pressing.
  */
 const LATE_FLUSH_GRACE_MS = 2000;
+/**
+ * A further poll-only window, again with no Enter, before a verifiable command
+ * is called unconfirmed. Under load the prompt hook and the transcript both
+ * land late: one overnight nudge's hook arrived 3.1 s after its first Enter,
+ * and the "unconfirmed" warning had already gone out 1 s after that. The
+ * delivery had worked. Pressing nothing costs only this wait, and only when
+ * neither signal has come.
+ */
+const PASSIVE_EVIDENCE_GRACE_MS = 8000;
+/**
+ * A permission prompt's hook dated up to this long after an Enter still
+ * counts as open when the Enter landed: the hook is written before the event
+ * reaches the app, and the two clocks are the same machine's.
+ */
+const PROMPT_ANSWER_SKEW_MS = 100;
+/** How long after an Enter a late permission hook marks that Enter as having answered it. */
+const PROMPT_ANSWER_WINDOW_MS = 2000;
 /**
  * Cap on the wait between Esc and the Enter that follows it.
  *
@@ -321,8 +354,31 @@ export class TerminalSubmit {
     const deliveries: CommandDelivery[] = [];
     let sawVerifiable = false;
     let sawFailure = false;
+    let reachedPermissionPrompt = false;
+    // A prompt hook proves OUR text went in only when nothing else sat in the
+    // prompt to be submitted with it. The clear guarantees that, and so does a
+    // fresh spawn with no draft; a draft left in place does not.
+    const promptHookConfirms = shouldClear || pendingDraft === null;
+    const hooks = new BurstHookWatch(this.sessionManager, sessionId);
+
+    /** The result of a burst the guard stopped before `stage`. */
+    const heldResult = (reason: string, stage: string): SubmitKeystrokesResult => {
+      console.warn(`[terminal-submit] ${source}: held before ${stage} for session ${sessionId.slice(0, 8)}: ${reason}`);
+      const delivered = new Set(deliveries.filter((delivery) => delivery.confirmed).map((delivery) => delivery.text));
+      return {
+        outcome: 'failed',
+        unconfirmedCommands: sanitized.map((entry) => entry.text).filter((text) => !delivered.has(text)),
+        deliveries,
+        discardedDraft: null,
+        interruptedTurn: false,
+        heldBy: reason,
+      };
+    };
 
     try {
+      const heldAtStart = await this.clearanceFor(sessionId, signal, source);
+      if (heldAtStart) return heldResult(heldAtStart, 'typing');
+
       if (shouldClear) {
         // Ctrl+U, the documented "clear the input line" key, NOT Ctrl+C.
         //
@@ -375,6 +431,10 @@ export class TerminalSubmit {
         // record (with a null watermark) for this position.
         const delivery: CommandDelivery = { text: command.text, firstSentAt: null, confirmed: false };
         deliveries.push(delivery);
+        // The prompt hook is evidence for a user-supplied message only: a
+        // command the adapter emits itself must match in the transcript.
+        const hookConfirmed = (): boolean => promptHookConfirms && command.verify === 'submitted'
+          && commandFirstSentAt !== null && hooks.promptSince(commandFirstSentAt);
         for (let attempt = 0; attempt < MAX_SUBMIT_ATTEMPTS; attempt++) {
           // Esc dismisses the slash picker, but it is NOT a picker-scoped key -
           // Claude Code documents it as "stop Claude while it is generating
@@ -393,6 +453,10 @@ export class TerminalSubmit {
           // Hence: at most once, on the first attempt, and only when we are not
           // sitting on a live turn. Retries send Enter alone.
           const sendEsc = isSlashCommand && attempt === 0 && !opts.interruptingTurn;
+          // A prompt that opened while the text was typed takes an Esc as a
+          // denial and an Enter as yes. Neither goes in until it is gone.
+          const heldBeforeKey = await this.clearanceFor(sessionId, signal, source);
+          if (heldBeforeKey) return heldResult(heldBeforeKey, sendEsc ? 'Esc' : 'Enter');
           if (sendEsc) {
             // Wait for the Esc's own repaint before Enter. `\x1b` followed by
             // `\r` in ONE read is the Meta prefix, so the TUI would receive
@@ -405,6 +469,12 @@ export class TerminalSubmit {
             await this.settleAfterWrite(sessionId, signal, ESC_SETTLE_CAP_MS);
           }
 
+          // The Esc's settle is an await: check again right before the Enter,
+          // with nothing between the check and the write.
+          if (sendEsc) {
+            const heldBeforeEnter = await this.clearanceFor(sessionId, signal, source);
+            if (heldBeforeEnter) return heldResult(heldBeforeEnter, 'Enter');
+          }
           const sentAt = Date.now();
           if (commandFirstSentAt === null) {
             commandFirstSentAt = sentAt;
@@ -415,17 +485,25 @@ export class TerminalSubmit {
 
           if (!canVerify || !verifier) break;
 
-          confirmed = await this.pollForConfirmation(verifier, command, commandFirstSentAt, signal, VERIFY_WINDOW_MS);
+          const firstSentAt = commandFirstSentAt;
+          confirmed = await this.pollForConfirmation(verifier, command, firstSentAt, signal, VERIFY_WINDOW_MS, hookConfirmed);
           if (confirmed) break;
+          // An Enter that met a prompt the app had not heard of yet answered
+          // it. Pressing again would answer whatever came next.
+          if (hooks.promptAnsweredBy(sentAt) && !hooks.promptSince(firstSentAt)) {
+            reachedPermissionPrompt = true;
+            break;
+          }
         }
 
-        if (canVerify && verifier && !confirmed && commandFirstSentAt !== null) {
+        if (canVerify && verifier && !confirmed && commandFirstSentAt !== null && !reachedPermissionPrompt) {
           // Retries exhausted; keep looking without pressing. See
-          // LATE_FLUSH_GRACE_MS for why the horizon and the Enter count are
-          // separate budgets.
-          confirmed = await this.pollForConfirmation(verifier, command, commandFirstSentAt, signal, LATE_FLUSH_GRACE_MS);
+          // LATE_FLUSH_GRACE_MS and PASSIVE_EVIDENCE_GRACE_MS for why the
+          // horizon and the Enter count are separate budgets.
+          confirmed = await this.pollForConfirmation(
+            verifier, command, commandFirstSentAt, signal, LATE_FLUSH_GRACE_MS + PASSIVE_EVIDENCE_GRACE_MS, hookConfirmed,
+          );
         }
-
         delivery.confirmed = canVerify && confirmed;
         if (canVerify) {
           if (!confirmed) {
@@ -434,13 +512,26 @@ export class TerminalSubmit {
             const firstEnterIso = commandFirstSentAt === null ? 'none' : new Date(commandFirstSentAt).toISOString();
             console.warn(
               `[terminal-submit] ${source}: "${command.text}" unconfirmed after ${MAX_SUBMIT_ATTEMPTS} attempts `
-                + `plus a ${LATE_FLUSH_GRACE_MS}ms grace (first Enter at ${firstEnterIso})`,
+                + `plus a ${LATE_FLUSH_GRACE_MS + PASSIVE_EVIDENCE_GRACE_MS}ms grace (first Enter at ${firstEnterIso})`,
             );
           }
         } else {
           // Nothing to check against; give the TUI a bounded moment so a
           // following command does not race this one's render.
           await this.settleAfterWrite(sessionId, signal, UNVERIFIED_SETTLE_CAP_MS);
+        }
+        if (
+          !confirmed && commandFirstSentAt !== null
+          && hooks.promptAnsweredBy(commandFirstSentAt) && !hooks.promptSince(commandFirstSentAt)
+        ) {
+          reachedPermissionPrompt = true;
+        }
+        if (reachedPermissionPrompt) {
+          // The rest of the burst would type into whatever the answered prompt
+          // let run. Nothing more goes in.
+          sawFailure = true;
+          console.warn(`[terminal-submit] ${source}: an Enter reached a permission prompt in session ${sessionId.slice(0, 8)}; stopping the burst`);
+          break;
         }
       }
 
@@ -459,6 +550,7 @@ export class TerminalSubmit {
         // field stays so the outcome notice keeps a slot for a genuine
         // interruption if one is ever reintroduced deliberately.
         interruptedTurn: false,
+        ...(reachedPermissionPrompt ? { reachedPermissionPrompt: true } : {}),
       };
     } catch (caughtError) {
       const message = caughtError instanceof Error ? caughtError.message : String(caughtError);
@@ -483,7 +575,23 @@ export class TerminalSubmit {
       }
       console.error(`[terminal-submit] ${source}: keystroke delivery failed: ${message}`);
       throw caughtError;
+    } finally {
+      hooks.dispose();
     }
+  }
+
+  /**
+   * Null when the session may take automated keys now, else wait for it to
+   * clear (`automated-keys-guard.ts`), however long that takes: a message is
+   * held behind a long tool call, never dropped. Returns why only when the
+   * session exited first. An abort throws, as every other wait in a burst does.
+   */
+  private async clearanceFor(sessionId: string, signal: AbortSignal, source: string): Promise<string | null> {
+    if (automatedKeysRefusal(this.sessionManager, sessionId, source) === null) return null;
+    const result = await waitUntilAutomatedKeysClear(this.sessionManager, sessionId, { signal, source });
+    if (result === 'clear') return null;
+    if (result === 'aborted') throw new Error('aborted');
+    return 'the session exited';
   }
 
   /**
@@ -542,14 +650,59 @@ export class TerminalSubmit {
     sentAt: number,
     signal: AbortSignal,
     windowMs: number,
+    /** Evidence other than the transcript (the prompt hook), checked each poll. */
+    alsoConfirmed: () => boolean = () => false,
   ): Promise<boolean> {
     const deadline = Date.now() + windowMs;
     while (Date.now() < deadline) {
       if (signal.aborted) throw new Error('aborted');
+      if (alsoConfirmed()) return true;
       if (await verifier(command.text, sentAt, command.verify)) return true;
       await waitMs(VERIFY_POLL_MS, signal);
     }
-    return false;
+    return alsoConfirmed();
+  }
+}
+
+/**
+ * The hook events a burst's session reports while the burst runs: its prompt
+ * hooks, which confirm a submission when the transcript is slow, and its
+ * permission prompts, which say an Enter met a prompt the app had not heard of.
+ */
+class BurstHookWatch {
+  private readonly prompts: number[] = [];
+  private readonly permissionHooks: Array<{ ts: number; seenAt: number }> = [];
+
+  private readonly onEvent = (eventSessionId: string, event: SessionEvent): void => {
+    if (eventSessionId !== this.sessionId) return;
+    if (event.type === EventType.Prompt && event.detail !== PromptReason.PtyActivity) {
+      this.prompts.push(event.ts);
+    } else if (event.type === EventType.Idle && event.detail === IdleReason.Permission) {
+      this.permissionHooks.push({ ts: event.ts, seenAt: Date.now() });
+    }
+  };
+
+  constructor(private readonly sessionManager: SessionManager, private readonly sessionId: string) {
+    sessionManager.on('event', this.onEvent);
+  }
+
+  dispose(): void {
+    this.sessionManager.off('event', this.onEvent);
+  }
+
+  /** A prompt the agent received, dated at or after `sinceMs`. */
+  promptSince(sinceMs: number): boolean {
+    return this.prompts.some((ts) => ts >= sinceMs);
+  }
+
+  /**
+   * A permission prompt's hook that arrived after the Enter at `enterAt` but is
+   * dated before it: the prompt was on screen when the Enter landed.
+   */
+  promptAnsweredBy(enterAt: number): boolean {
+    return this.permissionHooks.some((hook) => hook.seenAt >= enterAt
+      && hook.ts <= enterAt + PROMPT_ANSWER_SKEW_MS
+      && hook.seenAt - enterAt <= PROMPT_ANSWER_WINDOW_MS);
   }
 }
 

@@ -25,8 +25,9 @@ export const AGENT_REPLY_TIMEOUT_MS = 15_000;
 export async function readSessionFinalReply(
   session: { sessionId: string; agentSessionId?: string | null; transcriptAnchor?: TranscriptAnchor | null },
   sessionRepo: SessionRepository,
+  timeoutMs: number = AGENT_REPLY_TIMEOUT_MS,
 ): Promise<AgentReply | null> {
-  const read = await tryReadSessionFinalReply(session, sessionRepo);
+  const read = await tryReadSessionFinalReply(session, sessionRepo, timeoutMs);
   return read.ok ? read.reply : null;
 }
 
@@ -41,6 +42,7 @@ export type FinalReplyRead = { ok: true; reply: AgentReply | null } | { ok: fals
 export async function tryReadSessionFinalReply(
   session: { sessionId: string; agentSessionId?: string | null; transcriptAnchor?: TranscriptAnchor | null },
   sessionRepo: SessionRepository,
+  timeoutMs: number = AGENT_REPLY_TIMEOUT_MS,
 ): Promise<FinalReplyRead> {
   try {
     const record = sessionRepo.findByAnyId(session.sessionId);
@@ -61,7 +63,7 @@ export async function tryReadSessionFinalReply(
         since: session.transcriptAnchor ?? null,
         remoteTargets: collectRemoteTargets(agentRegistry),
       },
-      { timeoutMs: AGENT_REPLY_TIMEOUT_MS },
+      { timeoutMs },
     );
     return { ok: true, reply: reply ?? null };
   } catch (error) {

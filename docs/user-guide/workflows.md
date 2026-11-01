@@ -128,7 +128,9 @@ Planning column is Automatic)."). On a route where only some plan columns run an
 can approve plans for, Automatic approves only in those, and the tooltip names the agent whose plans
 still wait. While a plan is approved automatically, an MCP tool your Claude
 allow rules name, in the project's settings or your own, runs without a prompt during planning,
-even one Claude's plan mode would ask about. A question the agent asks, and any tool you have not
+even one Claude's plan mode would ask about. So does Claude's own Artifact tool when it only
+reads, lists or publishes, with no allow rule; deleting an artifact still asks, and a deny or ask
+rule naming `Artifact` keeps it asking. A question the agent asks, and any tool you have not
 allowed, still wait. When no plan column on the route runs an agent Kangentic can approve plans
 for, the task shows Manual and Automatic is disabled. The control is there only while a plan column
 is still ahead of the task; once the task has passed it, or is in Done, it is gone. An agent can
@@ -136,19 +138,32 @@ set it too: `planApproval` on a task in `kangentic_save_workflow` or `kangentic_
 and `kangentic_update_task` for a started workflow task that has not passed its plan column. Without an Automation agent, or in a
 column with no agent, you drag the card on yourself.
 
-**When a step does not finish.** A running workflow stops a task only for a decision that only you
-can make. When a turn ends with the step not done, the Automation agent also judges why it stopped:
+**When a step does not finish.** Nothing an agent writes stops a running workflow's task unless it
+says that only you can settle it: a change from the plan, something you must weigh in on, or a
+decision between options. The agent says so by ending its reply with a `Needs owner: <the question>` line, which
+every workflow task is told about. When a turn ends with the step not done:
 
-- **It needs you**: a choice that changes the result, information or a secret it cannot find, or an
-  approval for something outside the step, such as deleting data. You get a notice with the
-  question, at once, and nothing is typed for you. Asking whether to go ahead with the step's own
-  work ("Should I commit and run the gate now?") is not this.
-- **Work it started is still running** ("the gate is still running, I'll report back"). It is left
-  alone for an hour. When that work wakes the agent, the turn it ends is judged as usual.
-- **Anything else.** Kangentic types one line into its terminal telling it to carry on with the
-  step's own work without asking, at 5, 15, 30 and 60 minutes, up to four times, and only while you
-  are not there: no text typed, its terminal not on screen, the agent idle. A nudge whose turn
-  fails, as in an outage, does not count. The line shows in the conversation like any message.
+- **It ends on the Needs owner line.** You get a notice with the question, at once, and nothing is
+  typed for you. This needs no Automation agent.
+- **Work it started is still running**: a background command, or a subagent still going past the
+  turn. Kangentic reads this from the agent's own tool events, not from what its reply says. It is
+  left alone for an hour. When that work wakes the agent, the turn it ends is judged as usual.
+- **Anything else.** Kangentic types one line into its terminal telling it to carry on, at 5, 15,
+  30 and 60 minutes, up to four times, and only while you are not there: no text typed, nothing you
+  typed into it in the last 5 minutes, the agent idle and not at a permission prompt. The line
+  answers what the reply says it is stuck on: memory is back so run it again, the base branch
+  fails the same tests so check that on a separate checkout of the base, note those and fix the
+  rest, a sibling task
+  merged into the base branch (said as a fact, not an order to merge), or Kangentic restarted so
+  start its background commands again. A nudge whose turn fails,
+  as in an outage, does not count. The line shows in the conversation like any message.
+
+Nudges go one at a time, at most one a minute, and none while memory is low, so several agents do
+not start their gates at once. After Kangentic restarts (a quit, a crash), a task that was mid-step
+is nudged at once, since its background commands stopped with the old process. An idle agent with a
+tool call that has had no end for 10 minutes is most likely at a permission prompt nobody answered,
+so Kangentic types nothing into it and tells you: "it may be waiting on a permission prompt for
+<tool>".
 
 With Claude Code, a turn that hangs (shown working while Claude writes nothing for 20 minutes) is
 interrupted with Claude's own Esc, then nudged the same way. If the interrupt does not reach it,
@@ -159,9 +174,11 @@ When the nudges run out, or a check cannot run for a whole schedule, you get one
 stalled", on your desktop and your paired phone. The card and the Workflows view's header show
 Stalled with why on hover. Through an outage Kangentic keeps checking every hour, so when the
 service comes back the task moves on by itself. If you answer a stalled task and it stops again
-later, recovery starts over for it, with its own notice. A task the low-memory pause stops gets
-the same notice, and so do a start that keeps failing for 30 minutes and a hung turn the interrupt
-does not end. Pausing the workflow
+later, recovery starts over for it, with its own notice. A task the low-memory pause stops comes
+back by itself once memory recovers, one at a time. After three such returns in a day it stays
+paused, and gets the same notice, until you resume it or the first of those returns is a day old.
+A return that fails does not count; the next try waits half an hour. A start that keeps failing for 30
+minutes and a hung turn the interrupt does not end get the notice too. Pausing the workflow
 cancels all of it, and a task in a running workflow raises no plain Agent idle notice. The
 **Workflow stalled** switch is in Settings > Notifications.
 

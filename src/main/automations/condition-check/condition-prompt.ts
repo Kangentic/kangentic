@@ -76,9 +76,28 @@ const REASON_CHARS = 200;
 
 const CONDITION_TAG_PATTERN = promptTagPattern(['task', 'move', 'agent_reply', 'conditions', 'condition']);
 
+/** Whitespace runs to one space, trimmed. */
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
 function collapse(text: string, limit: number): string {
-  const collapsed = text.replace(/\s+/g, ' ').trim();
+  const collapsed = oneLine(text);
   return collapsed.length > limit ? `${collapsed.slice(0, limit)}...` : collapsed;
+}
+
+/**
+ * A reason on one line, cut after its last whole word within `limit`. A
+ * reason is read back to an agent in a workflow nudge, and one cut mid-word
+ * read "free memor." to it. A single word longer than the limit is cut at the
+ * limit, since there is no boundary to keep.
+ */
+function collapseAtWord(text: string, limit: number): string {
+  const collapsed = oneLine(text);
+  if (collapsed.length <= limit) return collapsed;
+  const lastSpace = collapsed.lastIndexOf(' ', limit);
+  const cut = lastSpace > 0 ? collapsed.slice(0, lastSpace) : collapsed.slice(0, limit);
+  return `${cut.replace(/[\s,;:.-]+$/, '')}...`;
 }
 
 /** Keep the head and the tail of a long reply, since either can hold the verdict. */
@@ -230,7 +249,7 @@ export function parseConditionReply(reply: string, count: number): Map<number, C
     // merely ends on a quote ("the last line is "CLEAN"") keeps it.
     const raw = parsed.reason.trim();
     const unwrapped = /^(["'])(.*)\1$/.exec(raw)?.[2] ?? raw;
-    const reason = collapse(unwrapped, REASON_CHARS);
+    const reason = collapseAtWord(unwrapped, REASON_CHARS);
     answers.set(position, { met: parsed.met, reason: reason || null });
   }
   for (const position of writtenTwice) answers.delete(position);

@@ -4,6 +4,7 @@
 // stay readable. Source: Anthropic prompt-engineering courses, OpenAI docs.
 
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
+import { WORKFLOW_NEEDS_OWNER_LINE } from '../../../shared/workflow-needs-owner';
 
 // Escapes both quote styles so values are safe inside `"..."` and `'...'`
 // attribute values. Anthropic's prompt-engineering guidance lists `'` as one
@@ -117,6 +118,12 @@ export interface WorkflowXmlInput {
    * route), or null when `column` does not run the task in plan mode.
    */
   planExitTo: string | null;
+  /**
+   * The route's columns that run the task in a conversation of their own (an
+   * isolated session target); every other column continues the task's main
+   * conversation. Absent or empty: every column shares one conversation.
+   */
+  ownConversation?: string[];
   /** What this task waited for, each already in Done when it starts. */
   waitsFor: Array<{ number: number; title: string; column: string; branch: string | null; prUrl: string | null }>;
   /** What waits for this task, so the agent keeps what they depend on stable. */
@@ -155,7 +162,11 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
   }
   lines.push('  <how_this_runs>');
   lines.push('This task is one step of a workflow that runs without anyone watching. When your turn ends, an agent reads your final message to judge whether this column\'s work is done; if it is, the task moves on to the next column of its route by itself.');
-  lines.push('- End your turn only when this column\'s work is done (say what you did in your final message), or when you need the user (ask your question in it). A turn that ends on a progress note stops the workflow until someone notices.');
+  lines.push('- End your turn only when this column\'s work is done (say what you did in your final message), or when only the owner can settle what you are stuck on. A turn that ends on a progress note stops the workflow until someone notices.');
+  // The one wait that stops a workflow task and notifies the owner, matched in
+  // code (`src/shared/workflow-needs-owner.ts`). Narrow on purpose: everything
+  // else a stalled agent meets, Kangentic nudges it past.
+  lines.push(`- Only the owner can settle a change from the plan, something the owner must weigh in on, or a decision between options. For those, end your final message with the line "${WORKFLOW_NEEDS_OWNER_LINE}". Anything else, such as a failing test, a busy machine or a step of your own work, is yours to act on without asking.`);
   lines.push('- Put progress notes in the same message as your next tool call, not at the end of a turn.');
   // A plan column's work ends at the plan's approval, which moves the task on
   // by itself while the conversation carries on. An agent told it may move the
@@ -164,6 +175,21 @@ export function buildWorkflowXml(input: WorkflowXmlInput): string {
     lines.push(`- ${escapeXml(input.column)} plans the work. Approving your plan moves the task on to ${escapeXml(input.planExitTo)}, so do not move it yourself.`);
   } else {
     lines.push('- When you know this column\'s work is done, you may move the task on yourself with kangentic_move_task, column "next".');
+  }
+  // Task #952: which columns share this conversation. An Executing agent that
+  // knew Testing resumes its chat, and that Code Review does not, left what
+  // each needed in the right place.
+  const ownConversation = input.ownConversation ?? [];
+  if (ownConversation.length > 0) {
+    if (input.column && ownConversation.includes(input.column)) {
+      lines.push(`- ${escapeXml(input.column)} runs in a conversation of its own. The task's other columns continue its main conversation, which sees only the commits you make and is told your final message, so put in that message what they need to know.`);
+    } else {
+      const names = ownConversation.map(escapeXml);
+      const single = names.length === 1;
+      const joined = single ? names[0] : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`;
+      const [runs, its, does] = single ? ['runs', 'its', 'does'] : ['run', 'their', 'do'];
+      lines.push(`- ${joined} ${runs} in a conversation of ${its} own and ${does} not see this one. The route's other columns continue this conversation, and are told what those columns did when they come back to it.`);
+    }
   }
   if (input.blocks.length > 0) lines.push('- The tasks waiting on this one build on what you change. Keep what they depend on stable.');
   // Conditional, because the tool is offered only to an agent that reports its

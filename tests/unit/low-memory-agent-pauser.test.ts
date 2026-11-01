@@ -59,6 +59,11 @@ function makeContext(options: { enabled?: boolean; summaries?: ReturnType<typeof
       getActivityReasonsCache: vi.fn((): Record<string, unknown> => ({ 'sess-1': { kind: 'idle', since: PARKED_AT } })),
       getFocusedSessions: vi.fn(() => new Set<string>()),
       getPendingDraft: vi.fn((): string | null => null),
+      getOpenWork: vi.fn((): { toolCalls: unknown[]; backgroundShells: unknown[]; backgroundSubagents: unknown[] } => ({
+        toolCalls: [],
+        backgroundShells: [],
+        backgroundSubagents: [],
+      })),
     },
     terminalSubmitScheduler: { hasPending: vi.fn(() => false) },
     configManager: { load: vi.fn(() => ({ agent: { pauseIdleAgentsOnLowMemory: options.enabled ?? true } })) },
@@ -108,8 +113,21 @@ describe('collectIdleAgentFacts', () => {
       focused: true,
       hasPendingSubmit: true,
       hasPendingDelivery: true,
+      hasOpenBackgroundWork: false,
+      inWorkingWait: false,
     });
     mocks.hasPendingMessageDelivery.mockReturnValue(false);
+  });
+
+  it('reads background work from the hook events: a held shell or a subagent past its turn end', () => {
+    const context = makeContext();
+    context.sessionManager.getOpenWork.mockReturnValue({
+      toolCalls: [],
+      backgroundShells: [{ id: 'gate', command: 'pnpm verify', since: PARKED_AT }],
+      backgroundSubagents: [],
+    });
+
+    expect(collectIdleAgentFacts(context as never)[0].hasOpenBackgroundWork).toBe(true);
   });
 
   it('counts a whitespace-only draft as no draft', () => {
@@ -153,7 +171,8 @@ describe('createLowMemoryAgentPauser', () => {
 
     expect(mocks.pauseTaskSession).toHaveBeenCalledWith(context, 'task-1', expect.objectContaining({
       projectId: 'proj-1',
-      suspendedBy: 'auto',
+      // Its own source, so a restart can still tell a memory pause apart.
+      suspendedBy: 'low_memory',
       stillEligible: expect.any(Function),
     }));
     expect(context.mainWindow.webContents.send).toHaveBeenCalledWith(

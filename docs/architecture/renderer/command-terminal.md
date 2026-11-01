@@ -392,7 +392,8 @@ SessionManager's own events, in main:
 - **A row is listed only once someone used the terminal.** `Session.hasUserInput` is set in main
   from the input's content. The pty host judges it (`writeCarriesUserContent`,
   `src/shared/terminal-input-content.ts`, on a `'user'` write, whether it came on a renderer's own
-  port or from main) and reports the first one as a `userInput` event, which main turns into
+  port or from main) and reports it as a `userInput` event (the first at once, later ones
+  throttled, see [Output streaming](../sessions/output-streaming.md)), which main turns into
   `markUserInput`; a `TerminalSubmit.submitContent` paste calls `markUserInput` directly: a keystroke, a
   paste or a submit counts; xterm's DA and DSR replies,
   focus reports, mouse motion, the repaint nudge and the system's own pill writes do not. A

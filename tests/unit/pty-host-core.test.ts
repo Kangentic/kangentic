@@ -834,7 +834,7 @@ describe('PtyHostCore', () => {
         port.send({ type: 'write', sessionId: 'session-1', data: 'h' });
         port.send({ type: 'write', sessionId: 'session-1', data: 'i' });
 
-        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1' }]);
+        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1', at: expect.any(Number) }]);
       });
 
       it('on a user write main enqueues (dictation, the phone)', () => {
@@ -843,7 +843,68 @@ describe('PtyHostCore', () => {
 
         core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: 'dictated words', origin: 'user' });
 
-        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1' }]);
+        expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1', at: expect.any(Number) }]);
+      });
+
+      // Workflow recovery reads the user as there from recent input, so the
+      // host reports it again while a person keeps typing, at most every ten
+      // seconds, and never for Kangentic's own writes.
+      it('again while a person keeps typing, at most every ten seconds', () => {
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          const { core, events, port } = makeCore();
+          core.spawn(spawnParams());
+
+          port.send({ type: 'write', sessionId: 'session-1', data: 'a' });
+          vi.advanceTimersByTime(5_000);
+          port.send({ type: 'write', sessionId: 'session-1', data: 'b' });
+          expect(userInputs(events)).toHaveLength(1);
+
+          vi.advanceTimersByTime(6_000);
+          port.send({ type: 'write', sessionId: 'session-1', data: 'c' });
+          core.handleCommand({ type: 'enqueueWrite', ptyId: 1, data: 'a nudge', origin: 'system' });
+          expect(userInputs(events)).toHaveLength(2);
+        } finally {
+          vi.useRealTimers();
+        }
+      });
+
+      // An NTP step or a VM resume can move the wall clock back. A report held
+      // for "less than ten seconds since the last one" would then stay held
+      // until the clock caught up, and workflow recovery would read a person
+      // who is typing as gone.
+      it('at once when the wall clock stepped back after a report, then throttles from the new time', () => {
+        const REPORTED_AT = Date.UTC(2030, 0, 1, 12, 0, 0);
+        const STEPPED_BACK_TO = REPORTED_AT - 60_000;
+        vi.useFakeTimers({ toFake: ['Date'] });
+        try {
+          vi.setSystemTime(REPORTED_AT);
+          const { core, events, port } = makeCore();
+          core.spawn(spawnParams());
+
+          port.send({ type: 'write', sessionId: 'session-1', data: 'a' });
+          expect(userInputs(events)).toEqual([{ type: 'userInput', sessionId: 'session-1', at: REPORTED_AT }]);
+
+          // A minute back is inside no window a forward clock would hold open.
+          vi.setSystemTime(STEPPED_BACK_TO);
+          port.send({ type: 'write', sessionId: 'session-1', data: 'b' });
+          expect(userInputs(events)).toEqual([
+            { type: 'userInput', sessionId: 'session-1', at: REPORTED_AT },
+            { type: 'userInput', sessionId: 'session-1', at: STEPPED_BACK_TO },
+          ]);
+
+          // The step-back report is the new baseline: the ten second throttle
+          // holds from it for a clock that moves forward again.
+          vi.setSystemTime(STEPPED_BACK_TO + 5_000);
+          port.send({ type: 'write', sessionId: 'session-1', data: 'c' });
+          expect(userInputs(events)).toHaveLength(2);
+
+          vi.setSystemTime(STEPPED_BACK_TO + 11_000);
+          port.send({ type: 'write', sessionId: 'session-1', data: 'd' });
+          expect(userInputs(events)).toHaveLength(3);
+        } finally {
+          vi.useRealTimers();
+        }
       });
     });
 

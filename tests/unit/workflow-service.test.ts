@@ -492,6 +492,7 @@ describe('workflow operations', () => {
         agentSessionId: 'agent-1',
         isolatedSwimlaneId: null,
         workSerial: 7,
+        resumedBy: 'user',
       }]);
     });
 

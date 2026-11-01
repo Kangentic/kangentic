@@ -80,51 +80,51 @@ export function workflowStepCondition(column: Pick<Swimlane, 'name' | 'descripti
 }
 
 /**
- * The second ask, made only when the step is not done (`workflow-step.ts`): why
- * the agent stopped. Two Conditions in one call; the first
- * `workflowStepCondition` call stays exactly as it was measured.
+ * What a stalled agent is stuck on, as far as its reply says: the kinds the
+ * unblock nudge has a specific instruction for (`nudgeMessage`,
+ * `workflow-recovery.ts`). Read by the second ask, made only when the step is
+ * not done and no work of the agent's own is still running (`workflow-step.ts`).
  *
- * - Needs the user: a decision, information or access only the user can give,
- *   without which the step cannot go on. The workflow stops for this and
- *   nothing else. Asking whether to go ahead with the step's own work is not it.
- * - Still running: work the agent started goes on outside its turn (a gate in
- *   the background), and that work wakes it. It is left alone a while.
- * - Neither: the agent is nudged to carry on.
+ * - `resource`: a command, a test run or the gate was stopped or failed because
+ *   the machine ran low on memory or was too busy. Claude Code's memory reaper
+ *   tells the agent "do not start it again on your own", and an agent that saw
+ *   its gate fail on load wrote "the gate needs a run on a quieter machine".
+ *   Neither is a question for the owner; the nudge says when to run it again.
+ * - `main-fails-too`: the failures it is stuck on also happen on the base
+ *   branch. One agent showed this and was still nudged that its gate was not
+ *   green, and spent two hours fixing a race the base branch fixed on its own.
  *
- * The check answers yes only on facts, so a reply it is unsure of is nudged,
- * never stopped on. A wrong nudge costs one paid turn; a wrong stop holds the
- * workflow until someone looks, which overnight is the whole night.
+ * This ask replaced the one that decided whether the agent waited on the user
+ * or on running work (owner's decision, 2026-10-31). Waiting on the owner is
+ * the agent's own call now, made with the `Needs owner:` line
+ * (`src/shared/workflow-needs-owner.ts`); running work comes from the hook
+ * events (`SessionManager.getOpenWork`), never from the reply's wording, which
+ * once read one gate as still running and, three hours later, as not done.
  *
- * Measured 2026-10-25 (`scripts/eval-condition-check.mjs`, Haiku at low) on
- * every not-done turn end of the one board with long workflow history: 311 of
- * them, each labeled by what happened next (its own background work woke it,
- * or a person typed "continue"; no person ever answered a decision). The
- * earlier ask, whose unsure answer was a wait on the user, stopped on 30 of
- * them: 5 of the 7 a person had to push on, and all 4 replies the CLI wrote
- * itself when a session resumed mid-turn. This one, written once
- * and not revised against the cases, stopped on 1, and on 0 of 5 when that
- * case was run again. Five runs each of the cases a stop turns on (every turn
- * a person pushed on, every reply the CLI wrote itself, and 13 written ones):
- * 120 of 120. Each real question (a choice, an approval to delete data, a
- * missing secret, an admin's token) stopped; "Should I commit and run the gate
- * now?" and "Want me to open the pull request?" were nudged, and a bare
- * "Waiting for the gate." was left to run. The written cases and their labels
- * are one person's. Where it errs it nudges a wait it should have left alone:
- * 42 of 300 background waits, whose own wake usually comes before the nudge.
+ * Unsure answers no, as every Condition does, and a reply with no named
+ * blocker gets the general nudge. Both rows are one call, the cost of the ask
+ * they replaced.
  */
-export function workflowStepNeedsUserCondition(column: Pick<Swimlane, 'name'>): string {
-  return `The agent's final message asks the user for something it cannot get or decide on its own, and the ${column.name} step `
-    + 'cannot go on without it: a choice between options that changes the result, information or a secret that is not in '
-    + 'the repository or the environment, or an approval for something outside the step\'s own work, such as deleting data. '
-    + 'Asking whether to go ahead with the step\'s own work (commit, run the gate or the tests, open the pull request, move '
-    + 'on) is not this. Neither is a report, a list of next steps, a progress note, or a note that a tool or service failed.';
-}
+export type WorkflowBlocker = 'resource' | 'main-fails-too';
 
-export function workflowStepRunningCondition(column: Pick<Swimlane, 'name'>): string {
-  return `The agent's final message says it is waiting for something other than the user to finish for the ${column.name} `
-    + 'step (a command or job in the background, a test run or build, CI checks, a gate), and that it will go on once that '
-    + 'finishes. A message that only says it is waiting for the gate, the tests or CI counts, with no more detail. A note '
-    + 'about work the agent itself was in the middle of, such as fixing tests or editing files, is not this.';
+/** The blocker rows of the second ask, each with the blocker its yes names. */
+export function workflowBlockerConditions(
+  column: Pick<Swimlane, 'name'>,
+  baseBranch: string,
+): Array<{ blocker: WorkflowBlocker; condition: string }> {
+  return [
+    {
+      blocker: 'resource',
+      condition: `The agent's final message says a command, a test run, a build or the gate it ran for the ${column.name} step `
+        + 'was stopped, killed or failed because the machine ran low on memory or was too busy (other runs at the same time, '
+        + 'a memory limit, a process reaper, timeouts under load), and not because of a mistake in the code.',
+    },
+    {
+      blocker: 'main-fails-too',
+      condition: `The agent's final message says that some or all of the failures it is stuck on also happen on ${baseBranch} `
+        + '(the base branch, without this task\'s changes), so they are not caused by this task.',
+    },
+  ];
 }
 
 /** One of a column's exit rows: a turn-end row that moves the task, behind a Text match. */

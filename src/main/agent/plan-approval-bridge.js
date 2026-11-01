@@ -44,6 +44,11 @@
  *                    prefixes: string[],  tools answered by name prefix
  *                    excludedTools: string[], excludedPrefixes: string[],
  *                                         never answered, whatever the above say
+ *                    inputJudgedTools?: [{ tool, inputField, actionField, allow[], whenMissing }],
+ *                                         a tool answered with no allow rule when
+ *                                         input[actionField] (or whenMissing, absent) is
+ *                                         one of allow: a call that only reads or
+ *                                         publishes, never one that edits or deletes
  *                    reply: object        printed to approve, as it is
  *                  }
  *
@@ -79,30 +84,53 @@ function approvingDecision(decision) {
   return decision && decision.approve === true ? decision : null;
 }
 
-/** The tool spec carries `tools` and `prefixes`; the plan spec carries neither. */
+/** The tool spec carries `tools` and `prefixes` (or input-judged tools); the plan spec carries none. */
 function isToolSpec(spec) {
-  return Array.isArray(spec.tools) || Array.isArray(spec.prefixes);
+  return Array.isArray(spec.tools) || Array.isArray(spec.prefixes) || Array.isArray(spec.inputJudgedTools);
 }
 
 function stringList(value) {
   return Array.isArray(value) ? value.filter((entry) => typeof entry === 'string') : [];
 }
 
-/** Whether a tool spec answers this tool: named, and not excluded. */
-function toolSpecNames(spec, tool) {
-  if (typeof tool !== 'string') return false;
-  if (stringList(spec.excludedTools).includes(tool)) return false;
-  if (stringList(spec.excludedPrefixes).some((prefix) => tool.startsWith(prefix))) return false;
-  return stringList(spec.tools).includes(tool) || stringList(spec.prefixes).some((prefix) => tool.startsWith(prefix));
+/** Whether a tool spec excludes this tool, whatever else it says. */
+function toolSpecExcludes(spec, tool) {
+  return stringList(spec.excludedTools).includes(tool)
+    || stringList(spec.excludedPrefixes).some((prefix) => tool.startsWith(prefix));
 }
 
 /**
- * The tool spec: answer a prompt for a tool the spec names, in a mode it
+ * Whether a call to one of the spec's input-judged tools only does what the
+ * spec allows: the value of its input field (or, absent, what the tool does
+ * by default) is one of `allow`. A call with any other value, or an input
+ * that is not an object, is left to the user.
+ */
+function inputJudgedCallAllowed(spec, context, tool) {
+  const entries = Array.isArray(spec.inputJudgedTools) ? spec.inputJudgedTools : [];
+  const entry = entries.find((candidate) => candidate && candidate.tool === tool);
+  if (!entry) return false;
+  const input = context[entry.inputField];
+  if (!input || typeof input !== 'object') return false;
+  const value = input[entry.actionField];
+  const action = value === undefined || value === null ? entry.whenMissing : value;
+  return typeof action === 'string' && stringList(entry.allow).includes(action);
+}
+
+/** Whether a tool spec answers this call: named or judged allowed by its input, and not excluded. */
+function toolSpecAnswers(spec, context, tool) {
+  if (typeof tool !== 'string') return false;
+  if (toolSpecExcludes(spec, tool)) return false;
+  if (stringList(spec.tools).includes(tool) || stringList(spec.prefixes).some((prefix) => tool.startsWith(prefix))) return true;
+  return inputJudgedCallAllowed(spec, context, tool);
+}
+
+/**
+ * The tool spec: answer a prompt for a call the spec answers, in a mode it
  * names, while the decision approves the plan. The reply is printed as it is.
  */
 function answerToolPrompt(spec, context, readDecision, now) {
   const tool = context[spec.toolField];
-  if (!toolSpecNames(spec, tool)) return null;
+  if (!toolSpecAnswers(spec, context, tool)) return null;
   if (!stringList(spec.modes).includes(context[spec.modeField])) return null;
   if (!approvingDecision(readDecision())) return null;
   return { marker: { ts: now, type: 'tool_approval_sent', tool }, reply: JSON.stringify(spec.reply) };

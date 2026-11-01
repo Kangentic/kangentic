@@ -38,6 +38,7 @@ const KNOWN_KINDS = new Set([
   'setDetail',
   'setTypeWhen',
   'setToolWhen',
+  'markSubagentLaunch',
   'setTypeWhenDetailContains',
   'setTypeWhenDetailMatches',
   'extractDetailPattern',

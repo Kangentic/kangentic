@@ -211,7 +211,12 @@ interface HostSession {
   livePtyId: number | null;
   /** `userInput` was sent for this session. */
   userInputReported: boolean;
+  /** When the last `userInput` went to main (epoch ms), for its throttle. */
+  lastUserInputReportAt: number | null;
 }
+
+/** At most one `userInput` report per session this often: a person typing sends one every ten seconds. */
+const USER_INPUT_REPORT_INTERVAL_MS = 10_000;
 
 /**
  * A PTY root the host can pin (`PinnedRoot`). The pin is taken once node-pty
@@ -465,6 +470,7 @@ export class PtyHostCore {
       activity: undefined,
       livePtyId: params.ptyId,
       userInputReported: false,
+      lastUserInputReportAt: null,
     });
     this.bufferManager.initSession(
       params.sessionId,
@@ -705,12 +711,23 @@ export class PtyHostCore {
     if (after !== before) this.deps.emit({ type: 'promptDraft', sessionId, draft: after });
   }
 
-  /** Tell main, once, that a human has used this session. */
+  /**
+   * Tell main that a human used this session: at once the first time, then at
+   * most once every `USER_INPUT_REPORT_INTERVAL_MS`, so main knows when a
+   * person last typed without an event per keystroke.
+   */
   private reportUserInput(sessionId: string): void {
     const session = this.sessions.get(sessionId);
-    if (!session || session.userInputReported) return;
+    if (!session) return;
+    const now = Date.now();
+    // A wall clock stepped back (an NTP step, a VM resume) reports at once,
+    // rather than holding every report until the clock catches up.
+    const sinceLastReport = session.lastUserInputReportAt === null ? null : now - session.lastUserInputReportAt;
+    if (session.userInputReported && sinceLastReport !== null
+      && sinceLastReport >= 0 && sinceLastReport < USER_INPUT_REPORT_INTERVAL_MS) return;
     session.userInputReported = true;
-    this.deps.emit({ type: 'userInput', sessionId });
+    session.lastUserInputReportAt = now;
+    this.deps.emit({ type: 'userInput', sessionId, at: now });
   }
 
   private clearDraft(sessionId: string): void {

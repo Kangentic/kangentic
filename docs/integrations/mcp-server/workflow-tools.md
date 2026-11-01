@@ -54,7 +54,8 @@ there (`Waits for #7 on "API"`), since task numbers count per board. A blocker w
 database will not open reads `a task on "API" that could not be read`, and still holds its task. A
 link to a deleted task, to one in a removed project, or to one that has left the workflow is left
 out: the engine drops it on its next pass. A task a running workflow is stalled on (its recovery
-ran out, a low-memory pause stopped it, or it cannot start) ends its line with `Stalled: <why>`,
+ran out, the low-memory pause stopped it more often than its memory resumes allow, or it cannot
+start) ends its line with `Stalled: <why>`,
 and so does its `stalled` field. `data`
 carries every task's `runSettings` in the task row's shape.
 

@@ -90,8 +90,9 @@ Two more causes were found by live testing, neither visible to any DOM-presence 
   return to `loading`, and a refetch that finds nothing must not blank an already-showing pane.
 - **Retention is invisible, not absent.** Hide with `opacity: 0`; NEVER `visibility: hidden` and
   never offscreen positioning. Both stop the guest compositing, which makes
-  `Page.captureScreenshot` hang forever and wedges that guest's CDP queue (measured on Electron
-  41; an `opacity: 0` subtree composites normally). See [[browser-automation-driver]].
+  `Page.captureScreenshot` hang until its timeout (measured on Electron 41 and 45; an `opacity: 0`
+  subtree composites normally). On Electron 41 the hung capture also wedged the guest's CDP queue;
+  on 45 the next command still answers. See [[browser-automation-driver]].
 - **Dormant windows stay out of shared state that belongs to the open project:** the serialized
   workspace (or they persist into another project's layout blob, or a parked window restores
   visible), the tile tree (or a leaf outlives the tree `applyWorkspace` replaces), the reported

@@ -222,6 +222,23 @@ export function setToolWhen(rule: ToolWhenRule): string {
 }
 
 /**
+ * Set `event.launchesSubagent` on a call to one of `tools`, the agent's own
+ * tools that start a subagent (Claude's Agent tool). The engine closes a
+ * permission prompt on a `subagent_start` only when the call the prompt
+ * awaited is one of these: then the approved call itself started the
+ * subagent. A parallel subagent's start says nothing about the prompt, and
+ * once cleared one 4 ms after it opened, with the prompt still on screen.
+ *
+ * Its own kind, so a stale `event-bridge.js` copy rejects it via `default` (a
+ * logged no-op). The flag is then never set, and an approved subagent call
+ * reads as a permission prompt until its own end.
+ */
+export function markSubagentLaunch(tools: string[]): string {
+  if (tools.length === 0) throw new Error('markSubagentLaunch requires at least one tool');
+  return encodeDirective('markSubagentLaunch', { tools });
+}
+
+/**
  * Change `event.type` to `to` when the ALREADY-EXTRACTED `event.detail`
  * contains `contains` (case-insensitive substring). Must be listed AFTER an
  * extractDetail directive. Classifying on the resolved detail (not a source

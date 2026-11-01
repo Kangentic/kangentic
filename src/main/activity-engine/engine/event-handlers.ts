@@ -215,7 +215,11 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
       if (event.tool) {
         // toolId may be undefined for adapters without correlation IDs;
         // the stack still tracks the name and falls back to LIFO matching.
-        state.pendingToolStack.push({ id: event.toolId, name: event.tool });
+        state.pendingToolStack.push({
+          id: event.toolId,
+          name: event.tool,
+          ...(event.launchesSubagent === true ? { launchesSubagent: true } : {}),
+        });
         state.currentTool = event.tool;
       }
       // A background launch arrives here, not as a BackgroundShellStart, when
@@ -508,12 +512,13 @@ export function updateCounters(state: SessionEngineState, event: SessionEvent): 
 
 /**
  * Update `permissionPending` based on the event. Permission is set by
- * `Idle` events with detail=permission, and cleared by signals from
- * the main agent (Prompt, Interrupted, SubagentStart, non-permission
- * Idle, depth-0 ToolStart, depth-0 ToolEnd of anything but a sibling
- * already running when the prompt opened) or by the awaited tool itself
- * starting/ending at ANY depth (`permissionAwaitedToolId` match - the
- * prompt was approved and the tool ran).
+ * `Idle` events with detail=permission, and cleared by the awaited tool
+ * itself starting/ending at ANY depth (`permissionAwaitedToolId` match - the
+ * prompt was approved and the tool ran), or by a wake from the main agent:
+ * Prompt, Interrupted, TurnFailed, a non-permission Idle, a SubagentStart
+ * when the awaited call is the one that starts subagents, and a depth-0
+ * ToolStart/ToolEnd that cannot be told apart from the awaited call (no id
+ * on one side). A parallel sibling's start, end or subagent never clears it.
  */
 export function updatePermissionFlag(state: SessionEngineState, event: SessionEvent): void {
   // Set on Idle/permission. Record which tool the prompt was raised for:
@@ -559,16 +564,31 @@ export function updatePermissionFlag(state: SessionEngineState, event: SessionEv
     (event.type === EventType.ToolStart || event.type === EventType.ToolEnd)
     && event.toolId !== undefined
     && event.toolId === state.permissionAwaitedToolId;
+  // A subagent's start answers the prompt only when the awaited call is the
+  // one that starts subagents: approving it is what starts this one. A
+  // parallel subagent launched in the same batch says nothing about the
+  // prompt. It once cleared an Artifact prompt 4 ms after it opened, the card
+  // read working, then idle, and a nudge's Enter approved the call.
+  const awaitedLaunchesSubagent = state.permissionAwaitedToolId !== null
+    && state.pendingToolStack.some((entry) => entry.id === state.permissionAwaitedToolId && entry.launchesSubagent === true);
+  // Another call's start or end at depth 0 answers the prompt only when the
+  // two cannot be told apart: no id on the event, or none on the awaited call.
+  // With both ids known, a different call is a parallel sibling, not the
+  // answer, and the prompt stays open until its own call starts or ends. A
+  // denial fires no hook at all; the transcript poll (`markPermissionRejected`)
+  // and the turn's own end close it.
+  const unattributedMainAgentTool = (event.type === EventType.ToolStart || event.type === EventType.ToolEnd)
+    && state.subagentDepth === 0
+    && (event.toolId === undefined || state.permissionAwaitedToolId === null);
   // Clear on signals from the main agent (depth 0) or unambiguous wakes.
   const isPermissionClearingSignal =
     awaitedToolResolved
     || event.type === EventType.Prompt
     || event.type === EventType.Interrupted
     || event.type === EventType.TurnFailed
-    || event.type === EventType.SubagentStart
+    || (event.type === EventType.SubagentStart && awaitedLaunchesSubagent)
     || (event.type === EventType.Idle && event.detail !== IdleReason.Permission)
-    || ((event.type === EventType.ToolStart || event.type === EventType.ToolEnd)
-        && state.subagentDepth === 0);
+    || unattributedMainAgentTool;
   if (isPermissionClearingSignal) clearPermissionWait(state);
 }
 

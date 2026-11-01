@@ -18,6 +18,10 @@ function fakeContext(overrides: {
   snapshot?: { permissionPending: boolean; permissionAwaitedToolId: string | null } | null;
   write?: ReturnType<typeof vi.fn>;
   writable?: boolean;
+  /** The session's open tool calls (`getOpenWork`). */
+  toolCalls?: Array<{ id: string | null; tool: string; since: number }>;
+  /** When a person last typed into the session (`getLastUserInputAt`). */
+  lastUserInputAt?: number | null;
 } = {}): IpcContext {
   const write = overrides.write ?? vi.fn();
   return {
@@ -25,6 +29,8 @@ function fakeContext(overrides: {
       getSession: vi.fn(() => (overrides.session === undefined ? { id: 'sess-1', status: 'running' } : overrides.session)),
       getActivityStatsSnapshot: vi.fn(() => (overrides.snapshot === undefined ? null : overrides.snapshot)),
       isWritable: vi.fn(() => overrides.writable ?? true),
+      getOpenWork: vi.fn(() => ({ toolCalls: overrides.toolCalls ?? [], backgroundShells: [], backgroundSubagents: [] })),
+      getLastUserInputAt: vi.fn(() => overrides.lastUserInputAt ?? null),
       write,
     },
   } as unknown as IpcContext;
@@ -136,6 +142,37 @@ describe('handleAnswerPermissionPrompt', () => {
     expect(response).toMatchObject({ ok: false, code: 'unknown-session' });
     expect(response.error).toMatch(/not accepting input/i);
     expect(write).not.toHaveBeenCalled();
+  });
+
+  // Task #952: a stray "1" reached two agents' input right after a prompt
+  // closed, likely a phone tap on a prompt the desktop already answered. The
+  // cause is unconfirmed, so the answer goes as before and the log says what
+  // it typed and whether someone typed after the call began: the evidence a
+  // fix needs.
+  it.each([
+    { case: 'someone typed after the call began', typedOffsetMs: 3_000, logged: ['after the call began'] },
+    { case: 'the last typing came before the call began', typedOffsetMs: -60_000, logged: ['Phone answered the Bash prompt', 'keys "1"'] },
+  ])('answers, and logs the answer when $case', ({ typedOffsetMs, logged }) => {
+    const write = vi.fn();
+    const since = Date.now() - 20_000;
+    const context = fakeContext({
+      snapshot: { permissionPending: true, permissionAwaitedToolId: 'tool-9' },
+      toolCalls: [{ id: 'tool-9', tool: 'Bash', since }],
+      lastUserInputAt: since + typedOffsetMs,
+      write,
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    try {
+      const response = handleAnswerPermissionPrompt(
+        fakeRequest({ sessionId: 'sess-1', promptId: 'sess-1:tool-9', keystrokes: '1' }),
+        context,
+      );
+      expect(response.ok).toBe(true);
+      expect(write).toHaveBeenCalledWith('sess-1', '1', 'user');
+      expect(log.mock.calls.some((call) => logged.every((part) => String(call[0]).includes(part)))).toBe(true);
+    } finally {
+      log.mockRestore();
+    }
   });
 
   it('rejects when the request carries a different sessionId than the awaited prompt was bound to', () => {

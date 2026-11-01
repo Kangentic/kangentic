@@ -566,11 +566,10 @@ export interface ScreenshotOptions {
 
 /**
  * `Page.captureScreenshot` waits for a composited frame, so it NEVER RESOLVES
- * when the guest is not being composited: a minimized or fully occluded host
- * window, a `visibility: hidden` or offscreen subtree. Worse than the missing
- * image, the un-settled command wedges that guest's CDP queue and every later
- * command stacks behind it, so one screenshot at the wrong moment bricks the
- * pane for the rest of the session.
+ * when the guest is not being composited: a minimized, hidden or fully
+ * occluded host window, a `visibility: hidden` or offscreen subtree. On
+ * Windows a locked screen counts as occluded, which is how an overnight
+ * workflow's captures failed (task #952).
  *
  * Measured on Electron 41: minimized and occluded hosts both hang indefinitely,
  * while an `opacity: 0` subtree in a visible window still composites and
@@ -578,6 +577,16 @@ export interface ScreenshotOptions {
  * precondition check cannot cover every case and this bound is the real
  * guarantee: the call fails cleanly and the agent gets an actionable error
  * rather than a tool call that never returns.
+ *
+ * Re-measured on Electron 45.1.0 (Chromium 156), Windows, with a `<webview>`
+ * guest: minimized, hidden and covered hosts all hang the capture, and so does
+ * `webContents.capturePage`, so it is no fallback; `setBackgroundThrottling
+ * (false)` changes nothing. A hung capture no longer wedges the guest: the next
+ * `Runtime.evaluate` answered at once, and a capture once the window was
+ * restored took 19 ms. Only turning off Chromium's occlusion tracking
+ * (`disable-backgrounding-occluded-windows` and the `CalculateNativeWinOcclusion`
+ * feature) let a covered host capture, in 22 ms, at the cost of a covered
+ * window painting on; a minimized host still hung with it.
  */
 export const SCREENSHOT_TIMEOUT_MS = 5000;
 
@@ -586,7 +595,7 @@ export class ScreenshotNotComposited extends Error {
     // The bound is interpolated, never restated: the agent-facing message, the
     // race below, and the test all have to move together when it changes.
     super(
-      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited (minimized, or fully covered by another window). Ask the user to bring the Kangentic window to the front, then retry. Other tools that do not need pixels, such as query_dom and click, still work.`,
+      `The Browser pane produced no frame within ${SCREENSHOT_TIMEOUT_MS / 1000}s, which means its window is not being composited (minimized, fully covered by another window, or the screen is locked). Retrying will not help until the window is on screen again. Tools that do not need pixels, such as query_dom, query_all and click, still work, so verify through them instead.`,
     );
     this.name = 'ScreenshotNotComposited';
   }

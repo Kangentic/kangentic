@@ -142,6 +142,18 @@ describe('parseConditionReply', () => {
     expect(answers.get(1)?.reason).toBe('all good');
   });
 
+  // Red before: a long reason was cut at 200 characters mid-word, and the
+  // workflow nudge that quoted it read "free memor." to the agent.
+  it('cuts a long reason after its last whole word, marked with an ellipsis', () => {
+    const longReason = `${'the gate was stopped while the machine ran low on '.repeat(4)}free memory and then`;
+    const reason = parseConditionReply(`C1: ${longReason} -> no`, 1).get(0)?.reason ?? '';
+    expect(reason.length).toBeLessThanOrEqual(203);
+    expect(reason.endsWith('...')).toBe(true);
+    const words = reason.slice(0, -3).split(' ');
+    // Every word it kept is a whole word of the original.
+    for (const word of words) expect(longReason.split(' ')).toContain(word);
+  });
+
   it('leaves out a label the reply skipped, and one out of range', () => {
     const answers = parseConditionReply('C2: yes - fine\nC9: yes - stray', 2);
     expect(answers.has(0)).toBe(false);

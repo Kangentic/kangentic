@@ -14,7 +14,9 @@ import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
 import { readLocalBranchSha } from '../git/worktree-head';
 import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
-import type { AutomationRunRepository } from '../db/repositories/automation-run-repository';
+import { workflowKeepsRuns, type AutomationRunRepository } from '../db/repositories/automation-run-repository';
+import { WorkflowRepository } from '../db/repositories/workflow-repository';
+import { getExistingProjectDb } from '../db/database';
 import type { LeftoverProcessEntry } from '../pty/process-tag/tagged-reap';
 
 
@@ -221,7 +223,15 @@ export function _resetTerminalTaskSweepForTests(): void {
 export function sweepAutomationRuns(automationRunRepo: AutomationRunRepository): number {
   try {
     const interrupted = automationRunRepo.markStaleRunsInterrupted(PROCESS_STARTED_AT);
-    automationRunRepo.pruneTo();
+    // A workflow's tasks keep every run until it has been done a day (task #952).
+    // With that unreadable, nothing is pruned this open: a prune cannot be undone.
+    let keepWorkflowIds: string[] | null = null;
+    try {
+      keepWorkflowIds = automationRunRepo.workflowIdsKeepingRuns(Date.now(), workflowHomedElsewhereKeepsRuns);
+    } catch (keepError) {
+      console.warn('[automations] Could not read which workflows keep their runs, so none were pruned:', keepError);
+    }
+    if (keepWorkflowIds !== null) automationRunRepo.pruneTo(undefined, keepWorkflowIds);
     if (interrupted > 0) {
       console.log(`[automations] Marked ${interrupted} interrupted run(s) from a previous session`);
     }
@@ -230,6 +240,22 @@ export function sweepAutomationRuns(automationRunRepo: AutomationRunRepository):
     // A project that cannot sweep is still a usable project.
     console.warn('[automations] Run sweep failed:', sweepError);
     return 0;
+  }
+}
+
+/**
+ * Whether a workflow homed in another project still keeps its tasks' runs,
+ * read from that project's own database. Never creates one: a home that is gone
+ * took its workflow with it, so nothing is kept for it.
+ */
+function workflowHomedElsewhereKeepsRuns(homeProjectId: string, workflowId: string): boolean {
+  try {
+    const homeDb = getExistingProjectDb(homeProjectId);
+    const workflow = homeDb ? new WorkflowRepository(homeDb).getById(workflowId) : undefined;
+    return workflow !== undefined && workflowKeepsRuns(workflow.state, workflow.finished_at, Date.now());
+  } catch {
+    // Unreadable: keep, since a prune cannot be taken back.
+    return true;
   }
 }
 

@@ -225,15 +225,29 @@ describe('ActivityEngine: the kind of a permission wait', () => {
       expect(engine.getState(SESSION_ID)?.permissionWaitKind).toBeNull();
     });
 
-    it('still ends on a new depth-0 tool start, the agent moving on', () => {
+    // Task #952: the wait ends on the awaited tool's own end, never on another
+    // tool's event. A concurrent batch starts its tools together, so a start
+    // after the prompt opened is a sibling as often as the agent moving on, and
+    // an early clear let a nudge type into the open prompt. A denied prompt,
+    // which ends no tool, is cleared by the transcript's rejection poll, and
+    // any wait by the turn's own end.
+    it('holds through a new depth-0 tool start with another id: only the awaited tool ends it', () => {
       for (const event of capturedSequence) engine.processEvent(SESSION_ID, event);
       engine.processEvent(SESSION_ID, plain(EventType.ToolStart, { tool: 'Read', toolId: 'read-1' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+      engine.processEvent(SESSION_ID, plain(EventType.ToolEnd, { tool: 'AskUserQuestion', toolId: 'toolu_01Djd9eTR9LCB2GwUoBSMm6B' }));
       expect(engine.getState(SESSION_ID)?.permissionPending).toBe(false);
     });
 
-    it('a sibling counts once: a second end with the same id clears as before', () => {
+    it('holds through a sibling\'s second end with the same id', () => {
       for (const event of capturedSequence) engine.processEvent(SESSION_ID, event);
       engine.processEvent(SESSION_ID, plain(EventType.ToolEnd, { tool: 'ToolSearch', toolId: 'toolu_017cVNhQJz8pYdmH74NEBNuM' }));
+      expect(engine.getState(SESSION_ID)?.permissionPending).toBe(true);
+    });
+
+    it('ends on the turn\'s own end, for a wait whose tool never ends (a denied prompt)', () => {
+      for (const event of capturedSequence) engine.processEvent(SESSION_ID, event);
+      engine.processEvent(SESSION_ID, plain(EventType.Idle));
       expect(engine.getState(SESSION_ID)?.permissionPending).toBe(false);
     });
 

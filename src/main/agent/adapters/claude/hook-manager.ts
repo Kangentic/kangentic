@@ -1,11 +1,19 @@
 import path from 'node:path';
 import { EventType } from '../../../../shared/types';
 import { filterKangenticHooks, buildBridgeCommand, safelyUpdateSettingsFile, type HookShell } from '../../shared/hook-utils';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractPlanMode, markSubagentLaunch, setDetail, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches, setWaitKind, setWaitKindWhen } from '../../shared/directive-builders';
 import { PLAN_APPROVAL_MODE, PLAN_APPROVAL_TOOL_INPUT, type PlanApprovalHookSpec } from '../../shared/plan-approval-hook';
 import { BACKGROUND_SHELL_HINT_TEXT, type BackgroundShellHintSpec } from '../../shared/background-shell-hint-hook';
 import { NO_ACTIVITY_HOLD_FLAG } from '../../../../shared/background-shell-hold';
 import { CLAUDE_PLAN_TOOL_APPROVAL_MATCHER } from './plan-tool-approval';
+import { CLAUDE_SUBAGENT_SPAWN_TOOL } from './subagent-usage-parser';
+
+/**
+ * The tools a Claude call starts a subagent with: `Agent` in current CLIs
+ * (the replay captures under `tests/fixtures/replay/` name it so), and the
+ * older `Task`, which the subagent sidecars still record.
+ */
+const CLAUDE_SUBAGENT_LAUNCH_TOOLS = ['Agent', CLAUDE_SUBAGENT_SPAWN_TOOL];
 
 /** All Claude Code hook event names (settings.json keys). */
 export const ClaudeHookEvent = {
@@ -233,7 +241,11 @@ export function buildHooks(
         // memo, and its PostToolUse still promotes it to a named shell. The
         // engine reads the no-activity-hold flag on either event (task #857).
         setTypeWhen({ whenTool: 'Bash', nested: ['tool_input', 'run_in_background'], equals: 'true', to: EventType.BackgroundShellStart }),
-        setTypeWhen({ field: 'tool_name', equals: 'KillBash', to: EventType.BackgroundShellEnd })) }] },
+        setTypeWhen({ field: 'tool_name', equals: 'KillBash', to: EventType.BackgroundShellEnd }),
+        // The calls that start a subagent: `Agent`, and `Task` on older CLIs.
+        // Only such a call's own approval may let a `subagent_start` close the
+        // permission prompt it awaited (`updatePermissionFlag`).
+        markSubagentLaunch(CLAUDE_SUBAGENT_LAUNCH_TOOLS)) }] },
     ],
     [H.PostToolUse]: [
       ...(existingHooks[H.PostToolUse] || []),

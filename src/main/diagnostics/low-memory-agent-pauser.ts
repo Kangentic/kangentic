@@ -14,6 +14,8 @@ import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { getProjectRepos } from '../ipc/helpers';
 import type { IpcContext } from '../ipc/ipc-context';
 import { noteWorkflowTaskPaused } from '../workflows/workflow-recovery';
+import { isInWorkingWait } from '../workflows/workflow-recovery-state';
+import type { OpenWork } from '../activity-engine/open-work-ledger';
 import {
   createIdleAgentPauser,
   isPauseEligible,
@@ -46,8 +48,15 @@ export function collectIdleAgentFacts(context: IpcContext): IdleAgentFacts[] {
       focused: focused.has(summary.id),
       hasPendingSubmit: context.terminalSubmitScheduler.hasPending(summary.taskId),
       hasPendingDelivery: hasPendingMessageDelivery(summary.taskId),
+      hasOpenBackgroundWork: hasOpenBackgroundWork(sessionManager.getOpenWork(summary.id)),
+      inWorkingWait: isInWorkingWait(summary.taskId),
     };
   });
+}
+
+/** Work the agent left running that it will come back to: a held shell, a background subagent. */
+function hasOpenBackgroundWork(openWork: OpenWork): boolean {
+  return openWork.backgroundShells.length > 0 || openWork.backgroundSubagents.length > 0;
 }
 
 /** The push the renderer's toast and Review list read, with the names resolved here. */
@@ -79,6 +88,15 @@ export function setSimulatedLowMemory(on: boolean): void {
   simulatedLowMemory = on;
 }
 
+/**
+ * The sample as every low-memory reader sees it: forced low while dev's
+ * `dev.simulateLowMemory` is on, so the pause and the workflow's memory gate
+ * read the same. Production builds drop the simulation (`__KANGENTIC_DEV__`).
+ */
+export function sampleAsRead(sample: HostMemorySample): HostMemorySample {
+  return __KANGENTIC_DEV__ && simulatedLowMemory ? simulateLowMemorySample(sample) : sample;
+}
+
 /** The sample with this platform's reading forced low. */
 export function simulateLowMemorySample(sample: HostMemorySample): HostMemorySample {
   return {
@@ -102,7 +120,9 @@ export function createLowMemoryAgentPauser(getContext: () => IpcContext | null):
       if (!context) return false;
       const outcome = await pauseTaskSession(context, facts.taskId, {
         projectId: facts.projectId,
-        suspendedBy: 'auto',
+        // Its own source, so a restart still knows which running workflow's
+        // tasks come back by themselves once memory recovers.
+        suspendedBy: 'low_memory',
         // The agent may have started working, the user may have typed into
         // it, resumed it onto a new session or moved it, while this waited
         // for the task lock. Decide again on what holds now.
@@ -126,7 +146,7 @@ export function createLowMemoryAgentPauser(getContext: () => IpcContext | null):
   });
   return {
     onSample(sample) {
-      pauser.onSample(__KANGENTIC_DEV__ && simulatedLowMemory ? simulateLowMemorySample(sample) : sample);
+      pauser.onSample(sampleAsRead(sample));
     },
   };
 }

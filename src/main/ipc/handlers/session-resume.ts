@@ -43,7 +43,7 @@ import { abortInFlightResume, registerResumeController, releaseResumeController 
 import { claimSpawnProgress } from '../../transition-engine/spawn-progress';
 import { isAbortError } from '../../../shared/abort-utils';
 import { resumeBlockMessage, resumeBlockReasonForTask } from '../../../shared/session-resume-eligibility';
-import type { Session, Task } from '../../../shared/types';
+import type { Session, SessionResumer, Task } from '../../../shared/types';
 import type { SpawnFailureStep } from '../helpers/task-git';
 import type { IpcContext } from '../ipc-context';
 
@@ -128,6 +128,12 @@ export interface ResumeTaskSessionOptions {
    * passes none: the renderer toasts the rejection itself.
    */
   onFailed?: (step: ResumeFailureStep, error: unknown, task: Task) => void;
+  /**
+   * Who resumes it when it is not a person: the workflow's memory resume
+   * passes `'memory'`, which rides the resume's `'session-resumed'` event so
+   * workflow recovery hands the turn to its unblock pass at once.
+   */
+  resumedBy?: SessionResumer;
 }
 
 /**
@@ -322,6 +328,7 @@ export function resumeTaskSession(
                   suppressAutoCommand: enteredFromDone,
                   continuationPrompt: options.resumePrompt,
                   resumesEntry: true,
+                  ...(options.resumedBy ? { resumedBy: options.resumedBy } : {}),
                 });
                 // `spawnAgent` reports a start that failed itself (the spawn-blocked
                 // notice), as it does for a move, so a Resume that started nothing
@@ -335,7 +342,11 @@ export function resumeTaskSession(
                 // A Resume brings back the conversation that was paused. An
                 // 'always_spawn_new' column forces a fresh one on ENTRY only;
                 // forwarding that here retired the paused conversation.
-                const overrides = { ...resolveSpawnOverrides(current, currentLane, project), forceFresh: false };
+                const overrides = {
+                  ...resolveSpawnOverrides(current, currentLane, project),
+                  forceFresh: false,
+                  ...(options.resumedBy ? { resumedBy: options.resumedBy } : {}),
+                };
                 // Messages held for the task go out with this resume, after the
                 // prompt it carries (a command from the task's Commands menu),
                 // or as the whole opening message of a plain Resume.

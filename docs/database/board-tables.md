@@ -366,10 +366,10 @@ prefix is `workflow-step` for `workflow_step`, `workflow-stalled` for `workflow_
 | `type` | Written by | What it holds |
 |--------|------------|---------------|
 | `workflow_step` | the step check (`recordWorkflowStep`) | Its answer: `succeeded` (done) or `skipped` (not done) with `condition_met` 1 or 0. A check that could not answer has `condition_met` NULL: `failed` when the call failed, `skipped` once a visit when no Automation agent can run one. A NULL row judged nothing, so it never counts as an answer (`hasWorkflowStepSince`). |
-| `workflow_recovery` | each recovery attempt (`recordWorkflowRecovery`) | `succeeded` for a nudge sent, rewritten to `failed` when its turn failed. Also `failed` for a nudge not delivered, and `skipped` for one held off while the user was there. A restart counts these to resume the schedule. |
+| `workflow_recovery` | each recovery attempt (`recordWorkflowRecovery`) | `succeeded` for a nudge sent, rewritten to `failed` when its turn failed. Also `failed` for a nudge not delivered, or one whose keys reached a permission prompt (which does not count), and `skipped` for one held off while the user was there, or held once per low spell while memory read low. A restart counts these to resume the schedule. |
 | `workflow_stalled` | the stall notice (`recordWorkflowStall`) | The notice's latch and the card's "Stalled" mark (`listStalledTasks`). `condition_reason` is why, and `attempts` holds the nudges that had run by then. |
 | `workflow_waiting` | a wait on the user that was told (`recordWorkflowWaiting`) | The boundary a fresh recovery counts from, and what keeps a task waiting on a question from being armed again (`isWaitingOnUser`). |
-| `workflow_recovery_start` | a recovery that starts over (`recordWorkflowRecoveryStart`) | After a stall, a turn recovery did not start stopped again. The row is where the next recovery counts from, so that stall gets its own nudges and its own notice. |
+| `workflow_recovery_start` | a recovery that starts over (`recordWorkflowRecoveryStart`) | After a stall, a turn recovery did not start stopped again. The row is where the next recovery counts from, so that stall gets its own nudges and its own notice. Also written, with its reason in `detail`, when Kangentic started the agent again after a restart and when a low-memory pause stopped it. |
 | `workflow_interrupt` | the hang check (`recordWorkflowInterrupt`) | A turn shown working whose agent wrote nothing past its limit, interrupted with the CLI's own key. Never counted as a recovery attempt. |
 
 Three indices, one per question the log is asked:
@@ -391,6 +391,10 @@ It also keeps the newest enter run of a live task with no session record in the 
 now, when that column is not To Do or Done. The startup reconcile reads it to leave alone a task
 whose agent failed to start after its enter group ran, rather than run that group again at every
 launch, and the prune runs unawaited beside that reconcile.
+And it keeps every run of a task in a workflow still running or paused, or done for less than 24
+hours (`workflowIdsKeepingRuns`, task #952), so the night a workflow ran can still be read the
+morning after. A workflow homed on another board is read from that board's own database. When
+the sweep cannot tell which workflows keep their runs, it prunes nothing that open.
 The sweep is required for honesty: `synchronous-shutdown.md` forbids awaiting a drain on quit, so a
 `running` row at boot is a known orphan, and without this "these always run" is false on every
 restart.

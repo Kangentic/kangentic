@@ -22,6 +22,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { createPasteEngine, sanitizeForPaste, PasteSubmitError } from '../../src/main/pty/paste-engine';
+import { AUTOMATED_KEYS_HOLD_LOG_MS, resetAutomatedKeysGuardForTests } from '../../src/main/pty/automated-keys-guard';
 import type { SubmissionVerifier } from '../../src/shared/types';
 
 class MockSessionManager extends EventEmitter {
@@ -70,6 +71,19 @@ class MockSessionManager extends EventEmitter {
 
   emitActivity(sessionId: string, activity: string): void {
     this.emit('activity', sessionId, activity, false);
+  }
+
+  /** Why the session may not take automated keys now (`SessionManager.automatedKeysBlocker`). */
+  blocker: string | null = null;
+
+  automatedKeysBlocker(_sessionId: string): string | null {
+    return this.blocker;
+  }
+
+  /** The blocker cleared: the tool call ended, as its hook event says. */
+  clearBlocker(sessionId: string): void {
+    this.blocker = null;
+    this.emit('event', sessionId, { type: 'tool_end' });
   }
 }
 
@@ -655,6 +669,163 @@ describe('PasteEngine.pasteAndSubmit', () => {
     await tick();
 
     await expect(promise).resolves.toBeUndefined();
+  });
+});
+
+// Task #952: an automated paste (a column message, a workflow nudge) types
+// nothing while a permission prompt or a tool call is open, or its Enter would
+// answer the prompt. A person's own paste is theirs to send.
+describe('PasteEngine.pasteAndSubmit for an automated sender', () => {
+  let mockSessionManager: MockSessionManager;
+  let engine: ReturnType<typeof createPasteEngine>;
+
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout', 'Date'] });
+    vi.spyOn(console, 'log').mockImplementation(() => undefined);
+    resetAutomatedKeysGuardForTests();
+    mockSessionManager = new MockSessionManager();
+    engine = createPasteEngine(mockSessionManager as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+    mockSessionManager.removeAllListeners();
+  });
+
+  /** From the write to the Enter: the redraw, then the settle window and its floor. */
+  async function settleAfterWrite(): Promise<void> {
+    mockSessionManager.emitData('s1', '\x1b[K[Pasted text +0 lines]');
+    await tick();
+    vi.advanceTimersByTime(250);
+    await tick();
+    vi.advanceTimersByTime(750);
+    await tick();
+  }
+
+  async function finishWithEvidence(promise: Promise<void>): Promise<void> {
+    mockSessionManager.flushDrain();
+    await tick();
+    mockSessionManager.emitActivity('s1', 'thinking');
+    await tick();
+    await expect(promise).resolves.toBeUndefined();
+  }
+
+  it('writes nothing while a tool call is open, and pastes once its end arrives', async () => {
+    mockSessionManager.blocker = 'the Artifact tool call has not ended';
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    await tick();
+    // Not even the drain: the paste has not started.
+    expect(mockSessionManager.drainResolvers).toHaveLength(0);
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+
+    mockSessionManager.clearBlocker('s1');
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+
+    await settleAfterWrite();
+    expect(mockSessionManager.writeCalls).toEqual([{ id: 's1', data: '\r' }]);
+    await finishWithEvidence(promise);
+  });
+
+  it('holds the Enter when a prompt opens between the write and the Enter', async () => {
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+
+    mockSessionManager.blocker = 'a permission prompt is open';
+    await settleAfterWrite();
+    expect(mockSessionManager.writeCalls).toHaveLength(0);
+
+    mockSessionManager.clearBlocker('s1');
+    await tick();
+    expect(mockSessionManager.writeCalls).toEqual([{ id: 's1', data: '\r' }]);
+    await finishWithEvidence(promise);
+  });
+
+  // A message for an agent busy in a long tool call is held, never dropped: an
+  // earlier 10-minute bound reported it "Not sent" (task #952).
+  it('holds as long as the call stays open, past the old 10-minute bound, then pastes', async () => {
+    mockSessionManager.blocker = 'the Bash tool call has not ended';
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    await tick();
+    vi.advanceTimersByTime(AUTOMATED_KEYS_HOLD_LOG_MS * 3);
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+    expect(mockSessionManager.drainResolvers).toHaveLength(0);
+
+    mockSessionManager.clearBlocker('s1');
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+    await settleAfterWrite();
+    await finishWithEvidence(promise);
+  });
+
+  it('ends a hold on its signal, having typed nothing', async () => {
+    mockSessionManager.blocker = 'a permission prompt is open';
+    const controller = new AbortController();
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge', signal: controller.signal });
+    const settled = promise.catch((error: unknown) => error);
+    await tick();
+    controller.abort();
+    await tick();
+
+    const error = await settled;
+    expect(error).toBeInstanceOf(PasteSubmitError);
+    expect((error as PasteSubmitError).code).toBe('aborted');
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+    expect(mockSessionManager.writeCalls).toHaveLength(0);
+  });
+
+  // An agent's `now` send answers its own tool call: a tool call that opened
+  // after the send's check fails it at the caller's bound, not after the tool.
+  it('gives up as held at the caller\'s clearance bound, having typed nothing', async () => {
+    mockSessionManager.blocker = 'the Bash tool call has not ended';
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'mcp', clearanceTimeoutMs: 30_000 });
+    const settled = promise.catch((error: unknown) => error);
+    await tick();
+    vi.advanceTimersByTime(29_000);
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+    vi.advanceTimersByTime(2_000);
+    await tick();
+
+    const error = await settled;
+    expect((error as PasteSubmitError).code).toBe('held');
+    expect((error as PasteSubmitError).message).toContain('the Bash tool call has not ended');
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+  });
+
+  it('gives up as held, having typed nothing, when the session exits during the hold', async () => {
+    mockSessionManager.blocker = 'a permission prompt is open';
+    const promise = engine.pasteAndSubmit('s1', 'hello', { automated: true, source: 'workflow-nudge' });
+    const settled = promise.catch((error: unknown) => error);
+    await tick();
+    mockSessionManager.emit('exit', 's1', 0);
+    await tick();
+
+    const error = await settled;
+    expect((error as PasteSubmitError).code).toBe('held');
+    expect((error as PasteSubmitError).message).toContain('the session exited');
+    expect(mockSessionManager.writeRawCalls).toHaveLength(0);
+  });
+
+  it('pastes a person\'s own paste whatever is open: the guard is for automated keys', async () => {
+    mockSessionManager.blocker = 'a permission prompt is open';
+    const promise = engine.pasteAndSubmit('s1', 'hello');
+    await tick();
+    mockSessionManager.flushDrain();
+    await tick();
+    expect(mockSessionManager.writeRawCalls).toHaveLength(1);
+    await settleAfterWrite();
+    expect(mockSessionManager.writeCalls).toHaveLength(1);
+    await finishWithEvidence(promise);
   });
 });
 

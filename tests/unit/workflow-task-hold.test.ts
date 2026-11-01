@@ -237,6 +237,7 @@ describe('applyAutomationsHoldChange', () => {
         agentSessionId: 'agent-session-1',
         isolatedSwimlaneId: 'column-isolated',
         workSerial: 41,
+        resumedBy: 'user',
       });
       expect(context.sessionManager.currentWorkSerial).toHaveBeenCalledWith('session-1');
       // The recovery's start row first: the catch-up's verdict rebuilds from it.

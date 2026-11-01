@@ -20,10 +20,16 @@
  * reacting to. Driving a TUI model that actually emits bytes tests the real
  * mechanism; the settle windows are small, so the suite stays fast.
  */
-import { describe, it, expect, vi } from 'vitest';
-import { TerminalSubmit, type CommandVerifier } from '../../src/main/pty/terminal-submit';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import {
+  TerminalSubmit,
+  type CommandVerifier,
+  type SubmitKeystrokesOptions,
+  type SubmitKeystrokesResult,
+} from '../../src/main/pty/terminal-submit';
 import type { PasteEngine, PasteOptions } from '../../src/main/pty/paste-engine';
 import type { SessionManager } from '../../src/main/pty/session-manager';
+import { EventType, IdleReason, PromptReason } from '../../src/shared/types';
 import {
   SimulatedSessionManager,
   DEFAULT_TUI_OPTIONS,
@@ -570,5 +576,359 @@ describe('TerminalSubmit', () => {
       expect((second.firstSentAt ?? 0) > (first.firstSentAt ?? 0)).toBe(true);
       sessionManager.dispose();
     }, 20_000);
+  });
+
+  /**
+   * The automated-keys guard (`automated-keys-guard.ts`) and the prompt hook.
+   * A permission prompt takes typed keys as its answer, so nothing goes in
+   * while the session reports one, or a tool call with no end. And under load
+   * the prompt hook can land before the transcript does.
+   */
+  describe('automated keys guard and the prompt hook', () => {
+    it('types nothing while the session cannot take keys, then delivers once it clears', async () => {
+      const { submit, sessionManager } = makeSubmit();
+      sessionManager.keysBlocker = 'a permission prompt is open';
+      const delivery = submit.submitKeystrokes(SESSION_ID, ['carry on']);
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(sessionManager.writes).toEqual([]);
+
+      sessionManager.setKeysBlocker(null);
+      const result = await delivery;
+      expect(result.outcome).toBe('unconfirmed');
+      expect(sessionManager.writes).toContain('carry on');
+      sessionManager.dispose();
+    });
+
+    it('never presses Enter while a prompt that opened mid-burst is on screen', async () => {
+      // The text is typed, then the session reports a tool call with no end
+      // before the Enter: the Enter waits, and the abort ends the burst with
+      // no Enter at all.
+      const { submit, sessionManager } = makeSubmit();
+      const controller = new AbortController();
+      const typed = new Promise<void>((resolve) => {
+        sessionManager.on('data-tap', () => {
+          if (sessionManager.writes.includes('carry on') && sessionManager.keysBlocker === null) {
+            sessionManager.keysBlocker = 'the Artifact tool call has not ended';
+            resolve();
+          }
+        });
+      });
+      const delivery = submit.submitKeystrokes(SESSION_ID, ['carry on'], { signal: controller.signal });
+      await typed;
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      controller.abort();
+
+      const result = await delivery;
+      expect(result.outcome).toBe('aborted');
+      expect(sessionManager.writes).not.toContain('\r');
+      sessionManager.dispose();
+    });
+
+    it('confirms a submitted message from the prompt hook when the transcript is slow', async () => {
+      // One overnight nudge's prompt hook landed 3.1 s after its Enter, before
+      // the transcript, and the delivery was logged as a failure.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier: CommandVerifier = async () => false;
+      sessionManager.on('data-tap', () => {
+        if (sessionManager.writes.includes('\r')) {
+          sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+        }
+      });
+
+      const result = await submit.submitKeystrokes(SESSION_ID, [{ text: 'carry on', verify: 'submitted' }], { verifier });
+
+      expect(result.outcome).toBe('confirmed');
+      expect(sessionManager.writes.filter((data) => data === '\r')).toHaveLength(1);
+      sessionManager.dispose();
+    }, 20_000);
+
+    it('does not take the prompt hook for a command the adapter emits itself', async () => {
+      // `command-match` must match exactly in the transcript: a hook says a
+      // prompt landed, not that it was this command with these arguments.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier: CommandVerifier = async () => false;
+      sessionManager.on('data-tap', () => {
+        if (sessionManager.writes.includes('\r')) {
+          sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+        }
+      });
+
+      const result = await submit.submitKeystrokes(SESSION_ID, [{ text: '/effort high', verify: 'command-match' }], { verifier });
+
+      expect(result.outcome).toBe('failed');
+      sessionManager.dispose();
+    }, 30_000);
+
+    it('reports an Enter that landed on a prompt the app had not heard of yet, and presses no more', async () => {
+      // The prompt's hook arrives after the Enter, dated before it, and no
+      // prompt of ours follows: the Enter most likely answered the prompt.
+      const { submit, sessionManager } = makeSubmit();
+      const verifier: CommandVerifier = async () => false;
+      let raised = false;
+      sessionManager.on('data-tap', () => {
+        if (!raised && sessionManager.writes.includes('\r')) {
+          raised = true;
+          sessionManager.emit('event', SESSION_ID, { ts: Date.now() - 50, type: EventType.Idle, detail: IdleReason.Permission });
+        }
+      });
+
+      const result = await submit.submitKeystrokes(SESSION_ID, [{ text: 'carry on', verify: 'submitted' }], { verifier });
+
+      expect(result.reachedPermissionPrompt).toBe(true);
+      expect(result.outcome).toBe('failed');
+      expect(sessionManager.writes.filter((data) => data === '\r')).toHaveLength(1);
+      sessionManager.dispose();
+    }, 20_000);
+  });
+
+  /**
+   * Scenarios that sit through production's long poll-only windows (the 2 s
+   * late-flush grace plus the 8 s passive-evidence window, about 12 s of real
+   * time per burst) or that need a hold to stay held. They drive the same
+   * simulated TUI on a fake clock: the simulator's timers and its `Date.now()`
+   * stamps are faked together with the burst's own, so the handshake still
+   * reacts to bytes the simulated TUI emits and no assertion waits on the wall
+   * clock.
+   */
+  describe('on a fake clock', () => {
+    const simulatedManagers: SimulatedSessionManager[] = [];
+
+    /** Advance the fake clock in small steps until `promise` settles, so every timer fires in order. */
+    async function runToCompletion<Value>(promise: Promise<Value>, budgetMs = 60_000): Promise<Value> {
+      let settled = false;
+      void promise.then(
+        () => { settled = true; },
+        () => { settled = true; },
+      );
+      for (let elapsedMs = 0; elapsedMs < budgetMs && !settled; elapsedMs += 25) {
+        await vi.advanceTimersByTimeAsync(25);
+      }
+      if (!settled) throw new Error(`the burst was still pending after ${budgetMs} ms of fake time`);
+      return promise;
+    }
+
+    /** Run `callback` synchronously right after the `enterNumber`th Enter is written. */
+    function onEnterWrite(sessionManager: SimulatedSessionManager, enterNumber: number, callback: () => void): void {
+      const originalWrite = sessionManager.write.bind(sessionManager);
+      let enterCount = 0;
+      sessionManager.write = (writeSessionId: string, data: string): void => {
+        originalWrite(writeSessionId, data);
+        if (data !== '\r') return;
+        enterCount += 1;
+        if (enterCount === enterNumber) callback();
+      };
+    }
+
+    function countEnters(sessionManager: SimulatedSessionManager): number {
+      return sessionManager.writes.filter((data) => data === '\r').length;
+    }
+
+    function makeClockedSubmit(): ReturnType<typeof makeSubmit> {
+      const made = makeSubmit();
+      simulatedManagers.push(made.sessionManager);
+      return made;
+    }
+
+    beforeEach(() => {
+      vi.useFakeTimers();
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+      for (const manager of simulatedManagers.splice(0)) manager.dispose();
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+    });
+
+    describe('the keys guard between the Esc and the Enter', () => {
+      const PROMPT_OPEN = 'a permission prompt is open';
+      const slashCommand = [{ text: '/test', verify: 'none' as const }];
+      const keysTypedBeforeTheEnter = ['\x15', '/test', '\x1b'];
+
+      /**
+       * A prompt that opens while the Esc is in flight: after the clearance
+       * check that precedes the Esc, before the one that precedes the Enter.
+       * An Enter typed into it would answer it as yes.
+       */
+      function openPromptWhenEscIsWritten(sessionManager: SimulatedSessionManager): void {
+        const originalWrite = sessionManager.write.bind(sessionManager);
+        sessionManager.write = (writeSessionId: string, data: string): void => {
+          originalWrite(writeSessionId, data);
+          if (data === '\x1b') sessionManager.keysBlocker = PROMPT_OPEN;
+        };
+      }
+
+      it('writes no Enter, and ends aborted when cancelled, if a prompt opens while the Esc settles', async () => {
+        const { submit, sessionManager } = makeClockedSubmit();
+        openPromptWhenEscIsWritten(sessionManager);
+        const controller = new AbortController();
+        const delivery = submit.submitKeystrokes(SESSION_ID, slashCommand, { signal: controller.signal, source: 'test' });
+
+        // Well past the 400 ms Esc settle cap and the Enter's own drain: an
+        // Enter that skipped the second clearance check would be written by now.
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(sessionManager.writes).toEqual(keysTypedBeforeTheEnter);
+
+        controller.abort();
+        const result = await runToCompletion(delivery);
+
+        expect(result.outcome).toBe('aborted');
+        expect(sessionManager.writes).toEqual(keysTypedBeforeTheEnter);
+        // The Enter was never pressed, so the command carries no watermark.
+        expect(result.deliveries).toEqual([{ text: '/test', firstSentAt: null, confirmed: false }]);
+      });
+
+      it('returns failed with heldBy naming the exit, and no Enter, if the session exits while the Enter waits on the prompt', async () => {
+        const { submit, sessionManager } = makeClockedSubmit();
+        openPromptWhenEscIsWritten(sessionManager);
+        const delivery = submit.submitKeystrokes(SESSION_ID, slashCommand, { source: 'test' });
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(sessionManager.writes).toEqual(keysTypedBeforeTheEnter);
+
+        sessionManager.emit('exit', SESSION_ID);
+        const result = await runToCompletion(delivery);
+
+        expect(result.outcome).toBe('failed');
+        expect(result.heldBy).toBe('the session exited');
+        expect(result.unconfirmedCommands).toEqual(['/test']);
+        expect(result.deliveries).toEqual([{ text: '/test', firstSentAt: null, confirmed: false }]);
+        expect(sessionManager.writes).toEqual(keysTypedBeforeTheEnter);
+        // It was the check after the Esc that held the burst, not the one before it.
+        const warnings = vi.mocked(console.warn).mock.calls.map((call) => String(call[0]));
+        expect(warnings).toEqual([expect.stringContaining('held before Enter')]);
+      });
+
+      it('presses the Enter once the prompt has closed, so a hold delays the command and never drops it', async () => {
+        const { submit, sessionManager } = makeClockedSubmit();
+        openPromptWhenEscIsWritten(sessionManager);
+        const delivery = submit.submitKeystrokes(SESSION_ID, slashCommand, { source: 'test' });
+
+        await vi.advanceTimersByTimeAsync(5_000);
+        expect(sessionManager.writes).toEqual(keysTypedBeforeTheEnter);
+
+        sessionManager.setKeysBlocker(null);
+        const result = await runToCompletion(delivery);
+
+        expect(result.heldBy).toBeUndefined();
+        expect(result.outcome).toBe('unconfirmed');
+        expect(sessionManager.writes).toEqual([...keysTypedBeforeTheEnter, '\r']);
+        expect(result.deliveries[0].firstSentAt).not.toBeNull();
+      });
+    });
+
+    it('returns failed with heldBy naming the exit, having typed nothing, when the session exits while the burst is held', async () => {
+      const { submit, sessionManager } = makeClockedSubmit();
+      sessionManager.keysBlocker = 'a tool call has not ended';
+      const verifier = vi.fn<CommandVerifier>(async () => true);
+      const delivery = submit.submitKeystrokes(
+        SESSION_ID,
+        [{ text: 'carry on', verify: 'submitted' }],
+        { verifier, source: 'test' },
+      );
+
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(sessionManager.writes).toEqual([]);
+
+      sessionManager.emit('exit', SESSION_ID);
+      const result = await runToCompletion(delivery);
+
+      expect(result).toMatchObject({
+        outcome: 'failed',
+        heldBy: 'the session exited',
+        unconfirmedCommands: ['carry on'],
+        deliveries: [],
+        discardedDraft: null,
+        interruptedTurn: false,
+      });
+      expect(sessionManager.writes).toEqual([]);
+      expect(verifier).not.toHaveBeenCalled();
+    });
+
+    describe('the prompt hook as evidence of a submission', () => {
+      /** The transcript never shows the command, so only a hook can confirm it. */
+      const neverInTranscript: CommandVerifier = async () => false;
+      const submittedMessage = [{ text: 'carry on', verify: 'submitted' as const }];
+
+      it('still confirms from a prompt hook that lands after the late-flush grace but inside the passive window', async () => {
+        const { submit, sessionManager } = makeClockedSubmit();
+        // The fifth Enter ends the retries: one more 400 ms poll, then 2000 ms
+        // of late-flush grace, then the 8000 ms passive window. Five seconds
+        // after the fifth Enter is past the 2.4 s a late-flush grace alone
+        // would have watched and well inside the window that follows it.
+        onEnterWrite(sessionManager, 5, () => {
+          setTimeout(() => {
+            sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+          }, 5_000);
+        });
+
+        const result = await runToCompletion(
+          submit.submitKeystrokes(SESSION_ID, submittedMessage, { verifier: neverInTranscript }),
+        );
+
+        expect(result.outcome).toBe('confirmed');
+        expect(result.unconfirmedCommands).toEqual([]);
+        expect(result.deliveries).toEqual([{ text: 'carry on', firstSentAt: expect.any(Number), confirmed: true }]);
+        // The window only watches. It never presses a sixth Enter.
+        expect(countEnters(sessionManager)).toBe(5);
+      });
+
+      it.each<{ label: string; hookSessionId: string; detail: string | undefined; expectedOutcome: SubmitKeystrokesResult['outcome'] }>([
+        { label: 'a genuine prompt hook from the burst session', hookSessionId: SESSION_ID, detail: undefined, expectedOutcome: 'confirmed' },
+        { label: 'a synthetic pty-activity prompt', hookSessionId: SESSION_ID, detail: PromptReason.PtyActivity, expectedOutcome: 'failed' },
+        { label: 'a prompt hook from another session', hookSessionId: 'other-session', detail: undefined, expectedOutcome: 'failed' },
+      ])('takes $label as $expectedOutcome', async ({ hookSessionId, detail, expectedOutcome }) => {
+        // The first row is the control: the same harness, a hook the burst may
+        // trust. The other two must not confirm. A pty-activity prompt is the
+        // tracker inferring a prompt from output, and another session's hook
+        // says nothing about this prompt.
+        const { submit, sessionManager } = makeClockedSubmit();
+        onEnterWrite(sessionManager, 1, () => {
+          sessionManager.emit('event', hookSessionId, {
+            ts: Date.now(),
+            type: EventType.Prompt,
+            ...(detail === undefined ? {} : { detail }),
+          });
+        });
+
+        const result = await runToCompletion(
+          submit.submitKeystrokes(SESSION_ID, submittedMessage, { verifier: neverInTranscript }),
+        );
+
+        expect(result.outcome).toBe(expectedOutcome);
+        expect(result.unconfirmedCommands).toEqual(expectedOutcome === 'confirmed' ? [] : ['carry on']);
+      });
+
+      it.each<{
+        label: string;
+        options: SubmitKeystrokesOptions;
+        expectedOutcome: SubmitKeystrokesResult['outcome'];
+        expectedEnters: number;
+      }>([
+        { label: 'a warm session that clears a draft off the prompt', options: { pendingDraft: 'instead can we' }, expectedOutcome: 'confirmed', expectedEnters: 1 },
+        { label: 'a fresh spawn with an empty prompt', options: { freshlySpawned: true }, expectedOutcome: 'confirmed', expectedEnters: 1 },
+        { label: 'a user draft left in the prompt', options: { sendCtrlC: false, pendingDraft: 'instead can we' }, expectedOutcome: 'failed', expectedEnters: 5 },
+      ])('lets a prompt hook alone confirm only when nothing else sat in the prompt: $label is $expectedOutcome', async ({ options, expectedOutcome, expectedEnters }) => {
+        // A hook says a prompt was submitted, not whose text it was. After a
+        // clear, or on a fresh spawn with no draft, the only text in the prompt
+        // is ours. With a draft left in place the submitted prompt is the draft
+        // glued to our text, so the hook proves nothing about our message and
+        // the burst keeps retrying, then reports it unconfirmed.
+        const { submit, sessionManager } = makeClockedSubmit();
+        if (options.pendingDraft) sessionManager.tui.setDraft(options.pendingDraft);
+        onEnterWrite(sessionManager, 1, () => {
+          sessionManager.emit('event', SESSION_ID, { ts: Date.now(), type: EventType.Prompt });
+        });
+
+        const result = await runToCompletion(
+          submit.submitKeystrokes(SESSION_ID, submittedMessage, { ...options, verifier: neverInTranscript }),
+        );
+
+        expect(result.outcome).toBe(expectedOutcome);
+        expect(countEnters(sessionManager)).toBe(expectedEnters);
+        expect(result.deliveries.map((delivery) => delivery.confirmed)).toEqual([expectedOutcome === 'confirmed']);
+      });
+    });
   });
 });
