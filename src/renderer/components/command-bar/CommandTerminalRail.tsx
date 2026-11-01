@@ -10,12 +10,19 @@
  * the others when one is expanded, focused when they tile). A row's
  * right-click is that terminal's whole ... menu (`CommandTerminalRowMenu`).
  *
- * Earlier has no heading until a conversation has ended, then shows as many
- * rows as fit the rail and never scrolls: the list is a
- * way back to a recent conversation, not an archive. A row resumes its
- * conversation in place of an unused terminal (nothing has reached it yet), or
- * in a new terminal beside the others. At the cap both are off and say why. A
- * name the rail cuts short shows in full on hover.
+ * Earlier has no heading and no search field until a conversation has ended,
+ * then lists every conversation that can still be resumed, in a list that
+ * scrolls on its own. The rail's body scrolls too only when Running leaves it
+ * under its minimum. The agent's own transcript cleanup is what bounds the
+ * list. Search filters it as the user types: the name and first prompt
+ * at once from the list held here, the conversation text from main a beat
+ * later, added below so a row on screen never moves (`useEarlierSearch`).
+ *
+ * A row resumes its conversation in place of an unused terminal (nothing has
+ * reached it yet), or in a new terminal beside the others. At the cap that is
+ * off and says why. Its right-click is Resume, Rename and Remove, and the last
+ * two still work at the cap, since neither starts anything. A name the rail
+ * cuts short shows in full on hover.
  *
  * The rail's edge drags (200 to 400px, 300 by default) and it folds to a 37px
  * strip (`useCommandTerminalRail`), the project sidebar's pattern. The strip
@@ -27,34 +34,48 @@
  * the rail back without moving the pointer.
  */
 
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { History, PanelLeftClose, PanelLeftOpen } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
+import { CirclePlay, History, PanelLeftClose, PanelLeftOpen, Pencil, Search, Trash2, X } from 'lucide-react';
+import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { Tooltip } from '../Tooltip';
 import { tipLabel } from '../../utils/tooltip';
 import { formatMonthDay, formatTimeAgo } from '../../lib/datetime';
+import { asSentence, describeIpcError } from '../../lib/ipc-error';
 import { useSessionStore } from '../../stores/session-store';
 import { transientKey } from '../../stores/session-store/transient-session-slice';
+import { useToastStore } from '../../stores/toast-store';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
-import { commandTerminalHistoryName } from '../../../shared/command-terminal-name';
+import { commandTerminalHistoryName, commandTerminalTitle, normalizeCommandTerminalName } from '../../../shared/command-terminal-name';
 import { COMMAND_RAIL_MAX_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
 import { ActivityMark } from '../ActivityMark';
 import { agentActivityMark } from '../board/agent-wait';
+import { ConfirmDialog } from '../dialogs/ConfirmDialog';
+import { KebabMenuDivider, KebabMenuItem } from '../KebabMenu';
 import { StopButtonIcon } from './StopButtonIcon';
 import { NewTerminalButton } from './NewTerminalButton';
+import { CommandTerminalContextMenu } from './CommandTerminalContextMenu';
 import { CommandTerminalNameField } from './CommandTerminalNameField';
 import { CommandTerminalRowMenu } from './CommandTerminalRowMenu';
 import { useCommandTerminalHistory } from './useCommandTerminalHistory';
 import { useCommandTerminalRail } from './useCommandTerminalRail';
 import { useCommandTerminalRename } from './useCommandTerminalRename';
+import { useEarlierSearch } from './useEarlierSearch';
 import { useRailTerminalMenuActions, type RailCommandTerminal } from './useRailTerminalMenuActions';
+import type { EarlierMatch } from './earlier-search';
 import type { CommandTerminalHistoryEntry } from '../../../shared/types';
 
-/** One Earlier row (44px) plus the 2px gap between rows. */
+/** One Earlier row (44px) plus the 2px gap below it. */
 const EARLIER_ROW_PITCH_PX = 46;
-const EARLIER_ROW_GAP_PX = 2;
+/** A list heading, its 12px top padding, line and 4px bottom padding. */
+const EARLIER_HEADING_PX = 32;
+/** A status line's first guess, before it is measured. */
+const EARLIER_LINE_PX = 36;
+/** The empty state's first guess, before it is measured. */
+const EARLIER_EMPTY_PX = 124;
 
 const MINUTE_MS = 60 * 1000;
 const RECENT_MS = 2 * 24 * 60 * MINUTE_MS;
@@ -72,23 +93,6 @@ function useMinuteClock(): number {
     return () => clearInterval(timer);
   }, []);
   return now;
-}
-
-/** How many rows fit the list's height, measured as it changes. */
-function useRowsThatFit(listRef: React.RefObject<HTMLDivElement | null>): number {
-  const [rows, setRows] = useState(0);
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const measure = (): void => {
-      setRows(Math.max(0, Math.floor((list.clientHeight + EARLIER_ROW_GAP_PX) / EARLIER_ROW_PITCH_PX)));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(list);
-    return () => observer.disconnect();
-  }, [listRef]);
-  return rows;
 }
 
 /** What a terminal in the rail is doing, as its mark's tone and its tip say. */
@@ -197,7 +201,7 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
       {rename.editing ? (
         <CommandTerminalNameField
           initialName={name}
-          slot={terminal.slot}
+          placeholder={commandTerminalTitle(terminal.slot)}
           onCommit={(value, byKey) => rename.commit(value, byKey)}
           onCancel={rename.cancel}
           className="text-[13px] leading-5"
@@ -288,54 +292,194 @@ function RunningMark({ projectId, terminal, front, onBringToFront, onStop }: Run
   );
 }
 
-interface EarlierRowProps {
-  entry: CommandTerminalHistoryEntry;
-  atCap: boolean;
-  atCapReason: string;
-  now: number;
-  onResume: (entry: CommandTerminalHistoryEntry) => void;
-}
-
-/** One ended conversation. Its tip is its full name when the rail cuts it short. */
-function EarlierRow({ entry, atCap, atCapReason, now, onResume }: EarlierRowProps) {
-  const { t } = useLingui();
-  const name = commandTerminalHistoryName(entry) ?? t`Untitled conversation`;
-  const nameRef = useRef<HTMLSpanElement>(null);
-  const [cut, setCut] = useState(false);
-  useLayoutEffect(() => {
-    const span = nameRef.current;
-    if (!span) return;
-    const measure = (): void => setCut(span.scrollWidth > span.clientWidth);
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(span);
-    return () => observer.disconnect();
-  }, [name]);
-
+/** `text` with its matched stretch marked, as Quick Find marks a snippet. */
+function Highlighted({ text, matchStart, matchEnd }: { text: string; matchStart: number; matchEnd: number }) {
+  if (matchEnd <= matchStart) return <>{text}</>;
   return (
-    // No tip for a name shown whole: the row reads as what it resumes. At the
-    // cap it says why it is off.
-    <Tooltip label={tipLabel({ disabled: atCap, disabledReason: atCapReason, tip: cut ? name : undefined })}>
-      <button
-        type="button"
-        onClick={() => onResume(entry)}
-        disabled={atCap}
-        className="flex h-11 flex-shrink-0 items-center gap-2.5 rounded-md px-2 text-left transition-colors hover:bg-surface-hover disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
-        aria-label={t`Resume ${name}`}
-        data-testid="command-terminal-earlier-row"
-        data-agent-session-id={entry.agentSessionId}
-      >
-        <History size={16} className="flex-shrink-0 text-fg-faint" />
-        <span className="flex min-w-0 flex-col">
-          <span ref={nameRef} className="truncate text-[13px] text-fg">{name}</span>
-          <span className="text-xs text-fg-muted">{endedLabel(entry.endedAt, now)}</span>
-        </span>
-      </button>
-    </Tooltip>
+    <>
+      {text.slice(0, matchStart)}
+      <mark className="rounded bg-amber-400/30 px-0.5 text-fg">{text.slice(matchStart, matchEnd)}</mark>
+      {text.slice(matchEnd)}
+    </>
   );
 }
 
+interface EarlierRowProps {
+  projectId: string;
+  match: EarlierMatch;
+  atCap: boolean;
+  atCapReason: string;
+  now: number;
+  /** The name field is open. The list holds this, so it can keep the row mounted. */
+  editing: boolean;
+  onEditingChange: (editing: boolean) => void;
+  onResume: (entry: CommandTerminalHistoryEntry) => void;
+  onRemove: (entry: CommandTerminalHistoryEntry) => void;
+}
+
+/**
+ * One ended conversation. Its tip is its full name when the rail cuts it short,
+ * read when the pointer or focus arrives, so a long list keeps no observer per
+ * row. A search that matched a passage its name does not show puts that passage
+ * under the name and the date beside it.
+ */
+function EarlierRow({ projectId, match, atCap, atCapReason, now, editing, onEditingChange, onResume, onRemove }: EarlierRowProps) {
+  const { t } = useLingui();
+  const { entry, nameMatch, snippet } = match;
+  const [menuPosition, setMenuPosition] = useState<{ x: number; y: number } | null>(null);
+  // The committed name until the list carrying it arrives, so the row never
+  // closes onto the old name for a frame. State set during render, as
+  // `useCommandTerminalRename` holds its own: the push is what ends the hold.
+  const [pending, setPending] = useState<{ label: string | null } | null>(null);
+  if (pending && pending.label === entry.label) setPending(null);
+  const storedName = commandTerminalHistoryName(pending ? { ...entry, label: pending.label } : entry);
+  const name = storedName ?? t`Untitled conversation`;
+  const ended = endedLabel(entry.endedAt, now);
+  const nameRef = useRef<HTMLSpanElement>(null);
+  const [cut, setCut] = useState(false);
+  const measureCut = (): void => {
+    const span = nameRef.current;
+    if (span) setCut(span.scrollWidth > span.clientWidth);
+  };
+
+  const commitName = (value: string): void => {
+    onEditingChange(false);
+    if (value.trim() === (storedName ?? '')) return;
+    const label = normalizeCommandTerminalName(value, null);
+    setPending({ label });
+    window.electronAPI.sessions.renameCommandTerminalHistory(projectId, entry.agentSessionId, label)
+      .then((saved) => {
+        // Main refused it (a terminal holds the conversation now): show what it holds.
+        if (!saved) setPending(null);
+      })
+      .catch((error: unknown) => {
+        setPending(null);
+        useToastStore.getState().addToast({
+          title: t`Couldn't rename conversation`,
+          message: asSentence(describeIpcError(error, String(error))),
+          variant: 'error',
+        });
+      });
+  };
+
+  const closeMenu = (): void => setMenuPosition(null);
+
+  return (
+    // The wrapper takes the right-click: a disabled button would not, and a row
+    // at the cap still renames and removes.
+    <div
+      onPointerEnter={measureCut}
+      onFocus={measureCut}
+      onContextMenu={(event) => {
+        if (editing) return;
+        event.preventDefault();
+        setMenuPosition({ x: event.clientX, y: event.clientY });
+      }}
+    >
+      {editing ? (
+        <div className="flex h-11 items-center gap-2.5 rounded-md bg-surface-hover/50 px-2">
+          <History size={16} className="flex-shrink-0 text-fg-faint" />
+          <span className="flex min-w-0 flex-1 flex-col">
+            <span className="flex min-w-0">
+              <CommandTerminalNameField
+                initialName={storedName ?? ''}
+                placeholder={entry.firstPrompt ?? t`Untitled conversation`}
+                onCommit={commitName}
+                onCancel={() => onEditingChange(false)}
+                className="text-[13px] leading-5"
+                data-testid="command-terminal-earlier-name-field"
+              />
+            </span>
+            <span className="text-xs text-fg-muted">{ended}</span>
+          </span>
+        </div>
+      ) : (
+        // No tip for a name shown whole: the row reads as what it resumes. At
+        // the cap it says why it is off.
+        <Tooltip label={tipLabel({ disabled: atCap, disabledReason: atCapReason, tip: cut ? name : undefined })}>
+          <button
+            type="button"
+            onClick={() => {
+              if (!atCap) onResume(entry);
+            }}
+            aria-disabled={atCap}
+            className={`flex h-11 w-full items-center gap-2.5 rounded-md px-2 text-left transition-colors ${
+              atCap ? 'cursor-not-allowed opacity-40' : 'hover:bg-surface-hover'
+            } ${menuPosition ? 'bg-surface-hover' : ''}`}
+            aria-label={t`Resume ${name}`}
+            data-testid="command-terminal-earlier-row"
+            data-agent-session-id={entry.agentSessionId}
+          >
+            <History size={16} className="flex-shrink-0 text-fg-faint" />
+            <span className="flex min-w-0 flex-1 flex-col">
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span ref={nameRef} className="min-w-0 flex-1 truncate text-[13px] text-fg">
+                  {nameMatch && !pending ? <Highlighted text={name} {...nameMatch} /> : name}
+                </span>
+                {snippet && <span className="flex-shrink-0 text-xs text-fg-muted">{ended}</span>}
+              </span>
+              {snippet ? (
+                <span className="truncate text-xs text-fg-muted" data-testid="command-terminal-earlier-snippet">
+                  <Highlighted {...snippet} />
+                </span>
+              ) : (
+                <span className="text-xs text-fg-muted">{ended}</span>
+              )}
+            </span>
+          </button>
+        </Tooltip>
+      )}
+      {menuPosition && (
+        <CommandTerminalContextMenu position={menuPosition} onClose={closeMenu} testId="command-terminal-earlier-menu">
+          <KebabMenuItem
+            icon={<CirclePlay size={14} />}
+            label={t`Resume`}
+            onClick={() => { closeMenu(); onResume(entry); }}
+            disabled={atCap}
+            disabledReason={atCap ? atCapReason : null}
+            data-testid="command-terminal-earlier-menu-resume"
+          />
+          <KebabMenuItem
+            icon={<Pencil size={14} />}
+            label={t`Rename`}
+            onClick={() => { closeMenu(); onEditingChange(true); }}
+            data-testid="command-terminal-earlier-menu-rename"
+          />
+          <KebabMenuDivider />
+          <KebabMenuItem
+            icon={<Trash2 size={14} />}
+            label={t`Remove`}
+            onClick={() => { closeMenu(); onRemove(entry); }}
+            destructive
+            data-testid="command-terminal-earlier-menu-remove"
+          />
+        </CommandTerminalContextMenu>
+      )}
+    </div>
+  );
+}
+
+/** What the Earlier list draws, in order. */
+type EarlierListItem =
+  | { kind: 'row'; key: string; match: EarlierMatch }
+  | { kind: 'conversations-heading' | 'status' | 'note' | 'empty'; key: string };
+
+function estimatedItemHeight(item: EarlierListItem): number {
+  switch (item.kind) {
+    case 'row':
+      return EARLIER_ROW_PITCH_PX;
+    case 'conversations-heading':
+      return EARLIER_HEADING_PX;
+    case 'empty':
+      return EARLIER_EMPTY_PX;
+    case 'status':
+    case 'note':
+      return EARLIER_LINE_PX;
+  }
+}
+
 interface EarlierListProps {
+  projectId: string;
   entries: CommandTerminalHistoryEntry[];
   atCap: boolean;
   atCapReason: string;
@@ -343,28 +487,173 @@ interface EarlierListProps {
 }
 
 /**
- * The Earlier rows that fit. Its own component, so it measures again whenever
- * the open rail mounts it (the folded rail has no list).
+ * Every Earlier conversation, or those a search reaches, under a field and a
+ * heading that stay put. Drawn through a virtualizer, since an agent that never
+ * purges its transcripts gives this list no limit. Keyed by project in the rail,
+ * so a project switch starts with an empty field.
  */
-function EarlierList({ entries, atCap, atCapReason, onResume }: EarlierListProps) {
-  const listRef = useRef<HTMLDivElement>(null);
-  const rowsThatFit = useRowsThatFit(listRef);
+function EarlierList({ projectId, entries, atCap, atCapReason, onResume }: EarlierListProps) {
+  const { t } = useLingui();
   const now = useMinuteClock();
-  const visibleEntries = entries.slice(0, rowsThatFit);
+  const [search, setSearch] = useState('');
+  const [removing, setRemoving] = useState<CommandTerminalHistoryEntry | null>(null);
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const { active, nameMatches, textMatches, textPending, indexingOff } = useEarlierSearch(projectId, entries, search);
+  const query = search.trim();
+
+  const items = useMemo(() => {
+    const rows: EarlierListItem[] = nameMatches.map((match) => ({ kind: 'row', key: match.entry.agentSessionId, match }));
+    if (textMatches.length > 0) {
+      rows.push({ kind: 'conversations-heading', key: 'conversations-heading' });
+      for (const match of textMatches) rows.push({ kind: 'row', key: `text-${match.entry.agentSessionId}`, match });
+    }
+    if (active && textPending && textMatches.length === 0) rows.push({ kind: 'status', key: 'status' });
+    if (active && !textPending && rows.length === 0) rows.push({ kind: 'empty', key: 'empty' });
+    if (active && indexingOff) rows.push({ kind: 'note', key: 'note' });
+    return rows;
+  }, [nameMatches, textMatches, active, textPending, indexingOff]);
+
+  // A row with its name field open stays mounted when it scrolls out of the
+  // window. Unmounting it would drop the typed name with no save and no blur.
+  const editingIndex = editingKey === null ? -1 : items.findIndex((item) => item.key === editingKey);
+  const rangeExtractor = useCallback((range: Range): number[] => {
+    const indexes = defaultRangeExtractor(range);
+    if (editingIndex < 0 || indexes.includes(editingIndex)) return indexes;
+    return [...indexes, editingIndex].sort((first, second) => first - second);
+  }, [editingIndex]);
+
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtualizer = useVirtualizer({
+    count: items.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: (index) => estimatedItemHeight(items[index]),
+    getItemKey: (index) => items[index].key,
+    overscan: 6,
+    rangeExtractor,
+  });
+
+  // A new search starts at its best rows, wherever the list was.
+  useEffect(() => {
+    scrollRef.current?.scrollTo({ top: 0 });
+  }, [query]);
+
+  // The row leaves on main's push, so a refusal leaves it where it was.
+  const confirmRemove = (entry: CommandTerminalHistoryEntry): void => {
+    setRemoving(null);
+    const failed = (message: string): void => {
+      useToastStore.getState().addToast({ title: t`Couldn't remove conversation`, message, variant: 'error' });
+    };
+    window.electronAPI.sessions.removeCommandTerminalHistory(projectId, entry.agentSessionId)
+      .then((removed) => {
+        if (!removed) failed(t`A terminal has this conversation open.`);
+      })
+      .catch((error: unknown) => failed(asSentence(describeIpcError(error, String(error)))));
+  };
+
+  // No field, heading or hint until a conversation has ended. Past that this
+  // keeps room for the field, the heading and a row, and the rail's body
+  // scrolls when Running leaves it less.
   return (
-    <>
-      {/* No heading and no hint until a conversation has ended. The list stays
-          mounted either way, so it has measured how many rows fit before the
-          first one arrives. */}
+    <div className={`flex flex-1 flex-col ${entries.length > 0 ? 'min-h-[124px]' : 'min-h-0'}`}>
       {entries.length > 0 && (
-        <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading"><Trans>Earlier</Trans></div>
+        <>
+          <div className="relative flex-shrink-0 pt-1">
+            <Search size={14} className="pointer-events-none absolute top-[calc(50%+2px)] left-2.5 -translate-y-1/2 text-fg-disabled" />
+            <input
+              type="text"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Escape') return;
+                event.stopPropagation();
+                setSearch('');
+                event.currentTarget.blur();
+              }}
+              placeholder={t`Search conversations...`}
+              aria-label={t`Search conversations`}
+              spellCheck={false}
+              className="h-8 w-full rounded-md border border-edge/50 bg-surface/50 pr-7 pl-7 text-xs text-fg placeholder-fg-muted outline-none transition-colors select-text focus:border-edge-input"
+              data-testid="command-terminal-earlier-search"
+            />
+            {search && (
+              <Tooltip label={t`Clear search`}>
+                <button
+                  type="button"
+                  onClick={() => setSearch('')}
+                  className="absolute top-[calc(50%+2px)] right-2 -translate-y-1/2 text-fg-disabled transition-colors hover:text-fg-muted"
+                  aria-label={t`Clear search`}
+                  data-testid="command-terminal-earlier-search-clear"
+                >
+                  <X size={14} />
+                </button>
+              </Tooltip>
+            )}
+          </div>
+          {(!active || nameMatches.length > 0) && (
+            <div className="flex-shrink-0 px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-heading"><Trans>Earlier</Trans></div>
+          )}
+        </>
       )}
-      <div ref={listRef} className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-hidden" data-testid="command-terminal-earlier">
-        {visibleEntries.map((entry) => (
-          <EarlierRow key={entry.agentSessionId} entry={entry} atCap={atCap} atCapReason={atCapReason} now={now} onResume={onResume} />
-        ))}
+      <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto" data-testid="command-terminal-earlier">
+        <div style={{ height: virtualizer.getTotalSize(), position: 'relative' }}>
+          {virtualizer.getVirtualItems().map((virtualItem) => {
+            const item = items[virtualItem.index];
+            return (
+              <div
+                key={item.key}
+                data-index={virtualItem.index}
+                ref={virtualizer.measureElement}
+                className={item.kind === 'row' ? 'pb-0.5' : ''}
+                style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${virtualItem.start}px)` }}
+              >
+                {item.kind === 'row' && (
+                  <EarlierRow
+                    projectId={projectId}
+                    match={item.match}
+                    atCap={atCap}
+                    atCapReason={atCapReason}
+                    now={now}
+                    editing={editingKey === item.key}
+                    onEditingChange={(editing) => setEditingKey(editing ? item.key : null)}
+                    onResume={onResume}
+                    onRemove={setRemoving}
+                  />
+                )}
+                {item.kind === 'conversations-heading' && (
+                  <div className="px-2 pt-3 pb-1 text-xs text-fg-muted" data-testid="command-terminal-earlier-text-heading"><Trans>In conversations</Trans></div>
+                )}
+                {item.kind === 'status' && (
+                  <div className="px-2 py-2.5 text-xs text-fg-muted" data-testid="command-terminal-earlier-searching"><Trans>Searching conversations...</Trans></div>
+                )}
+                {item.kind === 'note' && (
+                  <div className="px-2 py-2.5 text-xs text-fg-muted" data-testid="command-terminal-earlier-indexing-off"><Trans>Indexing is off, so conversation text was not searched</Trans></div>
+                )}
+                {item.kind === 'empty' && (
+                  <div className="p-6 text-center" data-testid="command-terminal-earlier-empty">
+                    <Search size={24} className="mx-auto mb-2 text-fg-disabled" />
+                    <div className="text-sm text-fg-muted"><Trans>No conversations match</Trans></div>
+                    <div className="mt-1 truncate text-xs text-fg-faint">{t`"${query}"`}</div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
-    </>
+      {/* BaseDialog renders inline and fixed, and the panel is transformed. */}
+      {removing && createPortal(
+        <ConfirmDialog
+          title={t`Remove this conversation?`}
+          message={t`It leaves Earlier and can no longer be searched. The agent keeps its transcript.`}
+          confirmLabel={t`Remove`}
+          variant="danger"
+          testId="command-terminal-earlier-remove"
+          onConfirm={() => confirmRemove(removing)}
+          onCancel={() => setRemoving(null)}
+        />,
+        document.body,
+      )}
+    </div>
   );
 }
 
@@ -491,28 +780,41 @@ export function CommandTerminalRail({
           </div>
         </>
       )}
-      {hasRunning && !folded && (
-        <>
-          <div className="px-2 pt-3 pb-1 text-xs text-fg-muted"><Trans context="Agent status">Running</Trans></div>
-          <div className="flex flex-shrink-0 flex-col gap-0.5" data-testid="command-terminal-running">
-            {terminals.map((terminal) => (
-              <RunningRow
-                key={terminal.windowId}
-                projectId={projectId}
-                terminal={terminal}
-                front={terminal.windowId === frontWindowId}
-                onBringToFront={onBringToFront}
-                onStop={onStop}
-              />
-            ))}
-          </div>
-          <div className="mx-0 mt-2.5 mb-1 h-px flex-shrink-0 bg-edge" aria-hidden />
-        </>
-      )}
       {folded ? (
         <div className="min-h-0 flex-1" />
       ) : (
-        <EarlierList entries={entries} atCap={atCap} atCapReason={atCapReason} onResume={handleResume} />
+        // Scrolls only when Running leaves Earlier less than its minimum: the
+        // Earlier list scrolls on its own at any ordinary height.
+        <div className="flex min-h-0 flex-1 flex-col overflow-y-auto" data-testid="command-terminal-rail-body">
+          {hasRunning && (
+            <>
+              <div className="px-2 pt-3 pb-1 text-xs text-fg-muted"><Trans context="Agent status">Running</Trans></div>
+              <div className="flex flex-shrink-0 flex-col gap-0.5" data-testid="command-terminal-running">
+                {terminals.map((terminal) => (
+                  <RunningRow
+                    key={terminal.windowId}
+                    projectId={projectId}
+                    terminal={terminal}
+                    front={terminal.windowId === frontWindowId}
+                    onBringToFront={onBringToFront}
+                    onStop={onStop}
+                  />
+                ))}
+              </div>
+              <div className="mx-0 mt-2.5 mb-1 h-px flex-shrink-0 bg-edge" aria-hidden />
+            </>
+          )}
+          {projectId && (
+            <EarlierList
+              key={projectId}
+              projectId={projectId}
+              entries={entries}
+              atCap={atCap}
+              atCapReason={atCapReason}
+              onResume={handleResume}
+            />
+          )}
+        </div>
       )}
       {/* The rail's bottom row: open, the whole width with the icon and "Hide";
           folded, the strip's button. Outlined at rest, as the sidebar's Add

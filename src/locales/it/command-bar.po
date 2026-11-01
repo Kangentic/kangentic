@@ -9,6 +9,11 @@ msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "\"{query}\""
+msgstr "\"{query}\""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "{name} (needs you)"
 msgstr "{name} (richiede intervento)"
 
@@ -27,6 +32,11 @@ msgstr "{name} (in avvio)"
 msgid "{name} (working)"
 msgstr "{name} (al lavoro)"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "A terminal has this conversation open."
+msgstr "Questa conversazione è aperta in un terminale."
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
@@ -36,6 +46,11 @@ msgstr "Aggiungi terminale"
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "Disponibile all'avvio del terminale"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Clear search"
+msgstr "Cancella ricerca"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -61,6 +76,16 @@ msgstr "Impossibile eseguire il checkout del ramo"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "Impossibile aprire la finestra"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't remove conversation"
+msgstr "Impossibile rimuovere la conversazione"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't rename conversation"
+msgstr "Impossibile rinominare la conversazione"
 
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
@@ -144,6 +169,21 @@ msgstr "Nascondi pannello"
 msgid "Hide rail"
 msgstr "Nascondi barra"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "In conversations"
+msgstr "Nelle conversazioni"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Indexing is off, so conversation text was not searched"
+msgstr "L'indicizzazione è disattivata, quindi il testo delle conversazioni non è stato cercato"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+msgstr "Verrà rimossa da Precedenti e non sarà più ricercabile. L'agente conserva la trascrizione."
+
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
 #, fuzzy
@@ -159,6 +199,11 @@ msgstr "Ingrandisci pannello"
 #, fuzzy
 msgid "Move to its own window"
 msgstr "Sposta in una finestra separata"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "No conversations match"
+msgstr "Nessuna conversazione corrispondente"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
@@ -180,7 +225,18 @@ msgstr "Apri cartella del progetto"
 msgid "Rail width"
 msgstr "Larghezza barra"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove"
+msgstr "Rimuovi"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove this conversation?"
+msgstr "Rimuovere questa conversazione?"
+
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "Rinomina"
@@ -202,6 +258,11 @@ msgstr "Ripristina la griglia"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Resume"
+msgstr "Riprendi"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
 msgstr "Riprendi {name}"
 
@@ -215,6 +276,21 @@ msgstr "Ripresa della conversazione..."
 msgctxt "Agent status"
 msgid "Running"
 msgstr "In esecuzione"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations"
+msgstr "Cerca conversazioni"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations..."
+msgstr "Cerca conversazioni..."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Searching conversations..."
+msgstr "Ricerca conversazioni..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx

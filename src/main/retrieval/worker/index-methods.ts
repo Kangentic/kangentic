@@ -39,6 +39,8 @@ export interface IndexSweepSteps {
   purge?: 'state' | 'chunks';
   /** Re-read conversations whose transcript changed (the project-open backfill). */
   conversations?: boolean;
+  /** The same for Command Terminal conversations, and drop any whose row is gone. */
+  commandTerminals?: boolean;
   tasks?: boolean;
   changes?: { projectPath: string | null };
   commits?: { projectPath: string; baseBranch: string; allowFullRead: boolean };
@@ -83,6 +85,12 @@ export interface IndexMethods {
       transcriptPath?: string | null;
       remoteTargets: RemoteTargets;
     };
+    result: { outcome: IndexOutcome };
+  };
+  /** One Command Terminal conversation into the Earlier search's corpus, or out
+   *  of it when its row is gone. */
+  'index.commandTerminalConversation': {
+    params: { projectId: string; agentSessionId: string; remoteTargets: RemoteTargets };
     result: { outcome: IndexOutcome };
   };
   /** Run some of a project's sweeps in order (`IndexSweepSteps`). */
@@ -221,9 +229,14 @@ export const indexHandlers: IndexHandlers = {
     return { outcome };
   },
 
+  'index.commandTerminalConversation': async ({ projectId, agentSessionId, remoteTargets }, context) => {
+    adoptRemoteTargets(agentRegistry, remoteTargets);
+    return { outcome: await indexerFor(context).indexCommandTerminalConversation(projectId, agentSessionId) };
+  },
+
   'index.sweep': ({ projectId, jobId, remoteTargets, ...steps }, context) => runJob(jobId, async (shouldContinue) => {
     const result: IndexSweepResult = { purged: 0, tasks: null, changes: null, commits: null, code: null };
-    if (steps.conversations) adoptRemoteTargets(agentRegistry, remoteTargets);
+    if (steps.conversations || steps.commandTerminals) adoptRemoteTargets(agentRegistry, remoteTargets);
     const indexer = indexerFor(context);
     // The worker's own `getDb`, which refuses a project closed for deletion, so
     // a sweep still queued for it cannot reopen the file before the unlink.
@@ -240,6 +253,7 @@ export const indexHandlers: IndexHandlers = {
       result.purged = await indexer.purgeDeletedSessions(projectId, shouldContinue, { fromChunks: steps.purge === 'chunks' });
     }
     if (steps.conversations && shouldContinue()) await indexer.sweepProject(projectId, shouldContinue);
+    if (steps.commandTerminals && shouldContinue()) await indexer.sweepCommandTerminalConversations(projectId, shouldContinue);
     if (steps.tasks && shouldContinue()) result.tasks = await sweepTaskRecords(projectId, shouldContinue, recordDeps);
     if (steps.changes && shouldContinue()) result.changes = await sweepChangeRecords(projectId, steps.changes.projectPath, shouldContinue, recordDeps);
     if (steps.commits && shouldContinue()) {

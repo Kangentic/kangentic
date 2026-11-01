@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (49 channels)
+## Sessions (52 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -59,7 +59,10 @@ sources:
 | `session:setTransientBranch` | invoke | Record the branch a Command Terminal's checkout is actually on, re-derived from live HEAD by the renderer, on its live registry row. Last write wins: HEAD moves, and the newest reading is the true one. Main holds it passively for the Monitor row and a post-reload adopt. |
 | `session:renameTransient` | invoke | Rename a Command Terminal by hand: `(sessionId, name \| null)`. Main normalizes the name to one line of at most 64 characters (`normalizeCommandTerminalName`; empty or the slot's own "Command Terminal N" clears it), sets the row's label and `commandTerminalNamedByUser`, and announces it on `session:status`. From then on the namer (`CommandTerminalNamer`) and the resume seed leave the row alone. The name field sends a name it did not change only on an Enter, for a terminal not yet named by the user, so the user can keep its number. Refuses a session that is not a Command Terminal, and a name that is neither a string nor null. Returns whether the label changed. Routed by session id, not stamped with a `projectId`. |
 | `commandTerminalHistory:list` | invoke | A project's ended Command Terminal conversations for the panel's Earlier list (`CommandTerminalHistory.list`, `src/main/ipc/helpers/command-terminal-history.ts`), newest first: only ones a user touched, whose agent can resume by id, that no live terminal or resume in flight holds. Each `{ agentSessionId, label, firstPrompt, agentName, endedAt }`. An id that names no project answers an empty list. A read, so it takes the `projectId` as its argument and answers for a project the desktop does not have open |
-| `commandTerminalHistory:changed` | on | Event: a project's Earlier list changed (a conversation ended, a resume claimed or released one, a row was pruned). Carries the `projectId`; the rail re-reads the list |
+| `commandTerminalHistory:rename` | invoke | Rename an Earlier row: `(projectId, agentSessionId, name \| null)`. `CommandTerminalHistory.rename` normalizes the name to one line of at most 64 characters, writes the label and marks the row `named_by_user`, and pushes `commandTerminalHistory:changed`. An empty name or null clears the label, and the mark still keeps the namer off when it resumes. Returns false, changing nothing, when a live terminal or a resume in flight holds the conversation, the row is gone, or the project is unknown |
+| `commandTerminalHistory:remove` | invoke | Remove an Earlier row: `(projectId, agentSessionId)`. `CommandTerminalHistory.remove` deletes the row, schedules its search text out of the index, and pushes `commandTerminalHistory:changed`. The agent's transcript stays. Returns false under the same conditions as a rename |
+| `commandTerminalHistory:search` | invoke | Search the project's Command Terminal conversation text for the Earlier list: `(projectId, query)`. Answers `{ indexingOff, hits }`, each hit `{ agentSessionId, snippet, matchStart, matchEnd }`, best first, one per conversation, from the retrieval worker (`search.commandTerminalConversations`). `indexingOff` is true, with no hits, when Knowledge Graph indexing is off. A worker that is down, or an unknown project, answers no hits |
+| `commandTerminalHistory:changed` | on | Event: a project's Earlier list changed (a conversation ended, a resume claimed or released one, a row was renamed or removed). Carries the `projectId`; the rail re-reads the list |
 | `session:injectSettings` | invoke | Inject a model/effort change into a live transient session's PTY via slash commands. Session-keyed (no task row, no DB persistence); backs the command-terminal context bar picker. |
 
 ## Usage Stats (1 channel)

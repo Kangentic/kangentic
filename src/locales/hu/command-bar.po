@@ -9,6 +9,11 @@ msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "\"{query}\""
+msgstr "„{query}”"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "{name} (needs you)"
 msgstr "{name} (önre vár)"
 
@@ -27,6 +32,11 @@ msgstr "{name} (indul)"
 msgid "{name} (working)"
 msgstr "{name} (dolgozik)"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "A terminal has this conversation open."
+msgstr "Ez a beszélgetés meg van nyitva egy terminálban."
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
@@ -36,6 +46,11 @@ msgstr "Terminál hozzáadása"
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "A terminál elindulása után érhető el"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Clear search"
+msgstr "Keresés törlése"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -61,6 +76,16 @@ msgstr "Nem sikerült kivenni az ágat"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "Nem sikerült megnyitni az ablakot"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't remove conversation"
+msgstr "Nem sikerült eltávolítani a beszélgetést"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't rename conversation"
+msgstr "Nem sikerült átnevezni a beszélgetést"
 
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
@@ -144,6 +169,21 @@ msgstr "Panel elrejtése"
 msgid "Hide rail"
 msgstr "Sáv elrejtése"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "In conversations"
+msgstr "A beszélgetésekben"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Indexing is off, so conversation text was not searched"
+msgstr "Az indexelés ki van kapcsolva, így a beszélgetések szövegében nem történt keresés"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+msgstr "Kikerül a Korábbiak közül, és többé nem kereshető. Az ügynök megőrzi az átiratát."
+
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
 #, fuzzy
@@ -159,6 +199,11 @@ msgstr "Panel teljes méretre"
 #, fuzzy
 msgid "Move to its own window"
 msgstr "Áthelyezés külön ablakba"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "No conversations match"
+msgstr "Nincs egyező beszélgetés"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
@@ -180,7 +225,18 @@ msgstr "Projektmappa megnyitása"
 msgid "Rail width"
 msgstr "Sáv szélessége"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove"
+msgstr "Eltávolítás"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove this conversation?"
+msgstr "Eltávolítja ezt a beszélgetést?"
+
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "Átnevezés"
@@ -202,6 +258,11 @@ msgstr "Rács visszaállítása"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Resume"
+msgstr "Folytatás"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
 msgstr "{name} folytatása"
 
@@ -215,6 +276,21 @@ msgstr "Beszélgetés folytatása..."
 msgctxt "Agent status"
 msgid "Running"
 msgstr "Fut"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations"
+msgstr "Beszélgetések keresése"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations..."
+msgstr "Beszélgetések keresése..."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Searching conversations..."
+msgstr "Keresés a beszélgetésekben..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx

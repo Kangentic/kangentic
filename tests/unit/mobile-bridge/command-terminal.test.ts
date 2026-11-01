@@ -29,8 +29,8 @@ vi.mock('../../../src/main/ipc/handlers/transient-sessions', () => ({
   CommandTerminalStartError: CommandTerminalStartErrorStub,
 }));
 
-import type { CapabilityRequestMessage } from '@kangentic/protocol';
-import { handleCommandTerminal } from '../../../src/main/mobile-bridge/handlers/command-terminal';
+import { encodeMessage, MAX_DECODED_LENGTH, MAX_FRAME_LENGTH, type CapabilityRequestMessage } from '@kangentic/protocol';
+import { handleCommandTerminal, PHONE_EARLIER_LIMIT } from '../../../src/main/mobile-bridge/handlers/command-terminal';
 import { AgentCliNotFoundError } from '../../../src/main/agent/shared/agent-cli-not-found';
 import type { IpcContext } from '../../../src/main/ipc/ipc-context';
 
@@ -195,6 +195,27 @@ describe('command-terminal: earlier conversations', () => {
       },
     });
     expect(startCommandTerminalMock).not.toHaveBeenCalled();
+  });
+
+  it('carries the newest 500, and the worst case of them fits a frame', async () => {
+    // A 200-character CJK prompt is 3 bytes a character, the largest row the record keeps.
+    const earlier = Array.from({ length: PHONE_EARLIER_LIMIT + 300 }, (_, index) => ({
+      agentSessionId: `00000000-0000-4000-8000-${String(index).padStart(12, '0')}`,
+      label: null,
+      firstPrompt: '漢'.repeat(200),
+      agentName: 'claude',
+      endedAt: '2026-10-24T10:00:00.000Z',
+    }));
+    const { context } = fakeContext({ earlier });
+
+    const response = await handleCommandTerminal(fakeRequest({ action: 'list-earlier', projectId: 'proj-1' }), context);
+
+    const conversations = (response.payload as { conversations: Array<{ agentSessionId: string }> }).conversations;
+    expect(conversations).toHaveLength(PHONE_EARLIER_LIMIT);
+    expect(conversations[0].agentSessionId).toBe(earlier[0].agentSessionId);
+    expect(new TextEncoder().encode(JSON.stringify(response)).length).toBeLessThan(MAX_DECODED_LENGTH);
+    // encodeMessage throws past either cap.
+    expect(encodeMessage(response).length).toBeLessThanOrEqual(MAX_FRAME_LENGTH);
   });
 
   it('refuses a list for an unknown project with its code', async () => {

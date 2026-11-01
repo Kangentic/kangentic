@@ -18,15 +18,28 @@
  *   conversation `/resume`d into a renamed terminal keeps its own name.
  * - The first prompt reaches the agent: the row keeps it, on one line, so a
  *   conversation nothing named still reads as what it was about.
- * - The terminal ends: the row is stamped ended.
+ * - The terminal ends: the row is stamped ended, and the conversation's text is
+ *   indexed for the Earlier list's search.
+ * - Someone renames or removes the row in the Earlier list: no live terminal
+ *   holds it, so the row is all there is to change.
  *
  * Rows are written as the id is captured, not when the terminal ends, because a
  * quit removes no row (`killAll` never calls `remove()`): a terminal open at
  * quit keeps its row, and the list stamps its end the first time it reads it,
  * or deletes the row if nobody used that terminal.
  */
-import { EventType, PromptReason, type CommandTerminalHistoryEntry, type Session, type SessionEvent, type StoredCliTarget } from '../../../shared/types';
+import PQueue from 'p-queue';
+import {
+  EventType,
+  PromptReason,
+  type CommandTerminalHistoryEntry,
+  type CommandTerminalHistorySearchResult,
+  type Session,
+  type SessionEvent,
+  type StoredCliTarget,
+} from '../../../shared/types';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
+import { normalizeCommandTerminalName } from '../../../shared/command-terminal-name';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { CommandTerminalHistoryRepository, CommandTerminalHistoryRow } from '../../db/repositories/command-terminal-history-repository';
 
@@ -36,6 +49,16 @@ type SessionEventListener = (sessionId: string, event: SessionEvent) => void;
 
 /** Longer than any rail or phone row shows; the row cuts it with an ellipsis. */
 const FIRST_PROMPT_MAX_LENGTH = 200;
+
+/** Transcript checks one list runs at a time. An agent's miss can scan a folder per project. */
+const AVAILABILITY_CHECKS_AT_ONCE = 8;
+
+/**
+ * How long a transcript found for a list stays known. A rename or a terminal's
+ * end re-lists every row, and neither changes which transcripts exist. A resume
+ * asks the agent itself, so a row shown stale costs only its `conversation-gone`.
+ */
+const AVAILABILITY_RECHECK_MS = 5 * 60 * 1000;
 
 /** A prompt on one line, as a row shows it, or null when it says nothing. */
 export function firstPromptLine(promptText: string): string | null {
@@ -68,6 +91,13 @@ export interface CommandTerminalHistoryDeps {
   conversationAvailable(agentName: string, agentSessionId: string, cwd: string, cliTarget: string | null): Promise<boolean>;
   /** Push `COMMAND_TERMINAL_HISTORY_CHANGED` for the project. */
   notifyChanged(projectId: string): void;
+  /**
+   * A conversation ended or its row went: read its text into the search index,
+   * or drop it from there when the row is gone. Never throws.
+   */
+  conversationEnded(projectId: string, agentSessionId: string): void;
+  /** Search the project's conversation text. Never throws. */
+  searchText(projectId: string, query: string): Promise<CommandTerminalHistorySearchResult>;
 }
 
 /** What the record knows about the conversation a live terminal holds. */
@@ -77,6 +107,8 @@ interface HeldConversation {
   touched: boolean;
   /** The terminal's live name when last seen, so only a CHANGE of it is written. */
   label: string | null;
+  /** Whether a user had named the terminal when last seen, written on a change as the name is. */
+  namedByUser: boolean;
   /** Its first prompt has been written. */
   prompted: boolean;
 }
@@ -102,6 +134,8 @@ export class CommandTerminalHistory {
    * then this is the only record that the conversation is open.
    */
   private readonly resumesInFlight = new Map<string, string | null>();
+  /** When each conversation's transcript was last found, by agent session id. */
+  private readonly transcriptFoundAt = new Map<string, number>();
   private started = false;
   private disposed = false;
 
@@ -130,6 +164,7 @@ export class CommandTerminalHistory {
     this.promptBeforeRow.clear();
     this.labelBeforeRow.clear();
     this.resumesInFlight.clear();
+    this.transcriptFoundAt.clear();
   }
 
   /**
@@ -179,15 +214,7 @@ export class CommandTerminalHistory {
   async list(projectId: string): Promise<CommandTerminalHistoryEntry[]> {
     const repository = this.deps.getRepository(projectId);
     if (!repository) return [];
-    const liveConversationIds = new Set<string>(this.resumesInFlight.keys());
-    for (const session of this.deps.sessionManager.listSessions()) {
-      if (session.projectId === projectId && session.agentSessionId && session.status !== 'exited') {
-        liveConversationIds.add(session.agentSessionId);
-      }
-    }
-    for (const held of this.heldBySession.values()) {
-      if (held.projectId === projectId) liveConversationIds.add(held.agentSessionId);
-    }
+    const liveConversationIds = this.liveConversationIds(projectId);
     let rows: CommandTerminalHistoryRow[];
     try {
       // Before any await, while the live set still describes the terminals:
@@ -199,13 +226,15 @@ export class CommandTerminalHistory {
       warn('list', error);
       return [];
     }
-    const availability = await Promise.all(rows.map((row) =>
-      (liveConversationIds.has(row.agent_session_id) ? Promise.resolve(false) : this.conversationAvailable(row))));
+    const checks = new PQueue({ concurrency: AVAILABILITY_CHECKS_AT_ONCE });
+    const availability = await checks.addAll(rows.map((row) => () =>
+      (liveConversationIds.has(row.agent_session_id) ? Promise.resolve(false) : this.availableForList(row))));
     const entries: CommandTerminalHistoryEntry[] = [];
     for (const [index, row] of rows.entries()) {
       if (liveConversationIds.has(row.agent_session_id)) continue;
       if (!availability[index]) {
         this.write(() => repository.delete(row.agent_session_id), 'drop');
+        this.deps.conversationEnded(projectId, row.agent_session_id);
         continue;
       }
       let endedAt = row.ended_at;
@@ -224,6 +253,72 @@ export class CommandTerminalHistory {
       });
     }
     return entries;
+  }
+
+  /**
+   * Rename a conversation no terminal holds, from its Earlier row. A user's
+   * name wins as a live rename does: the mark keeps the namer off when the
+   * conversation resumes, for an empty name too, which clears the row back to
+   * its first prompt. False when a live terminal or a resume in flight holds the
+   * conversation, or the row is gone.
+   */
+  rename(projectId: string, agentSessionId: string, name: string | null): boolean {
+    const repository = this.repositoryOfIdleRow(projectId, agentSessionId);
+    if (!repository) return false;
+    repository.setLabel(agentSessionId, normalizeCommandTerminalName(name, null), true);
+    this.deps.notifyChanged(projectId);
+    return true;
+  }
+
+  /**
+   * Remove a conversation from the Earlier list. The agent's transcript stays;
+   * the row and its search text go. False as `rename` is.
+   */
+  remove(projectId: string, agentSessionId: string): boolean {
+    const repository = this.repositoryOfIdleRow(projectId, agentSessionId);
+    if (!repository) return false;
+    repository.delete(agentSessionId);
+    this.transcriptFoundAt.delete(agentSessionId);
+    this.deps.conversationEnded(projectId, agentSessionId);
+    this.deps.notifyChanged(projectId);
+    return true;
+  }
+
+  /** Conversations whose text matches, for the Earlier list to place among its rows. */
+  searchText(projectId: string, query: string): Promise<CommandTerminalHistorySearchResult> {
+    return this.deps.searchText(projectId, query);
+  }
+
+  /** The project's repository while the row exists and nothing live holds it. */
+  private repositoryOfIdleRow(projectId: string, agentSessionId: string): CommandTerminalHistoryRepository | null {
+    const repository = this.deps.getRepository(projectId);
+    if (!repository || !repository.get(agentSessionId)) return null;
+    return this.liveConversationIds(projectId).has(agentSessionId) ? null : repository;
+  }
+
+  /** `conversationAvailable`, answering from a recent find. A miss is never held. */
+  private async availableForList(row: CommandTerminalHistoryRow): Promise<boolean> {
+    const agentSessionId = row.agent_session_id;
+    const foundAt = this.transcriptFoundAt.get(agentSessionId);
+    if (foundAt !== undefined && Date.now() - foundAt < AVAILABILITY_RECHECK_MS) return true;
+    const available = await this.conversationAvailable(row);
+    if (available) this.transcriptFoundAt.set(agentSessionId, Date.now());
+    else this.transcriptFoundAt.delete(agentSessionId);
+    return available;
+  }
+
+  /** The conversations the project's live terminals hold or a resume is starting. */
+  private liveConversationIds(projectId: string): Set<string> {
+    const live = new Set<string>(this.resumesInFlight.keys());
+    for (const session of this.deps.sessionManager.listSessions()) {
+      if (session.projectId === projectId && session.agentSessionId && session.status !== 'exited') {
+        live.add(session.agentSessionId);
+      }
+    }
+    for (const held of this.heldBySession.values()) {
+      if (held.projectId === projectId) live.add(held.agentSessionId);
+    }
+    return live;
   }
 
   /**
@@ -255,7 +350,10 @@ export class CommandTerminalHistory {
     if (held?.agentSessionId === agentSessionId) return;
     const repository = this.deps.getRepository(projectId);
     if (!repository) return;
-    if (held) this.write(() => repository.markEnded(held.agentSessionId), 'end');
+    if (held) {
+      this.write(() => repository.markEnded(held.agentSessionId), 'end');
+      this.deps.conversationEnded(projectId, held.agentSessionId);
+    }
     // A `/resume` into a board task's or a workflow's conversation: it belongs
     // to its card, so the terminal records nothing until it moves on again.
     if (this.read(() => repository.isOwnedElsewhere(agentSessionId), false, 'owner')) {
@@ -267,6 +365,7 @@ export class CommandTerminalHistory {
     }
     const touched = session.hasUserInput === true;
     const label = session.commandTerminalLabel ?? null;
+    const namedByUser = session.commandTerminalNamedByUser === true;
     this.write(() => repository.recordConversation({
       agentSessionId,
       agentName: this.deps.sessionManager.getSessionAgentName(sessionId) ?? 'agent',
@@ -281,9 +380,9 @@ export class CommandTerminalHistory {
     if (this.labelBeforeRow.has(sessionId)) {
       const renamed = this.labelBeforeRow.get(sessionId) ?? null;
       this.labelBeforeRow.delete(sessionId);
-      this.write(() => repository.setLabel(agentSessionId, renamed), 'label');
+      this.write(() => repository.setLabel(agentSessionId, renamed, true), 'label');
     }
-    const conversation: HeldConversation = { projectId, agentSessionId, touched, label, prompted: false };
+    const conversation: HeldConversation = { projectId, agentSessionId, touched, label, namedByUser, prompted: false };
     this.heldBySession.set(sessionId, conversation);
     const earlyPrompt = this.promptBeforeRow.get(sessionId);
     if (earlyPrompt !== undefined) {
@@ -330,7 +429,8 @@ export class CommandTerminalHistory {
       return;
     }
     const markTouched = session.hasUserInput === true && !held.touched;
-    const relabel = liveLabel !== held.label;
+    const liveNamedByUser = session.commandTerminalNamedByUser === true;
+    const relabel = liveLabel !== held.label || liveNamedByUser !== held.namedByUser;
     if (!markTouched && !relabel) return;
     const repository = this.deps.getRepository(held.projectId);
     if (!repository) return;
@@ -340,7 +440,8 @@ export class CommandTerminalHistory {
     }
     if (relabel) {
       held.label = liveLabel;
-      this.write(() => repository.setLabel(held.agentSessionId, liveLabel), 'label');
+      held.namedByUser = liveNamedByUser;
+      this.write(() => repository.setLabel(held.agentSessionId, liveLabel, liveNamedByUser), 'label');
     }
   };
 
@@ -355,6 +456,7 @@ export class CommandTerminalHistory {
     const repository = this.deps.getRepository(held.projectId);
     if (!repository) return;
     this.write(() => repository.markEnded(held.agentSessionId), 'end');
+    this.deps.conversationEnded(held.projectId, held.agentSessionId);
     this.deps.notifyChanged(held.projectId);
   };
 

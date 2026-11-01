@@ -3894,8 +3894,9 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('lists conversations newest first, as many as fit, and never scrolls', async () => {
-      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(40)));
+    test('lists conversations newest first and scrolls to the oldest, with the field and heading staying put', async () => {
+      const count = 300;
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(count)));
       try {
         await openWithOneTerminal(page);
         const rows = page.getByTestId('command-terminal-earlier-row');
@@ -3906,15 +3907,224 @@ test.describe('Command Terminal', () => {
         await expect(rows.nth(1)).toContainText('Untitled conversation');
         await expect(rows.nth(2)).toContainText('why does the sidebar count lag?');
 
-        const visibleRows = await rows.count();
-        expect(visibleRows).toBeGreaterThan(2);
-        expect(visibleRows).toBeLessThan(40);
-        const fits = await page.getByTestId('command-terminal-earlier').evaluate((list) => {
-          const listBox = list.getBoundingClientRect();
-          const lastRow = list.lastElementChild?.getBoundingClientRect();
-          return list.scrollHeight <= list.clientHeight + 1 && !!lastRow && lastRow.bottom <= listBox.bottom + 1;
+        // Drawn through a virtualizer: a long list keeps few rows in the DOM.
+        expect(await rows.count()).toBeLessThan(60);
+
+        const list = page.getByTestId('command-terminal-earlier');
+        const field = page.getByTestId('command-terminal-earlier-search');
+        const fieldTop = (await field.boundingBox())?.y;
+        await list.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+        await expect(page.locator(`[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-${count}"]`)).toBeVisible();
+        await expect(page.getByTestId('command-terminal-earlier-heading')).toBeVisible();
+        expect((await field.boundingBox())?.y).toBe(fieldTop);
+        await expect(page.getByTestId('command-terminal-rail-toggle')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    /** A row's right-click, on its name so the pointer lands on the row itself. */
+    async function openRowMenu(page: Page, agentSessionId: string): Promise<void> {
+      await page.locator(`[data-testid="command-terminal-earlier-row"][data-agent-session-id="${agentSessionId}"]`).click({ button: 'right' });
+      await expect(page.getByTestId('command-terminal-earlier-menu')).toBeVisible();
+    }
+
+    test('a row\'s menu is Resume, Rename and Remove, and Resume starts the conversation', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        await openRowMenu(page, 'conversation-1');
+        await expect(page.getByTestId('command-terminal-earlier-menu').getByRole('button')).toHaveText(['Resume', 'Rename', 'Remove']);
+
+        await page.getByTestId('command-terminal-earlier-menu-resume').click();
+        await expect(page.getByTestId('command-terminal-earlier-menu')).toHaveCount(0);
+        await expect.poll(async () => (await spawnCalls(page)).at(-1)?.resumeAgentSessionId, { timeout: 5000 }).toBe('conversation-1');
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Rename edits the row in place and the saved name replaces it at once', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        await openRowMenu(page, 'conversation-1');
+        await page.getByTestId('command-terminal-earlier-menu-rename').click();
+
+        const field = page.getByTestId('command-terminal-earlier-name-field');
+        await expect(field).toBeFocused();
+        await expect(field).toHaveValue('Conversation 1');
+        await field.fill('Rail fix');
+        await field.press('Enter');
+
+        const row = page.locator('[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-1"]');
+        await expect(row).toContainText('Rail fix');
+        const calls = await page.evaluate(() => (window as unknown as { __mockRenameCommandTerminalHistoryCalls: unknown[] }).__mockRenameCommandTerminalHistoryCalls);
+        expect(calls).toEqual([{ projectId: EARLIER_PROJECT_ID, agentSessionId: 'conversation-1', name: 'Rail fix' }]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Escape leaves a row\'s name as it was, and Enter on an unchanged name sends nothing', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        await openRowMenu(page, 'conversation-1');
+        await page.getByTestId('command-terminal-earlier-menu-rename').click();
+        const field = page.getByTestId('command-terminal-earlier-name-field');
+        await field.fill('Discarded');
+        await field.press('Escape');
+        const row = page.locator('[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-1"]');
+        await expect(row).toContainText('Conversation 1');
+        await expect(page.getByTestId('command-terminal-panel')).toBeVisible();
+
+        await openRowMenu(page, 'conversation-1');
+        await page.getByTestId('command-terminal-earlier-menu-rename').click();
+        await field.press('Enter');
+        await expect(row).toBeVisible();
+        const calls = await page.evaluate(() => (window as unknown as { __mockRenameCommandTerminalHistoryCalls?: unknown[] }).__mockRenameCommandTerminalHistoryCalls);
+        expect(calls).toBeUndefined();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('Remove confirms first, and Cancel keeps the row', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        const row = page.locator('[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-1"]');
+
+        await openRowMenu(page, 'conversation-1');
+        await page.getByTestId('command-terminal-earlier-menu-remove').click();
+        await page.getByTestId('command-terminal-earlier-remove-cancel').click();
+        await expect(row).toBeVisible();
+
+        await openRowMenu(page, 'conversation-1');
+        await page.getByTestId('command-terminal-earlier-menu-remove').click();
+        await page.getByTestId('command-terminal-earlier-remove-confirm').click();
+        await expect(row).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(2);
+        // The panel stayed open behind the dialog, its terminal untouched.
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    /** Seed `__mockCommandTerminalHistoryText` and friends after boot. */
+    async function seedSearch(page: Page, seed: Record<string, unknown>): Promise<void> {
+      await page.evaluate((values) => { Object.assign(window, values); }, seed);
+    }
+
+    const earlierNames = (page: Page) => page.getByTestId('command-terminal-earlier-row').evaluateAll((rows) => rows
+      .sort((first, second) => first.getBoundingClientRect().top - second.getBoundingClientRect().top)
+      .map((row) => row.getAttribute('data-agent-session-id')));
+
+    test('search matches the name and first prompt at once, then adds text matches below without moving a row', async () => {
+      const entries = [
+        { agentSessionId: 'by-name', agentName: 'claude', label: 'Did the release happen', firstPrompt: null, endedAt: new Date().toISOString() },
+        { agentSessionId: 'by-prompt', agentName: 'claude', label: 'Translated files', firstPrompt: 'link the release tag', endedAt: new Date().toISOString() },
+        { agentSessionId: 'by-text', agentName: 'claude', label: 'Fix the save hotkey', firstPrompt: null, endedAt: new Date().toISOString() },
+        { agentSessionId: 'no-match', agentName: 'claude', label: 'Unrelated', firstPrompt: null, endedAt: new Date().toISOString() },
+      ];
+      const { browser, page } = await launchWithState(earlierPreConfig(entries));
+      try {
+        await openWithOneTerminal(page);
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(4);
+        await seedSearch(page, {
+          __mockHoldCommandTerminalHistorySearch: true,
+          __mockCommandTerminalHistoryText: { 'by-text': 'goes out in the next release, so keep it', 'by-name': 'also the release' },
         });
-        expect(fits).toBe(true);
+
+        await page.getByTestId('command-terminal-earlier-search').fill('release');
+        // Before main answers: the name and prompt rows, and a line saying more may come.
+        await expect.poll(() => earlierNames(page)).toEqual(['by-name', 'by-prompt']);
+        await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-earlier-empty')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-earlier-snippet')).toHaveText(['link the release tag']);
+        const firstRowTop = (await page.getByTestId('command-terminal-earlier-row').first().boundingBox())?.y;
+
+        await page.waitForFunction(() => typeof (window as unknown as { __mockReleaseCommandTerminalHistorySearch?: unknown }).__mockReleaseCommandTerminalHistorySearch === 'function');
+        await page.evaluate(() => (window as unknown as { __mockReleaseCommandTerminalHistorySearch: () => void }).__mockReleaseCommandTerminalHistorySearch());
+
+        await expect(page.getByTestId('command-terminal-earlier-text-heading')).toHaveText('In conversations');
+        // A row already shown by name is not listed twice.
+        await expect.poll(() => earlierNames(page)).toEqual(['by-name', 'by-prompt', 'by-text']);
+        expect((await page.getByTestId('command-terminal-earlier-row').first().boundingBox())?.y).toBe(firstRowTop);
+        await expect(page.getByTestId('command-terminal-earlier-searching')).toHaveCount(0);
+        await expect(page.locator('[data-agent-session-id="by-text"] mark')).toHaveText('release');
+
+        await page.getByTestId('command-terminal-earlier-search-clear').click();
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(4);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a different query drops the last answer\'s text rows and searches again; typing on keeps them', async () => {
+      const entries = [
+        { agentSessionId: 'by-text', agentName: 'claude', label: 'Fix the save hotkey', firstPrompt: null, endedAt: new Date().toISOString() },
+      ];
+      const { browser, page } = await launchWithState(earlierPreConfig(entries));
+      try {
+        await openWithOneTerminal(page);
+        await seedSearch(page, { __mockCommandTerminalHistoryText: { 'by-text': 'goes out in the next release' } });
+        const field = page.getByTestId('command-terminal-earlier-search');
+        await field.fill('rele');
+        await expect(page.locator('[data-agent-session-id="by-text"] mark')).toHaveText('rele');
+
+        // Typing on: the row stays while main is asked again.
+        await seedSearch(page, { __mockHoldCommandTerminalHistorySearch: true });
+        await field.fill('release');
+        await expect(page.locator('[data-agent-session-id="by-text"]')).toBeVisible();
+        await page.waitForFunction(() => typeof (window as unknown as { __mockReleaseCommandTerminalHistorySearch?: unknown }).__mockReleaseCommandTerminalHistorySearch === 'function');
+        await page.evaluate(() => (window as unknown as { __mockReleaseCommandTerminalHistorySearch: () => void }).__mockReleaseCommandTerminalHistorySearch());
+        await expect(page.locator('[data-agent-session-id="by-text"] mark')).toHaveText('release');
+
+        // Another word: the old row goes at once and the search line shows.
+        await field.fill('hotkeyz');
+        await expect(page.locator('[data-agent-session-id="by-text"]')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a search with no match says so once the text answer is in, and Escape clears it', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        await seedSearch(page, { __mockHoldCommandTerminalHistorySearch: true });
+        const field = page.getByTestId('command-terminal-earlier-search');
+        await field.fill('zzz');
+        await expect(page.getByTestId('command-terminal-earlier-searching')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-earlier-empty')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-earlier-heading')).toHaveCount(0);
+
+        await page.waitForFunction(() => typeof (window as unknown as { __mockReleaseCommandTerminalHistorySearch?: unknown }).__mockReleaseCommandTerminalHistorySearch === 'function');
+        await page.evaluate(() => (window as unknown as { __mockReleaseCommandTerminalHistorySearch: () => void }).__mockReleaseCommandTerminalHistorySearch());
+        await expect(page.getByTestId('command-terminal-earlier-empty')).toContainText('No conversations match');
+        await expect(page.getByTestId('command-terminal-earlier-empty')).toContainText('"zzz"');
+
+        await field.press('Escape');
+        await expect(field).toHaveValue('');
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(3);
+        await expect(page.getByTestId('command-terminal-panel')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('says when conversation text was not searched because indexing is off', async () => {
+      const { browser, page } = await launchWithState(earlierPreConfig(earlierEntries(3)));
+      try {
+        await openWithOneTerminal(page);
+        await seedSearch(page, { __mockCommandTerminalHistoryIndexingOff: true });
+        await page.getByTestId('command-terminal-earlier-search').fill('Conversation 1');
+        await expect(page.getByTestId('command-terminal-earlier-indexing-off')).toHaveText('Indexing is off, so conversation text was not searched');
+        await expect(page.getByTestId('command-terminal-earlier-row')).toHaveCount(1);
       } finally {
         await browser.close();
       }
@@ -4090,6 +4300,20 @@ test.describe('Command Terminal', () => {
         const firstRow = page.getByTestId('command-terminal-earlier-row').first();
         await expect(firstRow).toBeDisabled({ timeout: 3000 });
         await expect(firstRow).toHaveAccessibleDescription('Stop one of the four to add another');
+
+        // A left click starts nothing.
+        const callsAtCap = (await spawnCalls(page)).length;
+        await firstRow.click({ force: true });
+        expect((await spawnCalls(page)).length).toBe(callsAtCap);
+
+        // A rename starts nothing either, so it stays on; Resume is off with the row.
+        await firstRow.click({ button: 'right', force: true });
+        await expect(page.getByTestId('command-terminal-earlier-menu-resume')).toBeDisabled();
+        await page.getByTestId('command-terminal-earlier-menu-rename').click();
+        const field = page.getByTestId('command-terminal-earlier-name-field');
+        await field.fill('Named at the cap');
+        await field.press('Enter');
+        await expect(page.locator('[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-1"]')).toContainText('Named at the cap');
       } finally {
         await browser.close();
       }

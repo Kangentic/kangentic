@@ -3002,6 +3002,83 @@
         var entries = (seeded && seeded[projectId]) || [];
         return entries.slice();
       },
+      // Mirrors CommandTerminalHistory.rename: one line, cut to 64, empty
+      // clears, and the changed push goes out. Call log for assertions:
+      // window.__mockRenameCommandTerminalHistoryCalls.
+      renameCommandTerminalHistory: async function (projectId, agentSessionId, name) {
+        if (typeof window === 'undefined') return false;
+        window.__mockRenameCommandTerminalHistoryCalls = window.__mockRenameCommandTerminalHistoryCalls || [];
+        window.__mockRenameCommandTerminalHistoryCalls.push({ projectId: projectId, agentSessionId: agentSessionId, name: name });
+        // window.__mockCommandTerminalHistoryRefusal = { rename: 'refuse' | 'reject', message?: string }:
+        // 'refuse' answers false as main does when a terminal holds the conversation;
+        // 'reject' throws, with `message` as the decorated text Electron would hand over.
+        var renameRefusal = window.__mockCommandTerminalHistoryRefusal;
+        if (renameRefusal && renameRefusal.rename === 'reject') {
+          throw new Error(renameRefusal.message || 'the conversation could not be saved');
+        }
+        if (renameRefusal && renameRefusal.rename === 'refuse') return false;
+        var seeded = window.__mockCommandTerminalHistory;
+        var entries = (seeded && seeded[projectId]) || [];
+        var entry = entries.find(function (candidate) { return candidate.agentSessionId === agentSessionId; });
+        if (!entry) return false;
+        var line = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+        entry.label = line || null;
+        if (window.__mockFireCommandTerminalHistoryChanged) window.__mockFireCommandTerminalHistoryChanged(projectId);
+        return true;
+      },
+      // Mirrors CommandTerminalHistory.remove: the row goes and the changed push fires.
+      removeCommandTerminalHistory: async function (projectId, agentSessionId) {
+        if (typeof window === 'undefined') return false;
+        // Call log for assertions: window.__mockRemoveCommandTerminalHistoryCalls. The same
+        // window.__mockCommandTerminalHistoryRefusal knob as rename, under `remove`.
+        window.__mockRemoveCommandTerminalHistoryCalls = window.__mockRemoveCommandTerminalHistoryCalls || [];
+        window.__mockRemoveCommandTerminalHistoryCalls.push({ projectId: projectId, agentSessionId: agentSessionId });
+        var removeRefusal = window.__mockCommandTerminalHistoryRefusal;
+        if (removeRefusal && removeRefusal.remove === 'reject') {
+          throw new Error(removeRefusal.message || 'the conversation could not be removed');
+        }
+        if (removeRefusal && removeRefusal.remove === 'refuse') return false;
+        var seeded = window.__mockCommandTerminalHistory;
+        var entries = (seeded && seeded[projectId]) || [];
+        var index = entries.findIndex(function (candidate) { return candidate.agentSessionId === agentSessionId; });
+        if (index === -1) return false;
+        entries.splice(index, 1);
+        if (window.__mockFireCommandTerminalHistoryChanged) window.__mockFireCommandTerminalHistoryChanged(projectId);
+        return true;
+      },
+      // A project's conversation text, as the search index would answer it. Seed
+      // window.__mockCommandTerminalHistoryText = { [agentSessionId]: text }, and
+      // window.__mockCommandTerminalHistoryIndexingOff = true for indexing off.
+      // window.__mockHoldCommandTerminalHistorySearch = true keeps the answer
+      // until window.__mockReleaseCommandTerminalHistorySearch() is called.
+      searchCommandTerminalHistory: async function (projectId, query) {
+        if (typeof window === 'undefined') return { indexingOff: false, hits: [] };
+        if (window.__mockCommandTerminalHistoryIndexingOff) return { indexingOff: true, hits: [] };
+        // window.__mockHoldCommandTerminalHistorySearchPerQuery = true parks each query's
+        // answer on its own, released by window.__mockHeldCommandTerminalHistorySearches[query](),
+        // so a slow answer for an older query can land after a newer one.
+        if (window.__mockHoldCommandTerminalHistorySearchPerQuery) {
+          await new Promise(function (resolve) {
+            window.__mockHeldCommandTerminalHistorySearches = window.__mockHeldCommandTerminalHistorySearches || {};
+            window.__mockHeldCommandTerminalHistorySearches[String(query).trim()] = resolve;
+          });
+        }
+        if (window.__mockHoldCommandTerminalHistorySearch) {
+          await new Promise(function (resolve) { window.__mockReleaseCommandTerminalHistorySearch = resolve; });
+        }
+        var texts = window.__mockCommandTerminalHistoryText || {};
+        var needle = String(query).trim().toLowerCase();
+        var hits = [];
+        if (needle) {
+          Object.keys(texts).forEach(function (agentSessionId) {
+            var text = texts[agentSessionId];
+            var start = text.toLowerCase().indexOf(needle);
+            if (start < 0) return;
+            hits.push({ agentSessionId: agentSessionId, snippet: text, matchStart: start, matchEnd: start + needle.length });
+          });
+        }
+        return { indexingOff: false, hits: hits };
+      },
       // Tests fire it via window.__mockFireCommandTerminalHistoryChanged(projectId).
       onCommandTerminalHistoryChanged: function (callback) {
         if (typeof window === 'undefined') return function () {};

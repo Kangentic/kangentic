@@ -8,10 +8,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import type DatabaseType from 'better-sqlite3';
 import { EventType, PromptReason, type Session } from '../../src/shared/types';
 import { runProjectMigrations } from '../../src/main/db/migrations/project-schema';
-import {
-  COMMAND_TERMINAL_HISTORY_LIMIT,
-  CommandTerminalHistoryRepository,
-} from '../../src/main/db/repositories/command-terminal-history-repository';
+import { CommandTerminalHistoryRepository } from '../../src/main/db/repositories/command-terminal-history-repository';
 import { CommandTerminalHistory } from '../../src/main/ipc/helpers/command-terminal-history';
 import { openTestDatabase } from './helpers/test-database';
 
@@ -92,15 +89,18 @@ function setup(options: { available?: (agentSessionId: string) => boolean } = {}
   const repository = new CommandTerminalHistoryRepository(database);
   const sessions = new FakeSessions();
   const notifyChanged = vi.fn();
+  const conversationEnded = vi.fn();
   const history = new CommandTerminalHistory({
     sessionManager: sessions,
     getRepository: () => repository,
     conversationAvailable: async (_agent, agentSessionId) => options.available?.(agentSessionId) ?? true,
     notifyChanged,
+    conversationEnded,
+    searchText: async () => ({ indexingOff: false, hits: [] }),
   });
   history.start();
   histories.push(history);
-  return { database, repository, sessions, history, notifyChanged };
+  return { database, repository, sessions, history, notifyChanged, conversationEnded };
 }
 
 describe('command_terminal_history migration', () => {
@@ -123,6 +123,26 @@ describe('command_terminal_history migration', () => {
     expect(repository.get('conversation-old')).toMatchObject({ agent_session_id: 'conversation-old', first_prompt: null });
     repository.setFirstPrompt('conversation-old', 'hello');
     expect(repository.get('conversation-old')?.first_prompt).toBe('hello');
+  });
+
+  it('adds named_by_user at 0 to existing rows and drops the prune index, and runs again cleanly', () => {
+    const database = openTestDatabase();
+    openDatabases.push(database);
+    runProjectMigrations(database);
+    const now = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO command_terminal_history (agent_session_id, agent_name, label, cwd, started_at, touched_at, ended_at, updated_at)
+      VALUES ('conversation-old', 'claude', 'Named by the namer', '/projects/demo', ?, ?, ?, ?)
+    `).run(now, now, now, now);
+    database.exec('ALTER TABLE command_terminal_history DROP COLUMN named_by_user');
+    database.exec('CREATE INDEX idx_command_terminal_history_ended ON command_terminal_history(ended_at)');
+
+    runProjectMigrations(database);
+    runProjectMigrations(database);
+
+    expect(new CommandTerminalHistoryRepository(database).get('conversation-old')).toMatchObject({ label: 'Named by the namer', named_by_user: 0 });
+    const index = database.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_command_terminal_history_ended'").get();
+    expect(index).toBeUndefined();
   });
 });
 
@@ -375,18 +395,46 @@ describe('CommandTerminalHistory', () => {
     expect(await history.list(PROJECT_ID)).toMatchObject([{ agentSessionId: 'conversation-live' }]);
   });
 
-  it('keeps the newest ended conversations and never prunes one still open', () => {
-    const { repository } = setup();
-    repository.recordConversation({ agentSessionId: 'still-open', agentName: 'claude', cwd: '/projects/demo', label: null, touched: false });
-    for (let index = 0; index < COMMAND_TERMINAL_HISTORY_LIMIT + 5; index += 1) {
+  it('keeps every ended conversation, oldest included, so the agent\'s own cleanup sets the limit', async () => {
+    const { repository, history } = setup();
+    const count = 120;
+    for (let index = 0; index < count; index += 1) {
       const agentSessionId = `ended-${index}`;
       repository.recordConversation({ agentSessionId, agentName: 'claude', cwd: '/projects/demo', label: null, touched: true });
       repository.markEnded(agentSessionId, new Date(Date.UTC(2026, 9, 1, 0, index)).toISOString());
     }
-    expect(repository.get('still-open')).not.toBeNull();
-    expect(repository.get('ended-0')).toBeNull();
-    expect(repository.get(`ended-${COMMAND_TERMINAL_HISTORY_LIMIT + 4}`)).not.toBeNull();
-    expect(repository.listUsed()).toHaveLength(COMMAND_TERMINAL_HISTORY_LIMIT);
+    const entries = await history.list(PROJECT_ID);
+    expect(entries).toHaveLength(count);
+    expect(entries[0].agentSessionId).toBe(`ended-${count - 1}`);
+    expect(entries.at(-1)?.agentSessionId).toBe('ended-0');
+  });
+
+  it('checks transcripts a few at a time, however long the list', async () => {
+    const { repository, sessions } = setup();
+    for (let index = 0; index < 40; index += 1) {
+      const agentSessionId = `ended-${index}`;
+      repository.recordConversation({ agentSessionId, agentName: 'claude', cwd: '/projects/demo', label: null, touched: true });
+      repository.markEnded(agentSessionId);
+    }
+    let running = 0;
+    let mostAtOnce = 0;
+    const history = new CommandTerminalHistory({
+      sessionManager: sessions,
+      getRepository: () => repository,
+      conversationAvailable: async () => {
+        running += 1;
+        mostAtOnce = Math.max(mostAtOnce, running);
+        await new Promise((resolve) => setImmediate(resolve));
+        running -= 1;
+        return true;
+      },
+      notifyChanged: vi.fn(),
+      conversationEnded: vi.fn(),
+      searchText: async () => ({ indexingOff: false, hits: [] }),
+    });
+    expect(await history.list(PROJECT_ID)).toHaveLength(40);
+    expect(mostAtOnce).toBeGreaterThan(1);
+    expect(mostAtOnce).toBeLessThanOrEqual(8);
   });
 
   /** One used conversation, ended: what Earlier lists and a resume claims. */
@@ -395,6 +443,112 @@ describe('CommandTerminalHistory', () => {
     fixture.sessions.reportAgentId('pty-old', agentSessionId);
     fixture.sessions.remove('pty-old');
   }
+
+  it('renames a row as a user name: one line, cut to 64, and pushes the change', async () => {
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    fixture.notifyChanged.mockClear();
+
+    expect(fixture.history.rename(PROJECT_ID, 'conversation-a', `  Rail\n${'x'.repeat(80)}  `)).toBe(true);
+
+    const row = fixture.repository.get('conversation-a');
+    expect(row?.label).toBe(`Rail ${'x'.repeat(59)}`);
+    expect(row?.named_by_user).toBe(1);
+    expect(fixture.notifyChanged).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it('clears a row with an empty name, keeps the mark, and reads as the first prompt again', async () => {
+    const fixture = setup();
+    fixture.sessions.add('pty-old', { hasUserInput: true, commandTerminalLabel: 'A derived name' });
+    fixture.sessions.reportAgentId('pty-old', 'conversation-a');
+    fixture.sessions.prompt('pty-old', 'why does the rail cut names');
+    fixture.sessions.remove('pty-old');
+
+    expect(fixture.history.rename(PROJECT_ID, 'conversation-a', '')).toBe(true);
+
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: null, named_by_user: 1 });
+    expect(await fixture.history.list(PROJECT_ID)).toMatchObject([{ label: null, firstPrompt: 'why does the rail cut names' }]);
+  });
+
+  it.each([
+    ['rename', (fixture: ReturnType<typeof setup>) => fixture.history.rename(PROJECT_ID, 'conversation-a', 'Mine')],
+    ['remove', (fixture: ReturnType<typeof setup>) => fixture.history.remove(PROJECT_ID, 'conversation-a')],
+  ])('refuses a %s while a live terminal holds the conversation or a resume is starting it, and for a row that is gone', (_name, act) => {
+    const fixture = setup();
+    fixture.sessions.add('pty-live', { hasUserInput: true });
+    fixture.sessions.reportAgentId('pty-live', 'conversation-a');
+    expect(act(fixture)).toBe(false);
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: null });
+
+    fixture.sessions.remove('pty-live');
+    expect(fixture.history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+    expect(act(fixture)).toBe(false);
+    expect(fixture.repository.get('conversation-a')).not.toBeNull();
+
+    fixture.history.settleResume(PROJECT_ID, 'conversation-a', null);
+    fixture.repository.delete('conversation-a');
+    expect(act(fixture)).toBe(false);
+  });
+
+  it('removes a row and asks for its text to go, leaving the conversation free to record again', async () => {
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    fixture.conversationEnded.mockClear();
+    fixture.notifyChanged.mockClear();
+
+    expect(fixture.history.remove(PROJECT_ID, 'conversation-a')).toBe(true);
+
+    expect(fixture.repository.get('conversation-a')).toBeNull();
+    expect(await fixture.history.list(PROJECT_ID)).toEqual([]);
+    expect(fixture.conversationEnded).toHaveBeenCalledWith(PROJECT_ID, 'conversation-a');
+    expect(fixture.notifyChanged).toHaveBeenCalledWith(PROJECT_ID);
+  });
+
+  it('carries a live rename and a live clear to the row as a user name, and leaves a derived name unmarked', () => {
+    const fixture = setup();
+    fixture.sessions.add('pty-1', { hasUserInput: true });
+    fixture.sessions.reportAgentId('pty-1', 'conversation-a');
+    fixture.sessions.change('pty-1', { commandTerminalLabel: 'Derived' });
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: 'Derived', named_by_user: 0 });
+
+    fixture.sessions.change('pty-1', { commandTerminalLabel: null, commandTerminalNamedByUser: true });
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: null, named_by_user: 1 });
+  });
+
+  it('marks a row when Enter keeps a terminal\'s number, which changes the flag and not the name', () => {
+    const fixture = setup();
+    fixture.sessions.add('pty-1', { hasUserInput: true });
+    fixture.sessions.reportAgentId('pty-1', 'conversation-a');
+    fixture.sessions.change('pty-1', { commandTerminalNamedByUser: true });
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: null, named_by_user: 1 });
+  });
+
+  it('marks a row for a rename made before the agent reported the id', () => {
+    const fixture = setup();
+    fixture.sessions.add('pty-1', { hasUserInput: true });
+    fixture.sessions.change('pty-1', { commandTerminalLabel: 'Early', commandTerminalNamedByUser: true });
+    fixture.sessions.reportAgentId('pty-1', 'conversation-a');
+    expect(fixture.repository.get('conversation-a')).toMatchObject({ label: 'Early', named_by_user: 1 });
+  });
+
+  it('asks for a conversation\'s text when its terminal ends and when the agent moves on, and for a row a purge dropped', async () => {
+    const available = new Set(['conversation-b']);
+    const fixture = setup({ available: (agentSessionId) => available.has(agentSessionId) });
+    fixture.sessions.add('pty-1', { hasUserInput: true });
+    fixture.sessions.reportAgentId('pty-1', 'conversation-a');
+    expect(fixture.conversationEnded).not.toHaveBeenCalled();
+
+    fixture.sessions.reportAgentId('pty-1', 'conversation-b');
+    expect(fixture.conversationEnded).toHaveBeenLastCalledWith(PROJECT_ID, 'conversation-a');
+
+    fixture.sessions.remove('pty-1');
+    expect(fixture.conversationEnded).toHaveBeenLastCalledWith(PROJECT_ID, 'conversation-b');
+
+    fixture.conversationEnded.mockClear();
+    await fixture.history.list(PROJECT_ID);
+    expect(fixture.conversationEnded).toHaveBeenCalledTimes(1);
+    expect(fixture.conversationEnded).toHaveBeenCalledWith(PROJECT_ID, 'conversation-a');
+  });
 
   it('holds a resumed conversation from the claim until its terminal reports it, and refuses a second claim', async () => {
     const fixture = setup();

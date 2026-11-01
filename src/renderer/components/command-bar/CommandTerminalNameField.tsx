@@ -1,21 +1,21 @@
 /**
  * The field a Command Terminal's name turns into while it is renamed, in the
- * header and in the rail's Running list. It is the project sidebar's rename
- * field (`ProjectListItem`): the name's own type, no box, an accent underline.
- * It opens with the name selected, so typing replaces it; an empty field shows
- * the slot title it would go back to. Enter or a click elsewhere saves, Escape
- * cancels.
+ * header and in the rail's Running and Earlier lists. It is the project
+ * sidebar's rename field (`ProjectListItem`): the name's own type, no box, an
+ * accent underline. It opens with the name selected, so typing replaces it; an
+ * empty field shows what the name would go back to. Enter or a click elsewhere
+ * saves, Escape cancels.
  */
 
 import { useEffect, useRef, useState } from 'react';
 import { useLingui } from '@lingui/react/macro';
-import { COMMAND_TERMINAL_NAME_MAX_LENGTH, commandTerminalTitle } from '../../../shared/command-terminal-name';
+import { COMMAND_TERMINAL_NAME_MAX_LENGTH } from '../../../shared/command-terminal-name';
 
 interface CommandTerminalNameFieldProps {
   /** The name the field opens with: what the terminal is called now. */
   initialName: string;
-  /** The terminal's slot, whose title is the placeholder an empty field shows. */
-  slot: string;
+  /** What an empty field shows: what clearing the name goes back to. */
+  placeholder: string;
   /** Save. `byKey` is true for Enter, false for a click elsewhere, which keeps its focus.
    *  Only Enter saves a name it did not change, so a terminal the user named its
    *  own number stays that way (`useCommandTerminalRename`). */
@@ -27,7 +27,7 @@ interface CommandTerminalNameFieldProps {
   'data-testid'?: string;
 }
 
-export function CommandTerminalNameField({ initialName, slot, onCommit, onCancel, className, ...rest }: CommandTerminalNameFieldProps) {
+export function CommandTerminalNameField({ initialName, placeholder, onCommit, onCancel, className, ...rest }: CommandTerminalNameFieldProps) {
   const { t } = useLingui();
   const [value, setValue] = useState(initialName);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -54,7 +54,7 @@ export function CommandTerminalNameField({ initialName, slot, onCommit, onCancel
       ref={inputRef}
       value={value}
       maxLength={COMMAND_TERMINAL_NAME_MAX_LENGTH}
-      placeholder={commandTerminalTitle(slot)}
+      placeholder={placeholder}
       aria-label={t`Terminal name`}
       spellCheck={false}
       onChange={(event) => setValue(event.target.value)}

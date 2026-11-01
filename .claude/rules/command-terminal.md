@@ -140,13 +140,34 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   agent nothing names a terminal. The first prompt never seeds a resumed terminal's title. Earlier lists only rows a user touched
   (`Session.hasUserInput`, set in main from the input's content, never from xterm replies, focus
   reports or the repaint nudge) whose agent can resume by id (`canResumeConversationById`) and
-  still find the transcript, and that no live terminal or in-flight resume holds. With no such
-  row the rail shows no Earlier heading and no hint; the list stays mounted, so it has measured
-  how many rows fit before the first arrives. A resume is a start with `resumeAgentSessionId`; main claims the
+  still find the transcript, and that no live terminal or in-flight resume holds. There is no row
+  limit: the list deletes a row whose transcript is gone, so the agent's own cleanup bounds the
+  table, the checks run `AVAILABILITY_CHECKS_AT_ONCE` at a time, a transcript found stays known for
+  `AVAILABILITY_RECHECK_MS` so a rename's re-list walks nothing (a resume always asks), and the
+  phone's answer carries the newest `PHONE_EARLIER_LIMIT`. With no such row the rail shows no Earlier heading, no search field
+  and no hint. A resume is a start with `resumeAgentSessionId`; main claims the
   conversation first (`claimResume`) and refuses a second with `conversation-open`, and a row it
   cannot resume with `conversation-gone`. A row resumes IN PLACE of the focused terminal only
   while nothing has reached that terminal; a used terminal is never replaced, and the resume opens
   beside it.
+- **Earlier is a list that scrolls, and its rows never move under a search.** It renders through
+  `useVirtualizer` with no per-row observer, and the row being renamed stays in its range so a
+  scroll never drops the typed name; the field and heading stay put, and the rail's body
+  scrolls only when Running leaves Earlier under 124px. Search has two steps: the name and first
+  prompt from the list the rail holds (`earlier-search.ts`), then conversation text from main,
+  appended under "In conversations" (`useEarlierSearch`). Never merge the two by date: a row on
+  screen must not move when main answers. "No conversations match" waits for that answer. A row's
+  menu is Resume, Rename and Remove; its button is `aria-disabled` at the cap, not `disabled`, so
+  the right-click still lands, and Rename and Remove work there. Both refuse a conversation a live
+  terminal or a resume in flight holds. Remove deletes the row and its search text, never the
+  agent's transcript.
+- **Conversation text is its own corpus, read in the worker.** A Command Terminal has no `sessions`
+  row, so its text is `command_terminal` (`corpora.ts`): null session and task, `doc_id` = the
+  agent's session id, keyword search only, read by nothing but the Earlier search. Main schedules
+  it (`scheduleCommandTerminalIndex`, 5 s after a conversation ends, past a Stop's exit) and the
+  worker reads the history row itself; no row deletes the document. The project-open sweep backfills
+  and purges, so a quit loses nothing. Never add it to `EMBEDDED_CORPORA`. Whether text was searched
+  is `isIndexingEnabled`, the sweep's own gate.
 - **No pause reaches a Command Terminal.** A suspend still ends one (its conversation lands in
   Earlier like any other end, so nothing is lost, but the user did not ask). The low-memory pause
   never picks one (`isPauseEligible`), and the When idle sweep skips one before either of its
@@ -210,6 +231,9 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   a click away with nothing changed sends nothing. The history writes the
   live label on every CHANGE of it, a clear included (`setLabel` is last write wins), never on an
   unchanged push, and holds a rename made before the agent's id arrives until the row exists.
+  An Earlier row renames through `commandTerminalHistory:rename`, keyed by the conversation. Either
+  way the row's `named_by_user` records the choice, and a resume hands it back through
+  `renameCommandTerminal`, so a suggestion never replaces a user's name or a clear.
   The kebab and the row menu render one item list (`CommandTerminalMenuItems`), so they cannot
   drift.
 - **The rail's width and fold are one GLOBAL setting, and what it shows is resolved, never
@@ -342,11 +366,20 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   case in `task-detail-maximize.spec.ts` and the seam cases in `command-terminal.spec.ts` drive it
   in the real app.
 - **Test (history and resume):** `tests/unit/command-terminal-history.test.ts` (the rows, the
-  touched filter, the owned-id skip, pruning, the resume claim),
+  touched filter, the owned-id skip, no row limit, the bounded checks, rename and remove and their
+  refusals, the resume claim),
   `tests/unit/transient-session-resume.test.ts` (the resume start, `conversation-gone` and
-  `conversation-open`), `tests/unit/session-manager-user-input.test.ts` (what counts as touched),
-  and `tests/unit/command-terminal-resume-request.test.ts` (the renderer's per-slot resume
-  requests).
+  `conversation-open`, a named row and a cleared row keeping the namer off),
+  `tests/unit/session-manager-user-input.test.ts` (what counts as touched),
+  `tests/unit/command-terminal-resume-request.test.ts` (the renderer's per-slot resume requests),
+  and `tests/unit/mobile-bridge/command-terminal.test.ts` (the phone's cap, and its worst case
+  through the real frame encoder).
+- **Test (search):** `tests/unit/earlier-search.test.ts` pins the renderer's match and
+  `tests/unit/command-terminal-conversation-index.test.ts` the corpus on real parsers and SQLite (no
+  session, no ledger, no vectors, no reach from the other searches, the purge and the sweep cap).
+  `tests/ui/command-terminal.spec.ts` pins the scroll, the menu, a rename, Remove's confirm, the two
+  steps of a search with no row moving, the empty state and the indexing-off note, and
+  `command-terminal-rail.spec.ts` the short panel.
 - **Test (spawn and branch):** `tests/unit/transient-session-spawn-dirty-guard.test.ts`,
   `transient-session-spawn-ensure-trust.test.ts`, `transient-session-branch.test.ts`,
   `transient-session-adopt.test.ts`, and the two `session-manager-command-terminal-*` tests pin

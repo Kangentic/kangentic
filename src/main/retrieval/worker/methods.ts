@@ -24,11 +24,13 @@ import {
   type RelatedWork,
 } from '../related-work';
 import { searchCommits, type CommitHit } from '../commit/commit-search';
+import { searchCommandTerminalConversations } from '../conversation/command-terminal-search';
 import { SummaryStore } from '../summary/summary-store';
 import { readTaskKnowledge, type TaskKnowledge, type TaskKnowledgeLimits } from '../task-knowledge';
 import type { BoardTaskFacts } from '../answer-tasks';
 import type { Embedder, StoredChunk } from '../types';
 import type {
+  CommandTerminalHistorySearchHit,
   KnowledgeGraphBuildProgress,
   KnowledgeGraphSnapshotWire,
   SessionSummary,
@@ -263,6 +265,12 @@ export interface RetrievalMethods extends IndexMethods, TranscriptMethods, Archi
     };
     result: TranscriptSearchHit[];
   };
+  /** The Earlier list's text search: keywords only, best match first, one hit
+   *  per Command Terminal conversation. A project that will not open answers none. */
+  'search.commandTerminalConversations': {
+    params: { projectId: string; query: string };
+    result: CommandTerminalHistorySearchHit[];
+  };
   /** Commits by subject, body or sha prefix, per project, in order. A project
    *  whose index cannot be read answers none. */
   'search.commits': {
@@ -441,6 +449,13 @@ export const retrievalHandlers: RetrievalHandlers = {
     embedder: queryVectors ? precomputedEmbedder(queryVectors) : null,
     getDb: context.getDb,
   }),
+  'search.commandTerminalConversations': ({ projectId, query }, context) => {
+    try {
+      return searchCommandTerminalConversations(context.getDb(projectId), query);
+    } catch {
+      return [];
+    }
+  },
   'search.commits': ({ projects, query, taskId }, context) => projects.flatMap((project) => {
     try {
       return searchCommits(context.getDb(project.id), query, { taskId }).map((hit) => ({ ...hit, projectName: project.name }));

@@ -119,6 +119,7 @@ describe('retrieval out-of-process boundary', () => {
       'createGraphService',
       'runProjectionPass',
       'searchConversationMemory',
+      'searchCommandTerminalConversations',
       'searchRelatedWork',
       'searchRelatedWorkAcross',
       'searchCommits',

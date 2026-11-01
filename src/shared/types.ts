@@ -7420,6 +7420,23 @@ export interface CommandTerminalHistoryEntry {
   endedAt: string;
 }
 
+/** One conversation whose transcript matched a search of the Earlier list. */
+export interface CommandTerminalHistorySearchHit {
+  agentSessionId: string;
+  /** The transcript around the best match, on one line. */
+  snippet: string;
+  /** Where the match sits in `snippet`; equal when no word could be placed. */
+  matchStart: number;
+  matchEnd: number;
+}
+
+export interface CommandTerminalHistorySearchResult {
+  /** Knowledge Graph indexing is off, so no conversation text was searched. */
+  indexingOff: boolean;
+  /** Best match first, one per conversation. */
+  hits: CommandTerminalHistorySearchHit[];
+}
+
 export interface SpawnTransientSessionResult {
   session: Session;
   /** The slot main gave the terminal (`slot-N`). */
@@ -8260,6 +8277,12 @@ export interface ElectronAPI {
     renameTransient: (sessionId: string, name: string | null) => Promise<boolean>;
     /** A project's earlier Command Terminal conversations, newest first. */
     listCommandTerminalHistory: (projectId: string) => Promise<CommandTerminalHistoryEntry[]>;
+    /** Rename an Earlier row. Null clears it. False: a live terminal holds it, or it is gone. */
+    renameCommandTerminalHistory: (projectId: string, agentSessionId: string, name: string | null) => Promise<boolean>;
+    /** Remove an Earlier row and its search text. The agent's transcript stays. */
+    removeCommandTerminalHistory: (projectId: string, agentSessionId: string) => Promise<boolean>;
+    /** Earlier conversations whose transcript matches, for the rail's search. */
+    searchCommandTerminalHistory: (projectId: string, query: string) => Promise<CommandTerminalHistorySearchResult>;
     /** A project's earlier conversations changed: re-list them. */
     onCommandTerminalHistoryChanged: (callback: (projectId: string) => void) => () => void;
     setFocused: (sessionIds: string[]) => Promise<void>;
@@ -9446,7 +9469,7 @@ export interface KnowledgeGraphProjection {
 }
 
 /** A corpus of the memory index, as the Index panel lists it. */
-export type KnowledgeGraphIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code';
+export type KnowledgeGraphIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code' | 'command_terminal';
 
 /** What one corpus holds. */
 export interface KnowledgeGraphIndexCorpusSummary {

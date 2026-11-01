@@ -373,6 +373,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       }
     },
     notifyChanged: (projectId) => broadcast(requireContext().mainWindow, IPC.COMMAND_TERMINAL_HISTORY_CHANGED, projectId),
+    conversationEnded: (projectId, agentSessionId) => retrievalService.scheduleCommandTerminalIndex(requireContext(), projectId, agentSessionId),
+    searchText: (projectId, query) => retrievalService.searchCommandTerminalText(requireContext(), projectId, query),
   });
   commandTerminalHistory.start();
   context.commandTerminalHistory = commandTerminalHistory;
