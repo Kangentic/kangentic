@@ -77,20 +77,27 @@ export function resolveRendererIndexPath(viteName: string): string {
  * Inside a worktree, a resolved preview task label (`#<id> - <title>`) wins outright with
  * NO `appLabel` prefix - Windows already groups the thumbnail under the Kangentic taskbar
  * group, so repeating the app name there only pushes the part that identifies the window
- * past the edge of the thumbnail. Otherwise it falls back to "<appLabel> - <folderLabel>",
- * where a purely-numeric worktree folder (the task's display_id) reads as "#<id>" instead
- * of a bare number, and a legacy `<slug>-<shortId>` folder is used verbatim.
+ * past the edge of the thumbnail. Otherwise it falls back to "<appLabel> - #<id>", with the
+ * number read from the worktree's task row (`resolveWorktreeTaskNumber`, also a thunk, also
+ * a DB read). A folder name is not the number: a task that adopted a spare worktree lives in
+ * `spare_<8 hex>` for good. Only when the row cannot be read does the folder itself show: a
+ * purely-numeric folder (the task's display_id) as "#<id>", anything else verbatim.
  */
 export function computeWindowTitle(
   appLabel: string,
   cwd: string | null,
   resolvePreviewTaskTitle: () => string | null,
+  resolveWorktreeTaskNumber: () => number | null = () => null,
 ): string {
   const worktreeMatch = cwd ? cwd.replace(/\\/g, '/').match(/\.kangentic\/worktrees\/([^/]+)/) : null;
   if (!worktreeMatch) return appLabel;
+  const previewLabel = resolvePreviewTaskTitle();
+  if (previewLabel) return previewLabel;
+  const taskNumber = resolveWorktreeTaskNumber();
+  if (taskNumber !== null) return `${appLabel} - #${taskNumber}`;
   const folderName = worktreeMatch[1];
   const folderLabel = /^\d+$/.test(folderName) ? `#${folderName}` : folderName;
-  return resolvePreviewTaskTitle() ?? `${appLabel} - ${folderLabel}`;
+  return `${appLabel} - ${folderLabel}`;
 }
 
 /** Read saved window bounds from config, with screen-boundary validation. */

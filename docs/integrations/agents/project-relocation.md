@@ -38,7 +38,10 @@ quiesce that lets the move succeed on Windows, where a directory cannot be renam
 process holds a handle inside it). The background deleter of worktrees a Done move set aside
 stops after its current batch before the move too (`stopRemovedWorktreeDeletion`), and the next
 project open at the new path deletes what it left (see
-[Done removal](../../architecture/worktrees/worktree-lifecycle.md#done-removal)). The quiesce does
+[Done removal](../../architecture/worktrees/worktree-lifecycle.md#done-removal)). A spare worktree
+build stops before the move as well, and every spare no task names is discarded at the new path
+after the `git worktree repair`, never repaired: its pnpm junctions name the old location (see
+[The spare worktree](../../architecture/worktrees/worktree-creation.md#the-spare-worktree)). The quiesce does
 NOT cover an unrelated agent session running in a DIFFERENT project or an external terminal:
 such a session can still hold a shared global config (e.g. `~/.claude.json`) in memory and overwrite the migrated keys on its next save. Kangentic
 only manages its own sessions and does not detect or kill those, so that residue is accepted (the

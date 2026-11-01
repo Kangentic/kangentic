@@ -12,6 +12,7 @@ import { removeNodeModulesPath } from '../git/node-modules-link';
 import { removeWithRetry } from '../git/rm-with-retry';
 import { WorktreeManager, GitQueuePriority } from '../git/worktree-manager';
 import { scheduleRemovedWorktreeDeletion } from '../git/removed-worktrees';
+import { isSpareWorktreeFolder } from '../git/spare-worktree';
 import { readLocalBranchSha } from '../git/worktree-head';
 import { holdsPRIdentity } from '../pr/pr-identity';
 import { withTaskLock } from '../ipc/task-lifecycle-lock';
@@ -677,13 +678,15 @@ export async function pruneOrphanedDirectories(
 
   // Worktree directories: match by full path. A worktree is recorded on its
   // task only once its setup (the Post-Worktree Script) ends, so one a
-  // creation still holds counts as referenced too.
+  // creation still holds counts as referenced too. A spare worktree is no
+  // task's until one adopts it, and its own startup pass decides whether it
+  // stays (`SpareWorktreePool.sweep`), so this sweep never takes one.
   const referencedWorktrees = new Set(
     allTasks.map(task => task.worktree_path).filter((worktreePath): worktreePath is string => Boolean(worktreePath)),
   );
   await pruneDirectory(
     path.join(kangenticDir, 'worktrees'),
-    (dirPath) => referencedWorktrees.has(dirPath) || isWorktreeCreationInFlight(dirPath),
+    (dirPath, name) => referencedWorktrees.has(dirPath) || isWorktreeCreationInFlight(dirPath) || isSpareWorktreeFolder(name),
     'worktree',
     true, // has junctions
   );
