@@ -11,20 +11,21 @@
  * Filesystem writes stay under os.tmpdir() (cross-platform-parity).
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import * as fs from 'node:fs';
+import fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { reconcileResumeAgentSessionId } from '../../src/main/transition-engine/resume-id-reconcile';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
 import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
-import type { SessionUsage } from '../../src/shared/types';
+import type { CliPlace } from '../../src/main/agent/shared/cli-target';
+import type { SessionStartReport, SessionUsage } from '../../src/shared/types';
 import { claudeSessionStartLine } from './helpers/claude-session-start';
 
 const RECORD_ID = 'record-1111-2222-3333-444444444444';
 const STORED_ID = 'aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee';
 const FORKED_ID = 'ffffffff-1111-2222-3333-444444444444';
 
-type ParseSessionStart = (hookContext: string) => { agentSessionId: string; movesConversation: boolean; inBackgroundSession: boolean } | null;
+type ParseSessionStart = (hookContext: string) => SessionStartReport | null;
 
 interface AdapterStub {
   runtime: {
@@ -97,6 +98,7 @@ describe('reconcileResumeAgentSessionId', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(projectPath, { recursive: true, force: true });
   });
 
@@ -286,7 +288,12 @@ describe('reconcileResumeAgentSessionId', () => {
       Object.assign(adapter.runtime.statusFile!, { confirmsBackgroundMove });
 
       expect(await reconcile(adapter)).toBe(STORED_ID);
-      expect(confirmsBackgroundMove).toHaveBeenCalledWith({ cwd: path.join(projectPath, 'worktree'), fromAgentSessionId: STORED_ID, toAgentSessionId: FORKED_ID });
+      expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+        cwd: path.join(projectPath, 'worktree'),
+        fromAgentSessionId: STORED_ID,
+        toAgentSessionId: FORKED_ID,
+        cliTarget: null,
+      });
       expect(updateAgentSessionId).not.toHaveBeenCalled();
     });
 
@@ -490,6 +497,141 @@ describe('reconcileResumeAgentSessionId', () => {
       expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(STORED_ID);
       expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
       expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: STORED_ID, cliPath: CLI_PATH });
+    });
+
+    // A record whose CLI ran in a WSL distro keeps its transcript in the
+    // distro's home, so both move checks are handed where the record ran, in the
+    // stored form a session row keeps. Passed as null, they would read the
+    // transcript on this machine, find none, and read a real move as a copy.
+    describe('for a record whose CLI ran in a WSL distro', () => {
+      const WSL_PLACE: CliPlace = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: {
+          distro: 'Ubuntu',
+          homeLinux: '/home/dev',
+          homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+          uncRoot: '\\\\wsl.localhost\\Ubuntu',
+          interactivePath: '',
+          env: {},
+          networkingMode: 'unknown',
+        },
+      };
+      const STORED_TARGET = {
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+        uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      };
+
+      it('gives the move check of a stored id the move left the record\'s place', async () => {
+        // No status.json: only the settle step asks about the move here.
+        writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+        const { stub, stopBackgroundSession } = backgroundAdapter();
+        const confirmsBackgroundMove = vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID);
+        Object.assign(stub.runtime.statusFile!, { confirmsBackgroundMove });
+
+        expect(await reconcile(stub, { cliPath: CLI_PATH, place: WSL_PLACE })).toBe(FORKED_ID);
+        expect(confirmsBackgroundMove).toHaveBeenCalledTimes(1);
+        expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+          cwd: path.join(projectPath, 'worktree'),
+          fromAgentSessionId: STORED_ID,
+          toAgentSessionId: FORKED_ID,
+          cliTarget: expect.objectContaining(STORED_TARGET),
+        });
+        expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
+      });
+
+      it('gives the move check of a status swap the record\'s place', async () => {
+        // The status file names the fork, so the swap asks. The settle step then
+        // finds the fork among the record's own background hooks and asks nothing.
+        writeStatusFile(JSON.stringify({ session_id: FORKED_ID }));
+        writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+        const { stub, stopBackgroundSession } = backgroundAdapter();
+        const confirmsBackgroundMove = vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID);
+        Object.assign(stub.runtime.statusFile!, { confirmsBackgroundMove });
+
+        expect(await reconcile(stub, { cliPath: CLI_PATH, place: WSL_PLACE })).toBe(FORKED_ID);
+        expect(confirmsBackgroundMove).toHaveBeenCalledTimes(1);
+        expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+          cwd: path.join(projectPath, 'worktree'),
+          fromAgentSessionId: STORED_ID,
+          toAgentSessionId: FORKED_ID,
+          cliTarget: expect.objectContaining(STORED_TARGET),
+        });
+        expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
+      });
+    });
+
+    // The record is pointed at the background session only once the stop and the
+    // resumable-id check are both done, so a step that throws leaves the record
+    // on the conversation it stored and the resume on that same id.
+    it('leaves the record on the stored id when a step after the stop throws', async () => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+      const { stub, stopBackgroundSession, resolveResumableSessionId } = backgroundAdapter({ resolveThrows: true });
+      Object.assign(stub.runtime.statusFile!, {
+        confirmsBackgroundMove: vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID),
+      });
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(STORED_ID);
+      // The path reached both steps, so an unwritten record is not an early exit.
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+      expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
+      expect(resolveResumableSessionId).toHaveBeenCalledTimes(1);
+      expect(updateAgentSessionId).not.toHaveBeenCalled();
+    });
+
+    // A hook payload the event bridge cut short, or a hand-edited file, can carry
+    // anything in its id field. The move check says yes to every id here, so only
+    // the id's own shape keeps an odd one from being stopped and persisted.
+    it.each([
+      ['has spaces', 'a b c'],
+      ['is too short', 'abc123'],
+      ['is a path', '../escape-0000-1111-2222'],
+    ])('never follows a fork hook whose session id %s', async (_shape, oddSessionId) => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(oddSessionId, 'fork', 2)]);
+      const { stub, stopBackgroundSession, resolveResumableSessionId } = backgroundAdapter();
+      const confirmsBackgroundMove = vi.fn(async () => true);
+      Object.assign(stub.runtime.statusFile!, { confirmsBackgroundMove });
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(STORED_ID);
+      expect(confirmsBackgroundMove).not.toHaveBeenCalled();
+      expect(stopBackgroundSession).not.toHaveBeenCalled();
+      expect(resolveResumableSessionId).not.toHaveBeenCalled();
+      expect(updateAgentSessionId).not.toHaveBeenCalled();
+    });
+
+    // The expected id differs from both the stored id and the odd one, so
+    // neither a dropped check nor a fall back to the stored id can pass by
+    // accident.
+    it('keeps the background id when the adapter resolves a resumable id that is not id-shaped', async () => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+      const { stub, resolveResumableSessionId } = backgroundAdapter({ resumable: '../x y' });
+      Object.assign(stub.runtime.statusFile!, {
+        confirmsBackgroundMove: vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID),
+      });
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(FORKED_ID);
+      expect(resolveResumableSessionId).toHaveBeenCalledTimes(1);
+      expect(updateAgentSessionId).toHaveBeenCalledTimes(1);
+      expect(updateAgentSessionId).toHaveBeenCalledWith(RECORD_ID, FORKED_ID);
+    });
+
+    // The status swap and the background check both read the record's hooks. A
+    // long session's events file is not read twice for one resume.
+    it('reads the events file once when the status swap and the background session both need its hooks', async () => {
+      writeStatusFile(JSON.stringify({ session_id: FORKED_ID }));
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+      const { stub, stopBackgroundSession, resolveResumableSessionId } = backgroundAdapter();
+      const eventsPath = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID, 'events.jsonl');
+      const createReadStream = vi.spyOn(fs, 'createReadStream');
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(FORKED_ID);
+      // Both checks ran, so one read is sharing, not a check that never asked.
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+      expect(resolveResumableSessionId).toHaveBeenCalledTimes(1);
+      expect(createReadStream.mock.calls.filter(([filePath]) => filePath === eventsPath)).toHaveLength(1);
     });
 
     // tests/fixtures/claude-background-move/session-starts.jsonl is a sanitized

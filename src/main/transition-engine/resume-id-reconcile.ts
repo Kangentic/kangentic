@@ -3,34 +3,41 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { AdapterRuntimeStrategy, SessionStartReport, StoredCliTarget } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import type { CliPlace } from '../agent/shared/cli-target';
+import { toStoredCliTarget, type CliPlace } from '../agent/shared/cli-target';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 import type { SessionRepository } from '../db/repositories/session-repository';
 import { sessionOutputPaths } from './session-paths';
 
 type StatusFileHook = NonNullable<AdapterRuntimeStrategy['statusFile']>;
 
+/** A record's SessionStart reports, read when first asked for (`readSessionStarts`). */
+type SessionStartsReader = () => Promise<readonly SessionStartReport[]>;
+
 /**
- * Hand each SessionStart report in an events file to `visit`, in order, until
- * it returns false. Streamed line by line, so a long session's file is never
- * held whole, and a tool or turn line is skipped unparsed (`sessionStartOfLine`).
- * Read only on the paths that need it (a status report that disagrees with the
- * stored id, a resume or a terminal transition of a conversation), never on
- * every status write. A missing or unreadable file yields nothing, which proves
- * nothing.
+ * An id plausible enough to persist or hand `--resume`. A hand-edited or
+ * corrupted file, or a hook payload the event bridge cut short, can carry
+ * anything in its id field.
  */
-async function scanSessionStarts(
-  statusFileHook: StatusFileHook,
-  eventsOutputPath: string,
-  visit: (sessionStart: SessionStartReport) => boolean | void,
-): Promise<void> {
-  if (!statusFileHook.parseSessionStart) return;
+const PLAUSIBLE_AGENT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
+
+/**
+ * Every SessionStart report in an events file, in order. Streamed line by line,
+ * so a long session's file is never held whole, and a tool or turn line is
+ * skipped unparsed (`sessionStartOfLine`). Read only on the paths that need it
+ * (a status report that disagrees with the stored id, a resume or a terminal
+ * transition of a conversation), never on every status write. A missing or
+ * unreadable file yields nothing, which proves nothing. A read that fails
+ * partway yields what it read.
+ */
+async function readSessionStarts(statusFileHook: StatusFileHook, eventsOutputPath: string): Promise<SessionStartReport[]> {
+  const sessionStarts: SessionStartReport[] = [];
+  if (!statusFileHook.parseSessionStart) return sessionStarts;
   // An absent file is the common miss. Checked first, because a stream error
   // would otherwise throw inside the loop below.
   try {
     await fs.promises.access(eventsOutputPath, fs.constants.R_OK);
   } catch {
-    return;
+    return sessionStarts;
   }
   const stream = fs.createReadStream(eventsOutputPath, { encoding: 'utf8' });
   // A file removed mid-read, or EBUSY on Windows, ends the scan where it is.
@@ -39,7 +46,7 @@ async function scanSessionStarts(
   try {
     for await (const line of lines) {
       const sessionStart = sessionStartOfLine(statusFileHook, line);
-      if (sessionStart && visit(sessionStart) === false) break;
+      if (sessionStart) sessionStarts.push(sessionStart);
     }
   } catch {
     // A mid-stream failure surfaced through the iterator: the scan ends there.
@@ -47,21 +54,11 @@ async function scanSessionStarts(
     lines.close();
     if (!stream.destroyed) stream.destroy();
   }
+  return sessionStarts;
 }
 
-/** The first SessionStart report in an events file that matches, or null. */
-async function findSessionStart(
-  statusFileHook: StatusFileHook,
-  eventsOutputPath: string,
-  matches: (sessionStart: SessionStartReport) => boolean,
-): Promise<SessionStartReport | null> {
-  let found: SessionStartReport | null = null;
-  await scanSessionStarts(statusFileHook, eventsOutputPath, (sessionStart) => {
-    if (!matches(sessionStart)) return true;
-    found = sessionStart;
-    return false;
-  });
-  return found;
+function eventsPathOfRecord(projectPath: string, recordId: string): string {
+  return sessionOutputPaths(path.join(projectPath, '.kangentic', 'sessions', recordId)).eventsOutputPath;
 }
 
 /**
@@ -93,16 +90,19 @@ export async function backgroundSessionHoldingConversation(params: {
   cwd: string | null;
   /** Where the record's CLI ran, for the move check's transcript read. */
   cliTarget?: StoredCliTarget | null;
+  /** The record's SessionStart reports, from a reader the caller shares with its own checks. Read here when absent. */
+  sessionStarts?: SessionStartsReader;
 }): Promise<string | null> {
   const statusFileHook = params.adapter.runtime?.statusFile;
   if (!statusFileHook?.parseSessionStart || !params.adapter.stopBackgroundSession) return null;
-  const { eventsOutputPath } = sessionOutputPaths(path.join(params.projectPath, '.kangentic', 'sessions', params.recordId));
+  const sessionStarts = params.sessionStarts
+    ? await params.sessionStarts()
+    : await readSessionStarts(statusFileHook, eventsPathOfRecord(params.projectPath, params.recordId));
   const backgroundIds: string[] = [];
-  await scanSessionStarts(statusFileHook, eventsOutputPath, (sessionStart) => {
-    if (sessionStart.inBackgroundSession && !backgroundIds.includes(sessionStart.agentSessionId)) {
-      backgroundIds.push(sessionStart.agentSessionId);
-    }
-  });
+  for (const sessionStart of sessionStarts) {
+    if (!sessionStart.inBackgroundSession || !PLAUSIBLE_AGENT_SESSION_ID.test(sessionStart.agentSessionId)) continue;
+    if (!backgroundIds.includes(sessionStart.agentSessionId)) backgroundIds.push(sessionStart.agentSessionId);
+  }
   if (backgroundIds.includes(params.agentSessionId)) return params.agentSessionId;
   const { cwd } = params;
   if (!cwd || !statusFileHook.confirmsBackgroundMove) return null;
@@ -174,9 +174,24 @@ interface ReconcileParams {
  * into one.
  */
 export async function reconcileResumeAgentSessionId(params: ReconcileParams): Promise<string | null> {
-  const reconciled = await reconcileReportedId(params);
+  const sessionStarts = sessionStartsOnce(params);
+  const reconciled = await reconcileReportedId(params, sessionStarts);
   if (!reconciled) return reconciled;
-  return settleResumeTarget(params, reconciled);
+  return settleResumeTarget(params, reconciled, sessionStarts);
+}
+
+/** The record's SessionStart reports, read on the first ask and shared by both checks, so one resume reads its events file once. */
+function sessionStartsOnce(params: ReconcileParams): SessionStartsReader {
+  let reading: Promise<readonly SessionStartReport[]> | null = null;
+  return () => {
+    if (!reading) {
+      const statusFileHook = params.adapter.runtime?.statusFile;
+      reading = statusFileHook && params.projectPath && params.recordId
+        ? readSessionStarts(statusFileHook, eventsPathOfRecord(params.projectPath, params.recordId))
+        : Promise.resolve([]);
+    }
+    return reading;
+  };
 }
 
 /**
@@ -191,30 +206,48 @@ export async function reconcileResumeAgentSessionId(params: ReconcileParams): Pr
  * Both steps run only on that evidence in the record's own events file
  * (`backgroundSessionHoldingConversation`), so an ordinary resume runs no CLI
  * and reads no transcript here. A record still stored on the conversation the
- * move left is pointed at the background session, as the status swap is.
- * Never throws.
+ * move left is pointed at the background session, as the status swap is, once
+ * both steps are done: a step that throws leaves the record and the returned id
+ * on the conversation it stored. Never throws.
  */
-async function settleResumeTarget(params: ReconcileParams, agentSessionId: string): Promise<string> {
+async function settleResumeTarget(params: ReconcileParams, agentSessionId: string, sessionStarts: SessionStartsReader): Promise<string> {
   const { adapter, recordId, projectPath, cwd, cliPath } = params;
   if (!recordId || !projectPath) return agentSessionId;
   try {
-    const backgroundId = await backgroundSessionHoldingConversation({ adapter, projectPath, recordId, agentSessionId, cwd: cwd ?? null });
+    const backgroundId = await backgroundSessionHoldingConversation({
+      adapter,
+      projectPath,
+      recordId,
+      agentSessionId,
+      cwd: cwd ?? null,
+      // The move check reads the transcript where the record's CLI ran.
+      cliTarget: toStoredCliTarget(params.place ?? null),
+      sessionStarts,
+    });
     if (!backgroundId) return agentSessionId;
+    if (cliPath) {
+      const stopRan = await adapter.stopBackgroundSession?.({ agentSessionId: backgroundId, cliPath });
+      if (stopRan === false) {
+        console.log(`[SESSION_LIFECYCLE] Resume target: no background session holding ${backgroundId.slice(0, 8)} was stopped. Resuming it anyway.`);
+      }
+    }
+    let resumable = backgroundId;
+    if (cwd && adapter.resolveResumableSessionId) {
+      const resolved = await adapter.resolveResumableSessionId({ agentSessionId: backgroundId, cwd, place: params.place ?? null });
+      if (resolved !== backgroundId && PLAUSIBLE_AGENT_SESSION_ID.test(resolved)) {
+        console.log(
+          `[SESSION_LIFECYCLE] Resume target: ${backgroundId.slice(0, 8)} moved into a background session and took`
+          + ` no turn there, so it resumes as ${resolved.slice(0, 8)}, the conversation it continued.`,
+        );
+        resumable = resolved;
+      }
+    }
     if (backgroundId !== agentSessionId) {
       console.log(
         `[SESSION_LIFECYCLE] Resume target: record ${recordId.slice(0, 8)} stored ${agentSessionId.slice(0, 8)},`
         + ` which moved into the background session ${backgroundId.slice(0, 8)}. Following the move.`,
       );
       params.sessionRepo?.updateAgentSessionId(recordId, backgroundId);
-    }
-    if (cliPath) await adapter.stopBackgroundSession?.({ agentSessionId: backgroundId, cliPath });
-    if (!cwd || !adapter.resolveResumableSessionId) return backgroundId;
-    const resumable = await adapter.resolveResumableSessionId({ agentSessionId: backgroundId, cwd, place: params.place ?? null });
-    if (resumable !== backgroundId) {
-      console.log(
-        `[SESSION_LIFECYCLE] Resume target: ${backgroundId.slice(0, 8)} moved into a background session and took`
-        + ` no turn there, so it resumes as ${resumable.slice(0, 8)}, the conversation it continued.`,
-      );
     }
     return resumable;
   } catch (error) {
@@ -223,7 +256,7 @@ async function settleResumeTarget(params: ReconcileParams, agentSessionId: strin
   }
 }
 
-async function reconcileReportedId(params: ReconcileParams): Promise<string | null> {
+async function reconcileReportedId(params: ReconcileParams, sessionStarts: SessionStartsReader): Promise<string | null> {
   const { adapter, recordId, storedAgentSessionId, cwd, projectPath, sessionRepo } = params;
   const storedId = storedAgentSessionId ?? null;
 
@@ -238,7 +271,7 @@ async function reconcileReportedId(params: ReconcileParams): Promise<string | nu
 
   try {
     const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
-    const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
+    const { statusOutputPath } = sessionOutputPaths(sessionDir);
     let raw: string;
     try {
       raw = fs.readFileSync(statusOutputPath, 'utf8');
@@ -252,7 +285,7 @@ async function reconcileReportedId(params: ReconcileParams): Promise<string | nu
     if (typeof reportedId !== 'string' || reportedId === storedId) return storedId;
     // Defense in depth against a hand-edited or corrupted file: only accept a
     // plausibly id-shaped value before pointing --resume at it.
-    if (!/^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/.test(reportedId)) return storedId;
+    if (!PLAUSIBLE_AGENT_SESSION_ID.test(reportedId)) return storedId;
 
     // Every process started with this record's --settings writes this status
     // file, so its last report can name a sibling rather than the
@@ -261,7 +294,7 @@ async function reconcileReportedId(params: ReconcileParams): Promise<string | nu
     // follows only an id a hook that moves the conversation named, the same
     // rule the live reconcile applies (ConversationSwitchGate).
     if (statusFileHook.parseSessionStart) {
-      const moveHook = await findSessionStart(statusFileHook, eventsOutputPath, (sessionStart) =>
+      const moveHook = (await sessionStarts()).find((sessionStart) =>
         sessionStart.movesConversation && sessionStart.agentSessionId === reportedId);
       if (!moveHook) {
         console.log(
@@ -272,12 +305,17 @@ async function reconcileReportedId(params: ReconcileParams): Promise<string | nu
       }
       // A background session's hook reads the same for a move (Claude's /bg)
       // and a copy started beside the conversation (/fork); the adapter tells
-      // them apart, as the live switch does. No place is passed: a CLI in a
-      // distro then reads as unproven and keeps the stored id.
+      // them apart, as the live switch does, reading the transcript where the
+      // record's CLI ran.
       if (
         moveHook.inBackgroundSession
         && statusFileHook.confirmsBackgroundMove
-        && !(await statusFileHook.confirmsBackgroundMove({ cwd, fromAgentSessionId: storedId, toAgentSessionId: reportedId }))
+        && !(await statusFileHook.confirmsBackgroundMove({
+          cwd,
+          fromAgentSessionId: storedId,
+          toAgentSessionId: reportedId,
+          cliTarget: toStoredCliTarget(params.place ?? null),
+        }))
       ) {
         console.log(
           `[SESSION_LIFECYCLE] Resume-time reconcile: record ${recordId.slice(0, 8)}'s status file last reported`

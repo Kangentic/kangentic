@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude';
-import { sessionStartOfLine, sessionStartOfRecord } from '../../src/main/agent/shared/session-start-hook';
+import { sessionStartOfLine } from '../../src/main/agent/shared/session-start-hook';
 import type { AdapterRuntimeStrategy, SessionStartReport } from '../../src/shared/types';
 
 type StatusFileHook = NonNullable<AdapterRuntimeStrategy['statusFile']>;
@@ -189,27 +189,26 @@ describe('sessionStartOfLine skips what is not a SessionStart', () => {
   });
 });
 
-describe('sessionStartOfRecord', () => {
+describe('sessionStartOfLine, by the record a line parses to', () => {
   it('returns null for a record of another type, even one carrying a real SessionStart payload', () => {
     const parseSessionStart = vi.fn<(hookContext: string) => SessionStartReport | null>(() => FORK_REPORT);
-    const record = { ts: 2, type: 'tool_start', hookContext: FORK_CONTEXT };
-    expect(sessionStartOfRecord(statusFileHookWith(parseSessionStart), record)).toBeNull();
+    // The tool name puts the event name in the line, so the line reaches the record's type check.
+    const line = JSON.stringify({ ts: 2, type: 'tool_start', tool: 'session_start', hookContext: FORK_CONTEXT });
+    expect(sessionStartOfLine(statusFileHookWith(parseSessionStart), line)).toBeNull();
     expect(parseSessionStart).not.toHaveBeenCalled();
-    expect(sessionStartOfRecord(claudeStatusFileHook, record)).toBeNull();
-  });
-
-  it('reads the hookContext of a session_start record', () => {
-    const record = JSON.parse(FORK_LINE) as Record<string, unknown>;
-    expect(sessionStartOfRecord(claudeStatusFileHook, record)).toEqual(FORK_REPORT);
+    expect(sessionStartOfLine(claudeStatusFileHook, line)).toBeNull();
   });
 
   it('reads each real record by its own source', () => {
-    expect(sessionStartOfRecord(claudeStatusFileHook, JSON.parse(RESUME_LINE) as Record<string, unknown>)).toEqual(RESUME_REPORT);
-    expect(sessionStartOfRecord(claudeStatusFileHook, JSON.parse(STARTUP_LINE) as Record<string, unknown>)).toEqual(STARTUP_REPORT);
+    expect(sessionStartOfLine(claudeStatusFileHook, RESUME_LINE)).toEqual(RESUME_REPORT);
+    expect(sessionStartOfLine(claudeStatusFileHook, STARTUP_LINE)).toEqual(STARTUP_REPORT);
+    expect(sessionStartOfLine(claudeStatusFileHook, FORK_LINE)).toEqual(FORK_REPORT);
   });
 
-  it('returns null for an adapter whose hook has no parseSessionStart', () => {
-    const record = JSON.parse(FORK_LINE) as Record<string, unknown>;
-    expect(sessionStartOfRecord(hookWithoutSessionStart, record)).toBeNull();
+  it.each([
+    ['an array', '[{"type":"session_start"}]'],
+    ['a string', '"session_start"'],
+  ])('returns null for a line that parses to %s, not a record', (_label, line) => {
+    expect(sessionStartOfLine(claudeStatusFileHook, line)).toBeNull();
   });
 });

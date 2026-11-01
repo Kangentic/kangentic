@@ -42,9 +42,9 @@ interface Harness {
   emittedUsage: EmittedUsage[];
 }
 
-function makeHarness(
-  confirmsBackgroundMove?: (sessionId: string, fromAgentSessionId: string, toAgentSessionId: string) => Promise<boolean>,
-): Harness {
+type ConfirmsBackgroundMove = (sessionId: string, fromAgentSessionId: string, toAgentSessionId: string) => Promise<boolean>;
+
+function makeHarness(confirmsBackgroundMove?: ConfirmsBackgroundMove): Harness {
   const capturedIds: string[] = [];
   const emittedUsage: EmittedUsage[] = [];
   const telemetry = new SessionTelemetry(
@@ -251,7 +251,11 @@ describe('SessionTelemetry: a status id change needs a SessionStart that moved t
 // Only a move ends the old transcript with `continued-in`, which the adapter
 // checks (`statusFile.confirmsBackgroundMove`, through the session manager).
 describe('SessionTelemetry: a background session\'s hook switches only once the move is proven', () => {
+  let telemetryUnderTest: SessionTelemetry | null = null;
+
   afterEach(() => {
+    telemetryUnderTest?.dispose();
+    telemetryUnderTest = null;
     vi.useRealTimers();
   });
 
@@ -259,6 +263,7 @@ describe('SessionTelemetry: a background session\'s hook switches only once the 
     vi.useFakeTimers();
     const confirmsBackgroundMove = vi.fn(async () => false);
     const { telemetry, capturedIds, emittedUsage } = makeHarness(confirmsBackgroundMove);
+    telemetryUnderTest = telemetry;
     telemetry.initSession('s1', new ClaudeAdapter());
     telemetry.processStatusUpdate('s1', conversation(ORIGINAL, 100));
 
@@ -273,15 +278,15 @@ describe('SessionTelemetry: a background session\'s hook switches only once the 
     expect(confirmsBackgroundMove).toHaveBeenCalledWith('s1', ORIGINAL, MOVED);
     expect(capturedIds).toEqual([ORIGINAL]);
     expect(emittedUsage.every((usage) => usage.agentSessionId === ORIGINAL)).toBe(true);
-    telemetry.dispose();
   });
 
   it('a /bg move switches once proven, on a later check, and applies the write it held', async () => {
     vi.useFakeTimers();
-    const confirmsBackgroundMove = vi.fn<(sessionId: string, from: string, to: string) => Promise<boolean>>()
+    const confirmsBackgroundMove = vi.fn<ConfirmsBackgroundMove>()
       .mockResolvedValueOnce(false)
       .mockResolvedValue(true);
     const { telemetry, capturedIds, emittedUsage } = makeHarness(confirmsBackgroundMove);
+    telemetryUnderTest = telemetry;
     telemetry.initSession('s1', new ClaudeAdapter());
     telemetry.processStatusUpdate('s1', conversation(ORIGINAL, 100));
 
@@ -293,19 +298,18 @@ describe('SessionTelemetry: a background session\'s hook switches only once the 
     await vi.advanceTimersByTimeAsync(1_500);
     expect(capturedIds).toEqual([ORIGINAL, MOVED]);
     expect(emittedUsage.at(-1)).toEqual({ agentSessionId: MOVED, totalCostUsd: 51.58, totalOutputTokens: 300 });
-    telemetry.dispose();
   });
 
   it('asks nothing for a hook that is not a background session\'s, such as /clear', () => {
     const confirmsBackgroundMove = vi.fn(async () => false);
     const { telemetry, capturedIds } = makeHarness(confirmsBackgroundMove);
+    telemetryUnderTest = telemetry;
     telemetry.initSession('s1', new ClaudeAdapter());
     telemetry.processStatusUpdate('s1', conversation(ORIGINAL, 100));
     telemetry.noteSessionStartHooks('s1', [claudeSessionStartLine(CLEARED, 'clear')]);
     telemetry.processStatusUpdate('s1', conversation(CLEARED));
     expect(confirmsBackgroundMove).not.toHaveBeenCalled();
     expect(capturedIds).toEqual([ORIGINAL, CLEARED]);
-    telemetry.dispose();
   });
 });
 
@@ -315,8 +319,6 @@ describe('SessionTelemetry: a background session\'s hook switches only once the 
 // next, and the checks stop as soon as the session is gone, has followed another
 // id, or the move is proven.
 describe('SessionTelemetry: a background session\'s move is checked on a schedule', () => {
-  type ConfirmsBackgroundMove = (sessionId: string, fromAgentSessionId: string, toAgentSessionId: string) => Promise<boolean>;
-
   let telemetryUnderTest: SessionTelemetry | null = null;
 
   beforeEach(() => {

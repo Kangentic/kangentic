@@ -769,6 +769,63 @@ describe('a conversation in the agent CLI\'s own background session stops before
     expect(inFlight).toBe(0);
     expect(sessionManager.reapTaskProcesses).toHaveBeenCalledTimes(1);
   });
+
+  // The stops race one deadline, twice a single stop's own 10 s budget, so a
+  // supervisor that never answers holds a bulk delete for 20 s, not for a
+  // budget per record. At the deadline the queue is cleared, so a stop still
+  // waiting for a slot never starts once the reap has gone ahead.
+  it('goes ahead with the reap 20 s after stops that never answer, and starts no queued stop after it', async () => {
+    const indexes = [1, 2, 3];
+    for (const index of indexes) writeMovedRecordEvents(`record-bg-${index}`, conversationId(index));
+    mockListForTaskNewestFirst.mockReturnValue(indexes.map((index) => recordOf(`record-bg-${index}`, conversationId(index))));
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    stopBackgroundSession.mockImplementation(async () => {
+      callOrder.push('stopBackgroundSession');
+      await gate;
+      return true;
+    });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sessionManager = makeSessionManager();
+
+    // Only the deadline's timer is faked. setImmediate and Date stay real, so the
+    // file reads behind each stop run as they do in production, and `pause`
+    // keeps the real timer for waiting on them.
+    const realSetTimeout = globalThis.setTimeout;
+    const pause = (milliseconds: number): Promise<void> => new Promise((resolve) => { realSetTimeout(resolve, milliseconds); });
+    const untilTrue = async (condition: () => boolean): Promise<void> => {
+      const giveUpAt = Date.now() + 2500;
+      while (!condition() && Date.now() < giveUpAt) await pause(5);
+    };
+
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      const reaping = reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+      // Two slots, two stops in flight, the third record queued behind them.
+      await untilTrue(() => stopBackgroundSession.mock.calls.length >= 2);
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(2);
+
+      await vi.advanceTimersByTimeAsync(19_999);
+      expect(sessionManager.reapTaskProcesses).not.toHaveBeenCalled();
+
+      await vi.advanceTimersByTimeAsync(1);
+      await untilTrue(() => sessionManager.reapTaskProcesses.mock.calls.length > 0);
+      expect(sessionManager.reapTaskProcesses).toHaveBeenCalledTimes(1);
+      expect(callOrder).toEqual(['stopBackgroundSession', 'stopBackgroundSession', 'reap']);
+
+      // The stops that never answered finish late and free their slots. The
+      // third stop must not take one. Intentional fixed wait: a stop that must
+      // NOT start cannot be polled for, and each one begins only after real file
+      // reads, so this is the budget a stop left in the queue would need.
+      releaseGate();
+      await pause(200);
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(2);
+      await reaping;
+    } finally {
+      releaseGate();
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe('the distros a reap also runs in (real wslCliDistrosOf)', () => {

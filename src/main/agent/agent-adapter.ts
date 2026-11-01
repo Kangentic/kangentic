@@ -866,10 +866,11 @@ export interface AgentAdapter {
    * Both call it only when the session record's own SessionStart hooks show the
    * conversation started there (`statusFile.parseSessionStart`'s
    * `inBackgroundSession`, `backgroundSessionHoldingConversation`), so an
-   * ordinary resume runs no CLI. `cliPath` is the CLI the spawn resolved, which
-   * also names its place (a WSL distro). Resolves true once the CLI's stop ran
-   * for a session holding the conversation, false when none did. Both callers
-   * go on either way. Never throws.
+   * ordinary resume runs no CLI. `cliPath` is the agent's CLI as the caller
+   * resolved it, which also names its place (a WSL distro): the spawn's own on
+   * a resume, the project's configured one on a terminal transition. Resolves
+   * true once the CLI's stop ran for a session holding the conversation, false
+   * when none did. Both callers go on either way. Never throws.
    */
   stopBackgroundSession?(options: { agentSessionId: string; cliPath: string }): Promise<boolean>;
 

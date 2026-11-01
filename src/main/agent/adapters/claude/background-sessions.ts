@@ -109,13 +109,18 @@ const TURN_SCAN_HEAD_BYTES = 64 * 1024;
 const CONTINUED_IN_TAIL_BYTES = 16 * 1024;
 /** Most recent transcripts in the folder searched for the conversation a fork continued. */
 const PREDECESSOR_CANDIDATES = 50;
+/** Candidate tails read at once in that search, newest first. */
+const PREDECESSOR_READ_BATCH = 8;
 /** A fork of a fork: how many links back the search follows. */
 const MAX_PREDECESSOR_HOPS = 4;
 
 async function holdsATurn(transcriptPath: string): Promise<boolean> {
   const head = await readHeadBytes(transcriptPath, TURN_SCAN_HEAD_BYTES);
-  const records = parseJsonlRecords(head, head.length >= TURN_SCAN_HEAD_BYTES);
-  return records.some((record) => record.type === 'user' || record.type === 'assistant');
+  // A fork with no turn holds only its title and name, a few hundred bytes. A
+  // head that fills the read holds more than that: a turn, even one whose
+  // first record is too long to parse here.
+  if (Buffer.byteLength(head, 'utf8') >= TURN_SCAN_HEAD_BYTES) return true;
+  return parseJsonlRecords(head, false).some((record) => record.type === 'user' || record.type === 'assistant');
 }
 
 /** Does this transcript end by continuing in `agentSessionId` (its `continued-in` record)? */
@@ -155,8 +160,11 @@ async function findContinuedFrom(
   const candidates = (await listFolder(path.dirname(transcriptPath)))
     .filter((candidate) => path.basename(candidate.fullPath) !== ownName)
     .slice(0, PREDECESSOR_CANDIDATES);
-  for (const candidate of candidates) {
-    if (await continuesIn(candidate.fullPath, agentSessionId)) return path.basename(candidate.fullPath, '.jsonl');
+  for (let start = 0; start < candidates.length; start += PREDECESSOR_READ_BATCH) {
+    const batch = candidates.slice(start, start + PREDECESSOR_READ_BATCH);
+    const continued = await Promise.all(batch.map((candidate) => continuesIn(candidate.fullPath, agentSessionId)));
+    const matchIndex = continued.indexOf(true);
+    if (matchIndex !== -1) return path.basename(batch[matchIndex].fullPath, '.jsonl');
   }
   return null;
 }

@@ -25,32 +25,45 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import type { AppConfig, Swimlane, Task } from '../../src/shared/types';
+import type { AppConfig, SessionStartReport, Swimlane, Task } from '../../src/shared/types';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import { claudeSessionStartLine } from './helpers/claude-session-start';
 
 const buildCommandMock = vi.fn((options: { sessionId?: string }) => `claude --resume ${options.sessionId ?? ''}`);
 const locateSessionHistoryFileMock = vi.fn(async (_agentSessionId: string, _cwd: string): Promise<string | null> => null);
+const stopBackgroundSessionMock = vi.fn(async (_options: { agentSessionId: string; cliPath: string }): Promise<boolean> => true);
+
+/** The path the stub adapter's `detect` reports, which the reconcile must be handed as `cliPath`. */
+const DETECTED_CLI_PATH = '/mock/bin/claude';
+
+// `parseSessionStart` is left off: with it the reconcile also demands a
+// SessionStart hook before it follows a status-file swap, which the swap tests
+// below do not write. The background-session describe sets it per test.
+const statusFile: {
+  parseStatus: (raw: string) => { sessionId?: string } | null;
+  parseSessionStart?: (hookContext: string) => SessionStartReport | null;
+} = {
+  parseStatus: (raw: string): { sessionId?: string } | null => {
+    try {
+      const parsed = JSON.parse(raw) as { session_id?: string };
+      return { sessionId: parsed.session_id };
+    } catch {
+      return null;
+    }
+  },
+};
 
 const adapter = {
   name: 'claude',
   displayName: 'Claude',
   sessionType: 'claude_agent',
   supportsCallerSessionId: true,
-  detect: vi.fn(async () => ({ found: true, path: '/mock/bin/claude', version: '1.0.0' })),
+  detect: vi.fn(async () => ({ found: true, path: DETECTED_CLI_PATH, version: '1.0.0' })),
   ensureTrust: vi.fn(async () => {}),
   buildCommand: buildCommandMock,
   locateSessionHistoryFile: locateSessionHistoryFileMock,
-  runtime: {
-    statusFile: {
-      parseStatus: (raw: string): { sessionId?: string } | null => {
-        try {
-          const parsed = JSON.parse(raw) as { session_id?: string };
-          return { sessionId: parsed.session_id };
-        } catch {
-          return null;
-        }
-      },
-    },
-  },
+  stopBackgroundSession: stopBackgroundSessionMock,
+  runtime: { statusFile },
 };
 
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -254,5 +267,38 @@ describe('prepareAgentSpawn resume-time agent-session-id reconcile wiring', () =
     expect(result.data.agentSessionId).toBe(STORED_ID);
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
     expect(locateSessionHistoryFileMock).not.toHaveBeenCalled();
+  });
+
+  describe('a conversation the record saw move into a background session', () => {
+    function writeEventsFile(lines: string[]): void {
+      const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+      fs.mkdirSync(sessionDir, { recursive: true });
+      fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), lines.map((line) => `${line}\n`).join(''));
+    }
+
+    beforeEach(() => {
+      statusFile.parseSessionStart = ClaudeStatusParser.parseSessionStart;
+    });
+
+    afterEach(() => {
+      delete statusFile.parseSessionStart;
+    });
+
+    it('hands the stop the CLI path this spawn detected, so the resume does not run beside the background session', async () => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'fork', 1)]);
+
+      await runPrepare({
+        agentSessionId: STORED_ID,
+        recordId: RECORD_ID,
+        recordCwd: '/mock/record-cwd',
+      });
+
+      // Red: deleting `cliPath: detection.path` from prepareAgentSpawn's
+      // reconcileResumeAgentSessionId call makes the reconcile skip the stop
+      // (`if (cliPath)`), so the resume starts a second process on the
+      // conversation and this spy is never called.
+      expect(stopBackgroundSessionMock).toHaveBeenCalledTimes(1);
+      expect(stopBackgroundSessionMock).toHaveBeenCalledWith({ agentSessionId: STORED_ID, cliPath: DETECTED_CLI_PATH });
+    });
   });
 });

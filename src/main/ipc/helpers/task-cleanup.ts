@@ -120,6 +120,15 @@ const BACKGROUND_SESSION_RECORDS_PER_TASK = 3;
 const BACKGROUND_SESSION_STOP_CONCURRENCY = 2;
 
 /**
+ * The longest one call waits for its stops before the reap goes ahead. Twice
+ * one stop's own 10 s budget, so a single stop always gets all of it, while a
+ * bulk delete behind a supervisor that does not answer waits this long, not a
+ * budget for every record. A stop still running at the deadline is not waited
+ * for, and none starts after it.
+ */
+const BACKGROUND_SESSION_STOPS_DEADLINE_MS = 20_000;
+
+/**
  * Stop the agent CLI's own background session holding a task's conversation,
  * for each of the tasks (Claude Code's `/bg` moves a conversation into one,
  * which outlives the task's PTY: see `AgentAdapter.stopBackgroundSession`).
@@ -166,7 +175,7 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
           projectPath,
           recordId: record.id,
           agentSessionId,
-          cwd: record.cwd ?? null,
+          cwd: record.cwd,
           cliTarget: parseStoredCliTarget(record.cli_target),
         });
         if (!backgroundId || stopped.has(backgroundId)) return;
@@ -180,7 +189,24 @@ async function stopTaskBackgroundSessions(context: IpcContext, projectPath: stri
       }
     };
     const queue = new PQueue({ concurrency: BACKGROUND_SESSION_STOP_CONCURRENCY });
-    await Promise.all(records.map((record) => queue.add(() => stopForRecord(record))));
+    const allStops = Promise.all(records.map((record) => queue.add(() => stopForRecord(record))));
+    let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+    const deadline = new Promise<'deadline'>((resolve) => {
+      deadlineTimer = setTimeout(() => resolve('deadline'), BACKGROUND_SESSION_STOPS_DEADLINE_MS);
+    });
+    try {
+      const outcome = await Promise.race([allStops.then(() => 'done' as const), deadline]);
+      if (outcome === 'deadline') {
+        const notStarted = queue.size;
+        queue.clear();
+        console.warn(
+          `[TASK-REAP] background session stops passed ${BACKGROUND_SESSION_STOPS_DEADLINE_MS} ms; the reap goes ahead`
+          + ` (${queue.pending} still stopping, ${notStarted} not started)`,
+        );
+      }
+    } finally {
+      clearTimeout(deadlineTimer);
+    }
   } catch (error) {
     console.warn('[TASK-REAP] could not stop a background session before the reap (non-fatal):', error);
   }

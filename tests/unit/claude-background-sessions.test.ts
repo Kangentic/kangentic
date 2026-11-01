@@ -406,6 +406,7 @@ describe('resolveClaudeResumableSessionId', () => {
   });
 
   afterEach(() => {
+    vi.restoreAllMocks();
     fs.rmSync(projectsFolder, { recursive: true, force: true });
   });
 
@@ -423,6 +424,23 @@ describe('resolveClaudeResumableSessionId', () => {
 
   it('keeps a fork that has taken a turn: its transcript holds the conversation', async () => {
     writeTranscript(MOVED, [...metadataOnly(MOVED), ...withTurn(MOVED)]);
+    writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+
+    await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+  });
+
+  // The head read is cut at 64 KB, which can end inside the first turn's record
+  // when that prompt is long (a pasted file, a long brief). A record cut in two
+  // does not parse, so the head shows no turn. It still shows more than a fork
+  // with no turn holds, a title and a name of a few hundred bytes.
+  it('keeps a fork whose first turn is longer than the 64 KB read of its head', async () => {
+    const headBytes = 64 * 1024;
+    const fork = writeTranscript(MOVED, [
+      ...metadataOnly(MOVED),
+      { type: 'user', message: { role: 'user', content: 'x'.repeat(80 * 1024) }, sessionId: MOVED },
+    ]);
+    // The premise: the turn runs past the head read, so only a cut record is in it.
+    expect(fs.statSync(fork).size).toBeGreaterThan(headBytes);
     writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
 
     await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
@@ -478,7 +496,6 @@ describe('resolveClaudeResumableSessionId', () => {
     findClaudeTranscriptFile.mockRejectedValueOnce(new Error('EACCES'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
-    vi.restoreAllMocks();
   });
 
   // `/bg` and `/fork` fire identical SessionStart hooks (`source: fork`); only

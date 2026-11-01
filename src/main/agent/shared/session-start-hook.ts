@@ -7,7 +7,7 @@ type StatusFileHook = NonNullable<AdapterRuntimeStrategy['statusFile']>;
  * (`statusFile.parseSessionStart`), or null for any other record and for an
  * adapter that does not read its SessionStart hooks.
  */
-export function sessionStartOfRecord(statusFileHook: StatusFileHook, record: Record<string, unknown>): SessionStartReport | null {
+function sessionStartOfRecord(statusFileHook: StatusFileHook, record: Record<string, unknown>): SessionStartReport | null {
   if (!statusFileHook.parseSessionStart) return null;
   if (record.type !== EventType.SessionStart || typeof record.hookContext !== 'string') return null;
   return statusFileHook.parseSessionStart(record.hookContext);

@@ -36,7 +36,8 @@ import type { ConversationExpiredNotice } from '../../src/shared/types';
 import { OpenCodeCommandBuilder, type OpenCodeCommandOptions } from '../../src/main/agent/adapters/opencode';
 import { CodexCommandBuilder, type CodexCommandOptions } from '../../src/main/agent/adapters/codex';
 import { AgentCliNotFoundError, agentCliNotFoundMessage } from '../../src/main/agent/shared/agent-cli-not-found';
-import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionUsage } from '../../src/shared/types';
+import type { AgentExecutionServer, AgentProjectExecution, AgentLaunchOptionInfo, SessionStartReport, SessionUsage } from '../../src/shared/types';
+import { claudeSessionStartLine } from './helpers/claude-session-start';
 
 // ---------------------------------------------------------------------------
 // Minimal mock factories
@@ -125,13 +126,6 @@ function makeTaskRepo() {
   };
 }
 
-function makeActionRepo(action: ReturnType<typeof makeAction>) {
-  return {
-    getTransitionsFor: vi.fn(() => [{ action_id: action.id }]),
-    getById: vi.fn(() => action),
-  };
-}
-
 function makeAttachmentRepo() {
   return {
     getPathsForTask: vi.fn(() => []),
@@ -200,7 +194,16 @@ const mockAdapter = {
   // "TransitionEngine - resume-time agent-session-id reconcile wiring"
   // describe below is the only one that sets this, and resets it to
   // undefined in its afterEach so it never leaks into other describes.
-  runtime: undefined as { statusFile?: { parseStatus: (raw: string) => SessionUsage | null } } | undefined,
+  runtime: undefined as {
+    statusFile?: {
+      parseStatus: (raw: string) => SessionUsage | null;
+      parseSessionStart?: (hookContext: string) => SessionStartReport | null;
+    };
+  } | undefined,
+  // Undefined by default, as on every adapter that has no background session of
+  // its own to stop. The reconcile describe's background-session test sets a
+  // spy and resets it in afterEach.
+  stopBackgroundSession: undefined as AgentAdapter['stopBackgroundSession'],
   locateSessionHistoryFile: vi.fn(async (_agentSessionId: string, _cwd: string): Promise<string | null> => null),
   // Undefined by default, so no resume is ever proven expired; the
   // expired-conversation describe below sets Claude's real proof and resets it.
@@ -905,6 +908,7 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
   afterEach(() => {
     fs.rmSync(projectPath, { recursive: true, force: true });
     mockAdapter.runtime = undefined;
+    mockAdapter.stopBackgroundSession = undefined;
     mockAdapter.locateSessionHistoryFile.mockReset();
     mockAdapter.locateSessionHistoryFile.mockImplementation(async () => null);
   });
@@ -1009,6 +1013,45 @@ describe('TransitionEngine - resume-time agent-session-id reconcile wiring (exec
 
     expect(capturedSessionId).toBe(STORED_ID);
     expect(sessionRepo.updateAgentSessionId).not.toHaveBeenCalled();
+  });
+
+  it('hands the background-session stop the CLI path this spawn detected, for a conversation the record saw move into one', async () => {
+    // The record's events file holds a background-session SessionStart (source
+    // `fork`) naming the stored id: the conversation moved into the CLI's own
+    // background session, which outlives the task's PTY. Written with
+    // fs.promises.mkdir for the same reason as writeStatusFile above.
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    await fs.promises.mkdir(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), `${claudeSessionStartLine(STORED_ID, 'fork', 1)}\n`);
+
+    mockAdapter.runtime = {
+      statusFile: {
+        parseStatus: ClaudeStatusParser.parseStatus,
+        parseSessionStart: ClaudeStatusParser.parseSessionStart,
+      },
+    };
+    const stopBackgroundSession = vi.fn(async (_options: { agentSessionId: string; cliPath: string }) => true);
+    mockAdapter.stopBackgroundSession = stopBackgroundSession;
+
+    const sessionRepo = makeSessionRepo();
+    sessionRepo.getLatestForTaskByTypeAndIsolation.mockReturnValue({
+      id: RECORD_ID,
+      agent_session_id: STORED_ID,
+      session_type: 'claude_agent',
+      status: 'suspended',
+      cwd: path.join(projectPath, 'worktree'),
+    });
+    const { runSpawn } = makeEngine({ sessionRepo, projectPath });
+
+    await runSpawn(makeTask({ worktree_path: null }));
+
+    // Red: deleting `cliPath: detection.path` from executeSpawnAgent's
+    // reconcileResumeAgentSessionId call makes the reconcile skip the stop
+    // (`if (cliPath)`), so the resume starts a second process on the
+    // conversation and this spy is never called. '/usr/bin/claude' is the path
+    // the file-level mockAdapter's `detect` reports.
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: STORED_ID, cliPath: '/usr/bin/claude' });
   });
 });
 
