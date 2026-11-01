@@ -17,6 +17,7 @@ import path from 'node:path';
 
 import { readTaskRunningWork, type RunningWorkDeps } from '../../src/main/ipc/helpers/task-running-work';
 import { readWorktreeWork } from '../../src/main/git/worktree-head';
+import { runningWorkRefusal } from '../../src/main/agent/commands/running-work-guard';
 import type { Task } from '../../src/shared/types';
 
 describe('reading what a task holds', () => {
@@ -173,6 +174,21 @@ describe('reading what a task holds', () => {
         liveAgent: false,
         worktree: { readable: true, branch: 'task/removed', baseBranch: 'trunk', commitsNotOnBase: null, uncommittedFiles: 0 },
       });
+    });
+
+    it('feeds the guard: a gone folder with a branch is refused for To Do and delete, allowed for Done; without a branch nothing is refused', async () => {
+      const gone = path.join(temporaryRoot, 'gone');
+      const task = taskIn(gone, { branch_name: 'task/removed', display_id: 9, title: 'Removed' } as Partial<Task>);
+      const withBranch = await readTaskRunningWork(task, depsWith());
+      const withoutBranch = await readTaskRunningWork(taskIn(gone, { branch_name: null, display_id: 9, title: 'Removed' } as Partial<Task>), depsWith());
+
+      // The branch's commits were never read, so the teardown that deletes it is refused.
+      expect(runningWorkRefusal(task, withBranch, { kind: 'todo', columnName: 'To Do' })).toContain('a worktree that could not be read');
+      expect(runningWorkRefusal(task, withBranch, { kind: 'delete' })).toContain('a worktree that could not be read');
+      // Done keeps the branch and the folder holds no files.
+      expect(runningWorkRefusal(task, withBranch, { kind: 'done', columnName: 'Done' })).toBeNull();
+      expect(runningWorkRefusal(task, withoutBranch, { kind: 'todo', columnName: 'To Do' })).toBeNull();
+      expect(runningWorkRefusal(task, withoutBranch, { kind: 'delete' })).toBeNull();
     });
 
     it('reads a base that does not resolve in a live worktree as readable with an uncounted branch', async () => {
