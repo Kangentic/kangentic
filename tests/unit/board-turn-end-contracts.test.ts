@@ -159,6 +159,14 @@ describe('board turn-end contracts: Executing', () => {
     const applyFindingsMessage = turnEndRow('Executing', 'Apply findings').message ?? '';
     expectTextIn(applyFindingsMessage, 'the Apply findings message', `"${finalLineOf('Executing', 'On to Code Review')}"`);
   });
+
+  // An agent told only "not as follow-up tasks" took on the four tasks it had
+  // just filed, then deleted them. An unfiled finding still ships in the task.
+  it('keeps the findings pass off work already filed as a task', () => {
+    const applyFindingsMessage = turnEndRow('Executing', 'Apply findings').message ?? '';
+    expectTextIn(applyFindingsMessage, 'the Apply findings message', 'not as follow-up tasks');
+    expectTextIn(applyFindingsMessage, 'the Apply findings message', 'Skip anything already filed as a task on the board, and never delete or move one.');
+  });
 });
 
 describe('board turn-end contracts: Merge', () => {

@@ -118,6 +118,22 @@ export interface CommandContext {
    */
   callerSessionId?: string | null;
   /**
+   * `'agent'` on a call an agent made through an MCP tool, set by the tool's
+   * registration and never from its parameters. Unset for a person's call (the
+   * phone's board tools), which the running-work guard leaves alone. A null
+   * `callerTaskId` cannot stand in for this: a Command Terminal or an outside
+   * MCP client has no task and is still an agent.
+   */
+  callerKind?: 'agent';
+  /**
+   * What ending this task's work would take away, read fresh. The guard asks it
+   * before an agent's call ends another task's work (`running-work-guard.ts`).
+   * Optional because test suites hand-build a context. An agent's call on a
+   * context without it is refused, so a missing callback cannot switch the guard
+   * off.
+   */
+  readTaskRunningWork?: (task: Task) => Promise<TaskRunningWork>;
+  /**
    * When a session's current turn began as work, never moved by a plan
    * approval (`SessionManager.workTurnStartedAt`), or null when unknown. A
    * task's own agent asking for "next" is refused when the task left the column
@@ -204,6 +220,19 @@ export interface CommandContext {
    * `readTaskReport`.
    */
   readTaskChanges?: (taskId: string) => Promise<GitTaskChangesResult>;
+}
+
+/** What `readTaskRunningWork` found in a task's worktree. */
+export type TaskWorktreeRead =
+  | { readable: false }
+  | { readable: true; branch: string | null; baseBranch: string; commitsNotOnBase: number | null; uncommittedFiles: number };
+
+/** A task's running work: an agent, and what its worktree holds. */
+export interface TaskRunningWork {
+  /** A running or queued session, or a spawn still in flight. */
+  liveAgent: boolean;
+  /** Null for a task with no worktree on disk. */
+  worktree: TaskWorktreeRead | null;
 }
 
 /** The index's knowledge of some tasks, as `readTaskKnowledge` returns it. */

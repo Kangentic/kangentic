@@ -401,7 +401,7 @@ export function buildConfiguredMcpServer(
   const callerTaskId = resolveCallerTaskId(browser);
   registerTaskTools(mcpServer, resolver, taskCounter, toolArgumentNotices, callerTaskId ?? null, browser.callerSessionId ?? null);
   registerProfileTools(mcpServer, resolver);
-  registerAutomationTools(mcpServer, resolver);
+  registerAutomationTools(mcpServer, resolver, callerTaskId ?? null);
   registerWorkflowTools(mcpServer, resolver, { taskId: callerTaskId ?? null, sessionId: browser.callerSessionId ?? null });
   registerSessionTools(mcpServer, resolver, callerTaskId ?? null);
   registerProjectTools(mcpServer, resolver);

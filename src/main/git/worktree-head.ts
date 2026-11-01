@@ -206,6 +206,64 @@ export async function isShaContainedInRef(repoCwd: string, ref: string, sha: str
   });
 }
 
+/** What a worktree holds that a teardown of it would take away (`readWorktreeWork`). */
+export interface WorktreeWork {
+  /** The checked-out branch, null on a detached HEAD. */
+  branch: string | null;
+  /** Null when no ref form of the base resolves, so nothing could count them. */
+  commitsNotOnBase: number | null;
+  uncommittedFiles: number;
+}
+
+/** See {@link readWorktreeWork} for the ref order and what `--cherry-pick` leaves out. */
+async function countCommitsNotOnBase(git: ReturnType<typeof gitAt>, baseBranch: string): Promise<number | null> {
+  if (!baseBranch || baseBranch.startsWith('-')) return null;
+  for (const candidateRef of [`origin/${baseBranch}`, baseBranch]) {
+    try {
+      const countOutput = (await git.raw(['rev-list', '--count', '--right-only', '--cherry-pick', `${candidateRef}...HEAD`])).trim();
+      const count = Number.parseInt(countOutput, 10);
+      return Number.isNaN(count) ? null : count;
+    } catch {
+      // This ref form does not resolve here (never fetched, or no remote) - try the next.
+    }
+  }
+  return null;
+}
+
+/**
+ * The work a worktree holds that its base branch does not: its commits and its
+ * uncommitted files. Asked before something ends a task's work, so `null`
+ * means "cannot tell" and the caller refuses. That is why this does not build
+ * on {@link hasCommitsAheadOfBase}, which answers false on a git error. A base
+ * that does not resolve leaves only `commitsNotOnBase` null, because a teardown
+ * that keeps the branch never needs that count.
+ *
+ * `--cherry-pick` leaves out a commit whose patch already landed on the base, so
+ * a rebase-merged branch reads as nothing left. A squash merge still counts,
+ * which errs toward asking. `origin/<base>` first, as in
+ * {@link isShaContainedInRef}: a local base behind origin would count commits
+ * the remote already holds.
+ *
+ * Never throws. Counts nothing for an option-shaped base, for the reason
+ * {@link isShaContainedInRef} gives. Queued through the global read cap.
+ */
+export async function readWorktreeWork(worktreePath: string, baseBranch: string): Promise<WorktreeWork | null> {
+  return viaGitRead(async () => {
+    try {
+      const git = gitAt(worktreePath);
+      const status = await git.status();
+      const branch = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+      return {
+        branch: branch && branch !== 'HEAD' ? branch : null,
+        commitsNotOnBase: await countCommitsNotOnBase(git, baseBranch),
+        uncommittedFiles: status.files.length,
+      };
+    } catch {
+      return null;
+    }
+  });
+}
+
 /** Which refs, if any, have a given commit as their exact tip. */
 export interface RefsPointingAtSha {
   /**
