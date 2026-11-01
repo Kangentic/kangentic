@@ -154,8 +154,9 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {Úloha „{taskTitle}“ byla nečinná # minutu.} few {Úloha „{taskTitle}“ byla nečinná # minuty.} many {Úloha „{taskTitle}“ byla nečinná # minuty.} other {Úloha „{taskTitle}“ byla nečinná # minut.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "„{taskTitle}“: Automatizace „{automationName}“ selhala ve sloupci {columnName}."
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -1071,6 +1072,11 @@ msgstr "Přejít na začátek"
 msgid "just now"
 msgstr "právě teď"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic nemůže do této složky zapisovat."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1480,8 +1486,9 @@ msgid "Restart to update"
 msgstr "Restartovat a aktualizovat"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "Obnovení nyní pokračuje v nové konverzaci agenta."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1580,9 @@ msgid "Settings"
 msgstr "Nastavení"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Instalační skript selhal"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy

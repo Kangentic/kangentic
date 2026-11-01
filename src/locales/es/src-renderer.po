@@ -154,8 +154,9 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" estuvo inactiva durante # minuto.} many {\"{taskTitle}\" estuvo inactiva durante # minutos.} other {\"{taskTitle}\" estuvo inactiva durante # minutos.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "\"{taskTitle}\": \"{automationName}\" falló en {columnName}."
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -1071,6 +1072,11 @@ msgstr "Ir al inicio"
 msgid "just now"
 msgstr "justo ahora"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic no puede escribir en esa carpeta."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1480,8 +1486,9 @@ msgid "Restart to update"
 msgstr "Reiniciar para actualizar"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "Reanudar ahora sigue la nueva conversación del agente."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1580,9 @@ msgid "Settings"
 msgstr "Configuración"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Error en el script de configuración"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy

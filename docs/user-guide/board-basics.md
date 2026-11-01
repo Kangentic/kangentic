@@ -24,7 +24,7 @@ The welcome screen also detects Git and your installed agent CLIs, showing each 
 
 On subsequent launches, Kangentic automatically re-opens the last activated project so you pick up right where you left off. If you launch with the `--cwd` flag, that path takes priority.
 
-When a project is opened, Kangentic initializes a `.kangentic/` directory inside the project folder (auto-added to `.gitignore`) and creates a board with default columns.
+When a project is opened, Kangentic initializes a `.kangentic/` directory inside the project folder (auto-added to `.gitignore`) and creates a board with default columns. A folder where Kangentic cannot write to `.kangentic/` is not added. Adding one from the app shows a toast, and passing one with `--cwd` opens the app with no project.
 
 ## Default Columns
 

@@ -154,8 +154,9 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {Zadanie „{taskTitle}” było bezczynne przez # minutę.} few {Zadanie „{taskTitle}” było bezczynne przez # minuty.} many {Zadanie „{taskTitle}” było bezczynne przez # minut.} other {Zadanie „{taskTitle}” było bezczynne przez # minuty.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "„{taskTitle}”: automatyzacja „{automationName}” nie powiodła się w kolumnie {columnName}."
 
 #: src/renderer/lib/paused-for-memory.ts
 #, fuzzy
@@ -1071,6 +1072,11 @@ msgstr "Przejdź na początek"
 msgid "just now"
 msgstr "przed chwilą"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic nie może zapisywać w tym folderze."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1480,8 +1486,9 @@ msgid "Restart to update"
 msgstr "Uruchom ponownie, aby zaktualizować"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "Wznawianie będzie teraz korzystać z nowej rozmowy agenta."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1580,9 @@ msgid "Settings"
 msgstr "Ustawienia"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Skrypt konfiguracji nie powiódł się"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy

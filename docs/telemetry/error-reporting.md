@@ -429,13 +429,20 @@ in one Sentry org, one triage surface.
 
 ## Counted, not reported
 
-- **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
+- **User-configuration errors are a deliberate exclusion.** `reportHandledError`
   early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
   missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship
   a fix for, so it is surfaced in the app instead - the spawn-blocked toast names the agent and
   points at the CLI path override in Settings > Agent - while `spawn_failed` still counts it, so
   "how often are users hitting a missing CLI" stays answerable. A future user-config error opts
   itself out by extending that class rather than by adding a message pattern to a filter list.
+- **A folder Kangentic cannot write to is refused, not reported.** Before it registers a new
+  project, `openProjectByPath` (`src/main/ipc/handlers/projects.ts`) writes and removes a probe
+  file in `<folder>/.kangentic/`. A refusal throws an error that starts with
+  `PROJECT_FOLDER_NOT_WRITABLE_PREFIX`, which reaches no Sentry issue because a user's folder
+  permissions are not a defect in the app (Sentry DESKTOP-28 was this folder arriving through the
+  config write instead). The Add project flow turns the sentinel into a toast, and nothing is
+  registered, so `project_create` does not fire either.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
   restart cap produces a Sentry issue, and only once per latch; Aptabase sees at most two
   `utility_worker_crashed` events per service per app run, the first crash and the latch. The same

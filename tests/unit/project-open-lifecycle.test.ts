@@ -62,6 +62,10 @@ const state = vi.hoisted(() => ({
   repairSnapshots: [] as Array<{ sessionsDir: string; callOrder: string[] }>,
   // While set, a mocked repair run stays in flight until it resolves.
   repairGate: null as { promise: Promise<void>; resolve: () => void } | null,
+  // While set, the mocked fs refuses every mkdir with it.
+  mkdirError: null as NodeJS.ErrnoException | null,
+  // While set, the mocked fs refuses every file write with it.
+  writeFileError: null as NodeJS.ErrnoException | null,
 }));
 
 // ---------------------------------------------------------------------------
@@ -81,6 +85,12 @@ vi.mock('electron', () => ({
 vi.mock('../../src/main/git/original-fs', () => ({
   default: {
     existsSync: vi.fn((target: string) => state.existingPaths.has(target)),
+    mkdirSync: vi.fn(() => {
+      if (state.mkdirError) throw state.mkdirError;
+    }),
+    writeFileSync: vi.fn(() => {
+      if (state.writeFileError) throw state.writeFileError;
+    }),
     unlinkSync: vi.fn(() => {
       // syncProjectMcpConfig's "no handle" branch always attempts an unlink;
       // ENOENT (no pre-existing file) is the common, silently-swallowed case.
@@ -163,6 +173,13 @@ vi.mock('../../src/main/ipc/helpers/project-entry-search', () => ({
 
 vi.mock('../../src/main/analytics/analytics', () => ({
   trackEvent: vi.fn(),
+}));
+
+// The one spy on what reaches Sentry: write-failure-notice.ts reports through
+// this same function, so it covers the route DESKTOP-28 arrived by.
+vi.mock('../../src/main/analytics/error-reporting', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/analytics/error-reporting')>()),
+  reportHandledError: vi.fn(),
 }));
 
 vi.mock('../../src/main/shutdown-state', () => ({
@@ -257,6 +274,8 @@ vi.mock('../../src/main/workflows/workflow-agent', async (importOriginal) => ({
 // ---------------------------------------------------------------------------
 
 import { trackEvent } from '../../src/main/analytics/analytics';
+import { reportHandledError } from '../../src/main/analytics/error-reporting';
+import fs from '../../src/main/git/original-fs';
 import { isShuttingDown } from '../../src/main/shutdown-state';
 import { gitFetchScheduler } from '../../src/main/git/git-fetch-scheduler';
 import { getProjectDb, getExistingProjectDb } from '../../src/main/db/database';
@@ -275,7 +294,7 @@ import { autoSpawnForTask, ensureGitignore } from '../../src/main/ipc/helpers';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-project-delete';
 import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
-import { IPC, PROJECT_NOT_FOUND_PREFIX } from '../../src/shared/ipc-channels';
+import { IPC, PROJECT_NOT_FOUND_PREFIX, PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../src/shared/ipc-channels';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { ResumeSuspendedOptions } from '../../src/main/transition-engine/session-startup';
 import type { ConversationExpiredNotice, Project } from '../../src/shared/types';
@@ -392,6 +411,8 @@ beforeEach(() => {
   state.autoSpawnError = null;
   state.repairSnapshots = [];
   state.repairGate = null;
+  state.mkdirError = null;
+  state.writeFileError = null;
   // mockReturnValue persists across tests (vi.clearAllMocks() resets call
   // history, not implementation), so reset both to their neutral defaults
   // here rather than letting one test's override leak into the next.
@@ -1023,6 +1044,130 @@ describe('PROJECT_OPEN cold-open block (registerProjectHandlers)', () => {
     } finally {
       delete (TaskRepository.prototype as unknown as { list?: unknown }).list;
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// openProjectByPath on a folder that refuses .kangentic (Sentry DESKTOP-28)
+// ---------------------------------------------------------------------------
+
+describe('openProjectByPath on a folder that refuses .kangentic', () => {
+  function permissionDeniedError(): NodeJS.ErrnoException {
+    const error = new Error('EPERM: operation not permitted') as NodeJS.ErrnoException;
+    error.code = 'EPERM';
+    return error;
+  }
+
+  it('rejects with the sentinel and registers, opens, counts and reports nothing', async () => {
+    const context = createMockContext();
+    const saveProjectOverrides = vi.fn();
+    Object.assign(context.configManager, {
+      loadProjectOverrides: vi.fn(() => null),
+      getProjectOverridableDefaults: vi.fn(() => ({})),
+      saveProjectOverrides,
+    });
+    context.projectRepo.create.mockReturnValue(makeProject());
+    state.existingPaths.add(PROJECT_PATH);
+    state.mkdirError = permissionDeniedError();
+
+    await expect(openProjectByPath(asIpcContext(context), PROJECT_PATH, { defaultAgent: 'claude' }))
+      .rejects.toThrow(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}EPERM: ${PROJECT_PATH}`);
+
+    expect(vi.mocked(fs.mkdirSync)).toHaveBeenCalledWith(path.join(PROJECT_PATH, '.kangentic'), { recursive: true });
+    expect(context.projectRepo.create).not.toHaveBeenCalled();
+    expect(vi.mocked(getProjectDb)).not.toHaveBeenCalled();
+    expect(saveProjectOverrides).not.toHaveBeenCalled();
+    expect(context.boardConfigManager.attach).not.toHaveBeenCalled();
+    expect(context.currentProjectId).toBeNull();
+    expect(vi.mocked(reportHandledError)).not.toHaveBeenCalled();
+    expect(vi.mocked(trackEvent)).not.toHaveBeenCalledWith('project_create');
+  });
+
+  it('refuses a folder whose .kangentic already exists but takes no file, which a mkdir cannot see', async () => {
+    const context = createMockContext();
+    context.projectRepo.create.mockReturnValue(makeProject());
+    state.existingPaths.add(PROJECT_PATH);
+    state.writeFileError = permissionDeniedError();
+
+    await expect(openProjectByPath(asIpcContext(context), PROJECT_PATH, { defaultAgent: 'claude' }))
+      .rejects.toThrow(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}EPERM: ${PROJECT_PATH}`);
+
+    expect(context.projectRepo.create).not.toHaveBeenCalled();
+    expect(context.currentProjectId).toBeNull();
+    expect(vi.mocked(reportHandledError)).not.toHaveBeenCalled();
+  });
+
+  it('refuses with UNKNOWN when the failure carries no error code, and keeps the original error as the cause', async () => {
+    const context = createMockContext();
+    context.projectRepo.create.mockReturnValue(makeProject());
+    state.existingPaths.add(PROJECT_PATH);
+    // A plain Error: no `.code`, so the sentinel falls back to UNKNOWN.
+    const codelessError = new Error('disk went away') as NodeJS.ErrnoException;
+    state.writeFileError = codelessError;
+
+    const rejection: unknown = await openProjectByPath(asIpcContext(context), PROJECT_PATH, { defaultAgent: 'claude' })
+      .then(() => null, (caught: unknown) => caught);
+
+    expect(rejection).toBeInstanceOf(Error);
+    expect((rejection as Error).message).toContain(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}UNKNOWN: ${PROJECT_PATH}`);
+    expect((rejection as Error).cause).toBe(codelessError);
+    expect(context.projectRepo.create).not.toHaveBeenCalled();
+    expect(vi.mocked(reportHandledError)).not.toHaveBeenCalled();
+  });
+
+  it('adds the folder and removes its probe, and a probe it cannot remove refuses nothing', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const context = createMockContext();
+      const project = makeProject();
+      context.projectRepo.create.mockReturnValue(project);
+      Object.assign(context.configManager, {
+        loadProjectOverrides: vi.fn(() => null),
+        getProjectOverridableDefaults: vi.fn(() => ({})),
+        saveProjectOverrides: vi.fn(),
+      });
+      state.existingPaths.add(PROJECT_PATH);
+
+      // The fs mock's unlinkSync always throws ENOENT, the can't-remove case.
+      await expect(openProjectByPath(asIpcContext(context), PROJECT_PATH, { defaultAgent: 'claude' }))
+        .resolves.toEqual(project);
+
+      const probePath = vi.mocked(fs.writeFileSync).mock.calls[0]?.[0];
+      expect(path.dirname(String(probePath))).toBe(path.join(PROJECT_PATH, '.kangentic'));
+      expect(vi.mocked(fs.unlinkSync)).toHaveBeenCalledWith(probePath);
+      expect(context.projectRepo.create).toHaveBeenCalledTimes(1);
+      // The failed unlink is logged, not swallowed silently and not rethrown.
+      expect(warnSpy).toHaveBeenCalledWith(
+        '[PROJECT_OPEN] Could not remove the write probe:',
+        expect.objectContaining({ code: 'ENOENT' }),
+      );
+
+      await vi.waitFor(() => {
+        expect(state.callOrder).toContain('autoSpawnTasks');
+      }, { timeout: 2000 });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it('leaves the open of a registered project alone, whatever its folder would answer', async () => {
+    const context = createMockContext();
+    const project = makeProject();
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+    state.mkdirError = permissionDeniedError();
+    state.writeFileError = permissionDeniedError();
+
+    await expect(openProjectByPath(asIpcContext(context), project.path)).resolves.toEqual(project);
+
+    expect(vi.mocked(fs.mkdirSync)).not.toHaveBeenCalled();
+    expect(vi.mocked(fs.writeFileSync)).not.toHaveBeenCalled();
+    expect(context.projectRepo.create).not.toHaveBeenCalled();
+    expect(context.currentProjectId).toBe(project.id);
+
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
   });
 });
 

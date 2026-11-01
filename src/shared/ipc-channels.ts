@@ -749,3 +749,13 @@ export const PROJECT_PATH_MISSING_PREFIX = 'PROJECT_PATH_MISSING:';
  * could no longer resolve, and the failure had nowhere to go.
  */
 export const PROJECT_NOT_FOUND_PREFIX = 'PROJECT_NOT_FOUND:';
+
+/**
+ * Sentinel prefix for "a folder being added cannot hold `.kangentic`". Nothing
+ * is registered, since a project there could not run. Electron wraps handler
+ * errors in its own Error, so the renderer detects this case via
+ * `error.message.includes(PROJECT_FOLDER_NOT_WRITABLE_PREFIX)` and shows its
+ * own translated sentence. The English text after the prefix is for the log.
+ * See Sentry DESKTOP-28.
+ */
+export const PROJECT_FOLDER_NOT_WRITABLE_PREFIX = 'PROJECT_FOLDER_NOT_WRITABLE:';

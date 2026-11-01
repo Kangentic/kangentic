@@ -1,7 +1,7 @@
 import path from 'node:path';
 import fs from '../../git/original-fs';
 import { ipcMain } from 'electron';
-import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX } from '../../../shared/ipc-channels';
+import { IPC, PROJECT_PATH_MISSING_PREFIX, PROJECT_NOT_FOUND_PREFIX, PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../../shared/ipc-channels';
 import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
@@ -628,6 +628,30 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
 
   let created = false;
   if (!project) {
+    // Sessions, config and logs all live under .kangentic, so a folder that
+    // refuses it would register a project no agent can start in (Sentry
+    // DESKTOP-28). Refuse before the project is registered. This is the user's
+    // folder and not an app defect, so it rejects to the renderer's toast and
+    // reports nothing. The mkdir is recursive because a folder removed from the
+    // list keeps its .kangentic and must stay addable, so it proves nothing
+    // about a .kangentic already there, and a file is written as well. A folder
+    // that takes the mkdir and refuses the file keeps an empty .kangentic, which
+    // git never sees and a later add reuses.
+    const writeProbePath = path.join(normalized, '.kangentic', `.write-probe.${process.pid}`);
+    try {
+      fs.mkdirSync(path.dirname(writeProbePath), { recursive: true });
+      fs.writeFileSync(writeProbePath, '');
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? 'UNKNOWN';
+      throw new Error(`${PROJECT_FOLDER_NOT_WRITABLE_PREFIX}${code}: ${normalized}`, { cause: error });
+    }
+    try {
+      fs.unlinkSync(writeProbePath);
+    } catch (error) {
+      // The write worked, so the folder is good. A scanner holding the new file
+      // leaves an empty file in a gitignored folder, not a reason to refuse.
+      console.warn('[PROJECT_OPEN] Could not remove the write probe:', error);
+    }
     created = true;
     // Create a new project. overrides comes from the Add project dialog
     // (editable name, chosen default agent); falls back to the folder's
