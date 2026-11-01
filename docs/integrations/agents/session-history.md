@@ -654,9 +654,10 @@ session (`backgroundSessionHoldingConversation`). Either a SessionStart with `in
 Done move between the background session's hook and its first status write, before the live
 switch could follow it. A Resume then points the record at the background session, as the status
 swap does. An ordinary resume runs no CLI. That matters because Claude Code's docs say
-`claude agents` starts the supervisor on demand. The events file is streamed, never held whole.
-One stop (list, stop, and the wait for the listing to show it gone) is bounded at 10 s in all, and
-a terminal transition runs the stops for its records two at a time.
+`claude agents` starts the supervisor on demand. The events file is streamed, never held whole,
+and a resume reads it once for both of its checks. One stop (list, stop, and the wait for the
+listing to show it gone) is bounded at 10 s in all. A terminal transition runs the stops for its
+records two at a time, and after 20 s it starts no more of them and goes on to the reap.
 
 A `/fork` copy is never stopped: the record follows the terminal's conversation, and no hook
 names that id as a background session.
@@ -694,8 +695,11 @@ Gaps that remain in how Kangentic handles a Claude background session
   those lanes through a transition that already stopped it, so the sweep could only catch a stop
   that failed, and it would run the CLI at every launch for that.
 - `claude stop` and `/fork` were measured on Windows only. A Claude in a WSL distro is listed and
-  stopped through the distro (`runClaudeCli`), unmeasured, and the resume-time move check passes
-  it no place, so it keeps the stored id there. macOS and Linux are unmeasured.
+  stopped through the distro (`runClaudeCli`), and its move check reads the transcript in the
+  distro's home, both unmeasured. macOS and Linux are unmeasured.
+- A Command Terminal has no session record, so neither its end nor an Earlier resume stops a
+  background session holding its conversation. Its leftover reap ends that session with no exit
+  of its own, or an Earlier resume runs beside it.
 - A terminal transition stops a background session through the project's configured Claude.
   A record whose Claude ran somewhere that path no longer reaches (the CLI path changed since) is
   not found in the listing, and the reap ends that session with no exit of its own.
