@@ -80,6 +80,13 @@ describe('spawn-progress queryable map', () => {
     expect(phaseLabel('resending-command')).toBe('Re-sending command...');
   });
 
+  // The label a task shows while its column's agent limit holds its start. The
+  // renderer and the phone display it as written, so a missing entry would show
+  // the raw phase id instead.
+  it('phaseLabel names the queued-for-a-full-column phase', () => {
+    expect(phaseLabel('queuing-for-column')).toBe('Queued...');
+  });
+
   it('createProgressCallback resolves known phases and passes unknown strings verbatim', () => {
     const { window } = makeWindow();
     const onProgress = createProgressCallback(window, 'task-1');

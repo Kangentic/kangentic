@@ -213,6 +213,41 @@ describe('handleCreateColumn / handleDeleteColumn', () => {
   });
 
   // -------------------------------------------------------------------------
+  // the per-column agent limit
+  //
+  // The mobile bridge routes create_column straight to this handler with no zod
+  // layer, and a limit under one would hold every task in the column forever.
+  // -------------------------------------------------------------------------
+
+  it.each([0, -1, 1.5, '1'])('refuses a maxAgents of %j on create, and creates no column', (value) => {
+    const response = handleCreateColumn({ name: 'Brand Review', maxAgents: value }, context);
+
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('maxAgents');
+    expect(repository.list().some((lane) => lane.name === 'Brand Review')).toBe(false);
+  });
+
+  it('stores a whole-number maxAgents on create', () => {
+    const response = handleCreateColumn({ name: 'Brand Review', maxAgents: 1 }, context);
+
+    expect(response.success).toBe(true);
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.max_agents).toBe(1);
+  });
+
+  it('reads a null maxAgents on create as no limit', () => {
+    const response = handleCreateColumn({ name: 'Brand Review', maxAgents: null }, context);
+
+    expect(response.success).toBe(true);
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.max_agents).toBeNull();
+  });
+
+  it('leaves a column with no maxAgents unlimited', () => {
+    handleCreateColumn({ name: 'Brand Review' }, context);
+
+    expect(repository.list().find((lane) => lane.name === 'Brand Review')?.max_agents).toBeNull();
+  });
+
+  // -------------------------------------------------------------------------
   // the session track
   //
   // Every assertion here reads the PERSISTED row, not the response payload.
