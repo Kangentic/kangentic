@@ -48,6 +48,11 @@ const setBrowserOffscreenTasksMock = vi.fn();
 // nothing else in this window loads them, so bootstrap and hmrResync call the
 // real config store's loadAgentList, which reads `agents.list`.
 const agentsListMock = vi.fn();
+// A queued card's place in line and a hosted detail's line of tasks. This window
+// runs no App.tsx, so bootstrap reads the line and follows the push itself.
+const sessionsOnQueueChangedMock = vi.fn();
+const syncQueueSnapshotMock = vi.fn().mockResolvedValue(undefined);
+const setQueueSnapshotMock = vi.fn();
 
 (globalThis as Record<string, unknown>).window = {
   electronAPI: {
@@ -59,7 +64,7 @@ const agentsListMock = vi.fn();
       getSnapshot: monitorGetSnapshotMock,
       onChanged: monitorOnChangedMock,
     },
-    sessions: { onActivity: sessionsOnActivityMock, onFirstOutput: sessionsOnFirstOutputMock },
+    sessions: { onActivity: sessionsOnActivityMock, onFirstOutput: sessionsOnFirstOutputMock, onQueueChanged: sessionsOnQueueChangedMock },
     browser: { onOffscreenSurfaces: onOffscreenSurfacesMock },
   },
 };
@@ -71,6 +76,8 @@ vi.mock('../../src/renderer/stores/session-store', () => ({
       loadBrowserOffscreenTasks: loadBrowserOffscreenTasksMock,
       setBrowserOffscreenTasks: setBrowserOffscreenTasksMock,
       markFirstOutput: markFirstOutputMock,
+      syncQueueSnapshot: syncQueueSnapshotMock,
+      setQueueSnapshot: setQueueSnapshotMock,
     }),
   },
 }));
@@ -115,6 +122,7 @@ describe('monitorSurface bootstrap: config-store subscription guard', () => {
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
     sessionsOnFirstOutputMock.mockReturnValue(() => {});
+    sessionsOnQueueChangedMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
@@ -185,6 +193,7 @@ describe('monitorSurface bootstrap: offscreen-surfaces wiring', () => {
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
     sessionsOnFirstOutputMock.mockReturnValue(() => {});
+    sessionsOnQueueChangedMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
@@ -266,6 +275,7 @@ describe('monitorSurface bootstrap: first-output wiring', () => {
     monitorOnChangedMock.mockReturnValue(() => {});
     sessionsOnActivityMock.mockReturnValue(() => {});
     sessionsOnFirstOutputMock.mockReturnValue(() => {});
+    sessionsOnQueueChangedMock.mockReturnValue(() => {});
     onOffscreenSurfacesMock.mockReturnValue(() => {});
     loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
     agentsListMock.mockResolvedValue([]);
@@ -305,5 +315,73 @@ describe('monitorSurface bootstrap: first-output wiring', () => {
     monitorSurface.hmrResync?.();
 
     expect(syncSessionsMock).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * A queued card's place in line and a hosted task detail's line of tasks come
+ * from main's queue snapshot. App.tsx reads it for the main window and this
+ * window has no App.tsx, so without this wiring the Monitor pop-out shows a bare
+ * "Queued..." with no count. Red-green: drop the channel, the subscription or
+ * either sync, and the matching test reads red.
+ */
+describe('monitorSurface bootstrap: queue snapshot wiring', () => {
+  let controller: AbortController;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    monitorSubscribeMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorUnsubscribeMock.mockResolvedValue(undefined);
+    monitorGetSnapshotMock.mockResolvedValue({ rows: [], generatedAt: 'boot' });
+    monitorOnChangedMock.mockReturnValue(() => {});
+    sessionsOnActivityMock.mockReturnValue(() => {});
+    sessionsOnFirstOutputMock.mockReturnValue(() => {});
+    sessionsOnQueueChangedMock.mockReturnValue(() => {});
+    onOffscreenSurfacesMock.mockReturnValue(() => {});
+    loadBrowserOffscreenTasksMock.mockResolvedValue(undefined);
+    agentsListMock.mockResolvedValue([]);
+    configSetMock.mockResolvedValue(undefined);
+    resetStores();
+    controller = new AbortController();
+  });
+
+  afterEach(() => {
+    controller.abort();
+  });
+
+  it('declares SESSION_QUEUE_CHANGED, so main broadcasts it to this window', () => {
+    expect(POP_OUT_SURFACES.monitor.channels).toContain(IPC.SESSION_QUEUE_CHANGED);
+  });
+
+  it('reads the line on mount, for a queue that predates this window', () => {
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+
+    expect(syncQueueSnapshotMock).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows the push into this window\'s session store, and unsubscribes on abort', () => {
+    const snapshot = { columns: [], global: [] };
+    let pushedCallback: ((pushed: typeof snapshot) => void) | undefined;
+    const unsubscribe = vi.fn();
+    sessionsOnQueueChangedMock.mockImplementation((callback: (pushed: typeof snapshot) => void) => {
+      pushedCallback = callback;
+      return unsubscribe;
+    });
+
+    monitorSurface.bootstrap({}, { signal: controller.signal });
+    expect(sessionsOnQueueChangedMock).toHaveBeenCalledTimes(1);
+
+    pushedCallback?.(snapshot);
+    expect(setQueueSnapshotMock).toHaveBeenCalledWith(snapshot);
+
+    expect(unsubscribe).not.toHaveBeenCalled();
+    controller.abort();
+    expect(unsubscribe).toHaveBeenCalledTimes(1);
+  });
+
+  it('hmrResync re-reads the line, so a Fast Refresh does not leave a card without its count', () => {
+    monitorSurface.hmrResync?.();
+
+    expect(syncQueueSnapshotMock).toHaveBeenCalledTimes(1);
   });
 });
