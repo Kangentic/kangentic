@@ -163,7 +163,10 @@ describe('deliverAgentMessageInBackground', () => {
     expect(context.terminalSubmit.submitContent).toHaveBeenCalledWith(
       SESSION_ID,
       MULTI_LINE,
-      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+      // `automated: true` makes the paste wait for the automated-keys guard, so
+      // it never lands in the middle of a person's typing. Red: dropping it
+      // from the background path's submitContent call.
+      expect.objectContaining({ signal: expect.any(AbortSignal), automated: true }),
     );
     await settle();
     expect(reports).toHaveLength(1);
@@ -371,7 +374,8 @@ describe('deliverAgentMessageAndWait', () => {
     expect(context.terminalSubmit.submitContent).toHaveBeenCalledWith(
       SESSION_ID,
       MULTI_LINE,
-      expect.objectContaining({ signal: runController.signal }),
+      // Red: dropping `automated: true` from the awaited path's submitContent call.
+      expect.objectContaining({ signal: runController.signal, automated: true }),
     );
     expect(delivered).toBe(false);
 

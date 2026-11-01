@@ -20,6 +20,11 @@
  *      which session to wait for and ends it before its turn does. Driven
  *      through the REAL builder and the REAL tool registrations; only the
  *      command handlers are spies.
+ *   3. The same builder hands the caller's task to `registerSessionTools`, which
+ *      puts it on the context of the two dev port tools (task #952). Their
+ *      handlers default to "your own task" from `callerTaskId` alone, so a
+ *      request that arrives without it makes every call without a `taskId`
+ *      refuse as coming from no task.
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
@@ -33,12 +38,19 @@ vi.mock('electron', () => ({
 }));
 // The command handlers are the spies; `withProject` and `callHandler` between
 // the tool and the handler are the real ones.
-const { moveTaskHandler, pauseWorkflowHandler } = vi.hoisted(() => ({
+const { moveTaskHandler, pauseWorkflowHandler, reserveDevPortsHandler, checkDevPortsHandler } = vi.hoisted(() => ({
   moveTaskHandler: vi.fn(),
   pauseWorkflowHandler: vi.fn(),
+  reserveDevPortsHandler: vi.fn(),
+  checkDevPortsHandler: vi.fn(),
 }));
 vi.mock('../../src/main/agent/commands', () => ({
-  commandHandlers: { move_task: moveTaskHandler, pause_workflow: pauseWorkflowHandler },
+  commandHandlers: {
+    move_task: moveTaskHandler,
+    pause_workflow: pauseWorkflowHandler,
+    reserve_dev_ports: reserveDevPortsHandler,
+    check_dev_ports: checkDevPortsHandler,
+  },
 }));
 vi.mock('../../src/main/agent/mcp-project-context', () => ({
   buildCommandContextForProject: vi.fn(() => null),
@@ -187,6 +199,8 @@ describe('buildConfiguredMcpServer carries the request\'s caller session to the 
     }
     moveTaskHandler.mockReset();
     pauseWorkflowHandler.mockReset();
+    reserveDevPortsHandler.mockReset();
+    checkDevPortsHandler.mockReset();
   });
 
   function lastCall(handler: typeof moveTaskHandler): { params: Record<string, unknown>; context: Record<string, unknown> } {
@@ -233,5 +247,48 @@ describe('buildConfiguredMcpServer carries the request\'s caller session to the 
       expect(context.callerTaskId ?? null).toBeNull();
       expect(context.callerSessionId ?? null).toBeNull();
     }
+  });
+
+  // Red-green: drop `callerTaskId` from the context a dev port tool builds in
+  // session-tools.ts and its test fails; hand `registerSessionTools` no caller
+  // in `buildConfiguredMcpServer` and both tools' caller tests fail.
+  describe.each([
+    { tool: 'kangentic_reserve_dev_ports', handler: reserveDevPortsHandler, ownArguments: { count: 2 } },
+    { tool: 'kangentic_check_dev_ports', handler: checkDevPortsHandler, ownArguments: { ports: [4200] } },
+  ])('$tool carries the caller\'s task to the handler', ({ tool, handler, ownArguments }) => {
+    it('puts the caller\'s task on the context, so a call with no taskId is about its own task', async () => {
+      handler.mockReturnValue({ success: true, message: 'ok' });
+      const client = await connect(browserFor(CALLER_SESSION_ID));
+
+      await client.callTool({ name: tool, arguments: ownArguments });
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      const { params, context } = lastCall(handler);
+      expect(context).toMatchObject({ callerTaskId: CALLER_TASK_ID });
+      // The caller rides the context, never the params: an unnamed task stays
+      // unnamed and the handler falls back to the context.
+      expect(params.taskId).toBeUndefined();
+    });
+
+    it('keeps the caller on the context when the call names another task', async () => {
+      handler.mockReturnValue({ success: true, message: 'ok' });
+      const client = await connect(browserFor(CALLER_SESSION_ID));
+
+      await client.callTool({ name: tool, arguments: { taskId: 'task-other', ...ownArguments } });
+
+      const { params, context } = lastCall(handler);
+      expect(params.taskId).toBe('task-other');
+      expect(context).toMatchObject({ callerTaskId: CALLER_TASK_ID });
+    });
+
+    it('names no task on the context for a request with no caller segment', async () => {
+      handler.mockReturnValue({ success: true, message: 'ok' });
+      const client = await connect(browserFor(undefined));
+
+      await client.callTool({ name: tool, arguments: ownArguments });
+
+      expect(handler).toHaveBeenCalledTimes(1);
+      expect(lastCall(handler).context.callerTaskId ?? null).toBeNull();
+    });
   });
 });

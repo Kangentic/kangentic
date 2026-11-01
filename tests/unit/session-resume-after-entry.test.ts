@@ -303,4 +303,58 @@ describe('resumeTaskSession after the task entered its column paused', () => {
       }));
     });
   });
+
+  // Task #952. A resume Kangentic makes for the workflow's memory pause names
+  // itself (`resumedBy: 'memory'`), which rides the resumed session's
+  // 'session-resumed' event so workflow recovery hands the turn to its unblock
+  // pass at once. Both branches of the resume must carry it: the plain resume,
+  // through the engine's spawn overrides, and the resume after an entry while
+  // paused, through `spawnAgent` (which forwards it into the same overrides).
+  // The second was missed once, so the branch that went through `spawnAgent`
+  // resumed as a person.
+  //
+  // Red-green: drop `resumedBy` from the `spawnAgent({...})` call and the first
+  // test fails; drop it from the plain branch's `overrides` and the third fails.
+  describe('who resumed it', () => {
+    it('names the resumer on the resume after an entry while paused, through spawnAgent', async () => {
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, resumedBy: 'memory' });
+
+      expect(engine.resumeSuspendedSession).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({
+        resumesEntry: true,
+        resumedBy: 'memory',
+      }));
+    });
+
+    it('names nobody on that resume when a person asked for it', async () => {
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      const spawnArguments = (mockSpawnAgent.mock.calls[0] as unknown[])[0];
+      expect(spawnArguments).not.toHaveProperty('resumedBy');
+    });
+
+    it('names the resumer on the plain resume, in the engine\'s spawn overrides', async () => {
+      entry = { at: ENTERED_BEFORE_PAUSE, origin: 'agent', from_swimlane_id: 'lane-executing' };
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID, resumedBy: 'memory' });
+
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+      expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+      // Argument 8 is the spawn overrides.
+      const overrides = (engine.resumeSuspendedSession.mock.calls[0] as unknown[])[7];
+      expect(overrides).toMatchObject({ forceFresh: false, resumedBy: 'memory' });
+    });
+
+    it('names nobody on the plain resume when a person asked for it', async () => {
+      entry = { at: ENTERED_BEFORE_PAUSE, origin: 'agent', from_swimlane_id: 'lane-executing' };
+
+      await resumeTaskSession(fakeContext(), TASK_ID, { projectId: PROJECT_ID });
+
+      expect(engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+      const overrides = (engine.resumeSuspendedSession.mock.calls[0] as unknown[])[7];
+      expect(overrides).not.toHaveProperty('resumedBy');
+    });
+  });
 });

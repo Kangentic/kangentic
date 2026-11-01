@@ -18,7 +18,7 @@
  * tested in `terminal-submit.test.ts`. These tests focus on scheduling
  * decisions, lifecycle, and reporting.
  */
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
 import { EventEmitter } from 'node:events';
 import {
   TerminalSubmitScheduler,
@@ -1012,6 +1012,125 @@ describe('TerminalSubmitScheduler', () => {
       expect(terminalSubmit.calls).toHaveLength(0);
       expect(reports).toHaveLength(1);
       expect(reports[0].outcome).toBe('failed');
+    });
+  });
+
+  /**
+   * A burst the byte layer reports as `failed` is normally escalated to a
+   * restart. Two kinds of `failed` must never be: a burst held because the
+   * session could not take keys (a restart would kill the very work it waited
+   * on), and one whose Enter reached a permission prompt (a retry or a restart
+   * would answer whatever came next). The setup is the one the escalation test
+   * above restarts on: an idle session, a verifiable command and a handler, so
+   * a restart is what would happen if the branch did not intervene.
+   */
+  describe('a failed burst that must not be restarted', () => {
+    const PROMPT_OPEN = 'a permission prompt is open';
+    const FIRST_ENTER_AT = 1_000_000;
+
+    /** Schedule a verifiable command on an idle session and hand back what a restart would need. */
+    function scheduleEscalatableBurst(): {
+      reports: InjectionReport[];
+      escalate: Mock<(commands: string[]) => Promise<boolean>>;
+      verifier: Mock<(command: string) => Promise<boolean>>;
+    } {
+      sessionManager.registry.set('s1', { status: 'running' });
+      sessionManager.activity.s1 = 'idle';
+      const reports: InjectionReport[] = [];
+      const escalate = vi.fn<(commands: string[]) => Promise<boolean>>(async () => true);
+      const verifier = vi.fn<(command: string) => Promise<boolean>>(async () => false);
+      scheduler.scheduleKeystrokes('task-1', 's1', [{ text: '/code-review', verify: 'submitted' }], {
+        verifier,
+        escalate,
+        onOutcome: (report) => reports.push(report),
+      });
+      return { reports, escalate, verifier };
+    }
+
+    /** Past the turn-completion quiet window, where an escalation would have fired. */
+    async function letEscalationWindowPass(): Promise<void> {
+      await tick();
+      vi.advanceTimersByTime(1600);
+      await tick();
+      await tick();
+    }
+
+    it('reports "Not sent: <reason>." with nothing typed, and does not restart, when the burst was held before it typed', async () => {
+      const { reports, escalate, verifier } = scheduleEscalatableBurst();
+      await tick();
+      terminalSubmit.finishLatest({
+        outcome: 'failed',
+        unconfirmedCommands: ['/code-review'],
+        deliveries: [],
+        heldBy: PROMPT_OPEN,
+      });
+      await letEscalationWindowPass();
+
+      expect(escalate).not.toHaveBeenCalled();
+      expect(verifier).not.toHaveBeenCalled();
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        commands: ['/code-review'],
+        unconfirmedCommands: ['/code-review'],
+        escalated: false,
+        reason: `Not sent: ${PROMPT_OPEN}.`,
+        textReachedAgent: false,
+      });
+      // One byte-layer call, not a retry.
+      expect(terminalSubmit.calls).toHaveLength(1);
+    });
+
+    it('reports "Not sent: <reason>." without claiming nothing was typed, and does not restart, when the hold came after typing began', async () => {
+      // The burst typed the text, then a prompt opened before the Enter. The
+      // text is in the agent's prompt, so a held message must not be put back
+      // on hold as if none of it had gone: the key stays absent.
+      const { reports, escalate } = scheduleEscalatableBurst();
+      await tick();
+      terminalSubmit.finishLatest({
+        outcome: 'failed',
+        unconfirmedCommands: ['/code-review'],
+        deliveries: [{ text: '/code-review', firstSentAt: null, confirmed: false }],
+        heldBy: PROMPT_OPEN,
+      });
+      await letEscalationWindowPass();
+
+      expect(escalate).not.toHaveBeenCalled();
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        escalated: false,
+        reason: `Not sent: ${PROMPT_OPEN}.`,
+      });
+      expect('textReachedAgent' in reports[0]).toBe(false);
+    });
+
+    it('reports an Enter that reached a permission prompt as its own failed outcome, never retried and never restarted', async () => {
+      const { reports, escalate, verifier } = scheduleEscalatableBurst();
+      await tick();
+      terminalSubmit.finishLatest({
+        outcome: 'failed',
+        unconfirmedCommands: ['/code-review'],
+        deliveries: [{ text: '/code-review', firstSentAt: FIRST_ENTER_AT, confirmed: false }],
+        reachedPermissionPrompt: true,
+      });
+      await letEscalationWindowPass();
+      // Long enough for a late-confirmation poll to have run if one were started.
+      vi.advanceTimersByTime(5_000);
+      await tick();
+
+      expect(escalate).not.toHaveBeenCalled();
+      expect(verifier).not.toHaveBeenCalled();
+      expect(terminalSubmit.calls).toHaveLength(1);
+      expect(reports).toHaveLength(1);
+      expect(reports[0]).toMatchObject({
+        outcome: 'failed',
+        escalated: false,
+        reason: 'An Enter reached a permission prompt, so it may have answered it.',
+        reachedPermissionPrompt: true,
+      });
+      // The Enter was pressed, so the text did reach the agent.
+      expect('textReachedAgent' in reports[0]).toBe(false);
     });
   });
 

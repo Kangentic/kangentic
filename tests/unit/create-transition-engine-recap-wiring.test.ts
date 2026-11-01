@@ -25,7 +25,8 @@
  * Red-green: drop the `recapSources` line and the first test fails; build the
  * sources once at module scope and the per-engine test fails; pass another id
  * and the project test fails; drop the `onConversationExpired` line, or pass a
- * different context to the notifier, and the notice tests fail.
+ * different context to the notifier, and the notice tests fail. Drop the
+ * `readStartHead` line and the start HEAD reader tests fail.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { TransitionEngineServices } from '../../src/main/transition-engine/transition-engine';
@@ -35,6 +36,7 @@ import type { ConversationExpiredNotice } from '../../src/shared/types';
 const engineConstructions = vi.hoisted(() => ({ argumentLists: [] as unknown[][] }));
 const mockCreateExpiredRecapSources = vi.hoisted(() => vi.fn());
 const mockNotifyConversationExpired = vi.hoisted(() => vi.fn());
+const mockReadWorktreeHead = vi.hoisted(() => vi.fn());
 
 // Same avoidance strategy as agent-spawn-expired-withhold.test.ts: the engine and
 // the agent registry are stubbed so the module loads without pulling in
@@ -48,6 +50,10 @@ vi.mock('../../src/main/transition-engine/transition-engine', () => ({
 }));
 vi.mock('../../src/main/transition-engine/expired-recap-sources', () => ({
   createExpiredRecapSources: mockCreateExpiredRecapSources,
+}));
+vi.mock('../../src/main/git/worktree-head', () => ({
+  readWorktreeHead: mockReadWorktreeHead,
+  readCommitsSince: vi.fn(),
 }));
 vi.mock('../../src/main/agent/agent-registry', () => ({
   agentRegistry: { get: vi.fn(() => ({ sessionType: 'claude_agent' })) },
@@ -129,6 +135,8 @@ beforeEach(() => {
   mockCreateExpiredRecapSources.mockReset();
   mockCreateExpiredRecapSources.mockImplementation(() => makeRecapSources());
   mockNotifyConversationExpired.mockReset();
+  mockReadWorktreeHead.mockReset();
+  mockReadWorktreeHead.mockResolvedValue({ branch: 'task-branch', sha: 'abc1234' });
 });
 
 describe('createTransitionEngine: the recap sources', () => {
@@ -157,6 +165,28 @@ describe('createTransitionEngine: the recap sources', () => {
 
     expect(mockCreateExpiredRecapSources).toHaveBeenCalledTimes(2);
     expect(second.recapSources).not.toBe(first.recapSources);
+  });
+});
+
+// The engine records `sessions.start_head_sha` for an isolated destination lane
+// through `services.readStartHead` (transition-engine.test.ts pins that side with a
+// stub). With no supplier here, every isolated session silently records no start
+// HEAD and its return recap lists no commits.
+describe('createTransitionEngine: the start HEAD reader', () => {
+  it('hands the engine a reader that resolves the head sha of the cwd it is given', async () => {
+    const services = buildEngineServices(makeContext());
+
+    expect(typeof services.readStartHead).toBe('function');
+    await expect(services.readStartHead!('/mock/worktree')).resolves.toBe('abc1234');
+    expect(mockReadWorktreeHead).toHaveBeenCalledTimes(1);
+    expect(mockReadWorktreeHead).toHaveBeenCalledWith('/mock/worktree');
+  });
+
+  it('resolves null when the cwd has no readable head', async () => {
+    mockReadWorktreeHead.mockResolvedValue({ branch: null, sha: null });
+    const services = buildEngineServices(makeContext());
+
+    await expect(services.readStartHead!('/mock/not-a-repo')).resolves.toBeNull();
   });
 });
 

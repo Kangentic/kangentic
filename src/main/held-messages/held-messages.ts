@@ -12,7 +12,7 @@ import {
   isSlashCommand,
   pasteAgentMessageInBackground,
 } from '../automations/turn-end/agent-message-delivery';
-import { isRecapSession } from '../automations/turn-end/recap-turns';
+import { isExpiredRecapSession } from '../automations/turn-end/recap-turns';
 
 /**
  * Held messages (GitHub #452): a message for a task whose agent is not running
@@ -388,7 +388,7 @@ export function flushHeldIfLive(context: IpcContext, projectId: string, taskId: 
   try {
     const session = context.sessionManager.findLiveSessionByTaskId(taskId);
     if (!session || session.transient || !context.sessionManager.isWritable(session.id)) return;
-    if (isRecapSession(session.id)) return;
+    if (isExpiredRecapSession(session.id)) return;
     const claim = claimHeldMessages(context, projectId, taskId);
     if (!claim) return;
     taken = claim;

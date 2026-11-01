@@ -29,7 +29,7 @@
  * session-isolation.ts are left UNMOCKED so the real profile fold runs.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import fs from 'node:fs';
 import type { BoardProfile, SessionRecord, SwimlaneRole, Task } from '../../src/shared/types';
 
@@ -153,6 +153,10 @@ vi.mock('../../src/main/transition-engine/spawn-intent', () => ({
 
 import { resumeSuspendedSessions } from '../../src/main/transition-engine/session-startup/resume-suspended';
 import { prepareAgentSpawn } from '../../src/main/transition-engine/session-startup/prepare-spawn';
+import {
+  ActivityIntervalStore,
+  resetIntervalSweepForTests,
+} from '../../src/main/activity-engine/activity-interval-store';
 
 // ---------------------------------------------------------------------------
 // Test data helpers
@@ -624,5 +628,175 @@ describe('resumeSuspendedSessions: the locked re-check keeps the gathered record
     expect(taskRepoUpdateMock).not.toHaveBeenCalled();
     expect(sessionRepoInsertMock).not.toHaveBeenCalled();
     expect(retireRecordMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * What a recovery pass hands the spawn and the new record (task #952): the
+ * resume is stamped `resumedBy: 'recovery'` (workflow recovery reads it to know
+ * the old process's background commands died), and the recovered record starts
+ * where the one it replaces did (`start_head_sha` copied across, so a recovered
+ * isolated pass still diffs against the HEAD it began at).
+ *
+ * Red-green: drop `resumedBy: 'recovery'` from the `sessionManager.spawn` call,
+ * or `start_head_sha: input.record.start_head_sha ?? null` from the insert, in
+ * resume-suspended.ts, and the matching test below fails.
+ */
+describe('resumeSuspendedSessions: the spawn and the new record carry the recovery stamp', () => {
+  beforeEach(() => {
+    markRecordSuspendedMock.mockClear();
+    markRecordSuspendedMock.mockReturnValue(true);
+    retireRecordMock.mockClear();
+    sessionRepoGetResumable.mockClear();
+    sessionRepoGetResumable.mockReturnValue([]);
+    sessionRepoGetOrphaned.mockClear();
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockClear();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
+    sessionRepoInsertMock.mockClear();
+    recordsNow.clear();
+    taskRepoList.mockClear();
+    taskRepoList.mockReturnValue([]);
+    taskRepoUpdateMock.mockClear();
+    vi.mocked(prepareAgentSpawn).mockReset();
+    vi.mocked(prepareAgentSpawn).mockResolvedValue(preparedSpawn() as never);
+    swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+  });
+
+  function gatherSuspendedRecord(overrides: Partial<SessionRecord> = {}): void {
+    sessionRepoGetResumable.mockReturnValue([
+      makeRecord({ id: 'record-gathered', isolated_swimlane_id: null, status: 'suspended', ...overrides }),
+    ]);
+    taskRepoList.mockReturnValue([makeTask({ swimlane_id: LOUD_LANE, profile_id: null })]);
+  }
+
+  it('spawns the recovered agent as resumed by recovery', async () => {
+    gatherSuspendedRecord();
+
+    const sessionManager = await runResume();
+
+    expect(sessionManager.spawn).toHaveBeenCalledTimes(1);
+    expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ resumedBy: 'recovery' }));
+  });
+
+  it('copies the replaced record\'s start_head_sha onto the recovered record', async () => {
+    gatherSuspendedRecord({ start_head_sha: 'abc123def456' });
+
+    await runResume();
+
+    expect(sessionRepoInsertMock).toHaveBeenCalledTimes(1);
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'new-pty-session-1', start_head_sha: 'abc123def456' }),
+    );
+  });
+
+  it('records a null start_head_sha when the replaced record never had one', async () => {
+    // A record from before the column existed reads back with no value at all.
+    gatherSuspendedRecord();
+
+    await runResume();
+
+    expect(sessionRepoInsertMock).toHaveBeenCalledWith(expect.objectContaining({ start_head_sha: null }));
+  });
+});
+
+/**
+ * The activity intervals the last quit or crash left open are closed by the
+ * first UNSCOPED recovery of a project in a launch (task #952), with the ids of
+ * the sessions this launch already runs so their rows are left alone. A scoped
+ * pass (`onlySessionIds`, the pty host's crash path) is mid-launch and sweeps
+ * nothing: it must not even spend the project's once-per-launch sweep, or the
+ * startup recovery that follows would find it already done.
+ *
+ * Runs the REAL `sweepIntervalsOncePerLaunch` and spies on the store's
+ * `closeIntervalsLeftOpen`, so both the call site's wiring and its
+ * once-per-project guard are exercised.
+ *
+ * Red-green: removing the `if (!onlySessionIds)` guard in resume-suspended.ts
+ * makes the scoped test fail (the scoped pass sweeps); removing the call makes
+ * all four fail.
+ */
+describe('resumeSuspendedSessions: sweeps the intervals a quit left open', () => {
+  let closeIntervalsLeftOpen: MockInstance;
+
+  beforeEach(() => {
+    resetIntervalSweepForTests();
+    closeIntervalsLeftOpen = vi.spyOn(ActivityIntervalStore.prototype, 'closeIntervalsLeftOpen').mockReturnValue(0);
+    sessionRepoGetResumable.mockReset();
+    sessionRepoGetResumable.mockReturnValue([]);
+    sessionRepoGetOrphaned.mockReset();
+    sessionRepoGetOrphaned.mockReturnValue([]);
+    sessionRepoGetInterruptedExited.mockReset();
+    sessionRepoGetInterruptedExited.mockReturnValue([]);
+    taskRepoList.mockReturnValue([]);
+    swimlaneListMock.mockReturnValue([lane(LOUD_LANE, true)]);
+  });
+
+  afterEach(() => {
+    closeIntervalsLeftOpen.mockRestore();
+    resetIntervalSweepForTests();
+  });
+
+  /** A session in the registry, as `listSessions` reports it. */
+  function listed(id: string, status: 'running' | 'queued' | 'exited' | 'suspended') {
+    return { id, taskId: `task-of-${id}`, status };
+  }
+
+  async function recover(projectId: string, registry: ReturnType<typeof listed>[], onlySessionIds?: ReadonlySet<string>) {
+    const sessionManager = makeSessionManager();
+    sessionManager.listSessions.mockReturnValue(registry as never);
+    await resumeSuspendedSessions(
+      projectId,
+      '/project',
+      sessionManager as never,
+      makeConfigManager(true) as never,
+      'claude',
+      null,
+      null,
+      null,
+      undefined,
+      onlySessionIds ? { onlySessionIds } : {},
+    );
+  }
+
+  it('closes the left-open intervals once, sparing the sessions this launch already runs', async () => {
+    await recover('proj-sweep-live', [
+      listed('running-session', 'running'),
+      listed('queued-session', 'queued'),
+      listed('exited-session', 'exited'),
+      listed('suspended-session', 'suspended'),
+    ]);
+
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledTimes(1);
+    // Only the running and queued sessions are live: an exited or suspended one
+    // has nothing in progress, so its open interval is exactly what to close.
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledWith(new Set(['running-session', 'queued-session']));
+  });
+
+  it('sweeps a project once per launch, however many recoveries it runs', async () => {
+    await recover('proj-sweep-once', []);
+    await recover('proj-sweep-once', []);
+
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it('sweeps each project on its own first recovery', async () => {
+    await recover('proj-sweep-first', []);
+    await recover('proj-sweep-second', []);
+
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledTimes(2);
+  });
+
+  it('sweeps nothing on a scoped recovery and leaves the project\'s sweep for its startup recovery', async () => {
+    await recover('proj-sweep-scoped', [listed('running-session', 'running')], new Set(['lost-session']));
+
+    expect(closeIntervalsLeftOpen).not.toHaveBeenCalled();
+
+    // The startup recovery that follows is still the project's first unscoped
+    // one, so it sweeps.
+    await recover('proj-sweep-scoped', [listed('running-session', 'running')]);
+
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledTimes(1);
+    expect(closeIntervalsLeftOpen).toHaveBeenCalledWith(new Set(['running-session']));
   });
 });

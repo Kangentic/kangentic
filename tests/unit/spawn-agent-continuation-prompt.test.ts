@@ -26,7 +26,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import type { Task, Swimlane, SessionRecord } from '../../src/shared/types';
+import type { Task, Swimlane, SessionRecord, SessionResumer } from '../../src/shared/types';
 
 vi.mock('../../src/main/transition-engine/agent-resolver', () => ({
   resolveTargetAgent: vi.fn(() => ({ agent: 'claude', isHandoff: false })),
@@ -197,6 +197,7 @@ async function runSpawn(
   toLane: Swimlane,
   deps: ReturnType<typeof makeDeps>,
   continuationPrompt: string | undefined,
+  extra: { resumedBy?: SessionResumer } = {},
 ) {
   await spawnAgent({
     context: deps.context as never,
@@ -210,6 +211,7 @@ async function runSpawn(
     // template is always skipped on this path.
     skipPromptTemplate: true,
     continuationPrompt,
+    ...extra,
   });
 }
 
@@ -331,5 +333,48 @@ describe('spawnAgent continuationPrompt delivery', () => {
     expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
     expect(resumePromptArg(deps.engine)).toBe('/implement');
     expect(deps.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * `resumedBy` (task #952): who resumed the session when it is not a person. The
+ * Resume after an entry while paused (`resumeTaskSession`) hands it to
+ * `spawnAgent`, which puts it in the spawn overrides of the engine's resume (the
+ * 8th argument), where the engine forwards it to the spawn. Without this link
+ * the workflow's memory resume came back as a person's, and recovery never
+ * handed its turn to the unblock pass.
+ *
+ * Red-green: drop the `resumedBy` spread from the overrides in agent-spawn.ts
+ * and the first test fails.
+ */
+describe('spawnAgent hands who resumed the session to the engine\'s resume', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    columnMessages.clear();
+    vi.mocked(resolveTargetAgent).mockImplementation(() => ({ agent: 'claude', isHandoff: false }));
+    vi.mocked(agentRegistry.get).mockImplementation(() => ({ sessionType: 'claude_agent' }) as never);
+  });
+
+  /** The spawn overrides are the 8th positional argument of resumeSuspendedSession. */
+  function spawnOverridesArg(engine: ReturnType<typeof makeDeps>['engine']): unknown {
+    return engine.resumeSuspendedSession.mock.calls[0]?.[7];
+  }
+
+  it('puts the resumer in the spawn overrides', async () => {
+    const deps = makeDeps({ resumeRecord: makeRecord() });
+
+    await runSpawn(makeSwimlane(EXECUTING_LANE_ID), deps, undefined, { resumedBy: 'memory' });
+
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(spawnOverridesArg(deps.engine)).toMatchObject({ resumedBy: 'memory' });
+  });
+
+  it('puts nobody in them when a person resumed it', async () => {
+    const deps = makeDeps({ resumeRecord: makeRecord() });
+
+    await runSpawn(makeSwimlane(EXECUTING_LANE_ID), deps, undefined);
+
+    expect(deps.engine.resumeSuspendedSession).toHaveBeenCalledTimes(1);
+    expect(spawnOverridesArg(deps.engine)).not.toHaveProperty('resumedBy');
   });
 });

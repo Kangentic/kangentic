@@ -66,7 +66,8 @@ vi.mock('node:util', () => ({
 // Import under test
 // ---------------------------------------------------------------------------
 
-import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories } from '../../src/main/transition-engine/resource-cleanup';
+import { cleanupStaleResources, cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks, pruneOrphanedDirectories, sweepAutomationRuns } from '../../src/main/transition-engine/resource-cleanup';
+import type { AutomationRunRepository } from '../../src/main/db/repositories/automation-run-repository';
 // The REAL per-task lock, not mocked: the To Do sweep takes it for each task,
 // so a test can hold it to stand in for a move that is still running.
 import { withTaskLock } from '../../src/main/ipc/task-lifecycle-lock';
@@ -1747,5 +1748,92 @@ describe('cleanupStaleResources -- removeWorktreeDirectory exhaustion path', () 
       id: 'aaaa1111-0000-0000-0000-000000000000',
       worktree_path: null,
     }));
+  });
+});
+
+// ---------------------------------------------------------------------------
+// sweepAutomationRuns (task #952): a workflow's tasks keep every run until the
+// workflow has been done a day, so the prune takes the keep list. A prune cannot
+// be undone, so when the keep list cannot be read nothing is pruned that open.
+//
+// Red-green: calling `pruneTo` outside the `keepWorkflowIds !== null` guard
+// (for example `pruneTo(undefined, keepWorkflowIds ?? [])`) makes the
+// unreadable-keep-list test fail; dropping the second argument makes the
+// keep-list test fail.
+// ---------------------------------------------------------------------------
+
+describe('sweepAutomationRuns: the prune takes the workflows that keep their runs', () => {
+  let warnSpy: ReturnType<typeof vi.spyOn>;
+
+  beforeEach(() => {
+    warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  function makeAutomationRunRepo(overrides: {
+    interrupted?: number;
+    workflowIdsKeepingRuns?: () => string[];
+  } = {}) {
+    return {
+      markStaleRunsInterrupted: vi.fn(() => overrides.interrupted ?? 0),
+      workflowIdsKeepingRuns: vi.fn(overrides.workflowIdsKeepingRuns ?? (() => [])),
+      pruneTo: vi.fn(() => 0),
+    };
+  }
+
+  it('hands the read keep list to the prune and returns the interrupted count', () => {
+    const repo = makeAutomationRunRepo({
+      interrupted: 3,
+      workflowIdsKeepingRuns: () => ['workflow-active', 'workflow-finished-recently'],
+    });
+
+    const interrupted = sweepAutomationRuns(repo as unknown as AutomationRunRepository);
+
+    expect(interrupted).toBe(3);
+    // The keep list is read against the current time, with the home-project lookup
+    // for a workflow homed in another project.
+    expect(repo.workflowIdsKeepingRuns).toHaveBeenCalledWith(expect.any(Number), expect.any(Function));
+    expect(repo.pruneTo).toHaveBeenCalledTimes(1);
+    expect(repo.pruneTo).toHaveBeenCalledWith(undefined, ['workflow-active', 'workflow-finished-recently']);
+  });
+
+  it('still prunes, with an empty keep list, when no workflow keeps its runs', () => {
+    const repo = makeAutomationRunRepo({ workflowIdsKeepingRuns: () => [] });
+
+    sweepAutomationRuns(repo as unknown as AutomationRunRepository);
+
+    expect(repo.pruneTo).toHaveBeenCalledTimes(1);
+    expect(repo.pruneTo).toHaveBeenCalledWith(undefined, []);
+  });
+
+  it('prunes nothing when the keep list cannot be read, and still reports the interrupted runs', () => {
+    const repo = makeAutomationRunRepo({
+      interrupted: 2,
+      workflowIdsKeepingRuns: () => { throw new Error('database is locked'); },
+    });
+
+    const interrupted = sweepAutomationRuns(repo as unknown as AutomationRunRepository);
+
+    expect(repo.pruneTo).not.toHaveBeenCalled();
+    // The honest `interrupted` marking is the other half of the sweep and does
+    // not depend on the prune.
+    expect(interrupted).toBe(2);
+    expect(repo.markStaleRunsInterrupted).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(
+      expect.stringContaining('Could not read which workflows keep their runs, so none were pruned'),
+      expect.any(Error),
+    );
+  });
+
+  it('returns 0 and prunes nothing when the stale runs cannot be marked', () => {
+    const repo = makeAutomationRunRepo();
+    repo.markStaleRunsInterrupted.mockImplementation(() => { throw new Error('no such table'); });
+
+    expect(sweepAutomationRuns(repo as unknown as AutomationRunRepository)).toBe(0);
+    expect(repo.pruneTo).not.toHaveBeenCalled();
   });
 });

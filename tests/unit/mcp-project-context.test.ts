@@ -34,6 +34,22 @@ vi.mock('../../src/main/ipc/handlers/task-move', () => ({
   handleTaskMove: vi.fn(() => Promise.resolve()),
 }));
 
+// A move that carries a message re-reads where the task landed, and names the
+// column it landed in, before it hands the message to the delivery. Only
+// `onTaskMove` uses either module in this file, so each is a stub the move tests
+// below configure: the landed column the task reads back, and the delivery spy.
+const landedTaskState = vi.hoisted(() => ({ swimlaneId: 'lane-review' as string | null, columnName: 'Code Review' as string | null }));
+vi.mock('../../src/main/ipc/helpers/project-repos', () => ({
+  getProjectRepos: vi.fn(() => ({
+    tasks: { getById: vi.fn(() => (landedTaskState.swimlaneId ? { swimlane_id: landedTaskState.swimlaneId } : undefined)) },
+    swimlanes: { getById: vi.fn(() => (landedTaskState.columnName ? { name: landedTaskState.columnName } : undefined)) },
+  })),
+}));
+const deliverMessageAfterMoveSpy = vi.hoisted(() => vi.fn(() => Promise.resolve()));
+vi.mock('../../src/main/automations/turn-end/deliver-message', () => ({
+  deliverMessageAfterMove: deliverMessageAfterMoveSpy,
+}));
+
 vi.mock('../../src/main/git/worktree-manager', () => ({
   prepareWorktreeForRemoval: vi.fn(() => Promise.resolve()),
   WorktreeManager: vi.fn().mockImplementation(() => ({
@@ -313,6 +329,84 @@ describe('buildCommandContextForProject - onTaskMove', () => {
     await context!.onTaskMove(MOVE_INPUT);
 
     expect(handleTaskMove).toHaveBeenCalledWith(expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined);
+  });
+
+  // A message that follows the move reaches the agent after it lands, so the
+  // move says so (`carriesMessage`) and its return recap leaves out the reply
+  // that message usually repeats. Only a message with text counts: an empty or
+  // blank one delivers nothing, and a recap that left the reply out for it would
+  // hand the agent neither.
+  //
+  // Red-green: pass `carriesMessage: true` for any `options.message` (or drop it)
+  // in mcp-project-context.ts's `onTaskMove` and the matching test fails.
+  describe('a move that carries a message', () => {
+    beforeEach(() => {
+      landedTaskState.swimlaneId = MOVE_INPUT.targetSwimlaneId;
+      landedTaskState.columnName = 'Code Review';
+    });
+
+    function contextForMove() {
+      return buildCommandContextForProject(makeIpcContext(makeProject({ id: DEFAULT_ID, path: '/repos/myboard' })), DEFAULT_ID)!;
+    }
+
+    it('tells the move it carries a message, and delivers the trimmed text once the task landed', async () => {
+      await contextForMove().onTaskMove(MOVE_INPUT, { message: '  Address the findings.  ' });
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { carriesMessage: true },
+      );
+      expect(deliverMessageAfterMoveSpy).toHaveBeenCalledWith(
+        expect.anything(), DEFAULT_ID, MOVE_INPUT.taskId, 'Code Review', 'Address the findings.',
+      );
+    });
+
+    it('adds the flag beside the task agent\'s own options', async () => {
+      await contextForMove().onTaskMove(MOVE_INPUT, {
+        message: 'Address the findings.',
+        moverIsTaskAgent: true,
+        moverSessionId: 'session-own',
+      });
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { moverIsTaskAgent: true, moverSessionId: 'session-own', carriesMessage: true },
+      );
+    });
+
+    it.each([
+      { label: 'an empty message', message: '' },
+      { label: 'a blank message', message: '   \n  ' },
+    ])('does not tell the move it carries one for $label, and delivers nothing', async ({ message }) => {
+      await contextForMove().onTaskMove(MOVE_INPUT, { message });
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard', undefined,
+      );
+      expect(deliverMessageAfterMoveSpy).not.toHaveBeenCalled();
+    });
+
+    it('does not tell the move it carries one when the caller passes no message', async () => {
+      await contextForMove().onTaskMove(MOVE_INPUT, { moverIsTaskAgent: true });
+
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { moverIsTaskAgent: true },
+      );
+    });
+
+    it('delivers nothing when the move did not land the task in its target column', async () => {
+      landedTaskState.swimlaneId = 'lane-elsewhere';
+
+      await contextForMove().onTaskMove(MOVE_INPUT, { message: 'Address the findings.' });
+
+      // The move still told its recap about the message it was asked to carry.
+      expect(handleTaskMove).toHaveBeenCalledWith(
+        expect.anything(), MOVE_INPUT, 'agent', DEFAULT_ID, '/repos/myboard',
+        { carriesMessage: true },
+      );
+      expect(deliverMessageAfterMoveSpy).not.toHaveBeenCalled();
+    });
   });
 });
 

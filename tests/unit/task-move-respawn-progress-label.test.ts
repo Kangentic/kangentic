@@ -483,6 +483,72 @@ describe('handleTaskMove respawn branches emit a spawn-progress label before sus
   });
 });
 
+/**
+ * `carriesMessage` (a Move to column row's Message, `kangentic_move_task`'s
+ * `message`) says a message follows the move to the agent. Phase 3 hands it to
+ * `spawnAgent` as `moveCarriesMessage`, so the return recap leaves out the reply
+ * that message usually repeats (`return-recap.ts`). The mapping is the only
+ * link between the move option and the recap, and `spawnAgent`'s own tests
+ * inject the flag, so nothing else fails if this wire is cut.
+ *
+ * Red-green: replace `options?.carriesMessage === true` in task-move.ts's
+ * `spawnAgent` call with `false` and the first test fails; with `true` and the
+ * other two fail.
+ */
+describe('handleTaskMove hands the move\'s message flag to spawnAgent', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    hoisted.activeRecord = null;
+    mockIsShuttingDown.value = false;
+    mockEnsureTaskWorktree.mockResolvedValue(null);
+    mockEnsureTaskBranchCheckout.mockResolvedValue(undefined);
+    mockSpawnAgent.mockResolvedValue(undefined);
+    mockPrepareInjectionPlan.mockReturnValue(null);
+    mockResolveTargetAgent.mockReturnValue({ agent: 'claude', isHandoff: false });
+  });
+
+  /** A move whose Phase 3 reaches `spawnAgent`: the effort restart scenario above. */
+  async function moveIntoSpawn(options?: Parameters<typeof handleTaskMove>[5]) {
+    const fromLane = makeSwimlane('lane-from');
+    const toLane = makeSwimlane(EXEC_LANE_ID, { effort_override: 'xhigh' });
+    const swimlaneRepo = {
+      getById: vi.fn((id: string) => (id === 'lane-from' ? fromLane : id === EXEC_LANE_ID ? toLane : null)),
+      list: vi.fn(() => [fromLane, toLane]),
+    };
+    setActiveRecord({ applied_effort: 'low' });
+    mockPrepareInjectionPlan.mockReturnValue({ sequence: [], verifier: null, restartReason: 'effort' });
+    const context = makeContext(makeTaskRepo('lane-from', EXEC_LANE_ID), swimlaneRepo);
+
+    await handleTaskMove(
+      context as never,
+      { taskId: TASK_ID, targetSwimlaneId: EXEC_LANE_ID, targetPosition: 0 },
+      'agent',
+      'proj-test',
+      '/mock/project',
+      options,
+    );
+    expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+  }
+
+  it('says the move carries a message when the caller says so', async () => {
+    await moveIntoSpawn({ carriesMessage: true });
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ moveCarriesMessage: true }));
+  });
+
+  it('says it does not for a move that carries no message', async () => {
+    await moveIntoSpawn();
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ moveCarriesMessage: false }));
+  });
+
+  it('says it does not when the caller passes other options but no message', async () => {
+    await moveIntoSpawn({ carriesMessage: false, moveReason: 'On to Testing' });
+
+    expect(mockSpawnAgent).toHaveBeenCalledWith(expect.objectContaining({ moveCarriesMessage: false }));
+  });
+});
+
 describe('handleTaskMove respawn branches during shutdown', () => {
   beforeEach(() => {
     vi.clearAllMocks();
