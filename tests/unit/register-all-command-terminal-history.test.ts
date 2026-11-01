@@ -43,6 +43,9 @@ const {
   capturedHistoryDeps,
   constructedRepositories,
   isWslDistroRunningMock,
+  retrievalAttachMock,
+  scheduleCommandTerminalIndexMock,
+  searchCommandTerminalTextMock,
 } = vi.hoisted(() => ({
   mockHandle: vi.fn(),
   mockOn: vi.fn(),
@@ -50,6 +53,9 @@ const {
   capturedHistoryDeps: [] as unknown[],
   constructedRepositories: [] as Array<{ database: unknown }>,
   isWslDistroRunningMock: vi.fn(async () => true),
+  retrievalAttachMock: vi.fn(),
+  scheduleCommandTerminalIndexMock: vi.fn(),
+  searchCommandTerminalTextMock: vi.fn(),
 }));
 
 vi.mock('electron', () => ({
@@ -216,7 +222,11 @@ vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('better-sqlite3', () => ({ default: vi.fn() }));
 vi.mock('simple-git', () => ({ simpleGit: vi.fn(() => ({})) }));
 vi.mock('../../src/main/retrieval/retrieval-service', () => ({
-  retrievalService: { attach: vi.fn() },
+  retrievalService: {
+    attach: retrievalAttachMock,
+    scheduleCommandTerminalIndex: scheduleCommandTerminalIndexMock,
+    searchCommandTerminalText: searchCommandTerminalTextMock,
+  },
 }));
 
 // Every handler registration register-all.ts calls that the idempotency suite
@@ -303,15 +313,22 @@ describe('registerAllIpc command terminal history deps', () => {
   let deps: CommandTerminalHistoryDeps;
   let agentRegistryGet: MockInstance<(name: string) => AgentAdapter | undefined>;
 
+  // The context registerAllIpc built, as it handed it to retrievalService.attach.
+  let registeredContext: unknown;
+
   beforeAll(async () => {
     const { registerAllIpc } = await import('../../src/main/ipc/register-all');
     registerAllIpc({ id: 1, webContents: { send: vi.fn() } } as unknown as import('electron').BrowserWindow);
 
     expect(capturedHistoryDeps, 'registerAllIpc must build one CommandTerminalHistory').toHaveLength(1);
     deps = capturedHistoryDeps[0] as CommandTerminalHistoryDeps;
+    expect(retrievalAttachMock, 'registerAllIpc must attach the retrieval service').toHaveBeenCalledTimes(1);
+    registeredContext = retrievalAttachMock.mock.calls[0][0];
   }, 30000);
 
   beforeEach(() => {
+    scheduleCommandTerminalIndexMock.mockReset();
+    searchCommandTerminalTextMock.mockReset();
     mockGetProjectDb.mockReset();
     constructedRepositories.length = 0;
     agentRegistryGet = vi.spyOn(agentRegistry, 'get');
@@ -343,6 +360,29 @@ describe('registerAllIpc command terminal history deps', () => {
 
       expect(mockGetProjectDb).toHaveBeenCalledWith('project-gone');
       expect(constructedRepositories).toHaveLength(0);
+    });
+  });
+
+  describe('conversationEnded', () => {
+    it('schedules the conversation index on the retrieval service: context, project, then conversation', () => {
+      deps.conversationEnded('project-7', 'conversation-9');
+
+      expect(scheduleCommandTerminalIndexMock).toHaveBeenCalledTimes(1);
+      expect(scheduleCommandTerminalIndexMock).toHaveBeenCalledWith(registeredContext, 'project-7', 'conversation-9');
+      expect(searchCommandTerminalTextMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('searchText', () => {
+    it('searches the conversation text on the retrieval service and returns its answer: context, project, then query', async () => {
+      const answer = { indexingOff: false, hits: [{ agentSessionId: 'conversation-9' }] };
+      searchCommandTerminalTextMock.mockResolvedValue(answer);
+
+      await expect(deps.searchText('project-7', 'needle query')).resolves.toBe(answer);
+
+      expect(searchCommandTerminalTextMock).toHaveBeenCalledTimes(1);
+      expect(searchCommandTerminalTextMock).toHaveBeenCalledWith(registeredContext, 'project-7', 'needle query');
+      expect(scheduleCommandTerminalIndexMock).not.toHaveBeenCalled();
     });
   });
 
