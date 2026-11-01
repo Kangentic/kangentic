@@ -351,6 +351,12 @@ test.describe('Completed task: Changes tab over a landed range', () => {
   });
 
   test('a History row narrows the list to its commit; the x and Escape go back to all changes', async () => {
+    // A cold app launch, then five waits of 8 to 10 s each, inside the UI
+    // project's 15 s budget. It failed on CI at exactly 15 s as a shard's first
+    // test and passed on its retry, which --fail-on-flaky-tests counts as a
+    // failure. test.slow() triples the enclosing budget; each wait still waits
+    // on real DOM state, never a fixed sleep.
+    test.slow();
     const { browser, page } = await launch(landedChanges());
     try {
       await openCompletedTask(page);
