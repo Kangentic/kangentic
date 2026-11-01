@@ -138,7 +138,7 @@ describe('moveDirectory', () => {
   });
 
   it('retries a transient EACCES then succeeds', async () => {
-    // EACCES is in RETRYABLE_RENAME_CODES alongside EBUSY/EPERM/ENOTEMPTY.
+    // EACCES is in TRANSIENT_HANDLE_CODES alongside EBUSY/EPERM/ENOTEMPTY.
     // Windows antivirus scanners can hold a handle that causes EACCES transiently.
     vi.useFakeTimers();
     fsMock.rename

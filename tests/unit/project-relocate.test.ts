@@ -10,6 +10,8 @@
  *     registered at the same path is rejected; same path is a no-op.
  *   - Live sessions are suspended (abort-then-lock order) and transient
  *     sessions killed before any path rewriting.
+ *   - The background deleter of removed worktrees is stopped and awaited after
+ *     the diff watchers are released and before the folder moves.
  *   - tasks.worktree_path and sessions.cwd rows under the old prefix are
  *     rewritten; rows outside it are untouched.
  *   - git worktree repair runs best-effort for git projects only, with the
@@ -52,6 +54,7 @@ const clearQueueMock = vi.hoisted(() => vi.fn());
 const onProjectRelocatedMock = vi.hoisted(() => vi.fn(async () => {}));
 const moveDirectoryMock = vi.hoisted(() => vi.fn(async () => ({ strategy: 'rename' as const })));
 const removeDirectoryTreeMock = vi.hoisted(() => vi.fn(async () => {}));
+const stopRemovedWorktreeDeletionMock = vi.hoisted(() => vi.fn<(projectPath: string) => Promise<void>>(async () => {}));
 
 vi.mock('../../src/main/git/original-fs', () => ({
   default: {
@@ -98,6 +101,11 @@ vi.mock('../../src/main/ipc/handlers/session-resume-controllers', () => ({
 vi.mock('../../src/main/fs/directory-move', () => ({
   moveDirectory: moveDirectoryMock,
   removeDirectoryTree: removeDirectoryTreeMock,
+}));
+// The background deleter of worktrees a Done move set aside. Relocation stops
+// it before the folder moves; the real one keeps a module-level drain map.
+vi.mock('../../src/main/git/removed-worktrees', () => ({
+  stopRemovedWorktreeDeletion: stopRemovedWorktreeDeletionMock,
 }));
 // The handler statically imports agentRegistry; mock it so vitest does not load
 // every real adapter and its transitive dependencies. One adapter implements
@@ -210,6 +218,9 @@ beforeEach(() => {
   isGitRepoMock.mockReturnValue(false);
   moveDirectoryMock.mockReset();
   removeDirectoryTreeMock.mockReset();
+  // clearAllMocks keeps implementations, so a gated one from a test would leak.
+  stopRemovedWorktreeDeletionMock.mockReset();
+  stopRemovedWorktreeDeletionMock.mockImplementation(async () => {});
   // New location exists as a directory in the common case (repoint mode).
   mockFs.existing.add(NEW_PATH);
   mockFs.directories.add(NEW_PATH);
@@ -545,6 +556,37 @@ describe('relocateProject (move mode)', () => {
     expect(order.indexOf('detach')).toBeLessThan(order.indexOf('releaseUnder'));
     expect(order.indexOf('releaseUnder')).toBeLessThan(order.indexOf('move'));
     expect(order.indexOf('move')).toBeLessThan(order.indexOf('updatePath'));
+  });
+
+  it('waits for the removed-worktree deleter to stop before it moves the folder', async () => {
+    const context = makeContext();
+    const stopReached = createDeferred();
+    const stopGate = createDeferred();
+    stopRemovedWorktreeDeletionMock.mockImplementation(async () => {
+      context.callOrder.push('stopRemovedWorktreeDeletion');
+      stopReached.resolve();
+      await stopGate.promise;
+    });
+
+    const relocatePromise = relocateProject(asIpcContext(context), 'project-1', MOVE_DEST, { mode: 'move' });
+    // Raced against the relocation itself so that a removed call fails the
+    // assertions below instead of hanging here until the test timeout.
+    await Promise.race([stopReached.promise, relocatePromise]);
+
+    // The deleter is stopping for the stored project path, and the gate is
+    // still shut: nothing may have moved the folder or rewritten the project.
+    expect(stopRemovedWorktreeDeletionMock).toHaveBeenCalledTimes(1);
+    expect(stopRemovedWorktreeDeletionMock).toHaveBeenCalledWith(OLD_PATH);
+    expect(moveDirectoryMock).not.toHaveBeenCalled();
+    expect(context.projectRepo.updatePath).not.toHaveBeenCalled();
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopRemovedWorktreeDeletion']);
+
+    stopGate.resolve();
+    await relocatePromise;
+
+    expect(moveDirectoryMock).toHaveBeenCalledWith(OLD_PATH, MOVE_DEST, expect.anything());
+    // releaseUnder -> deleter stopped -> move -> updatePath
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopRemovedWorktreeDeletion', 'move', 'updatePath']);
   });
 
   it('does not delete the source for a same-volume rename', async () => {
