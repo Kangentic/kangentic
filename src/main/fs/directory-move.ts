@@ -39,11 +39,12 @@ export type MoveDirectoryResult =
 
 /**
  * Windows releases handles (anti-virus scanners, a file watcher that was just
- * closed) asynchronously, so a rename can transiently fail with EBUSY/EPERM
- * even after we released our own handles. These codes are retried with
- * exponential backoff before giving up.
+ * closed) asynchronously, so a rename or a delete can transiently fail with
+ * EBUSY/EPERM even after we released our own handles. These codes are retried
+ * with backoff before giving up, by `renameWithRetry` here and by the Done
+ * move's deleter (`src/main/git/removed-worktrees.ts`).
  */
-const RETRYABLE_RENAME_CODES = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
+export const TRANSIENT_HANDLE_CODES: ReadonlySet<string> = new Set(['EBUSY', 'EPERM', 'EACCES', 'ENOTEMPTY']);
 const MAX_RENAME_ATTEMPTS = 5;
 const COPY_PROGRESS_THROTTLE_MS = 100;
 
@@ -80,31 +81,44 @@ async function countEntries(directoryPath: string): Promise<number> {
   return total;
 }
 
+/**
+ * Rename `sourcePath` to `destinationPath`, retrying the transient Windows
+ * handle holds above with a 100, 200, 400, 800 ms backoff. Any other failure,
+ * EXDEV included, is thrown at once, and so is the last retryable one.
+ */
+export async function renameWithRetry(sourcePath: string, destinationPath: string): Promise<void> {
+  let lastRenameError: unknown;
+  for (let attempt = 0; attempt < MAX_RENAME_ATTEMPTS; attempt += 1) {
+    try {
+      await originalFs.promises.rename(sourcePath, destinationPath);
+      return;
+    } catch (error) {
+      const code = errorCode(error);
+      if (!code || !TRANSIENT_HANDLE_CODES.has(code)) throw error;
+      lastRenameError = error;
+      if (attempt < MAX_RENAME_ATTEMPTS - 1) await delay(100 * 2 ** attempt);
+    }
+  }
+  throw lastRenameError;
+}
+
 export async function moveDirectory(
   sourcePath: string,
   destinationPath: string,
   options: MoveDirectoryOptions = {},
 ): Promise<MoveDirectoryResult> {
   // Strategy 1: atomic rename, with retry for transient Windows handle holds.
-  let lastRenameError: unknown;
-  for (let attempt = 0; attempt < MAX_RENAME_ATTEMPTS; attempt += 1) {
-    try {
-      await originalFs.promises.rename(sourcePath, destinationPath);
-      return { strategy: 'rename' };
-    } catch (error) {
-      const code = errorCode(error);
-      // EXDEV means the destination is on a different volume; no number of
-      // retries will help. Switch to the copy fallback immediately.
-      if (code === 'EXDEV') {
-        return copyDirectory(sourcePath, destinationPath, options);
-      }
-      if (!code || !RETRYABLE_RENAME_CODES.has(code)) throw error;
-      lastRenameError = error;
-      // Backoff 100, 200, 400, 800ms between the 5 attempts.
-      if (attempt < MAX_RENAME_ATTEMPTS - 1) await delay(100 * 2 ** attempt);
+  try {
+    await renameWithRetry(sourcePath, destinationPath);
+    return { strategy: 'rename' };
+  } catch (error) {
+    // EXDEV means the destination is on a different volume; no number of
+    // retries will help. Switch to the copy fallback.
+    if (errorCode(error) === 'EXDEV') {
+      return copyDirectory(sourcePath, destinationPath, options);
     }
+    throw error;
   }
-  throw lastRenameError;
 }
 
 /**

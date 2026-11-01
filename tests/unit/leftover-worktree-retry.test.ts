@@ -8,7 +8,10 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
-const { removeWorktree, taskRows, updates, getOpenProjectDb, getProjectDb, shutdown } = vi.hoisted(() => ({
+// A Done removal moves the worktree aside first (`moveWorktreeAside`) and
+// removes it in place only when that fails (`removeWorktree`).
+const { moveWorktreeAside, removeWorktree, taskRows, updates, getOpenProjectDb, getProjectDb, shutdown } = vi.hoisted(() => ({
+  moveWorktreeAside: vi.fn(async (_worktreePath: string): Promise<boolean> => true),
   removeWorktree: vi.fn(async (): Promise<boolean> => true),
   taskRows: new Map<string, { id: string; swimlane_id: string; worktree_path: string | null; branch_name: string | null }>(),
   updates: [] as Array<Record<string, unknown>>,
@@ -42,9 +45,11 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   prepareWorktreeForRemoval: vi.fn(async () => {}),
   WorktreeManager: class {
     withLock = async (job: () => Promise<unknown>) => job();
+    moveWorktreeAside = moveWorktreeAside;
     removeWorktree = removeWorktree;
   },
 }));
+vi.mock('../../src/main/git/removed-worktrees', () => ({ scheduleRemovedWorktreeDeletion: vi.fn() }));
 
 import {
   DONE_REMOVAL_RETRY_DELAY_MS,
@@ -70,6 +75,8 @@ beforeEach(() => {
   shutdown.inProgress = false;
   taskRows.clear();
   updates.length = 0;
+  moveWorktreeAside.mockClear();
+  moveWorktreeAside.mockResolvedValue(true);
   removeWorktree.mockClear();
   removeWorktree.mockResolvedValue(true);
   getOpenProjectDb.mockReset();
@@ -81,14 +88,14 @@ describe('retryDoneWorktreeRemoval', () => {
   it('removes a Done task\'s worktree and clears it on the task', async () => {
     taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: 'fix-login' });
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(true);
-    expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, expect.anything());
+    expect(moveWorktreeAside).toHaveBeenCalledWith(WORKTREE);
     expect(updates).toContainEqual(expect.objectContaining({ id: 'task-1', worktree_path: null }));
   });
 
   it('leaves a task that is not in Done alone: its worktree is still in use', async () => {
     taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-todo', worktree_path: WORKTREE, branch_name: null });
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(false);
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(moveWorktreeAside).not.toHaveBeenCalled();
   });
 
   it('does nothing for a task whose worktree is already gone, a deleted task, or an unknown project', async () => {
@@ -97,7 +104,7 @@ describe('retryDoneWorktreeRemoval', () => {
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-deleted')).toBe(false);
     expect(await retryDoneWorktreeRemoval(context(), '/mock/other', 'task-1')).toBe(false);
     expect(await retryDoneWorktreeRemoval(context(), null, 'task-1')).toBe(false);
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(moveWorktreeAside).not.toHaveBeenCalled();
   });
 
   it('opens no database for a project being deleted: main closed it, and opening it would create a new empty file', async () => {
@@ -108,13 +115,15 @@ describe('retryDoneWorktreeRemoval', () => {
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(false);
     expect(getOpenProjectDb).toHaveBeenCalledWith('project-1');
     expect(getProjectDb).not.toHaveBeenCalled();
-    expect(removeWorktree).not.toHaveBeenCalled();
+    expect(moveWorktreeAside).not.toHaveBeenCalled();
   });
 
   it('keeps the worktree on the task when something else still holds it, for the startup retry', async () => {
     taskRows.set('task-1', { id: 'task-1', swimlane_id: 'lane-done', worktree_path: WORKTREE, branch_name: null });
+    moveWorktreeAside.mockResolvedValue(false);
     removeWorktree.mockResolvedValue(false);
     expect(await retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1')).toBe(false);
+    expect(removeWorktree).toHaveBeenCalledTimes(1);
     expect(updates.filter((patch) => patch.worktree_path === null)).toEqual([]);
   });
 
@@ -129,7 +138,7 @@ describe('retryDoneWorktreeRemoval', () => {
       const first = retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
       const second = retryDoneWorktreeRemoval(context(), PROJECT_PATH, 'task-1');
       expect(await Promise.all([first, second])).toEqual([true, false]);
-      expect(removeWorktree).toHaveBeenCalledTimes(1);
+      expect(moveWorktreeAside).toHaveBeenCalledTimes(1);
       expect(taskRows.get('task-1')?.worktree_path).toBeNull();
     });
 
@@ -147,7 +156,7 @@ describe('retryDoneWorktreeRemoval', () => {
       await holder;
 
       expect(await retrying).toBe(false);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
       expect(updates).toEqual([]);
     });
   });
@@ -165,14 +174,14 @@ describe('scheduleDoneWorktreeRemovalRetry', () => {
       scheduleDoneWorktreeRemovalRetry(context(), PROJECT_PATH, 'task-1');
 
       await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS - 1);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
       await vi.advanceTimersByTimeAsync(1);
-      await vi.waitFor(() => expect(removeWorktree).toHaveBeenCalledTimes(1));
+      await vi.waitFor(() => expect(moveWorktreeAside).toHaveBeenCalledTimes(1));
       expect(updates).toContainEqual(expect.objectContaining({ id: 'task-1', worktree_path: null }));
 
       // One attempt only.
       await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 3);
-      expect(removeWorktree).toHaveBeenCalledTimes(1);
+      expect(moveWorktreeAside).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
     }
@@ -188,7 +197,7 @@ describe('scheduleDoneWorktreeRemovalRetry', () => {
       shutdown.inProgress = true;
 
       await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 2);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }
@@ -207,7 +216,7 @@ describe('scheduleDoneWorktreeRemovalRetry', () => {
       expect(vi.getTimerCount()).toBe(0);
 
       await vi.advanceTimersByTimeAsync(DONE_REMOVAL_RETRY_DELAY_MS * 2);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
       expect(updates).toEqual([]);
     } finally {
       vi.useRealTimers();
@@ -243,12 +252,12 @@ describe('reapTaskLeftovers, when the reap finishes after main stopped waiting',
     const { reapingContext, deliverLate } = reapContext();
     try {
       await reapTaskLeftovers(reapingContext, PROJECT_PATH, [{ id: 'task-1', worktree_path: WORKTREE, title: 'Fix login' }]);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
 
       deliverLate([stopped]);
 
       expect(add).toHaveBeenLastCalledWith(expect.any(Function), [stopped], new Map([['task-1', 'Fix login']]), true, PROJECT_PATH);
-      await vi.waitFor(() => expect(removeWorktree).toHaveBeenCalledWith(WORKTREE, expect.anything()));
+      await vi.waitFor(() => expect(moveWorktreeAside).toHaveBeenCalledWith(WORKTREE));
       expect(updates).toContainEqual(expect.objectContaining({ id: 'task-1', worktree_path: null }));
     } finally {
       add.mockRestore();
@@ -266,7 +275,7 @@ describe('reapTaskLeftovers, when the reap finishes after main stopped waiting',
       expect(add).toHaveBeenLastCalledWith(expect.any(Function), [kept], expect.anything(), true, PROJECT_PATH);
       // Wait out the task's lock queue: a retry would have joined it first, so it would have run by now.
       await withTaskLock('task-1', async () => undefined);
-      expect(removeWorktree).not.toHaveBeenCalled();
+      expect(moveWorktreeAside).not.toHaveBeenCalled();
     } finally {
       add.mockRestore();
     }

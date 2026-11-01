@@ -76,7 +76,7 @@ vi.mock('../../src/main/shared/child-tree-stop', () => ({
   killChildTreeNow: mockKillChildTreeNow,
 }));
 
-import { runInitScript } from '../../src/main/git/run-init-script';
+import { runInitScript, isAnyInitScriptRunning, whenNoInitScriptRuns } from '../../src/main/git/run-init-script';
 import { TREE_EXIT_WAIT_MS } from '../../src/main/git/spawn-with-abort';
 
 /** The fake child the most recent spawn returned. */
@@ -294,6 +294,73 @@ describe('runInitScript', () => {
 
     await expect(runInitScript('npm install', '/worktree/path', { timeoutMs: 1000 }))
       .rejects.toThrow(/exited with code null/);
+  });
+
+  // A Done move's deferred file delete waits on this count (removed-worktrees.ts),
+  // so it must rise for the whole run and drop however the script settles.
+  describe('the running-script count', () => {
+    it('counts a script from the call until it succeeds, and wakes a waiter then', async () => {
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+      expect(isAnyInitScriptRunning()).toBe(false);
+
+      const promise = runInitScript('pnpm install', '/worktree/path', { timeoutMs: 60_000 });
+      expect(isAnyInitScriptRunning()).toBe(true);
+      let idle = false;
+      const waiter = whenNoInitScriptRuns().then(() => { idle = true; });
+      for (let flushCount = 0; flushCount < 10; flushCount++) await Promise.resolve();
+      expect(idle).toBe(false);
+
+      lastChild().emit('close', 0, null);
+      await promise;
+      await waiter;
+      expect(idle).toBe(true);
+      expect(isAnyInitScriptRunning()).toBe(false);
+    });
+
+    it('stays up while either of two scripts runs', async () => {
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+      const first = runInitScript('pnpm install', '/worktree/one', { timeoutMs: 60_000 });
+      const firstChild = lastChild();
+      const second = runInitScript('pnpm install', '/worktree/two', { timeoutMs: 60_000 });
+      const secondChild = lastChild();
+
+      firstChild.emit('close', 0, null);
+      await first;
+      expect(isAnyInitScriptRunning()).toBe(true);
+      secondChild.emit('close', 0, null);
+      await second;
+      expect(isAnyInitScriptRunning()).toBe(false);
+    });
+
+    it('drops after a failure, an abort and a timeout', async () => {
+      spawnOverrides.push({ match: (cmd) => cmd === 'bad-script', behavior: { exitCode: 1 } });
+      await expect(runInitScript('bad-script', '/worktree/path', { timeoutMs: 1000 })).rejects.toThrow();
+      expect(isAnyInitScriptRunning()).toBe(false);
+
+      spawnOverrides.push({ match: () => true, behavior: { hang: true } });
+      const controller = new AbortController();
+      const aborted = runInitScript('npm install', '/worktree/path', { timeoutMs: 60_000, signal: controller.signal });
+      expect(isAnyInitScriptRunning()).toBe(true);
+      controller.abort();
+      await expect(aborted).rejects.toThrow(/external abort/);
+      expect(isAnyInitScriptRunning()).toBe(false);
+
+      vi.useFakeTimers();
+      const timedOut = runInitScript('slow-script', '/worktree/path', { timeoutMs: 1000 });
+      const assertion = expect(timedOut).rejects.toThrow(/timeout after 1000ms/);
+      expect(isAnyInitScriptRunning()).toBe(true);
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+      expect(isAnyInitScriptRunning()).toBe(false);
+    });
+
+    it('never counts a script that was aborted before it spawned', async () => {
+      const controller = new AbortController();
+      controller.abort();
+      await expect(runInitScript('npm install', '/worktree/path', { timeoutMs: 1000, signal: controller.signal })).rejects.toThrow();
+      expect(isAnyInitScriptRunning()).toBe(false);
+      await expect(whenNoInitScriptRuns()).resolves.toBeUndefined();
+    });
   });
 
   it('resolve wins when close(0) settles the Promise before a subsequent abort fires', async () => {

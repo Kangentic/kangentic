@@ -11,6 +11,7 @@ import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
 import { TaskMoveRepository } from '../../db/repositories/task-move-repository';
 import { WorktreeManager, prepareWorktreeForRemoval } from '../../git/worktree-manager';
+import { deleteRemovedWorktreesNow } from '../../git/removed-worktrees';
 import { isGitRepo, isInsideWorktree, isKangenticWorktree, ensureGitRepo, hasCommits } from '../../git/git-checks';
 import { readWorktreeHeadUnqueued } from '../../git/worktree-head';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -320,6 +321,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
 
   // 7. Remove .kangentic/ directory (ours entirely)
   if (!isWorktree) {
+    // Worktrees a Done move set aside go first, through the deleter that
+    // never enters a link, and without waiting for init scripts. The rmSync
+    // below would block main for the length of a whole node_modules.
+    await deleteRemovedWorktreesNow(projectPath);
     const kangenticDir = path.join(projectPath, '.kangentic');
     if (fs.existsSync(kangenticDir)) {
       try {

@@ -1,22 +1,28 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // Mock WorktreeManager: the helper constructs `new WorktreeManager(projectPath)`
-// and calls `withLock(fn)` + `removeWorktree(path)`. We capture the last-created
-// instance so each test can configure its behavior and assert against it.
+// and calls `withLock(fn)` + `moveWorktreeAside(path)` (deleteTaskWorktree) or
+// `removeWorktree(path)` (its fallback, and cleanupTaskResources). We capture
+// the last-created instance so each test can configure its behavior and assert
+// against it.
 const {
   worktreeManagerInstances,
   mockRemoveWorktree,
+  mockMoveWorktreeAside,
   mockPrepareWorktreeForRemoval,
   mockPruneWorktrees,
   mockRemoveBranch,
+  mockScheduleRemovedWorktreeDeletion,
   callOrder,
   withLockOptions,
 } = vi.hoisted(() => ({
   worktreeManagerInstances: [] as Array<{ removeWorktree: ReturnType<typeof vi.fn>; withLock: ReturnType<typeof vi.fn> }>,
   mockRemoveWorktree: vi.fn<(path: string, options?: unknown) => Promise<boolean>>(),
+  mockMoveWorktreeAside: vi.fn<(path: string) => Promise<boolean>>(),
   mockPrepareWorktreeForRemoval: vi.fn<(path: string, profile: string) => Promise<void>>(),
   mockPruneWorktrees: vi.fn<() => Promise<void>>(),
   mockRemoveBranch: vi.fn<(branch: string) => Promise<void>>(),
+  mockScheduleRemovedWorktreeDeletion: vi.fn<(projectPath: string) => void>(),
   callOrder: [] as string[],
   withLockOptions: [] as Array<{ label?: string; priority?: number } | undefined>,
 }));
@@ -29,6 +35,10 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   },
   WorktreeManager: class {
     removeWorktree = mockRemoveWorktree;
+    moveWorktreeAside = (worktreePath: string) => {
+      callOrder.push('moveAside');
+      return mockMoveWorktreeAside(worktreePath);
+    };
     pruneWorktrees = mockPruneWorktrees;
     removeBranch = mockRemoveBranch;
     withLock = vi.fn(async (operation: () => Promise<unknown>, options?: { label?: string; priority?: number }) => {
@@ -50,6 +60,22 @@ const { mockReadWorktreeHead } = vi.hoisted(() => ({
 
 vi.mock('../../src/main/git/worktree-head', () => ({
   readWorktreeHead: mockReadWorktreeHead,
+}));
+
+// The waits a Done removal makes before it moves the worktree, recorded in
+// call order: the churn read the Done move just fired into the worktree, then
+// a creation still setting the path up.
+vi.mock('../../src/main/ipc/handlers/git-stats-capture', () => ({
+  waitForChurnRead: async () => { callOrder.push('churn-wait'); },
+}));
+vi.mock('../../src/main/git/worktree-creation-registry', () => ({
+  waitForWorktreeCreation: async () => { callOrder.push('creation-wait'); return false; },
+}));
+vi.mock('../../src/main/git/removed-worktrees', () => ({
+  scheduleRemovedWorktreeDeletion: (projectPath: string) => {
+    callOrder.push('schedule');
+    mockScheduleRemovedWorktreeDeletion(projectPath);
+  },
 }));
 
 // DB-layer mocks aren't exercised by deleteTaskWorktree (it doesn't touch the
@@ -95,6 +121,11 @@ describe('deleteTaskWorktree', () => {
     callOrder.length = 0;
     withLockOptions.length = 0;
     mockRemoveWorktree.mockReset();
+    // Default: the move aside succeeds, as it does whenever nothing holds the
+    // directory. The fallback tests below make it fail.
+    mockMoveWorktreeAside.mockReset();
+    mockMoveWorktreeAside.mockResolvedValue(true);
+    mockScheduleRemovedWorktreeDeletion.mockReset();
     mockPrepareWorktreeForRemoval.mockReset();
     mockPrepareWorktreeForRemoval.mockResolvedValue(undefined);
     mockPruneWorktrees.mockReset();
@@ -106,7 +137,7 @@ describe('deleteTaskWorktree', () => {
     mockReadWorktreeHead.mockResolvedValue({ branch: null, sha: null });
   });
 
-  it('removes the worktree dir and nulls worktree_path, preserving branch_name', async () => {
+  it('moves the worktree aside, nulls worktree_path, then hands the copy to the deleter, preserving branch_name', async () => {
     const tasks = createMockTaskRepo();
     const context = createMockContext();
     const task = {
@@ -115,6 +146,42 @@ describe('deleteTaskWorktree', () => {
       branch_name: 'feature-x-abcd',
     };
 
+    const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
+
+    expect(result).toBe(true);
+    expect(mockMoveWorktreeAside).toHaveBeenCalledWith(task.worktree_path);
+    // Nothing is deleted in place: no node_modules clear, no in-queue removal.
+    expect(mockPrepareWorktreeForRemoval).not.toHaveBeenCalled();
+    expect(mockRemoveWorktree).not.toHaveBeenCalled();
+    // The churn read and a creation at the path are waited out before the
+    // move, which then runs inside the git queue.
+    expect(callOrder).toEqual(['churn-wait', 'creation-wait', 'withLock', 'moveAside', 'schedule']);
+    // BACKGROUND priority on the per-project git queue, so a batch of
+    // Done-move removals never parks a fresh spawn waiting at USER.
+    expect(withLockOptions[0]).toEqual({ label: 'remove-worktree:task-1', priority: 10 });
+    expect(tasks.update).toHaveBeenCalledTimes(1);
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-1', worktree_path: null });
+    // The deleter is started for this project only once the row no longer
+    // names the path.
+    expect(mockScheduleRemovedWorktreeDeletion).toHaveBeenCalledWith('/mock/project');
+    expect(tasks.update.mock.invocationCallOrder[0]).toBeLessThan(mockScheduleRemovedWorktreeDeletion.mock.invocationCallOrder[0]);
+    // Critical: branch_name is NOT cleared. Moving out of Done re-creates the
+    // worktree from the preserved branch.
+    const updateArgs = tasks.update.mock.calls[0][0] as Record<string, unknown>;
+    expect(updateArgs).not.toHaveProperty('branch_name');
+    expect(updateArgs).not.toHaveProperty('session_id');
+  });
+
+  it('removes in place, as before, when the move aside fails', async () => {
+    const tasks = createMockTaskRepo();
+    const context = createMockContext();
+    const task = {
+      id: 'task-1b',
+      worktree_path: '/mock/project/.kangentic/worktrees/task-1b-abcd',
+      branch_name: 'feature-y-abcd',
+    };
+
+    mockMoveWorktreeAside.mockResolvedValue(false);
     mockRemoveWorktree.mockResolvedValue(true);
 
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
@@ -124,17 +191,11 @@ describe('deleteTaskWorktree', () => {
     // The orphan reap + node_modules clear runs BEFORE the git lock is taken,
     // so the slow fs work does not hold the per-project queue.
     expect(mockPrepareWorktreeForRemoval).toHaveBeenCalledWith(task.worktree_path, 'moderate');
-    expect(callOrder).toEqual(['prepare', 'withLock']);
-    // Removal runs at BACKGROUND priority on the per-project git queue so a
-    // batch of Done-move removals never parks a fresh spawn waiting at USER.
-    expect(withLockOptions[0]).toEqual({ label: 'remove-worktree:task-1', priority: 10 });
-    expect(tasks.update).toHaveBeenCalledTimes(1);
-    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-1', worktree_path: null });
-    // Critical: branch_name is NOT cleared. Moving out of Done re-creates the
-    // worktree from the preserved branch.
-    const updateArgs = tasks.update.mock.calls[0][0] as Record<string, unknown>;
-    expect(updateArgs).not.toHaveProperty('branch_name');
-    expect(updateArgs).not.toHaveProperty('session_id');
+    expect(callOrder).toEqual(['churn-wait', 'creation-wait', 'withLock', 'moveAside', 'prepare', 'withLock']);
+    expect(withLockOptions[1]).toEqual({ label: 'remove-worktree:task-1b', priority: 10 });
+    expect(tasks.update).toHaveBeenCalledWith({ id: 'task-1b', worktree_path: null });
+    // Nothing went to removed-worktrees, so there is nothing to delete later.
+    expect(mockScheduleRemovedWorktreeDeletion).not.toHaveBeenCalled();
   });
 
   it('returns false and is a no-op when task has no worktree_path', async () => {
@@ -174,6 +235,7 @@ describe('deleteTaskWorktree', () => {
       branch_name: 'branch-4',
     };
 
+    mockMoveWorktreeAside.mockResolvedValue(false);
     mockRemoveWorktree.mockResolvedValue(false);
 
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
@@ -182,6 +244,7 @@ describe('deleteTaskWorktree', () => {
     expect(mockRemoveWorktree).toHaveBeenCalled();
     // worktree_path preserved so the next attempt retries the removal
     expect(tasks.update).not.toHaveBeenCalled();
+    expect(mockScheduleRemovedWorktreeDeletion).not.toHaveBeenCalled();
   });
 
   it('swallows worktree manager errors, returns false, and leaves DB unchanged', async () => {
@@ -193,12 +256,13 @@ describe('deleteTaskWorktree', () => {
       branch_name: 'branch-5',
     };
 
-    mockRemoveWorktree.mockRejectedValue(new Error('locked file'));
+    mockMoveWorktreeAside.mockRejectedValue(new Error('locked file'));
 
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
 
     expect(result).toBe(false);
     expect(tasks.update).not.toHaveBeenCalled();
+    expect(mockScheduleRemovedWorktreeDeletion).not.toHaveBeenCalled();
   });
 
   it('writes the renamed live branch back to branch_name before removal', async () => {
@@ -212,7 +276,6 @@ describe('deleteTaskWorktree', () => {
 
     // Agent renamed the branch inside the worktree to a team convention.
     mockReadWorktreeHead.mockResolvedValue({ branch: 'feat/real-work', sha: 'deadbeef' });
-    mockRemoveWorktree.mockResolvedValue(true);
 
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
 
@@ -233,6 +296,7 @@ describe('deleteTaskWorktree', () => {
     };
 
     mockReadWorktreeHead.mockResolvedValue({ branch: 'feat/kept', sha: 'cafe1234' });
+    mockMoveWorktreeAside.mockResolvedValue(false);
     mockRemoveWorktree.mockResolvedValue(false);
 
     const result = await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
@@ -254,7 +318,6 @@ describe('deleteTaskWorktree', () => {
     };
 
     mockReadWorktreeHead.mockResolvedValue({ branch: 'feat/unchanged', sha: 'beef5678' });
-    mockRemoveWorktree.mockResolvedValue(true);
 
     await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
 
@@ -274,7 +337,6 @@ describe('deleteTaskWorktree', () => {
     };
 
     mockReadWorktreeHead.mockResolvedValue({ branch: 'feat/renamed', sha: 'face9999' });
-    mockRemoveWorktree.mockResolvedValue(true);
 
     await deleteTaskWorktree(context as never, task, tasks as never, context.currentProjectPath);
 

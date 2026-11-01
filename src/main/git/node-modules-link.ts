@@ -101,6 +101,34 @@ export async function removeNodeModulesPath(
 }
 
 /**
+ * Remove `<worktree>/node_modules` only when it is a link (the junction or
+ * symlink `linkNodeModules` makes), and leave a real directory alone. A Done
+ * move calls it on the copy it just renamed aside, so the copy holds no link to
+ * the project root's node_modules while it waits for the deleter. Returns
+ * whether a link was removed. Never throws.
+ */
+export function removeNodeModulesLinkOnly(targetPath: string): boolean {
+  try {
+    const stat = fs.lstatSync(targetPath);
+    // The junction check first, for the reason removeNodeModulesPath gives.
+    if (process.platform === 'win32' && isJunction(targetPath)) {
+      fs.rmdirSync(targetPath);
+      return true;
+    }
+    if (stat.isSymbolicLink()) {
+      fs.rmSync(targetPath, { force: true });
+      return true;
+    }
+    return false;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') {
+      console.warn(`[WORKTREE] Failed to remove the ${targetPath} link: ${(error as Error).message}`);
+    }
+    return false;
+  }
+}
+
+/**
  * Create a filesystem junction (Windows) or symlink (Unix) from
  * `<worktree>/node_modules` to `<root>/node_modules` so the worktree gets
  * instant access to dependencies without running `npm install`.

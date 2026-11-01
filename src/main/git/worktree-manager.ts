@@ -9,7 +9,8 @@ import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './
 import { isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
-import { linkNodeModules, removeNodeModulesPath } from './node-modules-link';
+import { linkNodeModules, removeNodeModulesPath, removeNodeModulesLinkOnly } from './node-modules-link';
+import { moveIntoRemovedWorktrees } from './removed-worktrees';
 import { fetchIfStale, type FetchIfStaleOutcome } from './fetch-throttle';
 import {
   removeWithRetry,
@@ -1326,7 +1327,8 @@ export class WorktreeManager {
     options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
   ): Promise<boolean> {
     const { removed } = await this.removeWorktreeInternal(worktreePath, options);
-    // Single notification point for the whole app. There are seven call sites
+    // One of the two notification points for the whole app, with
+    // `moveWorktreeAside` (a Done move's rename). There are seven call sites
     // for worktree removal (Done move, task delete, archive, MCP delete,
     // project close, startup retry, branch-switch cleanup), and they are
     // hand-copied rather than routed through one helper - notifying at each
@@ -1334,6 +1336,63 @@ export class WorktreeManager {
     // MCP delete path. Notifying HERE is unmissable by construction.
     if (removed) await notifyWorktreeRemoved(worktreePath);
     return removed;
+  }
+
+  /**
+   * Take a worktree off its path at once and leave its files to the batched
+   * deleter (`removed-worktrees.ts`), which waits while any Post-Worktree
+   * Script runs. For a Done move: its in-place delete of a real node_modules
+   * ran beside the next task's install and slowed it.
+   *
+   * Callers wrap it in `withLock` (it prunes git's worktree records) and call
+   * `scheduleRemovedWorktreeDeletion` once the task row no longer names the path.
+   *
+   * Steps, in order: refuse a path a creation still holds; release our own
+   * handles under it (`notifyWorktreeRemoving`); rename the directory into
+   * `.kangentic/removed-worktrees/`; remove the copy's node_modules LINK
+   * (never a real directory) so it holds no link to the root's node_modules;
+   * delete the copy's `.git` file so nothing treats it as a worktree; then
+   * `git worktree prune`. The path is pinned per task, so a move back out of
+   * Done adds the same path on the same branch, and without the prune git
+   * refuses it as a missing but registered worktree. A link the copy keeps
+   * because its removal failed is still safe: the deleter removes a link as a
+   * link and never enters it.
+   *
+   * Returns true when the path no longer holds a worktree (an already-gone
+   * path counts). Returns false when the move was refused or the rename failed,
+   * with nothing changed: the caller then removes the worktree in place, as
+   * before this existed.
+   */
+  async moveWorktreeAside(worktreePath: string, options?: { timeoutMs?: number }): Promise<boolean> {
+    assertRemovableWorktreePath(this.projectPath, worktreePath);
+    if (isWorktreeCreationInFlight(worktreePath)) {
+      console.warn(`[WORKTREE] move aside skipped: ${worktreePath} (a creation is still setting it up)`);
+      return false;
+    }
+    await notifyWorktreeRemoving(worktreePath);
+
+    const startedAt = Date.now();
+    if (fs.existsSync(worktreePath)) {
+      const movedTo = await moveIntoRemovedWorktrees(this.projectPath, worktreePath);
+      if (!movedTo) return false;
+      removeNodeModulesLinkOnly(path.join(movedTo, 'node_modules'));
+      try {
+        await fs.promises.unlink(path.join(movedTo, '.git'));
+      } catch {
+        // Already gone, or not a file. The deleter takes whatever is left.
+      }
+      console.log(`[WORKTREE] moved aside: ${worktreePath} -> ${movedTo} in ${Date.now() - startedAt}ms`);
+    }
+
+    try {
+      await runGitWithTimeout(this.projectPath, ['worktree', 'prune'], options?.timeoutMs ?? GIT_REMOVAL_TIMEOUT_MS);
+    } catch (error) {
+      // The directory is gone either way. The debounced background prune the
+      // Done move schedules, or the next removal's own prune, clears the record.
+      console.warn(`[WORKTREE] prune after moving ${worktreePath} aside failed (non-fatal): ${(error as Error).message}`);
+    }
+    await notifyWorktreeRemoved(worktreePath);
+    return true;
   }
 
   private async removeWorktreeInternal(
@@ -1754,8 +1813,8 @@ export async function prepareStaleWorktreeForCreation(
 // ---------------------------------------------------------------------------
 
 /**
- * Notified once per successful worktree removal, from the single chokepoint in
- * `WorktreeManager.removeWorktree`.
+ * Notified once per successful worktree removal, from the two chokepoints in
+ * `WorktreeManager`: `removeWorktree`, and `moveWorktreeAside` for a Done move.
  *
  * The contract is "this path no longer holds a worktree", NOT "a live worktree
  * was just deleted": removal succeeds trivially for a path that was already

@@ -4,23 +4,29 @@
  * The pass runs on project open / activate-all startup. For every task in
  * the Done column whose `worktree_path` is still populated (meaning the
  * original TASK_MOVE -> Done cleanup failed, typically because orphaned
- * subprocesses held file handles on Windows), it reuses the full
- * WorktreeManager removal flow to try again. On success the DB field is
- * cleared, which also unsticks `ensureWorktree` if the user later drags
+ * subprocesses held file handles on Windows, or the app quit before it ran),
+ * it moves the worktree aside as the Done move does, and falls back to the
+ * full WorktreeManager removal flow when that fails. On success the DB field
+ * is cleared, which also unsticks `ensureWorktree` if the user later drags
  * the task back out of Done.
  *
  * Covers:
  *   - No-op when no Done lane exists
  *   - No-op when no Done task has a worktree_path set
+ *   - The move aside first, with no in-place removal when it succeeds
  *   - Successful retry clears worktree_path
  *   - Failed retry leaves worktree_path set for the next startup
  *   - Multiple tasks: mix of successes and failures are handled independently
+ *
+ * The move aside defaults to failing here, so the tests that assert on
+ * `removeWorktree` exercise the in-place fallback.
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-const { mockRemoveWorktree, mockWithLock } = vi.hoisted(() => ({
+const { mockRemoveWorktree, mockMoveWorktreeAside, mockWithLock } = vi.hoisted(() => ({
   mockRemoveWorktree: vi.fn(async (_path: string, _opts?: unknown): Promise<boolean> => true),
+  mockMoveWorktreeAside: vi.fn(async (_path: string, _opts?: unknown): Promise<boolean> => false),
   mockWithLock: vi.fn(async <T,>(fn: () => Promise<T>, _opts?: unknown): Promise<T> => fn()),
 }));
 
@@ -28,8 +34,13 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
   GitQueuePriority: { USER: 0, BACKGROUND: 10 },
   WorktreeManager: class {
     removeWorktree(path: string, opts?: unknown) { return mockRemoveWorktree(path, opts); }
+    moveWorktreeAside(path: string, opts?: unknown) { return mockMoveWorktreeAside(path, opts); }
     withLock<T>(fn: () => Promise<T>, opts?: unknown) { return mockWithLock(fn, opts); }
   },
+}));
+
+vi.mock('../../src/main/git/removed-worktrees', () => ({
+  scheduleRemovedWorktreeDeletion: vi.fn(),
 }));
 
 // resource-cleanup imports node:fs, node:path, node:child_process, and
@@ -119,7 +130,32 @@ describe('retryFailedDoneCleanups', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRemoveWorktree.mockResolvedValue(true);
+    mockMoveWorktreeAside.mockResolvedValue(false);
     mockWithLock.mockImplementation(async (fn) => fn());
+  });
+
+  it('moves the worktree aside first, inside the BACKGROUND lock, and removes nothing in place when that works', async () => {
+    const swimlaneRepo = makeSwimlaneRepo([
+      { id: 'lane-done', role: 'done', name: 'Done' },
+    ]);
+    const worktreePath = '/home/dev/my-project/.kangentic/worktrees/quit-early-abab1212';
+    const taskRepo = makeTaskRepo({
+      'lane-done': [
+        { id: 'abab1212', title: 'Quit before its Done cleanup', worktree_path: worktreePath },
+      ],
+    });
+    mockMoveWorktreeAside.mockResolvedValue(true);
+
+    const result = await retryFailedDoneCleanups(PROJECT_PATH, taskRepo as never, swimlaneRepo as never);
+
+    expect(result).toBe(1);
+    expect(mockMoveWorktreeAside).toHaveBeenCalledWith(worktreePath, { timeoutMs: 3000 });
+    expect(mockRemoveWorktree).not.toHaveBeenCalled();
+    expect(mockWithLock).toHaveBeenCalledWith(
+      expect.any(Function),
+      { priority: GitQueuePriority.BACKGROUND, label: 'retry-remove-worktree:abab1212' },
+    );
+    expect(taskRepo.update).toHaveBeenCalledWith({ id: 'abab1212', worktree_path: null });
   });
 
   it('returns 0 when no Done lane exists', async () => {
@@ -150,7 +186,7 @@ describe('retryFailedDoneCleanups', () => {
     expect(mockRemoveWorktree).not.toHaveBeenCalled();
   });
 
-  it('clears worktree_path when the retry succeeds', async () => {
+  it('clears worktree_path when the in-place retry succeeds after the move aside fails', async () => {
     const swimlaneRepo = makeSwimlaneRepo([
       { id: 'lane-done', role: 'done', name: 'Done' },
     ]);
@@ -292,8 +328,8 @@ describe('retryFailedDoneCleanups', () => {
   });
 
   /**
-   * removeWorktree has TWO failure modes, not one: it returns false when the
-   * directory is held, and it THROWS when the stored path is not a direct
+   * moveWorktreeAside and removeWorktree each have TWO failure modes, not one:
+   * they return false when the directory is held, and THROW when the stored path is not a direct
    * child of this project's worktrees root (assertRemovableWorktreePath in
    * worktree-manager.ts). The throw must be caught PER TASK.
    *
@@ -314,6 +350,14 @@ describe('retryFailedDoneCleanups', () => {
         { id: 'bbbb2222', title: 'Stored path outside the worktrees root', worktree_path: badPath },
         { id: 'cccc3333', title: 'Cleans fine too', worktree_path: '/home/dev/my-project/.kangentic/worktrees/clean-cccc3333' },
       ],
+    });
+    // The move aside runs first and makes the same path check, so it is the
+    // call that throws for the bad row, as the real one does.
+    mockMoveWorktreeAside.mockImplementation(async (removalPath: string) => {
+      if (removalPath === badPath) {
+        throw new Error(`Refusing to remove ${badPath}: it is not a direct child of the worktrees root.`);
+      }
+      return false;
     });
     mockRemoveWorktree.mockImplementation(async (removalPath: string) => {
       if (removalPath === badPath) {

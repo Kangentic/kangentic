@@ -4,7 +4,10 @@ import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../../git/worktree-manager';
+import { waitForWorktreeCreation } from '../../git/worktree-creation-registry';
+import { scheduleRemovedWorktreeDeletion } from '../../git/removed-worktrees';
 import { readWorktreeHead } from '../../git/worktree-head';
+import { waitForChurnRead } from '../handlers/git-stats-capture';
 import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
 import type { AgentAdapter } from '../../agent/agent-adapter';
@@ -294,6 +297,14 @@ export async function retryDoneWorktreeRemoval(
  * `/preview`'s cleanup helper deleting inside the worktree measured about 3 s.
  */
 export const DONE_REMOVAL_RETRY_DELAY_MS = 10_000;
+
+/**
+ * How long a Done move's removal waits for the churn capture it just fired into
+ * the worktree. That read is six git processes at background priority, about a
+ * second on a quiet machine; past this the removal goes ahead and the capture
+ * reports nothing, which never overwrites an earlier one.
+ */
+const CHURN_READ_WAIT_MS = 15_000;
 
 /**
  * Retry a Done move's worktree removal once, a little later, when it failed.
@@ -590,10 +601,16 @@ export async function cleanupTaskResources(
  * failed removal still leaves the corrected name persisted for the startup
  * retry pass.
  *
- * Returns true when the directory was actually removed and the DB field
- * was cleared, false when there was nothing to delete or the removal
- * failed. Callers use the return value for log classification; callers
- * that want to retry on failure rely on the preserved `worktree_path`.
+ * The directory is moved aside first (`WorktreeManager.moveWorktreeAside`):
+ * renamed into `.kangentic/removed-worktrees/`, and its files are deleted in
+ * the background, never while a Post-Worktree Script runs
+ * (`removed-worktrees.ts`). Only when the rename fails, because something
+ * still holds the directory, is it removed in place as before.
+ *
+ * Returns true when the directory left its path and the DB field was cleared,
+ * false when there was nothing to delete or the removal failed. Callers use
+ * the return value for log classification; callers that want to retry on
+ * failure rely on the preserved `worktree_path`.
  *
  * LOCK CONTRACT: callers MUST hold a `withTaskLock(taskId, ...)` for the
  * duration of this call. Crosses an await boundary and mutates per-task
@@ -622,21 +639,44 @@ export async function deleteTaskWorktree(
     tasks.update({ id: task.id, branch_name: capturedBranch });
   }
 
+  // The Done move fired its churn capture into this worktree just before this
+  // call. The in-place delete below used to give it 30 s of slack; a move
+  // aside takes the directory at once.
+  await waitForChurnRead(task.worktree_path, CHURN_READ_WAIT_MS);
+
   let removed = false;
+  // True once the worktree sits in removed-worktrees/ and the deleter has to
+  // be started for it. False after an in-place removal, which leaves no copy.
+  let copyAwaitsDeleter = false;
   try {
     const worktreeManager = new WorktreeManager(resolvedProjectPath);
-    // Reap orphans + clear node_modules BEFORE taking the git lock so the slow
-    // fs work (and a pinned-handle stall) does not head-of-line-block every
-    // other spawn on this project. Safe outside the lock per the LOCK CONTRACT
-    // above: the caller holds withTaskLock(taskId), which serializes same-path
-    // work; no other task ever shares this worktree path.
-    await prepareWorktreeForRemoval(task.worktree_path, 'moderate');
-    await worktreeManager.withLock(async () => {
-      removed = await worktreeManager.removeWorktree(task.worktree_path!, { removalProfile: 'moderate' });
-      // BACKGROUND: nothing user-visible gates on the removal finishing (the
-      // board mutation + archive already happened); a batch Done-move must not
-      // park a fresh agent spawn behind its removals.
-    }, { label: `remove-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND });
+    // A creation still setting this path up writes there outside the git
+    // queue; wait it out here, since the move inside the queue only refuses.
+    await waitForWorktreeCreation(task.worktree_path);
+    // BACKGROUND: nothing user-visible gates on the removal finishing (the
+    // board mutation + archive already happened); a batch Done-move must not
+    // park a fresh agent spawn behind its removals.
+    copyAwaitsDeleter = await worktreeManager.withLock(
+      () => worktreeManager.moveWorktreeAside(task.worktree_path!),
+      { label: `remove-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND },
+    );
+    removed = copyAwaitsDeleter;
+    if (!copyAwaitsDeleter) {
+      // The rename failed (something holds the directory) or was refused.
+      // Remove in place, as before the move existed, so the retry net below
+      // and at the next project open still applies.
+      //
+      // Reap orphans + clear node_modules BEFORE taking the git lock so the slow
+      // fs work (and a pinned-handle stall) does not head-of-line-block every
+      // other spawn on this project. Safe outside the lock per the LOCK CONTRACT
+      // above: the caller holds withTaskLock(taskId), which serializes same-path
+      // work; no other task ever shares this worktree path.
+      await prepareWorktreeForRemoval(task.worktree_path, 'moderate');
+      removed = await worktreeManager.withLock(
+        () => worktreeManager.removeWorktree(task.worktree_path!, { removalProfile: 'moderate' }),
+        { label: `remove-worktree:${task.id.slice(0, 8)}`, priority: GitQueuePriority.BACKGROUND },
+      );
+    }
   } catch (err) {
     console.error(`[WORKTREE] Failed to delete worktree for task ${task.id.slice(0, 8)}:`, err);
   }
@@ -644,5 +684,8 @@ export async function deleteTaskWorktree(
   if (removed) {
     tasks.update({ id: task.id, worktree_path: null, ...(capturedSha ? { head_sha: capturedSha } : {}) });
   }
+  // After the row stops naming the path. The deleter waits while any init
+  // script runs, so the next task's install has the disk to itself.
+  if (copyAwaitsDeleter) scheduleRemovedWorktreeDeletion(resolvedProjectPath);
   return removed;
 }

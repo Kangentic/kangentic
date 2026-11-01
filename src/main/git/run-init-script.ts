@@ -11,6 +11,34 @@ import { spawnWithAbort, type SpawnWithAbortOptions } from './spawn-with-abort';
 export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
 
 /**
+ * How many init scripts are running right now, in every project. A Done move's
+ * deferred file delete (`removed-worktrees.ts`) waits while this is above zero,
+ * because a large delete beside a script's install slows the install. App-wide,
+ * not per project, because the disk is what the two share.
+ */
+let runningInitScriptCount = 0;
+let idleWaiters: Array<() => void> = [];
+
+/** True while any Post-Worktree Script runs, in any project. */
+export function isAnyInitScriptRunning(): boolean {
+  return runningInitScriptCount > 0;
+}
+
+/** Resolves once no Post-Worktree Script runs. At once when none does. */
+export function whenNoInitScriptRuns(): Promise<void> {
+  if (runningInitScriptCount === 0) return Promise.resolve();
+  return new Promise<void>((resolve) => { idleWaiters.push(resolve); });
+}
+
+function releaseInitScriptSlot(): void {
+  runningInitScriptCount = Math.max(0, runningInitScriptCount - 1);
+  if (runningInitScriptCount > 0) return;
+  const waiters = idleWaiters;
+  idleWaiters = [];
+  for (const resolve of waiters) resolve();
+}
+
+/**
  * Run a user-provided init script (the `git.initScript` "Post-Worktree
  * Script") in a freshly created worktree.
  *
@@ -35,19 +63,28 @@ export const INIT_SCRIPT_TIMEOUT_MS = 600_000;
  *
  * Rejects on non-zero exit, kill-by-signal, or timeout/abort so the caller can
  * treat a failed init script as fatal.
+ *
+ * Counted in `isAnyInitScriptRunning` from the call until it settles, however
+ * it settles. An aborted script settles only once its tree is gone, so the
+ * count drops only when nothing the script started still writes.
  */
-export function runInitScript(
+export async function runInitScript(
   script: string,
   cwd: string,
   options: { timeoutMs: number; signal?: AbortSignal },
 ): Promise<{ stdout: string; stderr: string }> {
-  return spawnWithAbort(
-    {
-      command: script,
-      cwd,
-      label: 'init script',
-      signalKillAssertsTimeout: false,
-    },
-    options satisfies SpawnWithAbortOptions,
-  );
+  runningInitScriptCount += 1;
+  try {
+    return await spawnWithAbort(
+      {
+        command: script,
+        cwd,
+        label: 'init script',
+        signalKillAssertsTimeout: false,
+      },
+      options satisfies SpawnWithAbortOptions,
+    );
+  } finally {
+    releaseInitScriptSlot();
+  }
 }

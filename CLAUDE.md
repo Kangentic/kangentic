@@ -146,6 +146,8 @@ open):
 - `config.json` - project config overrides
 - `sessions/<claudeSessionId>/` - per-session files (`settings.json`, `status.json`, `activity.json`)
 - `worktrees/<slug>/` - git worktree checkouts
+- `removed-worktrees/<folder>-<timestamp>-<random>/` - worktrees a Done move set aside, deleted in the background
+  while no Post-Worktree Script runs
 
 ### Database
 - Global DB (`<configDir>/index.db`) for projects list. configDir is `%APPDATA%/kangentic/`

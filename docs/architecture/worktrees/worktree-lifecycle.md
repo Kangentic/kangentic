@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Worktree lifecycle
-description: How a task's worktree is named (branch and numeric folder), which base branch wins, the skip reasons and written creation errors, how hooks and settings reach the session, what each column move and cleanup does to the worktree, and the background fetch scheduler.
+description: How a task's worktree is named (branch and numeric folder), which base branch wins, the skip reasons and written creation errors, how hooks and settings reach the session, what each column move and cleanup does to the worktree, how a Done move sets it aside and deletes it while no init script runs, and the background fetch scheduler.
 tags: [worktrees, git, branches, cleanup]
 sources:
   - resource: src/main/git/worktree-manager.ts
@@ -14,6 +14,8 @@ sources:
   - resource: src/main/ipc/helpers/task-git.ts
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
+  - resource: src/main/git/removed-worktrees.ts
+  - resource: src/main/fs/directory-move.ts
   - resource: src/renderer/utils/worktree-placement.tsx
   - resource: src/main/agent/adapters/claude/hook-manager.ts
   - resource: src/shared/types.ts
@@ -411,7 +413,10 @@ Task moved to Done
   → Session suspended (PTY killed, DB record preserved)
   → Status: suspended
   → Pop-out windows closed and offscreen browser lane destroyed (closeTaskWindows), after the session ends and before the removal below
-  → Local worktree directory deleted; worktree_path cleared in DB
+  → Worktree moved aside at once (renamed into .kangentic/removed-worktrees/, git
+    worktree record pruned); worktree_path cleared in DB. Its files are deleted in
+    the background and never while a Post-Worktree Script runs (see "Done removal"
+    below). Removed in place, as before, only when the rename fails
   → branch_name and session files preserved on disk for resume
   → Task archived
 
@@ -458,12 +463,13 @@ Two listeners bracket a removal, and they are deliberately NOT symmetric in plac
 
 Some agent CLIs record per-directory state in a GLOBAL config file, keyed by absolute path. That state outlives the worktree: Kangentic creates one worktree per task, so an adapter keyed this way accumulates a dead entry per task with nothing to clean it up. Codex is the case that forced this (its directory trust in `~/.codex/config.toml` reached 473 dead entries on one machine); Gemini's `trustedFolders.json`, Qwen's `~/.qwen/trustedFolders.json`, Grok's `~/.grok/trusted_folders.toml`, and Antigravity's `trustedWorkspaces` array have the same shape (Grok accumulates entries only for worktrees under an undecided project root, since its trust cascades from a decided ancestor; Qwen has no ancestor check at all, so it records one entry per worktree whenever `security.folderTrust.enabled` is set).
 
-`WorktreeManager.removeWorktree` is therefore the single notification point: on a successful removal it calls the listener registered at startup (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Optional adapter properties](../../integrations/agents/optional-properties.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
+`WorktreeManager.removeWorktree` and `WorktreeManager.moveWorktreeAside` are therefore the two notification points: each calls the listener registered at startup on success (`setWorktreeRemovedListener` in `src/main/index.ts`), which fans out to every adapter's optional `onWorktreeRemoved` (see [Optional adapter properties](../../integrations/agents/optional-properties.md)). The listener is registered rather than imported so this git module never reaches into the agent registry.
 
 Notifying from the chokepoint is deliberate. Worktree removal is hand-copied across seven call sites (Done move, task delete, archive, MCP delete, project close, startup retry, branch-switch cleanup); an earlier attempt that notified at each site leaked from the ones it missed. The one path that deliberately does NOT fire the REMOVED listener is `createWorktree`'s husk-clear, which calls the internal removal directly because it is about to reuse the same path rather than vacate it.
 
 **Before** a removal is attempted, `removeWorktreeInternal` fires a second listener,
-`setWorktreeRemovingListener` (also wired in `src/main/index.ts`). Its contract is "drop any OS
+`setWorktreeRemovingListener` (also wired in `src/main/index.ts`). `moveWorktreeAside` calls it
+directly before its rename, so a Done move releases the same handles. Its contract is "drop any OS
 handle you hold under this path, I am about to delete it", and it releases both `DiffWatcher`
 instances for that prefix (`IpcContext`'s and the bridge-owned one, see
 [Data feeds](../../integrations/mobile-bridge/data-feeds.md)).
@@ -475,14 +481,58 @@ runs ahead of the `existsSync` bail, since an already-gone path is exactly the c
 left armed on it is spinning. On Windows a directory `fs.watch` whose target is deleted emits
 `rename` at roughly 150k events/sec forever, with no `error` event, until `close()`.
 
+### Done removal
+
+A Done move used to delete its worktree in place: the `node_modules` first, outside the git queue,
+then the checkout inside it. A pnpm worktree's `node_modules` is tens of thousands of files. That
+delete ran beside the next task's `pnpm install`, which then took about a third longer than on a
+quiet disk. The delete had started before the install did.
+
+So `deleteTaskWorktree` now moves the worktree aside (`WorktreeManager.moveWorktreeAside`, in the
+queue at BACKGROUND):
+
+1. Wait for the churn capture the Done move just fired into the worktree (`waitForChurnRead`, at
+   most 15 s), and for a creation still holding the path.
+2. Release our own handles under the path (`notifyWorktreeRemoving`).
+3. Rename the directory to `.kangentic/removed-worktrees/<folder>-<timestamp>-<random>`, unique per move. It sits
+   outside `worktrees/`, so the orphan sweep never runs a recursive delete over it. A failed
+   rename changes nothing in the worktree.
+4. Remove the copy's `node_modules` link if it is one, so the copy holds no link to the root's
+   `node_modules`. Delete the copy's `.git` file, then `git worktree prune`. Paths are pinned per
+   task, so a move back out of Done adds the same path on the same branch, and git refuses that
+   while the old record names it.
+5. Fire the removed listener, inside the move. Then `deleteTaskWorktree` clears `worktree_path` and
+   starts the deleter.
+
+The deleter (`src/main/git/removed-worktrees.ts`) walks the copy itself and empties it in batches
+of 8. Before each batch it waits while any Post-Worktree Script runs, in any project
+(`isAnyInitScriptRunning`, counted in `runInitScript`). Gating only the start would not have helped:
+the delete began before the install. It never enters a link: pnpm's junctions name absolute
+targets under the worktree's old path, which a restored worktree re-creates. On Windows, where
+`lstat` can report a junction as a directory, an entry counts as a real directory only when
+`readlink` answers EINVAL (not a link); any other error leaves that copy for the next open. On macOS and Linux it makes a
+read-only parent writable before it removes an entry. Measured on Windows over 6,239 entries, it
+takes about 1.5 times as long as `fs.promises.rm`, and nothing waits on it.
+
+A rename fails when something still holds the directory (Windows refuses to rename a folder with a
+file open in it). Then the worktree is removed in place as before, with the 10 s retry and the
+startup retry behind it. A quit never waits for the deleter. It stops between batches, and the
+next project open sweeps the folder. Project relocation stops it before the folder moves, and a
+project delete runs it to the end, without the gate, before it removes `.kangentic/`. A Done move
+that lands while the deleter is stopping starts no new one inside that folder; the next open
+deletes its copy. A copy that fails to delete is skipped for the rest of that run and retried at
+the next open.
+
 ### On Project Open
 
 - **`pruneOrphanedWorktreeTasks()`** (`src/main/transition-engine/resource-cleanup.ts`) -- Scans the tasks whose `worktree_path` directory is gone and deletes them, except a task in a To Do lane (a To Do move removes the directory before it clears `worktree_path`, so the To Do sweep clears those fields instead), a workflow task, and a task with a running or queued session. It re-reads the lane after its existence probes, so a task moved to To Do during the probes is kept.
+- **`retryFailedDoneCleanups()`** - Every Done task whose `worktree_path` is still set: a removal that failed, or a quit before the Done move reached it. It moves the worktree aside as a Done move does, and removes it in place only when that fails.
+- **`scheduleRemovedWorktreeDeletion()`** - Starts the deleter on `.kangentic/removed-worktrees/`, so a copy a quit left behind is deleted on the next open. Starting it again while it runs only makes it list the folder once more.
 
 ### On Project Close/Delete
 
 - **`stripKangenticHooks()`** -- Removes all Kangentic hooks from `.claude/settings.local.json`. Backs up the file before modification, restores on error. Removes empty settings files and `.claude/` directories if they only contained our hooks.
-- **`cleanupProject()`** -- Kills all PTYs, closes each task's pop-out windows and offscreen browser lane (`closeTaskWindows`, or `closeProjectTaskWindows` when the task list cannot be read), reaps their leftover processes (`reapTaskLeftovers`), detaches worktrees, strips hooks, removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
+- **`cleanupProject()`** -- Kills all PTYs, closes each task's pop-out windows and offscreen browser lane (`closeTaskWindows`, or `closeProjectTaskWindows` when the task list cannot be read), reaps their leftover processes (`reapTaskLeftovers`), detaches worktrees, strips hooks, deletes the worktrees a Done move set aside (`deleteRemovedWorktreesNow`, without the init-script gate; not for a project that is itself a worktree), removes `.kangentic/` directory and DB files, removes `.kangentic/` from `.gitignore`.
 - **`detachProjectFromWorkflows()`** runs first in `cleanupProject()`, before any PTY is killed and whether or not the folder still exists. It takes the project's tasks out of every workflow, drops links in other homes that name them, and releases the tasks on other boards of a workflow the project was home to. A running or paused workflow homed elsewhere that is left with no task is deleted, but only when every board could be read. `cleanupProject()` ends the project's workflow agents (`endWorkflowAgentsOfProject`) on both paths, before the project's database closes.
 
 ### On Task Delete

@@ -5,6 +5,7 @@ import { withTaskLock } from '../task-lifecycle-lock';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager } from '../../git/worktree-manager';
+import { stopRemovedWorktreeDeletion } from '../../git/removed-worktrees';
 import { isGitRepo } from '../../git/git-checks';
 import { runGitWithTimeout } from '../../git/git-spawn';
 import { getProjectDb } from '../../db/database';
@@ -156,6 +157,9 @@ export async function relocateProject(
     context.boardConfigManager.detach();
   }
   context.diffWatcher.releaseUnder(oldPath);
+  // The background deleter of worktrees a Done move set aside holds handles
+  // inside the folder while it runs. The next open sweeps at the new path.
+  await stopRemovedWorktreeDeletion(storedOldPath);
 
   // `move` mode: move the folder on disk now that nothing of ours holds a
   // handle inside it. Errors propagate; the engine leaves the source intact

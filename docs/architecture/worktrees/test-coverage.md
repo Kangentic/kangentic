@@ -1,12 +1,19 @@
 ---
 type: Reference
 title: Worktree test coverage
-description: Which unit tests cover worktree creation, sparse-checkout, the priority git queue and fail-fast removal, base branch resolution, the fetch scheduler, the hook and trust managers, and the real-process reap tests that run on Linux, macOS and Windows runners.
+description: Which unit tests cover worktree creation, sparse-checkout, the priority git queue and fail-fast removal, the Done move's move aside and deferred delete, base branch resolution, the fetch scheduler, the hook and trust managers, and the real-process reap tests that run on Linux, macOS and Windows runners.
 tags: [worktrees, tests, unit]
 sources:
   - resource: tests/unit/worktree-manager.test.ts
   - resource: tests/unit/worktree-base-branch.test.ts
   - resource: tests/unit/worktree-setup-outside-queue.test.ts
+  - resource: tests/unit/done-worktree-move-aside.test.ts
+  - resource: tests/unit/removed-worktree-restart.test.ts
+  - resource: tests/unit/wait-for-churn-read.test.ts
+  - resource: tests/unit/removed-worktrees-transient.test.ts
+  - resource: tests/unit/removed-worktrees-drain.test.ts
+  - resource: tests/unit/move-worktree-aside.test.ts
+  - resource: tests/unit/project-delete-removed-worktrees.test.ts
   - resource: tests/unit/run-init-script.test.ts
   - resource: tests/unit/trust-manager.test.ts
   - resource: tests/unit/hook-manager.test.ts
@@ -87,6 +94,22 @@ Uses real temp files with mocked `os.homedir()`.
 - `removeBranch` calls `git branch -D`
 - `removeBranch` silently handles missing branch
 
+**Done removal (move aside, then a deferred delete):**
+- With a real repo and a real blocking script (`done-worktree-move-aside.test.ts`): a Done move takes the worktree off its path, out of `git worktree list` and off the row at once; a script that starts while the deleter is mid-delete parks it with its removed-entry count unchanged until the script ends, and a Done during a running script deletes nothing until it ends. The test reads the deleter's own state, never a timed wait. With the gate disabled both fail on an assertion in about 2 s
+- A task moved back out of Done gets its worktree at the same path and branch while the old copy waits (the move pruned the old record), and a pnpm-style link in the copy (a junction on Windows) whose absolute target the restored worktree re-creates is removed as a link, with the live files kept
+- In the default setup, where the worktree's `node_modules` links to the project root's, the link is removed from the copy as soon as it moves, and every root file survives. `removeNodeModulesLinkOnly` removes a link and keeps its target, and leaves a real directory alone
+- The deleter stops after the batch in flight when told to (relocation), and a project delete deletes the copies at once without waiting for a running script
+- `waitForChurnRead` waits for a running or still-queued churn read in that directory, ignores another directory's, and returns at its bound (`wait-for-churn-read.test.ts`)
+- The walker removes files, directories, a read-only file and a link without entering it, stops when told to, refuses any path that is not a direct child of `removed-worktrees/`, and each move gets its own name
+- The walker retries a brief `ENOTEMPTY` or `EBUSY` (a handle antivirus or the indexer still holds), gives up on one that lasts, and does not retry any other error (`removed-worktrees-transient.test.ts`)
+- A copy set aside while a drain ends is still deleted: the schedule is placed 0 to 24 microtasks after the drain's last listing, and a one-microtask gap between the drain's last check and its exit fails it (`removed-worktrees-transient.test.ts`)
+- Across a restart (`removed-worktree-restart.test.ts`, file-backed database closed and reopened): a copy a quit left mid-delete is deleted by the next project open, and a Done row a quit left with its worktree still on disk is moved aside, deleted and cleared, branch kept. Without the project-open sweep both fail
+- `moveWorktreeAside` with real git (`move-worktree-aside.test.ts`): it refuses a path a creation holds and changes nothing, a failed rename prunes nothing and keeps the `node_modules` link, a failed prune still answers true, an already-gone path is still pruned, and a move leaves the copy with no link and no `.git`
+- The drain (`removed-worktrees-drain.test.ts`): a stop resolves while the deleter waits on a running script, a schedule during a stop starts no drain, a quit ends it between batches, the same drain's reruns skip a copy that failed, a failed batch settles its siblings first, the Windows `EPERM` and `readlink` branches with the platform stubbed, a read-only parent on macOS and Linux, and a direct child named `..foo`
+- Relocation stops the deleter before the folder moves (`project-relocate.test.ts`), and a project delete runs it before it removes `.kangentic/`, but not for a project that is itself a worktree (`project-delete-removed-worktrees.test.ts`)
+- `runInitScript` counts a script from the call until it settles, however it settles (`run-init-script.test.ts`)
+- `deleteTaskWorktree` waits for the churn read and the creation, moves aside in the BACKGROUND lock, clears the row before it starts the deleter, and removes in place only when the move fails (`delete-task-worktree.test.ts`)
+
 **Stale branch recovery:**
 - `createWorktree` reuses auto-generated branch that already exists (no `-b` flag)
 - `createWorktree` does NOT inline `git worktree prune` (moved to the removal path and background prune - see [Creation Flow](worktree-creation.md#creation-flow))
@@ -109,7 +132,7 @@ Uses real temp files with mocked `os.homedir()`.
 
 **Fail-fast removal:**
 - All three profiles are pinned: `fast` forwards single-attempt opts to `removeWithRetry`, `moderate` forwards its bounded budget to both removal steps, and `thorough` (the default) forwards a wall-clock `budgetMs` to both. The thorough case exists because its absence is why the budget shipped unbounded in the first place
-- Background retry cleanup runs at `BACKGROUND` priority with `{ timeoutMs: 3000, removalProfile: 'fast' }`
+- Background retry cleanup runs at `BACKGROUND` priority: it moves the worktree aside first (`{ timeoutMs: 3000 }`), and falls back to `{ timeoutMs: 3000, removalProfile: 'fast' }` in place (`retry-failed-done-cleanups.test.ts`)
 - The post-reap retry gets a shorter budget than the first attempt
 - The node_modules step is capped again so it cannot spend the whole budget
 - The move-failure stale cleanup passes `removalProfile: 'moderate'`

@@ -20,6 +20,29 @@ export function resolveDefaultBaseBranch(context: IpcContext, projectPath: strin
 
 const churnReadsInFlight = new Map<string, Promise<ChurnSummary>>();
 
+function churnDirectoryKey(gitDir: string): string {
+  return process.platform === 'win32' ? gitDir.toLowerCase() : gitDir;
+}
+
+/**
+ * Wait, at most `timeoutMs`, for every churn read in flight in `gitDir` to
+ * settle. A Done move fires its capture into the worktree just before it moves
+ * the worktree aside, and a read whose directory vanished mid-diff reports
+ * nothing. Never rejects.
+ */
+export async function waitForChurnRead(gitDir: string, timeoutMs: number): Promise<void> {
+  const prefix = `${churnDirectoryKey(gitDir)}\0`;
+  const reads = [...churnReadsInFlight].filter(([key]) => key.startsWith(prefix)).map(([, read]) => read);
+  if (reads.length === 0) return;
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const bound = new Promise<void>((resolve) => {
+    timer = setTimeout(resolve, timeoutMs);
+    timer.unref?.();
+  });
+  await Promise.race([Promise.allSettled(reads), bound]);
+  if (timer) clearTimeout(timer);
+}
+
 /**
  * The churn read for one directory and base, shared while it is queued or
  * running. A suspend fires two captures for the same stopped agent, one from
@@ -31,8 +54,7 @@ const churnReadsInFlight = new Map<string, Promise<ChurnSummary>>();
  * never overwrites a real capture (the zero-churn guard below).
  */
 function readChurnShared(gitDir: string, baseBranch: string): Promise<ChurnSummary> {
-  const directoryKey = process.platform === 'win32' ? gitDir.toLowerCase() : gitDir;
-  const key = `${directoryKey}\0${baseBranch}`;
+  const key = `${churnDirectoryKey(gitDir)}\0${baseBranch}`;
   const inFlight = churnReadsInFlight.get(key);
   if (inFlight) return inFlight;
   // Global read-queue cap at BACKGROUND priority: every finalization branch
