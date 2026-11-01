@@ -1,6 +1,6 @@
 import path from 'node:path';
 import { runClaudeCli } from './cli-run';
-import { findClaudeTranscriptFile } from './transcript-locator';
+import { findClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
 import { listMostRecentFiles, parseJsonlRecords, readHeadBytes, readTailBytes } from '../../shared/history-scan';
 import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import type { StoredCliTarget } from '../../../../shared/types';
@@ -176,6 +176,11 @@ async function findContinuedFrom(
  * `/fork` does not. File reads only, and no CLI: a folder of 156 transcripts
  * took 6 to 11 ms to list and search. The record outlives the session, so true
  * means the conversation may still be running there, and the stop finds out.
+ *
+ * The background session's own transcript need not exist. Measured on
+ * 2.1.316: it appeared 1.7 s after the `continued-in` record, and a terminal
+ * stopped 2 s after `/bg` had none, while its session was still running. Its
+ * folder is then the one the cwd maps to, where `/bg` started it.
  * Never throws; any doubt is false.
  */
 export async function claudeIsInBackgroundSession(options: {
@@ -184,8 +189,7 @@ export async function claudeIsInBackgroundSession(options: {
   place?: CliPlace | null;
 }): Promise<boolean> {
   try {
-    const transcriptPath = await findClaudeTranscriptFile({ agentSessionId: options.agentSessionId, cwd: options.cwd, place: options.place ?? null });
-    if (!transcriptPath) return false;
+    const transcriptPath = await resolveClaudeTranscriptFile({ agentSessionId: options.agentSessionId, cwd: options.cwd, place: options.place ?? null });
     return await findContinuedFrom(transcriptPath, options.agentSessionId, transcriptListingCache()) !== null;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
@@ -234,9 +238,11 @@ export async function claudeConfirmsBackgroundMove(options: {
  * `--resume <old id>` resumed the whole conversation. The old transcript's
  * last record, `continued-in`, names the new id, which is how it is found.
  *
- * Anything unproven returns `agentSessionId`: a transcript that is missing
- * (the resume check decides that case), one with a turn, or a fork whose
- * predecessor is not in its folder.
+ * A fork whose own transcript is not written yet holds no turn either (a
+ * terminal stopped 2 s after `/bg` left none: `claudeIsInBackgroundSession`),
+ * and is searched for in the folder the cwd maps to. Anything unproven returns
+ * `agentSessionId`: a transcript with a turn, or a fork whose predecessor is
+ * not in its folder (the resume check decides a conversation that is gone).
  */
 export async function resolveClaudeResumableSessionId(options: {
   agentSessionId: string;
@@ -247,8 +253,9 @@ export async function resolveClaudeResumableSessionId(options: {
   const listFolder = transcriptListingCache();
   try {
     for (let hop = 0; hop < MAX_PREDECESSOR_HOPS; hop++) {
-      const transcriptPath = await findClaudeTranscriptFile({ agentSessionId: resumable, cwd: options.cwd, place: options.place ?? null });
-      if (!transcriptPath || await holdsATurn(transcriptPath)) return resumable;
+      // A missing file reads as an empty head: no turn.
+      const transcriptPath = await resolveClaudeTranscriptFile({ agentSessionId: resumable, cwd: options.cwd, place: options.place ?? null });
+      if (await holdsATurn(transcriptPath)) return resumable;
       const predecessor = await findContinuedFrom(transcriptPath, resumable, listFolder);
       if (!predecessor) return resumable;
       resumable = predecessor;

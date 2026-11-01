@@ -28,7 +28,12 @@ const runClaudeCli = vi.fn<(cliPath: string, cliArgs: readonly string[], timeout
 vi.mock('../../src/main/agent/adapters/claude/cli-run', () => ({ runClaudeCli }));
 
 const findClaudeTranscriptFile = vi.fn<(query: { agentSessionId: string }) => Promise<string | null>>();
-vi.mock('../../src/main/agent/adapters/claude/transcript-locator', () => ({ findClaudeTranscriptFile }));
+/** The folder the cwd maps to, where the real locator's fallback path points. */
+let derivedFolder = os.tmpdir();
+// As the real one: the transcript where it is found, else the path the cwd derives.
+const resolveClaudeTranscriptFile = vi.fn(async (query: { agentSessionId: string }) =>
+  (await findClaudeTranscriptFile(query)) ?? path.join(derivedFolder, `${query.agentSessionId}.jsonl`));
+vi.mock('../../src/main/agent/adapters/claude/transcript-locator', () => ({ findClaudeTranscriptFile, resolveClaudeTranscriptFile }));
 
 const {
   stopClaudeBackgroundSession,
@@ -406,6 +411,7 @@ describe('resolveClaudeResumableSessionId', () => {
 
   beforeEach(() => {
     projectsFolder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-claude-bg-'));
+    derivedFolder = projectsFolder;
     findClaudeTranscriptFile.mockReset();
     findClaudeTranscriptFile.mockImplementation(async ({ agentSessionId }) => {
       const filePath = path.join(projectsFolder, `${agentSessionId}.jsonl`);
@@ -426,6 +432,12 @@ describe('resolveClaudeResumableSessionId', () => {
       { type: 'continued-in', continuedInSessionId: MOVED, timestamp: '2026-10-31T22:45:31.000Z' },
     ]);
     writeTranscript(OTHER, withTurn(OTHER));
+
+    await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(ORIGINAL);
+  });
+
+  it('resumes a fork that has not written its own transcript yet by the conversation it continued', async () => {
+    writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
 
     await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(ORIGINAL);
   });
@@ -534,6 +546,17 @@ describe('resolveClaudeResumableSessionId', () => {
       expect(runClaudeCli).not.toHaveBeenCalled();
     });
 
+    // Measured in a /preview on 2.1.316: the background session's transcript
+    // appeared 1.7 s after the continued-in record, and a terminal stopped 2 s
+    // after /bg had none while the session still ran. Red-green: reading only a
+    // transcript the locator finds misses this session, and the reap killed it.
+    it('is true for a background session that has not written its own transcript yet', async () => {
+      writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+
+      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(true);
+      expect(runClaudeCli).not.toHaveBeenCalled();
+    });
+
     it('reads a locator that throws as false', async () => {
       findClaudeTranscriptFile.mockRejectedValueOnce(new Error('EACCES'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -610,6 +633,13 @@ describe('resolveClaudeResumableSessionId', () => {
     it('reads the background session as one, and the conversation it moved out of as none', async () => {
       await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(true);
       await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_MOVED, cwd: 'C:\\work' })).resolves.toBe(false);
+    });
+
+    it('reads the background session as one, and resumes by the moved conversation, before its own transcript is written', async () => {
+      fs.rmSync(path.join(projectsFolder, `${CAPTURED_FORK}.jsonl`), { force: true });
+
+      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(true);
+      await expect(resolveClaudeResumableSessionId({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_MOVED);
     });
   });
 });

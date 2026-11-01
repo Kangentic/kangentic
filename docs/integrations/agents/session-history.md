@@ -651,16 +651,25 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    no session record, and whose events file is deleted with its session directory.
    `isInBackgroundSession` reads the agent's own transcripts instead, with no CLI. Claude's is
    true when a transcript in the conversation's folder ends by continuing in it. Listing and
-   searching a folder of 156 transcripts took 6 to 11 ms. On that evidence the terminal's end
-   runs `stopBackgroundSession` through the project's configured Claude: the leftover reaper
-   starts the stop at the removal, while the registry row still names the agent and its place,
-   and the reap waits for it. An Earlier resume runs it through the spawn's own Claude before the
-   command is built, then `resolveResumableSessionId`. A resume that lands on the conversation
-   the background session continued claims that one too, and refuses with `conversation-open`
-   when another terminal holds it. A quit stops nothing, so the next Earlier resume of the
-   conversation is what stops a background session a terminal open at the quit left running. A
-   terminal stopped in the seconds between `/bg` and the live switch still holds the id the move
-   left, which no transcript continues in, so that one background session is not stopped.
+   searching a folder of 156 transcripts took 6 to 11 ms. The background session's own
+   transcript need not exist: in a `/preview` one appeared 1.7 s after the move's record, and in
+   three later runs none was written before the session's first turn. So the search starts from
+   the folder the cwd maps to, and `resolveResumableSessionId` reads a missing transcript as one
+   with no turn. On that evidence the terminal's end runs `stopBackgroundSession` through the
+   project's configured Claude: the leftover reaper starts the stop at the removal, while the
+   registry row still names the agent and its place, and the reap waits for it. Measured in a
+   `/preview`: a terminal stopped 25 s after `/bg`, and one stopped 37 ms after the live switch
+   with no transcript written, each left its background session `stopped` in
+   `claude agents --json --all`, the CLI's own stop. Before the search started from the cwd's
+   folder, the second case was missed, the reap killed that session, and the CLI listed it
+   `failed`. An Earlier resume runs the stop through the spawn's own Claude before the command is
+   built, then `resolveResumableSessionId`. A resume that lands on the conversation the
+   background session continued claims that one too, and refuses with `conversation-open` when
+   another terminal holds it. Two cases are not stopped. A quit stops nothing, and when the
+   background session had taken no turn, it has no transcript, so Earlier drops its row and
+   offers the conversation it left. Nothing continues in that one, so its resume leaves the idle
+   background session running. And a terminal stopped between `/bg` and the live switch still
+   holds the id the move left, so its background session is missed the same way.
 
 The first two run only when the session record's own events file shows the conversation in a
 background session (`backgroundSessionHoldingConversation`). Either a SessionStart with `inBackgroundSession`
