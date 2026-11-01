@@ -8,10 +8,11 @@ import type { CliPlace } from '../agent/shared/cli-target';
  *
  * cwd-keyed agents (Claude, Gemini, Qwen, Kimi, Droid) store conversation
  * history in a directory derived from the cwd - Claude at
- * `~/.claude/projects/<slug(cwd)>/<agentSessionId>.jsonl`. When a task's branch
- * is renamed, its worktree directory is later recreated at a NEW path (the
- * folder follows the renamed branch). The re-spawned agent then runs with the
- * new worktree as cwd, so `--resume <id>` looks under the new slug, finds
+ * `~/.claude/projects/<slug(cwd)>/<agentSessionId>.jsonl`. On a worktree made
+ * before numeric folders, renaming a task's branch later recreated its worktree
+ * directory at a NEW path (the folder followed the branch). The re-spawned
+ * agent then runs with the new worktree as cwd, so `--resume <id>` looks under
+ * the new slug, finds
  * nothing, and silently starts an empty session ("No conversation found with
  * session ID"). The transcript is intact, just orphaned under the old slug.
  *

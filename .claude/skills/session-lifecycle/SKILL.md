@@ -112,7 +112,7 @@ layers:
 3. **Transition engine** (`src/main/transition-engine/transition-engine.ts`): retires the old record via `retireRecord()`, spawns a new PTY with `--resume <agent_session_id>` in the task's worktree cwd.
 4. **Session manager / store**: scrollback preservation + `syncSessions()` reconciliation.
 
-**Worktree path must stay stable.** Because the transcript is cwd-keyed, the worktree must be recreated at the SAME path across a Done round-trip. `WorktreeManager.createWorktree` derives the folder from the title for auto-generated branches to guarantee this. A regression here (e.g. re-slugifying the preserved branch name, which already ends in `-<shortId>`, and appending the suffix again -> `foo-abcd1234-abcd1234`) changes the cwd and silently orphans the session.
+**Worktree path must stay stable.** Because the transcript is cwd-keyed, the worktree must be recreated at the SAME path across a Done round-trip. `WorktreeManager.createWorktree` takes the folder from `taskWorktreeFolderFor` (`src/main/git/task-worktree-folder.ts`), which reads the task's stored `worktree_folder`. That folder is chosen once, as the task's display number, and is never recomputed from the title or the branch. A regression here (computing the folder afresh instead of reading the stored one, or skipping `prepareWorktreeFolder` for a task from before numeric folders) changes the cwd and silently orphans the session.
 
 **`--resume` failure is loud, not silent.** When Claude can't find the transcript under the current cwd it prints `No conversation found with session ID: <id>` and EXITS -- it does NOT start a fresh session. The wrapping shell PTY stays alive and idle (the "N idle" phantom on the project). `recoverStaleSessionId()` cannot heal this case (no agent ever starts to report a new id). There is deliberately NO transcript-presence guard on the spawn path (built and reverted in #255 - see docs/integrations/agents/session-history.md); the transcript reliably exists because `buildSpawnEnv` strips the leaked `CLAUDE_CODE_*` markers that once stopped spawned Claudes from persisting it, and `migrateResumeCwdIfRenamed` heals the worktree-rename orphan case.
 
@@ -141,7 +141,7 @@ layers:
 - **Rapid task moves during async gaps**: A task moved twice quickly can trigger two `handleTaskMove` calls that interleave. The `commandInjector.cancel()` ordering and generation counters mitigate this but don't fully prevent it.
 - **Timestamp-based ordering nondeterminism**: Sessions sorted by `startedAt` may have identical timestamps if spawned in rapid succession. Use stable secondary sort (session ID) when ordering matters.
 - **Natural agent exit vs kill**: When the agent exits naturally (user types `/exit` or task completes), the PTY fires `onExit`. The `markRecordExited()` function uses atomic `compareAndUpdateStatus` to only transition from `running`/`queued` - it never overwrites `suspended`, which may have been set by `handleTaskMove` before the async `onExit` fires.
-- **`--resume` failure is loud, not silent**: When `--resume <uuid>` finds no transcript under the current cwd, Claude prints `No conversation found` and EXITS (no fresh-session fallback), leaving an idle shell PTY. `recoverStaleSessionId()` cannot help because no agent starts to report a new id. The cwd-keyed transcript model plus stable worktree naming (`createWorktree` derives the folder from the title for auto-generated branches) keep the cwd constant across Done round-trips so `--resume` finds the transcript. See "Resume Flow".
+- **`--resume` failure is loud, not silent**: When `--resume <uuid>` finds no transcript under the current cwd, Claude prints `No conversation found` and EXITS (no fresh-session fallback), leaving an idle shell PTY. `recoverStaleSessionId()` cannot help because no agent starts to report a new id. The cwd-keyed transcript model plus stable worktree naming (`createWorktree` reuses the folder chosen at the task's first creation, `taskWorktreeFolderFor`) keep the cwd constant across Done round-trips so `--resume` finds the transcript. See "Resume Flow".
 
 ## Key Source Files
 
@@ -152,6 +152,6 @@ layers:
 - `src/main/pty/session-queue.ts` -- Concurrency control, max concurrent sessions
 - `src/main/transition-engine/transition-engine.ts` -- Action execution, resume logic
 - `src/main/ipc/handlers/task-move.ts` -- handleTaskMove priority cascade
-- `src/main/git/worktree-manager.ts` -- `createWorktree` (stable, title-derived folder naming)
+- `src/main/git/worktree-manager.ts` -- `createWorktree` (a folder chosen once, as the task's number, that never moves)
 - `src/renderer/stores/session-store.ts` -- Zustand store, sync generation guard
 - `src/renderer/components/terminal/TerminalPanel.tsx` -- Terminal ownership handoff
