@@ -239,8 +239,8 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
   // process on the conversation, so it is stopped first, on the agent's files
   // alone, and the resume names the id a `--resume` reaches.
   describe("a conversation in the agent CLI's own background session", () => {
-    function withBackgroundSupport(options: { inBackground: boolean; resolvesTo?: string }, order: string[] = []) {
-      const claude = makeAdapter('claude', { resumable: true });
+    function withBackgroundSupport(options: { inBackground: boolean; resolvesTo?: string; distro?: string }, order: string[] = []) {
+      const claude = makeAdapter('claude', { resumable: true, distro: options.distro });
       Object.assign(claude, {
         // The row is the background session itself when the files show one.
         backgroundSessionOf: vi.fn(async ({ agentSessionId }: { agentSessionId: string }) => {
@@ -279,6 +279,37 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
       expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-before-bg');
       expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
       expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-before-bg', 'session-1');
+    });
+
+    // A conversation of a CLI that ran in a WSL distro keeps its transcripts in
+    // that distro's home. The place the resume resolved for the CLI goes to both
+    // reads, or each looks in this machine's folder, finds no transcript, and
+    // the background session keeps running beside the resume. Red-green: handing
+    // either read no place (null) fails the matching assertion below.
+    it('hands the background check and the resumable-id lookup the distro its CLI resolved to', async () => {
+      const claude = withBackgroundSupport({ inBackground: true, resolvesTo: 'conversation-before-bg', distro: 'Ubuntu' });
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, cli_target: storedDistroTarget('Ubuntu') } });
+
+      await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+
+      const distroPlace = expect.objectContaining({
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: expect.objectContaining({
+          homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+          uncRoot: '\\\\wsl.localhost\\Ubuntu',
+        }),
+      });
+      expect(claude.backgroundSessionOf).toHaveBeenCalledTimes(1);
+      expect(claude.backgroundSessionOf).toHaveBeenCalledWith({ agentSessionId: 'conversation-a', cwd: PROJECT_ROOT, place: distroPlace });
+      expect(claude.resolveResumableSessionId).toHaveBeenCalledTimes(1);
+      expect(claude.resolveResumableSessionId).toHaveBeenCalledWith({ agentSessionId: 'conversation-a', cwd: PROJECT_ROOT, place: distroPlace });
+      // The resume is the one the lookup named, so the settled id reached the spawn.
+      expect(claude.buildCommand).toHaveBeenCalledWith(expect.objectContaining({
+        sessionId: 'conversation-before-bg',
+        resume: true,
+        cliTarget: expect.objectContaining({ kind: 'wsl', distro: 'Ubuntu' }),
+      }));
     });
 
     it('runs no CLI for a conversation that never moved into one', async () => {

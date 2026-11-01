@@ -362,7 +362,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `transient-session-kill-by-slot.test.ts` (scrub before kill),
   `command-terminal-namer.test.ts`, and `command-terminal-background-session.test.ts` with
   `command-terminal-leftovers.test.ts` and `transient-session-resume.test.ts` (a background session
-  stopped before the reap and before a resume, and no CLI for an ordinary end or resume).
+  stopped before the reap and before a resume, and no CLI for an ordinary end or resume), and
+  `command-terminal-background-session-wiring.test.ts` (`register-all.ts` hands the reaper that stop).
 - **Test (no pause):** `tests/unit/session-telemetry-activity-decisions.test.ts` (the sweep times
   out neither callback for an exempt session, and still does for a task beside it),
   `session-manager-idle-suspend-wiring.test.ts` (a Command Terminal is exempt and never

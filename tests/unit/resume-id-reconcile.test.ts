@@ -322,8 +322,11 @@ describe('reconcileResumeAgentSessionId', () => {
     const LIVE_MOVED_ID = '58bd8a86-0d47-4861-8449-63202d8e6a43';
     const CAPTURED_HOOKS = path.join(__dirname, '..', 'fixtures', 'claude-background-move', 'session-starts.jsonl');
 
-    function backgroundAdapter(options: { resumable?: string; resolveThrows?: boolean } = {}) {
-      const stopBackgroundSession = vi.fn(async () => true);
+    function backgroundAdapter(options: { resumable?: string; resolveThrows?: boolean; stopResult?: boolean; stopThrows?: boolean } = {}) {
+      const stopBackgroundSession = vi.fn(async () => {
+        if (options.stopThrows) throw new Error('supervisor gone');
+        return options.stopResult ?? true;
+      });
       const resolveResumableSessionId = vi.fn(async ({ agentSessionId }: { agentSessionId: string }) => {
         if (options.resolveThrows) throw new Error('EACCES');
         return options.resumable ?? agentSessionId;
@@ -580,6 +583,48 @@ describe('reconcileResumeAgentSessionId', () => {
       expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
       expect(resolveResumableSessionId).toHaveBeenCalledTimes(1);
       expect(updateAgentSessionId).not.toHaveBeenCalled();
+    });
+
+    // `claude stop` reports false when no live background session held the
+    // conversation (the listing showed none alive, or the stop never ran). The
+    // conversation is as stopped as it will get, so the resume goes on exactly as
+    // after a stop that ran: the resumable id, and the record pointed at the
+    // background session. Red-green: returning the stored id on a false stop
+    // leaves the record on the conversation the move left.
+    it('still resumes the resolved id and follows the move when no background session was stopped', async () => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+      const { stub, stopBackgroundSession, resolveResumableSessionId } = backgroundAdapter({ resumable: CONTINUED_FROM, stopResult: false });
+      Object.assign(stub.runtime.statusFile!, {
+        confirmsBackgroundMove: vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID),
+      });
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(CONTINUED_FROM);
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+      expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
+      expect(resolveResumableSessionId).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cwd: path.join(projectPath, 'worktree'), place: null });
+      // The record follows the move to the background session, not to the id the resume resolved.
+      expect(updateAgentSessionId).toHaveBeenCalledTimes(1);
+      expect(updateAgentSessionId).toHaveBeenCalledWith(RECORD_ID, FORKED_ID);
+    });
+
+    // A stop that throws is a step that failed: the record and the returned id
+    // stay on the conversation the record stored, as when the lookup after it
+    // throws. Red-green: swallowing the stop's rejection as a false stop goes on
+    // to resume the resolved id, which this return value rejects.
+    it('leaves the record and the returned id on the stored conversation when the stop itself throws', async () => {
+      writeEventsFile([claudeSessionStartLine(STORED_ID, 'resume', 1), claudeSessionStartLine(FORKED_ID, 'fork', 2)]);
+      const { stub, stopBackgroundSession } = backgroundAdapter({ resumable: CONTINUED_FROM, stopThrows: true });
+      Object.assign(stub.runtime.statusFile!, {
+        confirmsBackgroundMove: vi.fn(async ({ toAgentSessionId }: { toAgentSessionId: string }) => toAgentSessionId === FORKED_ID),
+      });
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+      expect(await reconcile(stub, { cliPath: CLI_PATH })).toBe(STORED_ID);
+      // The path reached the stop, so an unwritten record is not an early exit.
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+      expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: FORKED_ID, cliPath: CLI_PATH });
+      expect(updateAgentSessionId).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('Resume target check failed'), expect.any(Error));
     });
 
     // A hook payload the event bridge cut short, or a hand-edited file, can carry

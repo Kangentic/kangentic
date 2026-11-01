@@ -12,6 +12,7 @@
  * Test tier: Unit. Fake adapters; the agent registry is mocked.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import type { StoredCliTarget } from '../../src/shared/types';
 
 const adapters = new Map<string, Record<string, unknown>>();
 vi.mock('../../src/main/agent/agent-registry', () => ({
@@ -23,6 +24,7 @@ const {
   stopCommandTerminalBackgroundSession,
   stopEndedCommandTerminalBackgroundSession,
 } = await import('../../src/main/ipc/helpers/command-terminal-background-session');
+const { placeFromStored } = await import('../../src/main/agent/shared/cli-target');
 
 /** The background session `/bg` moved the conversation into. */
 const MOVED = '8c4cb30b-352c-4d33-ba24-3c53324bfd49';
@@ -81,6 +83,42 @@ describe('stopEndedCommandTerminalBackgroundSession: a terminal that just ended'
     expect(adapter.backgroundSessionOf).toHaveBeenCalledWith({ agentSessionId: ORIGINAL, cwd: PROJECT_ROOT, place: null });
     expect(adapter.detect).not.toHaveBeenCalled();
     expect(adapter.stopBackgroundSession).not.toHaveBeenCalled();
+  });
+
+  // A conversation of a CLI that ran in a WSL distro keeps its transcripts in
+  // that distro's home, so the check that decides whether a background session
+  // exists reads them there. Red-green: handing it no place (null) reads this
+  // machine's folder, finds no transcript, and never stops the session.
+  it('asks where a conversation that ran in a WSL distro moved in the place its stored target recorded', async () => {
+    const adapter = makeAdapter({ backgroundId: null });
+    adapters.set('claude', adapter);
+    const wslTarget: StoredCliTarget = {
+      kind: 'wsl',
+      distro: 'Ubuntu',
+      homeLinux: '/home/dev',
+      homeUnc: '\\\\wsl.localhost\\Ubuntu\\home\\dev',
+      uncRoot: '\\\\wsl.localhost\\Ubuntu',
+      env: {},
+      linuxCliPath: '/home/dev/.local/bin/claude',
+    };
+    // The premise: this target carries the homes a place is built from. Without
+    // them it reads as this machine, and null would equal null below.
+    const expectedPlace = placeFromStored(wslTarget);
+    expect(expectedPlace).not.toBeNull();
+
+    await stopEndedCommandTerminalBackgroundSession(makeContext() as never, { agentName: 'claude', agentSessionId: ORIGINAL, cwd: PROJECT_ROOT, cliTarget: wslTarget });
+
+    expect(adapter.backgroundSessionOf).toHaveBeenCalledTimes(1);
+    expect(adapter.backgroundSessionOf).toHaveBeenCalledWith({
+      agentSessionId: ORIGINAL,
+      cwd: PROJECT_ROOT,
+      place: expect.objectContaining({
+        kind: 'wsl',
+        distro: 'Ubuntu',
+        facts: expect.objectContaining({ homeUnc: wslTarget.homeUnc, uncRoot: wslTarget.uncRoot }),
+      }),
+    });
+    expect(adapter.backgroundSessionOf).toHaveBeenCalledWith({ agentSessionId: ORIGINAL, cwd: PROJECT_ROOT, place: expectedPlace });
   });
 
   it.each([

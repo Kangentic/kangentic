@@ -875,7 +875,13 @@ export class SessionTelemetry {
     for (const delayMs of BACKGROUND_MOVE_CHECK_DELAYS_MS) {
       const waitMs = delayMs - previousDelayMs;
       previousDelayMs = delayMs;
-      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      // Unref'd: a removed session's wait ends at the check below and needs nothing kept alive.
+      if (waitMs > 0) {
+        await new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, waitMs);
+          timer.unref?.();
+        });
+      }
       if (!this.sessionParsers.has(sessionId)) return;
       if (this.lastReportedAgentSessionIds.get(sessionId) !== fromAgentSessionId) return;
       let moved: boolean;

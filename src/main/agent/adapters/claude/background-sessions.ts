@@ -2,6 +2,7 @@ import path from 'node:path';
 import { runClaudeCli } from './cli-run';
 import { findClaudeTranscriptFile, resolveClaudeTranscriptFile } from './transcript-locator';
 import { listMostRecentFiles, parseJsonlRecords, readHeadBytes, readTailBytes } from '../../shared/history-scan';
+import { PLAUSIBLE_AGENT_SESSION_ID } from '../../shared/agent-session-id';
 import { placeFromStored, type CliPlace } from '../../shared/cli-target';
 import type { StoredCliTarget } from '../../../../shared/types';
 
@@ -92,7 +93,8 @@ export async function stopClaudeBackgroundSession(options: { agentSessionId: str
       if (!stillAlive) return true;
       await new Promise((resolve) => setTimeout(resolve, STOP_SETTLE_POLL_MS));
     }
-    console.warn(`[claude] background session for ${agentSessionId.slice(0, 8)} still listed alive at the end of the stop's ${STOP_BUDGET_MS} ms`);
+    // Reached with no listing taken too, when the stop itself used the budget.
+    console.warn(`[claude] no listing showed the background session for ${agentSessionId.slice(0, 8)} gone within the stop's ${STOP_BUDGET_MS} ms`);
     return true;
   } catch (error) {
     const reason = error instanceof Error ? error.message.split('\n')[0] : String(error);
@@ -111,8 +113,11 @@ const CONTINUED_IN_TAIL_BYTES = 16 * 1024;
 const PREDECESSOR_CANDIDATES = 50;
 /** Candidate tails read at once in that search, newest first. */
 const PREDECESSOR_READ_BATCH = 8;
-/** A fork of a fork: how many links back the search follows. */
-const MAX_PREDECESSOR_HOPS = 4;
+/**
+ * How many links of a chain of moves a search follows: back to the conversation
+ * a fork continued (a fork of a fork), or on to the session holding it now.
+ */
+const MAX_MOVE_HOPS = 4;
 
 async function holdsATurn(transcriptPath: string): Promise<boolean> {
   const head = await readHeadBytes(transcriptPath, TURN_SCAN_HEAD_BYTES);
@@ -169,9 +174,6 @@ async function findContinuedFrom(
   return null;
 }
 
-/** An id shaped like a session id, before it is handed on. */
-const SESSION_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
-
 /**
  * The session this transcript says the conversation moved on to: the id its
  * last `continued-in` record names, while no turn follows it, or null.
@@ -187,7 +189,7 @@ async function continuedInOf(transcriptPath: string): Promise<string | null> {
     if (record.type === 'user' || record.type === 'assistant') return null;
     if (record.type !== 'continued-in') continue;
     const nextId = record.continuedInSessionId;
-    return typeof nextId === 'string' && SESSION_ID_SHAPE.test(nextId) ? nextId : null;
+    return typeof nextId === 'string' && PLAUSIBLE_AGENT_SESSION_ID.test(nextId) ? nextId : null;
   }
   return null;
 }
@@ -227,7 +229,7 @@ export async function claudeBackgroundSessionOf(options: {
     let holder: string | null = null;
     const followed = new Set([options.agentSessionId]);
     let transcriptPath = ownTranscript;
-    for (let hop = 0; hop < MAX_PREDECESSOR_HOPS; hop++) {
+    for (let hop = 0; hop < MAX_MOVE_HOPS; hop++) {
       const nextId = await continuedInOf(transcriptPath);
       if (!nextId || followed.has(nextId)) break;
       followed.add(nextId);
@@ -235,9 +237,8 @@ export async function claudeBackgroundSessionOf(options: {
       transcriptPath = await locate(nextId);
     }
     if (holder) return holder;
-    return await findContinuedFrom(ownTranscript, options.agentSessionId, transcriptListingCache()) !== null
-      ? options.agentSessionId
-      : null;
+    const continuedFromId = await findContinuedFrom(ownTranscript, options.agentSessionId, transcriptListingCache());
+    return continuedFromId !== null ? options.agentSessionId : null;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[claude] could not check whether ${options.agentSessionId.slice(0, 8)} is in a background session: ${reason}`);
@@ -299,7 +300,7 @@ export async function resolveClaudeResumableSessionId(options: {
   let resumable = options.agentSessionId;
   const listFolder = transcriptListingCache();
   try {
-    for (let hop = 0; hop < MAX_PREDECESSOR_HOPS; hop++) {
+    for (let hop = 0; hop < MAX_MOVE_HOPS; hop++) {
       // A missing file reads as an empty head: no turn.
       const transcriptPath = await resolveClaudeTranscriptFile({ agentSessionId: resumable, cwd: options.cwd, place: options.place ?? null });
       if (await holdsATurn(transcriptPath)) return resumable;

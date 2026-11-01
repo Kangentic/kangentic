@@ -9,6 +9,7 @@ sources:
   - resource: src/main/activity-engine/session-telemetry.ts
   - resource: src/main/activity-engine/conversation-switch-gate.ts
   - resource: src/main/agent/shared/session-start-hook.ts
+  - resource: src/main/agent/shared/agent-session-id.ts
   - resource: src/main/agent/adapters/claude/background-sessions.ts
     title: stopClaudeBackgroundSession, resolveClaudeResumableSessionId, claudeBackgroundSessionOf
   - resource: src/main/ipc/helpers/command-terminal-background-session.ts
@@ -674,7 +675,9 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    Measured in a `/preview` after an in-app restart: resuming that row left the background
    session `stopped`, and the start took 1.8 s, against 0.3 s for an ordinary resume.
    A row that is the background session resumes by the id `resolveResumableSessionId` returns,
-   claiming that one too, and refuses with `conversation-open` when another terminal holds it. A
+   claiming that one too, and refuses with `conversation-open` when another terminal holds it.
+   The stop runs before the resolve, so the background session cannot take a turn between the
+   two, and a refused start has stopped it already. The CLI's stop keeps its conversation. A
    row the move left keeps its own id, by decision: its transcript holds the conversation up to
    the move, and a background session that took turns has a row of its own beside it. The
    alternative, resuming the background session instead, would open a conversation other than

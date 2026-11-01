@@ -3,6 +3,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import type { AdapterRuntimeStrategy, SessionStartReport, StoredCliTarget } from '../../shared/types';
 import type { AgentAdapter } from '../agent/agent-adapter';
+import { PLAUSIBLE_AGENT_SESSION_ID } from '../agent/shared/agent-session-id';
 import { toStoredCliTarget, type CliPlace } from '../agent/shared/cli-target';
 import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 import type { SessionRepository } from '../db/repositories/session-repository';
@@ -12,13 +13,6 @@ type StatusFileHook = NonNullable<AdapterRuntimeStrategy['statusFile']>;
 
 /** A record's SessionStart reports, read when first asked for (`readSessionStarts`). */
 type SessionStartsReader = () => Promise<readonly SessionStartReport[]>;
-
-/**
- * An id plausible enough to persist or hand `--resume`. A hand-edited or
- * corrupted file, or a hook payload the event bridge cut short, can carry
- * anything in its id field.
- */
-export const PLAUSIBLE_AGENT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 
 /**
  * Every SessionStart report in an events file, in order. Streamed line by line,

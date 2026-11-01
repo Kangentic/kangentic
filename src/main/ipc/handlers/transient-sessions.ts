@@ -267,7 +267,10 @@ export async function startCommandTerminal(
     // beside it would put a second process on it. It is stopped first, unless a
     // live terminal still holds it, and the resume names the id a `--resume`
     // reaches. Both run only when the agent's own files show the move, so an
-    // ordinary resume runs no CLI here.
+    // ordinary resume runs no CLI here. The stop comes before the resolve, so
+    // the background session cannot take a turn between the two, and a start
+    // refused below because another terminal holds the resolved id has stopped
+    // it already. The CLI's stop keeps its conversation.
     let resumeAgentSessionId: string | null = null;
     if (resume) {
       const cliPath = detection.path;

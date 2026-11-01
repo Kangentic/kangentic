@@ -48,12 +48,15 @@ const MOVED = '8c4cb30b-352c-4d33-ba24-3c53324bfd49';
 const ORIGINAL = '6e21471d-887a-42d3-97d3-fcfedac9dd51';
 const OTHER = '0005843e-b5d5-4bc9-8a45-38ae97f6cdc2';
 
-// These mirror STOP_SETTLE_POLL_MS, STOP_BUDGET_MS and MAX_PREDECESSOR_HOPS in
-// background-sessions.ts. They are restated here on purpose: a test that imported
-// the constant could not notice the constant being changed.
+// These mirror STOP_SETTLE_POLL_MS, STOP_BUDGET_MS, MAX_MOVE_HOPS,
+// PREDECESSOR_READ_BATCH and CONTINUED_IN_TAIL_BYTES in background-sessions.ts.
+// They are restated here on purpose: a test that imported the constant could not
+// notice the constant being changed.
 const STOP_SETTLE_POLL_MS = 250;
 const STOP_BUDGET_MS = 10_000;
-const PREDECESSOR_HOP_LIMIT = 4;
+const MAX_MOVE_HOPS = 4;
+const PREDECESSOR_READ_BATCH = 8;
+const CONTINUED_IN_TAIL_BYTES = 16 * 1024;
 
 function listing(entries: Array<Record<string, unknown>>): string {
   return JSON.stringify(entries);
@@ -266,6 +269,56 @@ describe('stopClaudeBackgroundSession', () => {
       const lastCall = runClaudeCli.mock.calls[runClaudeCli.mock.calls.length - 1];
       expect(lastCall[2]).toBeGreaterThanOrEqual(1);
       expect(lastCall[2]).toBeLessThanOrEqual(STOP_SETTLE_POLL_MS);
+      expect(vi.getTimerCount()).toBe(0);
+    });
+
+    // The stop itself can use the whole budget (a supervisor slow to answer), and
+    // then no time is left to look. The wait takes no listing, the call still
+    // resolves true because `claude stop` ran, and it warns once, naming the
+    // budget. Red-green: a wait that takes one listing at the deadline
+    // (`<=` for `<`) lists once more here, which the call list below rejects.
+    it('takes no listing, resolves true, and warns once naming the budget when the stop itself takes all of it', async () => {
+      const warn = vi.mocked(console.warn);
+      const alive = listing([{ pid: 61392, id: '8c4cb30b', kind: 'background', sessionId: MOVED, state: 'working' }]);
+      // Any listing taken after the stop shows the session gone, so a listing
+      // that should not run cannot hang the test on a poll interval.
+      const gone = listing([{ id: '8c4cb30b', kind: 'background', sessionId: MOVED, state: 'stopped' }]);
+      let stopFinished = false;
+      runClaudeCli.mockImplementation(async (_cliPath, cliArgs) => {
+        if (cliArgs[0] === 'stop') {
+          await new Promise((resolve) => setTimeout(resolve, STOP_BUDGET_MS));
+          stopFinished = true;
+          return 'stopped 8c4cb30b\n';
+        }
+        return stopFinished ? gone : alive;
+      });
+
+      const outcome: { result?: boolean } = {};
+      const pending = stopClaudeBackgroundSession({ agentSessionId: MOVED, cliPath: CLI_PATH })
+        .then((result) => {
+          outcome.result = result;
+          return result;
+        });
+
+      // One millisecond short of the budget the stop is still running: the first
+      // listing and the stop are all that has started, and nothing has been said.
+      await vi.advanceTimersByTimeAsync(STOP_BUDGET_MS - 1);
+      expect(outcome.result).toBeUndefined();
+      expect(warn).not.toHaveBeenCalled();
+      expect(runClaudeCli.mock.calls.map((call) => call[1])).toEqual([
+        ['agents', '--json'],
+        ['stop', '8c4cb30b'],
+      ]);
+
+      await vi.advanceTimersByTimeAsync(1);
+      // The stop returned at the budget, so no `agents` listing may follow it.
+      expect(runClaudeCli.mock.calls.map((call) => call[1])).toEqual([
+        ['agents', '--json'],
+        ['stop', '8c4cb30b'],
+      ]);
+      await expect(pending).resolves.toBe(true);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toMatch(/10[,_]?000\s*ms/);
       expect(vi.getTimerCount()).toBe(0);
     });
   });
@@ -510,13 +563,59 @@ describe('resolveClaudeResumableSessionId', () => {
 
     expect([cycleA, cycleB]).toContain(resolved);
     // A walk with no bound never returns, so a finite lookup count is what proves it stops.
-    expect(findClaudeTranscriptFile.mock.calls.length).toBeLessThanOrEqual(PREDECESSOR_HOP_LIMIT);
+    expect(findClaudeTranscriptFile.mock.calls.length).toBeLessThanOrEqual(MAX_MOVE_HOPS);
   });
 
   it('keeps the id when the locator throws', async () => {
     findClaudeTranscriptFile.mockRejectedValueOnce(new Error('EACCES'));
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+  });
+
+  // The search for the transcript that continued in a fork reads the newest
+  // candidates first, a batch at a time. The listing is by modification time, so
+  // each case sets its mtimes after every write, to values that cannot tie.
+  describe('searching the folder for the conversation a fork continued', () => {
+    const BASE_TIME_MS = Date.UTC(2026, 0, 1, 12, 0, 0);
+
+    /** Sets a transcript's modification time to `minutesAfterBase` minutes after a fixed instant. */
+    function setModifiedTime(filePath: string, minutesAfterBase: number): void {
+      const modifiedAt = new Date(BASE_TIME_MS + minutesAfterBase * 60_000);
+      fs.utimesSync(filePath, modifiedAt, modifiedAt);
+    }
+
+    it('finds the predecessor in the second batch, behind the eight newest transcripts', async () => {
+      writeTranscript(MOVED, metadataOnly(MOVED));
+      const predecessorPath = writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      // Named to sort before the predecessor, so a listing that fell back to
+      // name order would still put the predecessor behind them.
+      const fillerPaths = Array.from({ length: PREDECESSOR_READ_BATCH }, (_unused, index) => {
+        const fillerId = `0000000${index}-aaaa-4000-8000-000000000000`;
+        return writeTranscript(fillerId, withTurn(fillerId));
+      });
+      setModifiedTime(predecessorPath, 0);
+      fillerPaths.forEach((fillerPath, index) => setModifiedTime(fillerPath, index + 1));
+      // The premise: a full batch of newer transcripts, none of which continued in the fork.
+      expect(fillerPaths).toHaveLength(PREDECESSOR_READ_BATCH);
+      expect(fillerPaths.every((fillerPath) => fs.statSync(fillerPath).mtimeMs > fs.statSync(predecessorPath).mtimeMs)).toBe(true);
+
+      await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(ORIGINAL);
+      // The same proof, read the other way: the fork is a background session.
+      await expect(claudeBackgroundSessionOf({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+    });
+
+    it('resumes by the newest of two transcripts that both continued in the fork', async () => {
+      // The older one sorts first by name and the newer one is written first,
+      // so neither name order nor write order can pick the newer by accident.
+      const olderPredecessor = '2d1f6a90-4b7c-4e58-9a3e-5c0b8e7d1f23';
+      writeTranscript(MOVED, metadataOnly(MOVED));
+      const newerPath = writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      const olderPath = writeTranscript(olderPredecessor, [...withTurn(olderPredecessor), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      setModifiedTime(olderPath, 0);
+      setModifiedTime(newerPath, 10);
+
+      await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(ORIGINAL);
+    });
   });
 
   // The gate a Command Terminal's end and an Earlier resume put in front of the
@@ -564,6 +663,35 @@ describe('resolveClaudeResumableSessionId', () => {
       ]);
 
       await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+    });
+
+    // The record is read from the last 16 KB of the transcript, and a long
+    // record before it (a pasted file, a long brief) is cut by the window's
+    // start. That fragment is no record, and must not hide the one after it.
+    // Red-green: reading the head of the transcript instead of its tail finds
+    // only the turn and the start of the long record, and the move is missed.
+    it('names the moved-to session when the last 16 KB of its transcript starts inside a longer record', async () => {
+      const records = [
+        ...withTurn(ORIGINAL),
+        { type: 'user', message: { role: 'user', content: 'x'.repeat(20 * 1024) }, sessionId: ORIGINAL },
+        { type: 'continued-in', continuedInSessionId: MOVED },
+        { type: 'cost-state', totalCostUSD: 0.03 },
+        { type: 'last-prompt', lastPrompt: 'Reply with the single word ok.' },
+      ];
+      const transcriptPath = writeTranscript(ORIGINAL, records);
+      // The premise, from byte offsets: the window starts strictly inside the
+      // long record (neither at its first byte nor at its line's end), and the
+      // move record starts after it, whole.
+      const offsetOfRecord = (recordIndex: number): number =>
+        records.slice(0, recordIndex).reduce((total, record) => total + Buffer.byteLength(JSON.stringify(record), 'utf8') + 1, 0);
+      const longRecordStart = offsetOfRecord(2);
+      const moveRecordStart = offsetOfRecord(3);
+      const windowStart = fs.statSync(transcriptPath).size - CONTINUED_IN_TAIL_BYTES;
+      expect(windowStart).toBeGreaterThan(longRecordStart);
+      expect(windowStart).toBeLessThan(moveRecordStart - 1);
+
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+      expect(runClaudeCli).not.toHaveBeenCalled();
     });
 
     it('names nothing for a conversation that took a turn after the move, a /fork copy, an ordinary conversation, or a missing transcript', async () => {

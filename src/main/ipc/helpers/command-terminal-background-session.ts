@@ -19,8 +19,8 @@
 import type { StoredCliTarget } from '../../../shared/types';
 import type { AgentAdapter } from '../../agent/agent-adapter';
 import { agentRegistry } from '../../agent/agent-registry';
+import { PLAUSIBLE_AGENT_SESSION_ID } from '../../agent/shared/agent-session-id';
 import { placeFromStored, type CliPlace } from '../../agent/shared/cli-target';
-import { PLAUSIBLE_AGENT_SESSION_ID } from '../../transition-engine/resume-id-reconcile';
 import type { IpcContext } from '../ipc-context';
 
 export interface CommandTerminalConversation {
