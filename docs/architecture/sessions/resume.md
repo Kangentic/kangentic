@@ -114,7 +114,7 @@ sharing the reconciled `agent_session_id`, newest first), from three agent-writt
 | Source | Transcript path | Turns |
 |---|---|---|
 | the session row | `sessions.transcript_path`, written from the status line when it changes, and inherited at insert from the same conversation's newest row | token or cost totals above zero prove turns; zero proves nothing |
-| `status.json` | the status line's `transcript_path` | tokens or cost |
+| `status.json` | the status line's `transcript_path`, when its `session_id` is the resumed id (another process with the same `--settings`, such as a background daemon's spare, can write it last) | tokens or cost |
 | `events.jsonl` | `transcript_path` inside the SessionStart hook payload | any event beyond `session_start` / `session_end` |
 
 The row exists because a quit or a removal deletes the session folder (`detachAndDelete`), which
@@ -328,14 +328,16 @@ When a suspended task moves to an active column:
   resume takes no prompt, the message is typed in once the agent is ready instead (see
   [How the resume prompt arrives](#how-the-resume-prompt-arrives))
 - The resumed id tracks mid-session forks. Running `/clear` inside a Claude session forks the
-  conversation to a brand-new session id; the statusline re-reports it and the change-sensitive
-  status-file capture (`SessionTelemetry.processStatusUpdate` -> `recoverStaleSessionId`)
-  rewrites `sessions.agent_session_id` live. At resume time,
-  `reconcileResumeAgentSessionId` (`src/main/transition-engine/resume-id-reconcile.ts`)
-  additionally checks the retiring record's own `status.json` and swaps the resumed id if a fork
-  landed in the final seconds before suspend (the status watcher detaches before the CLI exits).
-  Details and the empirical grounding: docs/integrations/agents/session-history.md, "Mid-session fork
-  reconcile".
+  conversation to a brand-new session id. Its SessionStart hook names the new id, the statusline
+  re-reports it, and the change-sensitive status-file capture
+  (`SessionTelemetry.processStatusUpdate` -> `recoverStaleSessionId`) rewrites
+  `sessions.agent_session_id` live. The capture adopts a changed id only after such a hook named
+  it, because another process started with the same `--settings` can write the same status file.
+  At resume time, `reconcileResumeAgentSessionId`
+  (`src/main/transition-engine/resume-id-reconcile.ts`) additionally checks the retiring record's
+  own `status.json` and swaps the resumed id if a fork landed in the final seconds before suspend
+  (the status watcher detaches before the CLI exits), under the same hook rule. Details and the
+  empirical grounding: docs/integrations/agents/session-history.md, "Mid-session fork reconcile".
 - New PTY spawned with scrollback carried over from the most recently started previous row for the task (see [Spawn flow](spawn-flow.md#engine-spawn-board-driven-path))
 - New session DB record inserted, old record marked `exited`
 - The destination column's settings are re-applied as CLI flags on the resume

@@ -197,6 +197,16 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   says, as `stopLostPtyTree` does for a crashed host: the session is over, not parked. Do not add
   tag or directory matching to it, and do not use it as a reap: what an agent detached from its
   tree is still the reap's to find.
+- **An agent CLI's own background session is stopped by the CLI, before the reap.** Claude Code's
+  `/bg` moves a task's conversation into a background session its supervisor runs outside the
+  task's PTY, tagged and in the task's folder, so the reap would kill it with no exit of its own.
+  `reapTaskLeftovers` first calls `AgentAdapter.stopBackgroundSession` (Claude: `claude stop <id>`,
+  measured to run its SessionEnd hook) for the task's newest records, naming the session by its
+  exact `sessionId` and `kind: background` in the CLI's own listing, never by cwd or name. It runs
+  only when the record's own events file shows the conversation in one
+  (`backgroundSessionHoldingConversation`), and it is not gated on `stopLeftoverProcesses`: it ends the
+  task's own agent, which every terminal transition ends. Do not route it through the reap or
+  widen its match.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
   terminates through. A scan that cannot read the caller's own session or user fails, so the reap
@@ -224,6 +234,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   server, qemu, netsimd and the emulator launcher; which clients count; propagation; a listener
   that is never kept for its children). `tests/unit/local-connections.test.ts` pins the pairing.
   `tests/unit/task-directories.test.ts` pins the roots that are never accepted.
+- **Test (background session):** `tests/unit/session-leftover-reap-wiring.test.ts` pins that
+  `reapTaskLeftovers` stops a background session holding the conversation before the reap, with
+  "Stop leftover processes" off too, and runs no CLI without the record's hook evidence;
+  `tests/unit/claude-background-sessions.test.ts` pins Claude's exact match (full `sessionId`,
+  `kind: background`, a live `pid`, a plain short id) and its failures reading as nothing stopped.
 - **Test (wiring):** `tests/unit/session-leftover-reap-wiring.test.ts` pins the Done and
   `cleanupTaskSession` orderings (exit, then reap, then worktree removal), a Done move whose
   session ended earlier, the `auto_spawn=false` and Pause/Stop negatives, and `PROJECT_DELETE`'s

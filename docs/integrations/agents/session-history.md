@@ -7,6 +7,10 @@ sources:
   - resource: src/main/pty/readers/session-history-reader.ts
   - resource: src/main/pty/readers/status-file-reader.ts
   - resource: src/main/activity-engine/session-telemetry.ts
+  - resource: src/main/activity-engine/conversation-switch-gate.ts
+  - resource: src/main/agent/shared/session-start-hook.ts
+  - resource: src/main/agent/adapters/claude/background-sessions.ts
+    title: stopClaudeBackgroundSession, resolveClaudeResumableSessionId
   - resource: src/main/agent/adapters/codex/session-history-parser.ts
   - resource: src/main/agent/adapters/gemini/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/session-history-parser.ts
@@ -493,55 +497,86 @@ which sits at the cwd's own path.
 
 ### Mid-session fork reconcile (/clear moves the conversation to a new id)
 
-**The invariant: a task points at whatever conversation its agent last reported it was
-writing.** Kangentic never chooses or guesses a session id; it follows the agent's own report,
-adopts it idempotently (same-id reports are no-ops), and no path can turn a resume into a fresh
-session or touch a transcript on disk. Everything in this section is that one rule enforced at
-two moments (live, and at resume), plus the lockdown that keeps every other channel from ever
-moving the pointer.
+**The invariant: a task points at the conversation its agent last said it moved to.**
+Kangentic never chooses or guesses a session id. It follows the agent's own report, adopts it
+idempotently (same-id reports are no-ops), and no path can turn a resume into a fresh session or
+touch a transcript on disk. Everything in this section is that one rule enforced at two moments
+(live, and at resume), plus the lockdown that keeps every other channel from moving the pointer.
 
-When the user runs `/clear` inside a Claude session, the CLI **forks the conversation to a
-brand-new session id**: subsequent turns persist to a new `<slug(cwd)>/<newId>.jsonl` and the
-pre-clear file is never touched again. Empirical facts this design is grounded on (validated
-live against CLI v2.1.220 via `scripts/validate-clear-fork.mjs`, plus two real fork instances
-and a 1,557-session-dir scan across versions v2.1.187-v2.1.220):
+When the user runs `/clear` inside a Claude session, the CLI **continues under a brand-new
+session id**: later turns persist to a new `<slug(cwd)>/<newId>.jsonl` and the pre-clear file is
+never touched again. The facts this design rests on:
 
-- The **statusline payload flips to the new id within ~1 refresh** of the fork. Kangentic's
-  `status-bridge.js` persists that payload verbatim as the session dir's `status.json`, so the
-  live id is always on disk. The statusline reflects only the main REPL session, so this channel
-  cannot be poisoned by subagent ids.
-- `SessionStart(source=clear)` / `SessionEnd(reason=clear)` **do fire in current CLI versions**
-  (observed live on v2.1.220) but fired **zero times across 1,557 historical session dirs**
-  (sources observed: startup/resume/compact only), so hook-based fork detection would silently
-  miss on the older CLI versions still in the field. The status channel works across the range.
+- The **statusline payload flips to the new id within about one refresh** of the move.
+  Kangentic's `status-bridge.js` persists that payload verbatim as the session dir's
+  `status.json`, so the live id is always on disk. The statusline reflects only the main REPL
+  session, so subagent ids never reach it (validated live on v2.1.220 with
+  `scripts/validate-clear-fork.mjs`).
+- **The status file can have more than one writer.** Every process started with the session's
+  `--settings` runs the statusLine and the hooks into the same session dir. Claude Code 2.1.316
+  moved a live task into its background daemon (`claude daemon run --origin transient`, started
+  through WMI, so outside the task PTY's process tree). The daemon started the moved
+  conversation (`--fork-session --resume`) and an empty pre-warmed "spare" worker, both with the
+  task's `--settings`. Their writes alternated about 0.6 s apart on every 10 s refresh. Read as
+  one writer, each alternation was a /clear: a "Conversation moved" toast, a
+  `sessions.agent_session_id` rewrite and the spare's zeros on the context bar, twice every 10 s,
+  until the daemon retired the idle spare after 60 minutes.
+- **The SessionStart hook says which id is the conversation.** Its payload carries `session_id`
+  and `source`. The spare said `startup`, and the moved conversation said `fork` 236 ms later. A
+  /clear sends `clear` (measured on 2.1.294 by `scripts/probe-claude-exit-paths.js`, about 720 ms
+  after the command), a `/resume` choice sends `resume`, and a compaction sends `compact` with
+  the id unchanged.
 - `claude --resume <id>` **continues the same id** in current versions, so "reported id differs
-  from stored id" cleanly means a fork, never routine resume noise.
+  from stored id" means a move, never routine resume noise.
 
-Kangentic tracks the fork at two layers, neither of which is agent-name-branched (both ride the
-generic `runtime.statusFile` capability's status channel - i.e. a `parseStatus` that returns a
-live payload, which only Claude's does today; Copilot's and Grok's `statusFile` declarations
-carry only the events channel):
+Kangentic tracks the move at two layers. Neither branches on an agent name. Both ride the
+generic `runtime.statusFile` capability: a `parseStatus` that returns a live payload, which only
+Claude's does today (Copilot's and Grok's `statusFile` declarations carry only the events
+channel), and `parseSessionStart`, which reads the hook. An adapter without `parseSessionStart`
+follows every status id change, as before.
 
 1. **Live reconcile.** `SessionTelemetry.processStatusUpdate`'s agent-session-id capture is
-   **change-sensitive on the status-file channel**: it re-fires `onAgentSessionId` whenever the
-   status file reports a different id than last reported, flowing through the existing
-   `recoverStaleSessionId` chain to rewrite `sessions.agent_session_id` in place. The PTY-output
-   and hook capture channels stay strictly **one-shot** - multi-shot output capture would
-   reintroduce the OpenCode stale-flag-echo poisoning bug - and any capture closes them, so only
-   the status file may later revise the id.
+   **change-sensitive on the status-file channel**. Its first id-bearing write is the session's
+   baseline and needs no hook, so a `--resume` that silently started fresh (a new id with
+   `source: startup`) is still followed. After that, `ConversationSwitchGate`
+   (`src/main/activity-engine/conversation-switch-gate.ts`) adopts a different id only once a
+   SessionStart whose `source` is not `startup` named it. `SessionManager` hands every events
+   batch to `SessionTelemetry.noteSessionStartHooks`. Either may land first. A write without a
+   confirmation is held and stops before the usage cache, and the hook that confirms it applies
+   the held usage at once. A confirmation is spent by the switch it allows, together with every
+   older one, so a late write from a move it superseded is not adopted. One naming the current id
+   is ignored, so a stale writer can never carry the pointer back. A replaced id returns only
+   through a new hook that names it, as an in-terminal `/resume` to an earlier conversation
+   sends. A background session's hook needs one more proof, that the conversation moved rather
+   than a copy starting beside it ([Claude Code background sessions](#claude-code-background-sessions-bg)).
+   An adopted id flows through the existing `recoverStaleSessionId` chain to
+   rewrite `sessions.agent_session_id` in place. The PTY-output and hook capture channels stay
+   strictly **one-shot** (multi-shot output capture would reintroduce the OpenCode
+   stale-flag-echo poisoning bug), and any capture closes them, so only the status file may
+   later revise the id.
 2. **Resume-time reconcile.** `reconcileResumeAgentSessionId`
    (`src/main/transition-engine/resume-id-reconcile.ts`), run at both resume chokepoints
    (`executeSpawnAgent` before `migrateResumeCwdIfRenamed`, and `prepareAgentSpawn` for startup
    recovery), reads the retiring record's own `.kangentic/sessions/<recordId>/status.json` and
    swaps the resumed id when the agent's last report disagrees with the DB. This covers the
-   suspend race (suspend closes the status watcher before the CLI exits, so a fork in the final
-   ~2s can miss the live reconcile) and records from before the fix shipped.
+   suspend race (suspend closes the status watcher before the CLI exits, so a move in the final
+   ~2s can miss the live reconcile) and records from before the fix shipped. For an adapter with
+   `parseSessionStart` it applies the same rule: the record's own `events.jsonl` must hold a
+   SessionStart that moved the conversation to the reported id, because a sibling writer can
+   have written the status file last.
 
-The resume-time reconcile is **not** the reverted `canResumeSession` guard: it reads only
+The resume-time reconcile is **not** the reverted `canResumeSession` guard. It reads only
 Kangentic's own session directory (mock CLIs write no status.json, so mocked E2E resumes no-op
-structurally), it can only swap WHICH id is resumed (never downgrades resume to fresh), and its
-one positive probe (`locateSessionHistoryFile` on the reported id, guarding a crash right after
-the fork) keeps the stored id on a miss - degrading to exactly the prior behavior.
+structurally), and it can only swap WHICH id is resumed, never downgrade resume to fresh. Its two
+positive checks, the SessionStart hook and `locateSessionHistoryFile` on the reported id (which
+guards a crash right after the move), each keep the stored id on a miss, degrading to exactly
+the prior behavior.
+
+**A /clear without a hook is not followed.** A scan of 1,557 session dirs from v2.1.187 to
+v2.1.220 recorded no `clear` SessionStart, while live runs of v2.1.220 and v2.1.294 sent one.
+Status writes were the only fork signal while that question was open. With two writers they
+cannot be, so a Claude build whose /clear sends no SessionStart keeps the pre-clear id live and
+at resume, and its context bar keeps the pre-clear numbers until the session restarts.
 
 Three accepted consequences, all deliberate: (a) lifetime token rollups partition by
 `COALESCE(agent_session_id, id)`, so a forked record's lineage key follows the fork and the
@@ -554,6 +589,88 @@ partitions at the fork the same way as (a): pre-clear chunks stay indexed under 
 id, and post-fork turns index as a new document. Note for MCP consumers: a task's
 `agentSessionId` can rotate mid-session, so do not cache it across turns.
 
+### Claude Code background sessions (`/bg`)
+
+`/bg` (or `/background`) in a task's terminal moves the conversation into a background session
+that Claude Code's supervisor runs. Measured on 2.1.316 (2026-10-31), on a live task and in a
+`/preview`:
+
+- The supervisor starts through WMI (`claude daemon run --origin transient`, parent
+  `WmiPrvSE.exe`), outside the task PTY's process tree, and works in the user's home folder. Each
+  background session runs under its own `--bg-pty-host`, in the task's folder, carrying the
+  task's `KANGENTIC_TASK_ID`. The supervisor sometimes also starts a pre-warmed spare with the
+  task's `--settings` and retires it after 60 idle minutes. Both write the task's status file,
+  which is why the [fork reconcile](#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)
+  needs the SessionStart hook.
+- The conversation continues under a new id: the old session's SessionEnd fires, then a
+  SessionStart with `source: fork` names the new id, and the old transcript's last record,
+  `continued-in`, names it too. The task's PTY keeps a `claude agents` client.
+- A Kangentic pause closes that client, and the background session keeps running. A plain
+  `claude --resume` beside it would put two processes on one conversation.
+- `claude agents --json` lists it (`kind: background`, the full `sessionId`, a `pid` while its
+  process is alive) in about 220 ms. `claude stop <id>` ends it in about 450 ms through Claude's
+  own exit: its SessionEnd hook ran, its process and its pty host were gone, and its conversation
+  was kept. `claude daemon stop --any` stops every background session on the machine and is
+  never the right tool for one task.
+- A fork's transcript holds only its title and name until the background session's first turn.
+  Stopped before one, `claude --resume <new id>` answers "No conversation found", while
+  `claude --resume <old id>` resumes the whole conversation. A fork that has taken turns holds
+  the full history.
+- `/fork` starts a background COPY while the terminal keeps the original. Its SessionStart is
+  identical to `/bg`'s (`source: fork`, the same fields), but no SessionEnd fires, the terminal
+  keeps writing the original id, and the original transcript gets no `continued-in` record. That
+  record is the only difference Kangentic can read. `/bg` does not always send a SessionEnd
+  either: the live task's `/bg` recorded none.
+
+So a SessionStart with `inBackgroundSession` switches the live session only once
+`statusFile.confirmsBackgroundMove` finds the `continued-in` record naming the new id in the
+current conversation's transcript, through the path its status reported. The record landed about
+2 s before the hook on the live task, so the check runs at once and four more times (1.5, 4, 10
+and 30 s later). Until it succeeds, the background session's writes are held like any other
+unconfirmed writer's, so a move never proven keeps the pre-move numbers on the context bar until
+the next Resume. The resume-time reconcile applies the same check before it follows a status report
+from a background session. Measured in a `/preview`: after `/fork`, Kangentic followed the copy
+before this check, and stays on the terminal's conversation with it.
+
+Kangentic handles a `/bg` move with two more optional adapter members, both implemented by Claude
+(`adapters/claude/background-sessions.ts`):
+
+1. **Before a resume** (`reconcileResumeAgentSessionId`, at both resume chokepoints),
+   `stopBackgroundSession` stops the live background session holding the conversation, then
+   `resolveResumableSessionId` swaps a fork that took no turn for the conversation it continued
+   (its `continued-in` predecessor). Measured end to end in a `/preview`: after `/bg` and a
+   pause, Resume stopped the background session and resumed the original id, and the agent
+   quoted the task's first message. The whole Resume took 1.4 s.
+2. **On a terminal transition** (`reapTaskLeftovers`, before the leftover reap),
+   `stopBackgroundSession` stops it for each of the task's three newest records. The reap would
+   otherwise kill it with no exit of its own. It is not gated on "Stop leftover processes",
+   because it ends the task's own agent rather than something the agent left running. Measured
+   with a Done move after `/bg`: the background session's SessionEnd ran and its process was gone.
+
+Both run only when the session record's own events file shows the conversation in a background
+session (`backgroundSessionHoldingConversation`). Either a SessionStart with `inBackgroundSession`
+(Claude's `source: fork`) names the stored id, or one names another id that
+`confirmsBackgroundMove` proves the stored conversation moved to. The second case is a pause or a
+Done move between the background session's hook and its first status write, before the live
+switch could follow it. A Resume then points the record at the background session, as the status
+swap does. An ordinary resume runs no CLI. That matters because Claude Code's docs say
+`claude agents` starts the supervisor on demand. The events file is streamed, never held whole.
+One stop (list, stop, and the wait for the listing to show it gone) is bounded at 10 s in all, and
+a terminal transition runs the stops for its records two at a time.
+
+A `/fork` copy is never stopped: the record follows the terminal's conversation, and no hook
+names that id as a background session.
+
+Decisions:
+- The stop happens at the next Resume or terminal transition, not at the pause. The alternative,
+  stopping at the pause, would keep a paused task from editing, at the cost of a CLI run on every
+  pause of a task that used `/bg`.
+- The Resume stops the background session and then runs `--resume`, rather than `claude attach`.
+  An attached background session keeps the old record's `--settings`, so its hooks and status
+  would land in a session folder Kangentic no longer watches.
+- Kangentic does not set `CLAUDE_CODE_DISABLE_AGENT_VIEW`, which would turn `/bg` off for task
+  sessions. That would block a Claude Code feature the user chose to use.
+
 ## Known gaps
 
 ### WSL on Windows
@@ -565,6 +682,26 @@ Two gaps remain. A worktree rename does not move a cwd-keyed CLI's history in a 
 ### Remote SSH sessions
 
 The history file of a session on a remote machine is not reachable through local `fs`. The session falls back to PtyActivityTracker.
+
+### Claude Code background sessions
+
+Gaps that remain in how Kangentic handles a Claude background session
+([Claude Code background sessions (`/bg`)](#claude-code-background-sessions-bg)):
+
+- A paused task's background session keeps working until the task's next Resume or terminal
+  transition, which stop it. The pause itself does not, by decision (above).
+- The startup sweep of archived and To Do tasks does not stop one, by decision. A task reaches
+  those lanes through a transition that already stopped it, so the sweep could only catch a stop
+  that failed, and it would run the CLI at every launch for that.
+- `claude stop` and `/fork` were measured on Windows only. A Claude in a WSL distro is listed and
+  stopped through the distro (`runClaudeCli`), unmeasured, and the resume-time move check passes
+  it no place, so it keeps the stored id there. macOS and Linux are unmeasured.
+- A terminal transition stops a background session through the project's configured Claude.
+  A record whose Claude ran somewhere that path no longer reaches (the CLI path changed since) is
+  not found in the listing, and the reap ends that session with no exit of its own.
+- A fork that took no turn resumes by its predecessor only when the predecessor's transcript is
+  in the fork's own project folder. A conversation started in the project root and moved from a
+  worktree is not found, and that resume answers "No conversation found" as before.
 
 ### First-session race
 

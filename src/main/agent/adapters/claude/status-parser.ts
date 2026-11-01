@@ -1,4 +1,4 @@
-import type { SessionUsage, SessionEvent, RateLimitWindow } from '../../../../shared/types';
+import type { SessionUsage, SessionEvent, RateLimitWindow, SessionStartReport } from '../../../../shared/types';
 
 /**
  * Parses Claude Code status line and event bridge data.
@@ -23,9 +23,32 @@ const RATE_LIMIT_WINDOWS: ReadonlyArray<{ key: string } & Pick<RateLimitWindow, 
   { key: 'seven_day', id: 'seven-day', label: '7d weekly', iconKind: 'period', windowDurationSeconds: 7 * 24 * 60 * 60 },
 ];
 
-function isWindowObject(value: unknown): value is Record<string, unknown> {
+function isPlainObject(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
+
+// A SessionStart payload's two fields, read by pattern when the event bridge's
+// 2048-char hookContext cap cut the JSON short. Both sit at the top level of
+// the payload, and a quote inside a string value is escaped, so neither
+// pattern can match text from inside a path.
+const HOOK_SESSION_ID_RE = /"session_id"\s*:\s*"([^"\\]+)"/;
+const HOOK_SOURCE_RE = /"source"\s*:\s*"([^"\\]+)"/;
+
+/**
+ * The one SessionStart `source` that reports a session launched fresh. Claude
+ * Code's other sources (`resume`, `clear`, `compact`, and `fork` when 2.1.316
+ * moves a live conversation into its background daemon) each name the
+ * conversation the terminal moved to.
+ */
+const LAUNCH_SOURCE = 'startup';
+
+/**
+ * The SessionStart `source` of a session Claude Code runs in the background:
+ * `/bg` (and `/fork`) continue the conversation as a forked session its
+ * supervisor owns. Kangentic itself never starts a fork: it launches with
+ * `--session-id` (`startup`) or `--resume` (`resume`).
+ */
+const BACKGROUND_SOURCE = 'fork';
 
 function finiteOrZero(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) ? value : 0;
@@ -127,7 +150,7 @@ export class ClaudeStatusParser {
       const reportedWindows: RateLimitWindow[] = [];
       for (const { key, ...windowShape } of RATE_LIMIT_WINDOWS) {
         const windowRaw = rateLimitsRaw?.[key];
-        if (!isWindowObject(windowRaw)) continue;
+        if (!isPlainObject(windowRaw)) continue;
         reportedWindows.push({
           ...windowShape,
           usedPercentage: Math.min(100, Math.max(0, finiteOrZero(windowRaw.used_percentage))),
@@ -182,5 +205,32 @@ export class ClaudeStatusParser {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * Read a SessionStart hook payload (`statusFile.parseSessionStart`): the
+   * `session_id` it names, and whether its `source` moved the terminal's
+   * conversation there. Every source but `startup` does. A missing source
+   * reads as a launch, so a payload cut before the field confirms nothing.
+   *
+   * The background daemon in Claude Code 2.1.316 runs a spare session with the
+   * task's own `--settings`. Its hook says `startup`, and the conversation it
+   * moved says `fork` (measured on a live task, 2026-10-31).
+   */
+  static parseSessionStart(hookContext: string): SessionStartReport | null {
+    let sessionId: unknown;
+    let source: unknown;
+    try {
+      const payload: unknown = JSON.parse(hookContext);
+      if (!isPlainObject(payload)) return null;
+      sessionId = payload.session_id;
+      source = payload.source;
+    } catch {
+      sessionId = HOOK_SESSION_ID_RE.exec(hookContext)?.[1];
+      source = HOOK_SOURCE_RE.exec(hookContext)?.[1];
+    }
+    if (typeof sessionId !== 'string' || sessionId.length === 0) return null;
+    const movesConversation = typeof source === 'string' && source.length > 0 && source !== LAUNCH_SOURCE;
+    return { agentSessionId: sessionId, movesConversation, inBackgroundSession: source === BACKGROUND_SOURCE };
   }
 }

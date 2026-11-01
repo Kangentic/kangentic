@@ -1,8 +1,7 @@
 import os from 'node:os';
 import path from 'node:path';
-import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec';
-import { quoteCmdExecutable } from '../../../../shared/shell-quote';
-import { cliHomeDir, execCliForTarget, resolveCliTarget } from '../../shared/cli-target';
+import { cliHomeDir, resolveCliTarget } from '../../shared/cli-target';
+import { runClaudeCli } from './cli-run';
 import { getCachedModelPickerModels, probeModelPickerModels, type ModelPickerScan } from './model-picker-probe';
 import { buildModelCapabilityFields } from './model-display-name';
 import {
@@ -18,29 +17,11 @@ import type { AgentCapabilities } from '../../../../shared/types';
 const HELP_TIMEOUT_MS = 5000;
 
 /**
- * Run `<cliPath> --help` and capture stdout. Mirrors `execVersion`'s Windows
- * vs Unix split: Windows .cmd shims need a shell, Unix can call the binary
- * directly. A Claude installed in a WSL distro runs there.
+ * Run `<cliPath> --help` and capture stdout (`runClaudeCli`: a Windows .cmd
+ * shim through a shell, a Claude installed in a WSL distro in that distro).
  */
 async function readHelpText(cliPath: string): Promise<string> {
-  const target = await resolveCliTarget(cliPath, true);
-  if (target) {
-    const { stdout } = await execCliForTarget(target, ['--help'], { timeout: HELP_TIMEOUT_MS, maxBuffer: 1024 * 1024 });
-    return stdout;
-  }
-  if (process.platform === 'win32') {
-    const { stdout } = await execAsync(`${quoteCmdExecutable(cliPath)} --help`, {
-      timeout: HELP_TIMEOUT_MS,
-      windowsHide: true,
-      maxBuffer: 1024 * 1024,
-    });
-    return stdout;
-  }
-  const { stdout } = await execFileAsync(cliPath, ['--help'], {
-    timeout: HELP_TIMEOUT_MS,
-    maxBuffer: 1024 * 1024,
-  });
-  return stdout;
+  return runClaudeCli(cliPath, ['--help'], HELP_TIMEOUT_MS);
 }
 
 // Caps for the historical-session scan. The walk runs at agents.list() time

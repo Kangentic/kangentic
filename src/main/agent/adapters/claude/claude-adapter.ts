@@ -45,6 +45,7 @@ import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capabili
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
 import { proveClaudeConversationGone } from './conversation-gone';
+import { claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
@@ -478,6 +479,15 @@ export class ClaudeAdapter implements AgentAdapter {
       parseStatus: ClaudeStatusParser.parseStatus,
       parseEvent: ClaudeStatusParser.parseEvent,
       isFullRewrite: true,
+      // Every process started with this session's --settings writes the same
+      // status.json, and Claude Code's background daemon starts more than one
+      // (a spare beside the moved conversation). A status id change is a
+      // conversation switch only once a SessionStart that moves the
+      // conversation named it.
+      parseSessionStart: ClaudeStatusParser.parseSessionStart,
+      // `/bg` moves the conversation into a background session and `/fork`
+      // copies it there, with identical hooks: background-sessions.ts.
+      confirmsBackgroundMove: claudeConfirmsBackgroundMove,
     },
     // Background-session fallback - see the comment block above. Append-mode
     // (isFullRewrite: false): the transcript is append-only JSONL.
@@ -620,6 +630,16 @@ export class ClaudeAdapter implements AgentAdapter {
     place?: CliPlace | null;
   }): Promise<boolean> {
     return proveClaudeConversationGone(params);
+  }
+
+  /** `/bg` moves a task's conversation into a background session its terminal does not own: background-sessions.ts. */
+  stopBackgroundSession(options: { agentSessionId: string; cliPath: string }): Promise<boolean> {
+    return stopClaudeBackgroundSession(options);
+  }
+
+  /** A fork into a background session resumes by its predecessor until its first turn: background-sessions.ts. */
+  resolveResumableSessionId(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<string> {
+    return resolveClaudeResumableSessionId(options);
   }
 
   async parseTranscript(

@@ -22,6 +22,8 @@ import { PlanModeTrail } from './plan-mode-trail';
 import { PlanApprovalGate } from './plan-approval-gate';
 import { UserInterruptCoordinator } from './user-interrupt-coordinator';
 import { OpenWorkLedger, type OpenWork } from './open-work-ledger';
+import { ConversationSwitchGate } from './conversation-switch-gate';
+import { sessionStartOfLine } from '../agent/shared/session-start-hook';
 
 const MAX_EVENTS_PER_SESSION = 500;
 
@@ -30,6 +32,16 @@ const MAX_EVENTS_PER_SESSION = 500;
  * #640), matching the bg-shell watcher's 2s cycle.
  */
 const PERMISSION_REJECTION_POLL_MS = 2_000;
+
+/**
+ * When a background session's SessionStart is checked for a move
+ * (`confirmBackgroundMove`): at once, then four more times over 30 s. On a live
+ * task the CLI's record of the move landed about 2 s BEFORE the hook, so the
+ * first check normally answers. The later ones cover a record written after its
+ * hook: a move never proven holds the conversation's status writes, which
+ * freezes the context bar and the resume id until the next Resume.
+ */
+const BACKGROUND_MOVE_CHECK_DELAYS_MS = [0, 1_500, 4_000, 10_000, 30_000];
 
 /**
  * Safely extract the `hookContext` string from a raw JSONL line written
@@ -82,6 +94,14 @@ interface SessionTelemetryCallbacks {
   onBranchPushed?(sessionId: string, branch: string): void;
   /** Called when the agent reports its own session_id (from status.json). */
   onAgentSessionId?(sessionId: string, agentReportedId: string): void;
+  /**
+   * A SessionStart named the CLI's own background session: did the session's
+   * conversation `fromAgentSessionId` move there, rather than a copy start
+   * beside it (`statusFile.confirmsBackgroundMove`, which this answers with the
+   * session's cwd, place and reported transcript)? Optional: unwired, such a
+   * hook is a move like any other.
+   */
+  confirmsBackgroundMove?(sessionId: string, fromAgentSessionId: string, toAgentSessionId: string): Promise<boolean>;
   /**
    * The idle sweep asks for a session it timed out to be suspended, just
    * before `onIdleTimeout`. The session manager suspends only a workflow's own
@@ -238,13 +258,20 @@ export class SessionTelemetry {
   private readonly agentSessionIdChecked = new Set<string>();
   /**
    * Last agent session id reported through onAgentSessionId, per PTY session
-   * (any channel seeds it; only the status-file channel consults it). The
-   * streaming status file carries the CURRENT id on every write, so comparing
-   * against the last reported value lets a mid-session fork (the agent starts
-   * a new conversation under a new id, e.g. Claude /clear) re-fire the capture
-   * while same-id churn (a status rewrite every ~10s) stays quiet.
+   * (any channel seeds it, through `recordReportedId`; only the status-file
+   * channel consults it). The streaming status file carries the CURRENT id on
+   * every write, so comparing against the last reported value lets a
+   * mid-session move (the agent continues under a new id, e.g. Claude /clear)
+   * re-fire the capture while same-id churn (a status rewrite every ~10s)
+   * stays quiet.
    */
   private readonly lastReportedAgentSessionIds = new Map<string, string>();
+  /**
+   * Whether a status write's new id is the conversation moving or another
+   * process writing the same status file. Consulted only for an adapter that
+   * declares `statusFile.parseSessionStart`; see `ConversationSwitchGate`.
+   */
+  private readonly conversationSwitches = new ConversationSwitchGate();
   /**
    * PTY sessions that have had a status write. The first one is a baseline:
    * before it, the cached usage is the spawn's model-only seed, and a resumed
@@ -623,19 +650,34 @@ export class SessionTelemetry {
     // Agent session id capture, status-file channel. Unlike the strictly
     // one-shot PTY-output/hook channels (notifyAgentSessionId /
     // captureHookSessionIds), this channel is CHANGE-SENSITIVE: the status
-    // file is authoritative and continuous, and a forked CLI session (a new
+    // file is authoritative and continuous, and a moved CLI session (a new
     // conversation under a new id, e.g. Claude /clear) re-reports its id
-    // here and ONLY here. Firing again on a changed id keeps
-    // sessions.agent_session_id resumable after the fork; comparing against
-    // the last reported value keeps same-id status churn quiet. Capturing
-    // here also closes the one-shot channels (the Set), so a later PTY
-    // scrollback echo can never override a status-reported id.
+    // here. Firing again on a changed id keeps sessions.agent_session_id
+    // resumable after the move; comparing against the last reported value
+    // keeps same-id status churn quiet. Capturing here also closes the
+    // one-shot channels (the Set), so a later PTY scrollback echo can never
+    // override a status-reported id.
+    //
+    // The file can have more than one writer (every process started with the
+    // session's --settings runs its statusLine into it), so for an adapter
+    // that reads its SessionStart hooks a CHANGED id is adopted only once a
+    // hook that moves the conversation named it (`noteSessionStartHooks`). A
+    // write from any other writer stops here, before its usage reaches the
+    // cache: an empty sibling's zeros would blank the context bar and reset
+    // the heartbeat baseline.
     let conversationSwitched = false;
     if (this.callbacks.onAgentSessionId && usage.sessionId && typeof usage.sessionId === 'string') {
       const previouslyReportedId = this.lastReportedAgentSessionIds.get(sessionId);
       if (previouslyReportedId !== usage.sessionId) {
+        if (
+          previouslyReportedId !== undefined
+          && this.readsSessionStartHooks(sessionId)
+          && this.conversationSwitches.admit(sessionId, usage.sessionId, usage) === 'hold'
+        ) {
+          return;
+        }
         conversationSwitched = previouslyReportedId !== undefined;
-        this.lastReportedAgentSessionIds.set(sessionId, usage.sessionId);
+        this.recordReportedId(sessionId, usage.sessionId);
         this.agentSessionIdChecked.add(sessionId);
         this.callbacks.onAgentSessionId(sessionId, usage.sessionId);
       }
@@ -772,8 +814,92 @@ export class SessionTelemetry {
     if (!capturedId) return;
     this.agentSessionIdChecked.add(sessionId);
     // Seed the status channel's change detection (see notifyAgentSessionId).
-    this.lastReportedAgentSessionIds.set(sessionId, capturedId);
+    this.recordReportedId(sessionId, capturedId);
     this.callbacks.onAgentSessionId?.(sessionId, capturedId);
+  }
+
+  /**
+   * Read the SessionStart hooks in a batch of raw event-bridge lines, for an
+   * adapter that declares `statusFile.parseSessionStart`. A hook that moves
+   * the conversation (anything but a fresh launch) confirms the id it names,
+   * so the status channel may switch to it (`ConversationSwitchGate`). When a
+   * status write of that id arrived first and was held, it is applied now
+   * rather than at the next ~10 s refresh. Runs on every batch: unlike
+   * `captureHookSessionIds`, it is not a one-shot capture.
+   */
+  noteSessionStartHooks(sessionId: string, rawLines: string[]): void {
+    const statusFile = this.sessionParsers.get(sessionId)?.runtime?.statusFile;
+    if (!statusFile?.parseSessionStart) return;
+    for (const line of rawLines) {
+      const sessionStart = sessionStartOfLine(statusFile, line);
+      if (!sessionStart?.movesConversation) continue;
+      const currentId = this.lastReportedAgentSessionIds.get(sessionId);
+      // A background session's hook reads the same whether the conversation
+      // moved there (Claude's /bg) or a copy started beside it (/fork), and a
+      // copy must not take the terminal's place. Its write stays held until
+      // the move is proven, and is applied then.
+      if (
+        sessionStart.inBackgroundSession
+        && statusFile.confirmsBackgroundMove
+        && this.callbacks.confirmsBackgroundMove
+        && currentId !== undefined
+        && currentId !== sessionStart.agentSessionId
+      ) {
+        void this.confirmBackgroundMove(sessionId, currentId, sessionStart.agentSessionId);
+        continue;
+      }
+      this.confirmConversationMove(sessionId, sessionStart.agentSessionId);
+    }
+  }
+
+  /** A hook proved the conversation moved to `agentSessionId`: let the status channel switch, and apply a write it held. */
+  private confirmConversationMove(sessionId: string, agentSessionId: string): void {
+    const heldUsage = this.conversationSwitches.confirm(
+      sessionId,
+      agentSessionId,
+      this.lastReportedAgentSessionIds.get(sessionId),
+    );
+    if (heldUsage) this.processStatusUpdate(sessionId, heldUsage);
+  }
+
+  /**
+   * Ask whether the conversation moved into the background session, and confirm
+   * the move when it did. The CLI's record of the move and the background
+   * session's hook race, so a no is asked again a few times
+   * (`BACKGROUND_MOVE_CHECK_DELAYS_MS`). Stops once the session is gone or has
+   * followed another id meanwhile.
+   */
+  private async confirmBackgroundMove(sessionId: string, fromAgentSessionId: string, toAgentSessionId: string): Promise<void> {
+    // Each delay is counted from the hook, so each wait is the gap since the previous check.
+    let previousDelayMs = 0;
+    for (const delayMs of BACKGROUND_MOVE_CHECK_DELAYS_MS) {
+      const waitMs = delayMs - previousDelayMs;
+      previousDelayMs = delayMs;
+      if (waitMs > 0) await new Promise((resolve) => setTimeout(resolve, waitMs));
+      if (!this.sessionParsers.has(sessionId)) return;
+      if (this.lastReportedAgentSessionIds.get(sessionId) !== fromAgentSessionId) return;
+      let moved: boolean;
+      try {
+        moved = await (this.callbacks.confirmsBackgroundMove?.(sessionId, fromAgentSessionId, toAgentSessionId) ?? Promise.resolve(false));
+      } catch {
+        moved = false;
+      }
+      if (moved) {
+        if (this.lastReportedAgentSessionIds.get(sessionId) === fromAgentSessionId) this.confirmConversationMove(sessionId, toAgentSessionId);
+        return;
+      }
+    }
+  }
+
+  /** Does the session's adapter confirm a status id change with its SessionStart hooks? */
+  private readsSessionStartHooks(sessionId: string): boolean {
+    return typeof this.sessionParsers.get(sessionId)?.runtime?.statusFile?.parseSessionStart === 'function';
+  }
+
+  /** The session now follows `agentSessionId`, on whichever channel reported it. */
+  private recordReportedId(sessionId: string, agentSessionId: string): void {
+    this.lastReportedAgentSessionIds.set(sessionId, agentSessionId);
+    this.conversationSwitches.adopt(sessionId, agentSessionId);
   }
 
   // ==== Per-event side detectors ====
@@ -836,7 +962,7 @@ export class SessionTelemetry {
       this.agentSessionIdChecked.add(sessionId);
       // Seed the status channel's change detection so its first write with
       // this same id does not redundantly re-fire.
-      this.lastReportedAgentSessionIds.set(sessionId, agentReportedId);
+      this.recordReportedId(sessionId, agentReportedId);
       this.callbacks.onAgentSessionId?.(sessionId, agentReportedId);
     }
   }
@@ -916,6 +1042,7 @@ export class SessionTelemetry {
     this.sessionParsers.delete(sessionId);
     this.agentSessionIdChecked.delete(sessionId);
     this.lastReportedAgentSessionIds.delete(sessionId);
+    this.conversationSwitches.removeSession(sessionId);
     this.statusWriteSeen.delete(sessionId);
     this.prCommandDetector.removeSession(sessionId);
     this.pushCommandDetector.removeSession(sessionId);

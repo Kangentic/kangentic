@@ -728,8 +728,9 @@ export class SessionManager extends EventEmitter {
         // 1. Fresh capture: agent_session_id was null (Codex/Gemini), now captured from hooks/PTY output.
         // 2. Stale recovery: agent_session_id was pre-specified (Claude --resume) but the agent
         //    created a different session (--resume failed silently). DB needs the correct ID.
-        // 3. Mid-session fork: the agent moved the live conversation to a NEW id (Claude /clear)
-        //    and its status file re-reported it, so this callback fires AGAIN mid-session.
+        // 3. Mid-session move: the agent moved the live conversation to a NEW id (Claude /clear,
+        //    or a fork into Claude Code's background daemon), a SessionStart hook said so, and
+        //    the status file re-reported it, so this callback fires AGAIN mid-session.
         //    Everything below is repeat-safe: the mutation is value-guarded, and the history
         //    re-attach is blocked by hasReceivedStatus (see the note further down).
         // recoverStaleSessionId() handles all cases - emit unconditionally.
@@ -787,6 +788,21 @@ export class SessionManager extends EventEmitter {
             console.warn(`[session-history] attach failed for session=${sessionId.slice(0, 8)}:`, err);
           });
         }
+      },
+      // The session's own place and the transcript its agent reported, for the
+      // adapter's check that a background session's hook is the conversation
+      // moving rather than a copy starting beside it.
+      confirmsBackgroundMove: async (sessionId, fromAgentSessionId, toAgentSessionId) => {
+        const session = this.registry.get(sessionId);
+        const confirm = session?.agentParser?.runtime?.statusFile?.confirmsBackgroundMove;
+        if (!session || !confirm) return false;
+        return confirm({
+          cwd: session.cwd,
+          fromAgentSessionId,
+          toAgentSessionId,
+          cliTarget: session.cliTarget,
+          transcriptPath: this.telemetry.getReportedTranscriptPath(sessionId),
+        });
       },
       // A Command Terminal is never paused: it has no task record to resume
       // in place, so a suspend ends the terminal the user was looking at (its
@@ -895,6 +911,9 @@ export class SessionManager extends EventEmitter {
       onUsageParsed: (sessionId, usage) => this.telemetry.processStatusUpdate(sessionId, this.usageOnHost(sessionId, usage)),
       onEventsParsed: (sessionId, rawLines, events) => {
         this.telemetry.captureHookSessionIds(sessionId, rawLines);
+        // Before the events, and on every batch: a SessionStart that moves the
+        // conversation is what lets the status channel follow a new id.
+        this.telemetry.noteSessionStartHooks(sessionId, rawLines);
         this.telemetry.ingestEvents(sessionId, events);
       },
       onFirstStatus: (sessionId) => {

@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude';
 import { EventType } from '../../src/shared/types';
+import { claudeSessionStartContext } from './helpers/claude-session-start';
 
 describe('ClaudeStatusParser', () => {
   // -------------------------------------------------------------------------
@@ -415,6 +416,66 @@ describe('ClaudeStatusParser', () => {
 
     it('returns null for malformed line', () => {
       expect(ClaudeStatusParser.parseEvent('not valid json {')).toBeNull();
+    });
+  });
+
+  // -------------------------------------------------------------------------
+  // parseSessionStart
+  // -------------------------------------------------------------------------
+  describe('parseSessionStart', () => {
+    const SESSION_ID = '58bd8a86-0d47-4861-8449-63202d8e6a43';
+
+    it('reads a fresh launch (startup) as not moving the conversation', () => {
+      expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, 'startup')))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+    });
+
+    it.each(['clear', 'resume', 'compact'] as const)('reads %s as moving the conversation to its id, in the terminal', (source) => {
+      expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, source)))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: false });
+    });
+
+    it('reads fork as the conversation moving into a background session (/bg)', () => {
+      expect(ClaudeStatusParser.parseSessionStart(claudeSessionStartContext(SESSION_ID, 'fork')))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: true });
+    });
+
+    it('reads a payload with no source, or an empty one, as a launch', () => {
+      expect(ClaudeStatusParser.parseSessionStart(JSON.stringify({ session_id: SESSION_ID })))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+      expect(ClaudeStatusParser.parseSessionStart(JSON.stringify({ session_id: SESSION_ID, source: '' })))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+    });
+
+    it('reads the fields by pattern when the bridge cut the payload short', () => {
+      const full = claudeSessionStartContext(SESSION_ID, 'fork');
+      // Cut just past the source value, as the bridge's 2048-char cap does
+      // to a payload with longer paths: the JSON no longer parses.
+      const cut = full.slice(0, full.indexOf('"fork"') + '"fork"'.length + 3);
+      expect(() => JSON.parse(cut)).toThrow();
+      expect(ClaudeStatusParser.parseSessionStart(cut))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: true, inBackgroundSession: true });
+    });
+
+    it('reads a payload cut before its source as a launch, which confirms nothing', () => {
+      const full = claudeSessionStartContext(SESSION_ID, 'fork');
+      const cut = full.slice(0, full.indexOf('"source"'));
+      expect(ClaudeStatusParser.parseSessionStart(cut))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+    });
+
+    it('does not read a quoted "source" inside a path as the field', () => {
+      const tricky = `{"session_id":"${SESSION_ID}","cwd":"C:\\\\x\\"source\\":\\"fork\\"","source":"startup"`;
+      expect(ClaudeStatusParser.parseSessionStart(tricky))
+        .toEqual({ agentSessionId: SESSION_ID, movesConversation: false, inBackgroundSession: false });
+    });
+
+    it('returns null without a session id, or for something that is not a payload', () => {
+      expect(ClaudeStatusParser.parseSessionStart(JSON.stringify({ source: 'fork' }))).toBeNull();
+      expect(ClaudeStatusParser.parseSessionStart(JSON.stringify({ session_id: 42, source: 'fork' }))).toBeNull();
+      expect(ClaudeStatusParser.parseSessionStart('null')).toBeNull();
+      expect(ClaudeStatusParser.parseSessionStart('[]')).toBeNull();
+      expect(ClaudeStatusParser.parseSessionStart('not json at all')).toBeNull();
     });
   });
 });

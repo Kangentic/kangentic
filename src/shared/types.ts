@@ -6559,6 +6559,16 @@ export const ActivityDetection = {
     ({ kind: 'hooks_and_pty', detectIdle }),
 } as const;
 
+/** What one SessionStart hook says (`AdapterRuntimeStrategy.statusFile.parseSessionStart`). */
+export interface SessionStartReport {
+  /** The conversation id the hook names. */
+  agentSessionId: string;
+  /** The hook moved the terminal's conversation to that id, rather than reporting a session launched fresh. */
+  movesConversation: boolean;
+  /** The hook's session is the agent CLI's own background session, which the task's PTY does not own. */
+  inBackgroundSession: boolean;
+}
+
 /**
  * Declares how an agent exposes runtime state to Kangentic.
  * One location per adapter for activity detection + session ID capture,
@@ -6715,6 +6725,47 @@ export interface AdapterRuntimeStrategy {
      * separate byte cursor regardless of this flag.
      */
     readonly isFullRewrite: boolean;
+
+    /**
+     * Read a SessionStart hook's payload (the `hookContext` of a
+     * `session_start` line): the conversation id it names, and whether the
+     * hook moved the terminal's conversation to that id (a fork, a /clear, a
+     * /resume, a compaction) rather than reporting a session launched fresh.
+     * Returns null for a payload it cannot read.
+     *
+     * Declared by an agent whose `parseStatus` reports a session id. A status
+     * write's id then counts as a conversation switch only after a hook that
+     * moves the conversation named it, because more than one process can run
+     * the same `--settings` and write one status file (Claude Code's
+     * background daemon runs a spare session beside the real one). Without
+     * it, every id change in the status file is a switch.
+     *
+     * `inBackgroundSession` is true when the hook's session is the agent CLI's
+     * own background session (Claude Code's `/bg`), which the task's PTY does
+     * not own: a resume and a terminal transition then stop it first
+     * (`AgentAdapter.stopBackgroundSession`).
+     */
+    parseSessionStart?(hookContext: string): SessionStartReport | null;
+
+    /**
+     * For a SessionStart whose session is the CLI's own background session
+     * (`inBackgroundSession`): did the terminal's conversation move there, or
+     * did a copy start beside it? Claude Code's `/bg` moves it and its `/fork`
+     * copies it, and the two hooks are identical; a move ends the old
+     * conversation's transcript with a `continued-in` record naming the new id.
+     * The status channel switches to a background session only on true.
+     * Resolves false on any doubt. Without it, such a hook is a move.
+     */
+    confirmsBackgroundMove?(options: {
+      cwd: string;
+      /** The conversation the terminal ran (the session's current id). */
+      fromAgentSessionId: string;
+      /** The background session's id, from its SessionStart. */
+      toAgentSessionId: string;
+      cliTarget?: StoredCliTarget | null;
+      /** The transcript path the agent reported for `fromAgentSessionId`, read before any path derived from `cwd`. */
+      transcriptPath?: string | null;
+    }): Promise<boolean>;
   };
 
   /**

@@ -58,13 +58,14 @@ vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
 import * as pty from 'node-pty';
 import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
 import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
+import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
 import { ClaudeSessionHistoryParser } from '../../src/main/agent/adapters/claude/session-history-parser';
 import { traceTerminal } from '../../src/main/pty/terminal-trace';
 
 const claudeAdapter = new ClaudeAdapter();
 import { DEFAULT_CONFIG, EventType } from '../../src/shared/types';
-import type { SessionEvent } from '../../src/shared/types';
+import type { AgentParser, SessionEvent, StoredCliTarget } from '../../src/shared/types';
 
 let tmpDir: string;
 
@@ -1786,12 +1787,13 @@ describe('Transcript-fallback handoff', () => {
   });
 
   // Mid-session fork (Claude /clear moves the live conversation to a NEW
-  // session id and the statusline re-reports it): a status.json rewrite with a
-  // DIFFERENT session_id must fire a SECOND 'agent-session-id' (the
-  // change-sensitive status channel), mutate the live session (so the renderer
-  // observes the flip via 'session-changed'), and must NOT re-attach the
-  // deliberately-detached transcript fallback - the `!hasReceivedStatus` guard
-  // in session-manager's onAgentSessionId is load-bearing for the fork case.
+  // session id, its SessionStart hook says `clear`, and the statusline
+  // re-reports it): a status.json rewrite with that DIFFERENT session_id must
+  // fire a SECOND 'agent-session-id' (the change-sensitive status channel),
+  // mutate the live session (so the renderer observes the flip via
+  // 'session-changed'), and must NOT re-attach the deliberately-detached
+  // transcript fallback - the `!hasReceivedStatus` guard in session-manager's
+  // onAgentSessionId is load-bearing for the fork case.
   it('a mid-session fork (new session_id in status.json) re-fires agent-session-id without re-attaching the fallback', async () => {
     const historyFile = path.join(tmpDir, 'fork-transcript.jsonl');
     fs.writeFileSync(historyFile, JSON.stringify({ type: 'assistant', message: { id: 'm1', model: 'claude-opus-4-8', usage: { input_tokens: 10, cache_creation_input_tokens: 0, cache_read_input_tokens: 0, output_tokens: 1 } } }) + '\n');
@@ -1799,6 +1801,7 @@ describe('Transcript-fallback handoff', () => {
     const adapter = new ClaudeAdapter();
 
     const statusPath = path.join(tmpDir, 'fork-status.json');
+    const eventsPath = path.join(tmpDir, 'fork-events.jsonl');
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
     const session = await manager.spawn({
@@ -1807,13 +1810,16 @@ describe('Transcript-fallback handoff', () => {
       cwd: tmpDir,
       agentSessionId: 'fork-uuid-original',
       statusOutputPath: statusPath,
+      eventsOutputPath: eventsPath,
       agentParser: adapter,
     });
 
     const managerInternals = manager as unknown as {
       sessionHistoryReader: { isAttached(id: string): boolean };
-      statusFileReader: { handleStatusChange(id: string): void };
+      statusFileReader: { handleStatusChange(id: string): void; handleEventsChange(id: string): void };
+      telemetry: { noteSessionStartHooks(id: string, rawLines: string[]): void };
     };
+    const hookSpy = vi.spyOn(managerInternals.telemetry, 'noteSessionStartHooks');
 
     // Let the fire-and-forget eager attach (awaits the mocked locate) settle.
     await new Promise((resolve) => setTimeout(resolve, 30));
@@ -1847,7 +1853,11 @@ describe('Transcript-fallback handoff', () => {
     await vi.waitFor(() => expect(capturedAgentSessionIds).toEqual(['fork-uuid-original']));
     expect(managerInternals.sessionHistoryReader.isAttached(session.id)).toBe(false);
 
-    // The fork: status.json re-reports a DIFFERENT id.
+    // The fork: Claude's SessionStart hook says `clear`, then status.json
+    // re-reports the DIFFERENT id it named.
+    fs.appendFileSync(eventsPath, claudeSessionStartLine('fork-uuid-after-clear', 'clear') + '\n');
+    managerInternals.statusFileReader.handleEventsChange(session.id);
+    await vi.waitFor(() => expect(hookSpy).toHaveBeenCalled());
     fs.writeFileSync(statusPath, statusPayload('fork-uuid-after-clear'));
     managerInternals.statusFileReader.handleStatusChange(session.id);
 
@@ -1867,6 +1877,197 @@ describe('Transcript-fallback handoff', () => {
     managerInternals.statusFileReader.handleStatusChange(session.id);
     await vi.waitFor(() => expect(dispatchSpy).toHaveBeenCalledTimes(1));
     expect(capturedAgentSessionIds).toEqual(['fork-uuid-original', 'fork-uuid-after-clear']);
+  });
+
+  // Claude Code 2.1.316's background daemon ran a moved conversation and an
+  // empty spare with the task's own --settings, so both wrote this session's
+  // status.json. The events file carries each one's SessionStart (`fork` and
+  // `startup`), and the manager must hand those lines to the telemetry so only
+  // the conversation that moved is followed. Without the wiring, the fork is
+  // never confirmed and the session stays on its first id; with the old
+  // capture, every write of the spare was a switch.
+  /**
+   * A Claude session whose status and events files the test writes, with the
+   * original conversation's transcript at the path its status reports, under
+   * a `projects/<slug>` folder in the test's temp directory.
+   */
+  async function spawnDaemonRig(taskId: string, originalTranscript: Array<Record<string, unknown>>) {
+    const statusPath = path.join(tmpDir, `${taskId}-status.json`);
+    const eventsPath = path.join(tmpDir, `${taskId}-events.jsonl`);
+    const transcriptFolder = path.join(tmpDir, 'claude', 'projects', `${taskId}-slug`);
+    fs.mkdirSync(transcriptFolder, { recursive: true });
+    const transcriptPathOf = (agentSessionId: string) => path.join(transcriptFolder, `${agentSessionId}.jsonl`);
+    fs.writeFileSync(transcriptPathOf('daemon-uuid-original'), originalTranscript.map((record) => JSON.stringify(record)).join('\n') + '\n');
+
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId,
+      command: '',
+      cwd: tmpDir,
+      agentSessionId: 'daemon-uuid-original',
+      statusOutputPath: statusPath,
+      eventsOutputPath: eventsPath,
+      agentParser: new ClaudeAdapter(),
+    });
+
+    const managerInternals = manager as unknown as {
+      statusFileReader: { handleStatusChange(id: string): void; handleEventsChange(id: string): void };
+    };
+    const capturedAgentSessionIds: string[] = [];
+    manager.on('agent-session-id', (_sessionId: string, _taskId: string, _projectId: string, agentReportedId: string) => {
+      capturedAgentSessionIds.push(agentReportedId);
+    });
+    const usageCosts: number[] = [];
+    manager.on('usage', (_sessionId: string, usage: { cost: { totalCostUsd: number } }) => {
+      usageCosts.push(usage.cost.totalCostUsd);
+    });
+
+    const statusPayload = (agentSessionId: string, totalCostUsd: number) => JSON.stringify({
+      session_id: agentSessionId,
+      transcript_path: transcriptPathOf(agentSessionId),
+      context_window: {
+        used_percentage: totalCostUsd > 0 ? 40 : 0,
+        total_input_tokens: totalCostUsd > 0 ? 24000 : 0,
+        total_output_tokens: totalCostUsd > 0 ? 500 : 0,
+        context_window_size: 200000,
+        current_usage: { input_tokens: totalCostUsd > 0 ? 24000 : 0 },
+      },
+      cost: { total_cost_usd: totalCostUsd, total_duration_ms: 5000 },
+      model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+    });
+    const writeStatus = async (agentSessionId: string, totalCostUsd: number) => {
+      const before = usageCosts.length;
+      const dispatchSpy = vi.spyOn(
+        managerInternals.statusFileReader as unknown as { dispatchStatus: (...args: unknown[]) => void },
+        'dispatchStatus',
+      );
+      fs.writeFileSync(statusPath, statusPayload(agentSessionId, totalCostUsd));
+      managerInternals.statusFileReader.handleStatusChange(session.id);
+      await vi.waitFor(() => expect(dispatchSpy).toHaveBeenCalledTimes(1));
+      dispatchSpy.mockRestore();
+      return usageCosts.length > before;
+    };
+    const appendHooks = async (lines: string[]) => {
+      const before = manager.getEventsForSession(session.id).length;
+      fs.appendFileSync(eventsPath, lines.map((line) => line + '\n').join(''));
+      managerInternals.statusFileReader.handleEventsChange(session.id);
+      await vi.waitFor(() => expect(manager.getEventsForSession(session.id).length).toBeGreaterThanOrEqual(before + lines.length));
+    };
+    return { session, capturedAgentSessionIds, usageCosts, writeStatus, appendHooks, transcriptPathOf };
+  }
+
+  const conversationTurn = [
+    { type: 'user', message: { role: 'user', content: 'Set up CI' }, sessionId: 'daemon-uuid-original' },
+    { type: 'assistant', message: { role: 'assistant', content: [{ type: 'text', text: 'Done.' }] }, sessionId: 'daemon-uuid-original' },
+  ];
+
+  it('follows the conversation /bg moved to, never a spare writing the same status file', async () => {
+    const rig = await spawnDaemonRig('task-daemon', [
+      ...conversationTurn,
+      { type: 'continued-in', continuedInSessionId: 'daemon-uuid-moved' },
+    ]);
+
+    await rig.writeStatus('daemon-uuid-original', 1.5);
+    expect(rig.capturedAgentSessionIds).toEqual(['daemon-uuid-original']);
+
+    await rig.appendHooks([claudeSessionStartLine('daemon-uuid-spare', 'startup'), claudeSessionStartLine('daemon-uuid-moved', 'fork')]);
+    // The move is checked against the original's transcript, which the manager
+    // finds through the path the original's status reported.
+    await rig.writeStatus('daemon-uuid-moved', 2.5);
+    await vi.waitFor(() => expect(rig.capturedAgentSessionIds).toEqual(['daemon-uuid-original', 'daemon-uuid-moved']));
+
+    expect(await rig.writeStatus('daemon-uuid-spare', 0)).toBe(false);
+    expect(await rig.writeStatus('daemon-uuid-moved', 2.6)).toBe(true);
+    expect(await rig.writeStatus('daemon-uuid-spare', 0)).toBe(false);
+
+    expect(rig.capturedAgentSessionIds).toEqual(['daemon-uuid-original', 'daemon-uuid-moved']);
+    expect(rig.usageCosts).not.toContain(0);
+    expect(manager.listSessions().find((listed) => listed.id === rig.session.id)?.agentSessionId).toBe('daemon-uuid-moved');
+  });
+
+  it('stays on the terminal\'s conversation when /fork starts a copy beside it', async () => {
+    const rig = await spawnDaemonRig('task-daemon-fork', conversationTurn);
+
+    await rig.writeStatus('daemon-uuid-original', 1.5);
+    await rig.appendHooks([claudeSessionStartLine('daemon-uuid-moved', 'fork')]);
+    expect(await rig.writeStatus('daemon-uuid-moved', 0.2)).toBe(false);
+    expect(await rig.writeStatus('daemon-uuid-original', 1.6)).toBe(true);
+    expect(await rig.writeStatus('daemon-uuid-moved', 0.2)).toBe(false);
+
+    expect(rig.capturedAgentSessionIds).toEqual(['daemon-uuid-original']);
+    expect(manager.listSessions().find((listed) => listed.id === rig.session.id)?.agentSessionId).toBe('daemon-uuid-original');
+  });
+
+  // The manager answers the telemetry's "did the conversation move into the
+  // background session?" with the adapter's own check
+  // (`statusFile.confirmsBackgroundMove`), handing it the session's place and
+  // the transcript its agent reported. The rig's adapter check is replaced by a
+  // spy, so these pin the wiring and not the transcript reading (which
+  // claude-background-sessions.test.ts covers).
+  interface RegistryRowInternals {
+    cliTarget?: StoredCliTarget | null;
+    agentParser?: AgentParser;
+  }
+
+  /** The session's registry row and its adapter's status-file hook, which the test may replace. */
+  function backgroundMoveCheckOf(sessionId: string) {
+    const row = (manager as unknown as { registry: { get(id: string): RegistryRowInternals | undefined } }).registry.get(sessionId);
+    const statusFile = row?.agentParser?.runtime?.statusFile;
+    if (!row || !statusFile) throw new Error(`Session ${sessionId} has no registry row or no status-file hook`);
+    return { row, statusFile };
+  }
+
+  /** The callback the manager gave the telemetry for the adapter's background-move check. */
+  function wiredConfirmsBackgroundMove() {
+    return (manager as unknown as {
+      telemetry: { callbacks: { confirmsBackgroundMove(sessionId: string, fromAgentSessionId: string, toAgentSessionId: string): Promise<boolean> } };
+    }).telemetry.callbacks.confirmsBackgroundMove;
+  }
+
+  it('hands the adapter the session\'s cwd, both ids, place and the transcript its status reported', async () => {
+    const rig = await spawnDaemonRig('task-daemon-wiring', conversationTurn);
+    await rig.writeStatus('daemon-uuid-original', 1.5);
+    const { row, statusFile } = backgroundMoveCheckOf(rig.session.id);
+    const cliTarget: StoredCliTarget = { kind: 'wsl', distro: 'Ubuntu' };
+    row.cliTarget = cliTarget;
+    const confirmsBackgroundMove = vi.spyOn(statusFile, 'confirmsBackgroundMove').mockResolvedValue(true);
+
+    await rig.appendHooks([claudeSessionStartLine('daemon-uuid-moved', 'fork')]);
+
+    await vi.waitFor(() => expect(confirmsBackgroundMove).toHaveBeenCalledTimes(1));
+    expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+      cwd: tmpDir,
+      fromAgentSessionId: 'daemon-uuid-original',
+      toAgentSessionId: 'daemon-uuid-moved',
+      cliTarget,
+      transcriptPath: rig.transcriptPathOf('daemon-uuid-original'),
+    });
+  });
+
+  it('answers false without asking the adapter once the session is gone', async () => {
+    const rig = await spawnDaemonRig('task-daemon-gone', conversationTurn);
+    await rig.writeStatus('daemon-uuid-original', 1.5);
+    const { statusFile } = backgroundMoveCheckOf(rig.session.id);
+    const confirmsBackgroundMove = vi.spyOn(statusFile, 'confirmsBackgroundMove').mockResolvedValue(true);
+    const askManager = wiredConfirmsBackgroundMove();
+
+    // While the session lives the question reaches the adapter and its answer comes back.
+    await expect(askManager(rig.session.id, 'daemon-uuid-original', 'daemon-uuid-moved')).resolves.toBe(true);
+    expect(confirmsBackgroundMove).toHaveBeenCalledTimes(1);
+
+    manager.remove(rig.session.id);
+
+    await expect(askManager(rig.session.id, 'daemon-uuid-original', 'daemon-uuid-moved')).resolves.toBe(false);
+    expect(confirmsBackgroundMove).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers false for a session whose adapter cannot confirm a move', async () => {
+    const rig = await spawnDaemonRig('task-daemon-no-check', conversationTurn);
+    const { statusFile } = backgroundMoveCheckOf(rig.session.id);
+    delete statusFile.confirmsBackgroundMove;
+
+    await expect(wiredConfirmsBackgroundMove()(rig.session.id, 'daemon-uuid-original', 'daemon-uuid-moved')).resolves.toBe(false);
   });
 });
 

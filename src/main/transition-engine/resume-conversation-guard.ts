@@ -179,7 +179,7 @@ export async function assessResumeConversation(params: {
       // preferred (richest usage), but it only runs once the TUI is up: a CLI
       // killed in its first second leaves none. The SessionStart hook fires
       // far earlier and carries the same `transcript_path`.
-      const reported = readStatusEvidence(sessionDir, parseStatus) ?? readSessionStartEvidence(sessionDir);
+      const reported = readStatusEvidence(sessionDir, parseStatus, agentSessionId) ?? readSessionStartEvidence(sessionDir);
       if (!reported) continue;
       const evidence = { ...reported, transcriptPath: reportedPathOnHost(reported.transcriptPath, place) ?? '' };
       if (evidence.hadTurns) hadTurns = true;
@@ -229,13 +229,24 @@ interface ConversationEvidence {
   hadTurns: boolean;
 }
 
-/** The status line's report. Null when absent, malformed, or pathless. */
+/**
+ * The status line's report. Null when absent, malformed, pathless, or about
+ * another conversation.
+ *
+ * Every process started with the record's --settings writes this one file, so
+ * its last write can be a sibling's: Claude Code's background daemon runs an
+ * empty spare (no turns, no transcript on disk) beside the conversation it
+ * moved. A report that names another id says nothing about the conversation
+ * being resumed, and read as its evidence it would claim that nothing ever
+ * happened. A report with no id is kept, as before.
+ */
 function readStatusEvidence(
   sessionDir: string,
   // The adapter's own signature, not a re-declared subset: a local structural
   // copy typechecks against today's SessionUsage and then silently stops
   // tracking it.
   parseStatus: (raw: string) => SessionUsage | null,
+  agentSessionId: string,
 ): ConversationEvidence | null {
   const { statusOutputPath } = sessionOutputPaths(sessionDir);
   let raw: string;
@@ -247,6 +258,7 @@ function readStatusEvidence(
   const usage = parseStatus(raw);
   const transcriptPath = usage?.transcriptPath;
   if (!usage || typeof transcriptPath !== 'string' || transcriptPath.length === 0) return null;
+  if (usage.sessionId !== undefined && usage.sessionId !== agentSessionId) return null;
   return {
     transcriptPath,
     hadTurns: usage.contextWindow.usedTokens > 0

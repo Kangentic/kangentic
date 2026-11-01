@@ -7,6 +7,7 @@ sources:
   - resource: src/main/activity-engine/engine/
   - resource: src/main/activity-engine/session-telemetry.ts
   - resource: src/main/activity-engine/open-work-ledger.ts
+  - resource: src/main/activity-engine/conversation-switch-gate.ts
   - resource: src/main/activity-engine/user-interrupt-coordinator.ts
   - resource: src/main/activity-engine/pty-activity-tracker.ts
   - resource: src/main/activity-engine/activity-interval-recorder.ts
@@ -324,6 +325,14 @@ one reported (a `/resume` or `/clear` inside the session). `processStatusUpdate`
 a new baseline, with no previous usage to grow against, so neither force-thinks nor keeps a
 thinking state warm. Without it a Command Terminal resumed from its Earlier list, or switched
 with `/resume`, read as working for the heartbeat's 30 seconds.
+
+For Claude, a write whose id the session has not adopted never reaches the baseline at all. Every
+process started with the session's `--settings` writes the same status file, and Claude Code's
+background daemon runs an empty spare beside the conversation it moved. The id capture adopts a
+changed id only after a SessionStart hook that moved the conversation named it
+(`ConversationSwitchGate`, see [Mid-session fork reconcile](../../integrations/agents/session-history.md#mid-session-fork-reconcile-clear-moves-the-conversation-to-a-new-id)).
+A write from any other writer returns before the usage cache, the heartbeat and the stale-thinking
+refresh, so the spare's zeros never reset the baseline.
 
 The SAME function is also rung 3 of the auto_command delivery ladder, called with a `resumePrompt` so the command rides the spawn as the CLI's prompt argument (see [Command Injection](../automations/command-injection.md)). That call deliberately SKIPS the assertion (`if (resumedSessionId && !options.resumePrompt)`): a resume carrying a prompt starts a real turn, so claiming the session is authoritatively idle would be a lie, and the heartbeat force-thinking it is then correct rather than the bug described above. A command that cannot ride the command line (lines a `.cmd` shim launch would flatten, or over the cap) is the exception: the engine keeps it off, asserts idle on the new session itself, and the restart types it in (see [How the resume prompt arrives](../sessions/resume.md#how-the-resume-prompt-arrives)).
 

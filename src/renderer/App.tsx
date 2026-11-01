@@ -350,12 +350,15 @@ export function App() {
         // Wrapped whole so the (currently side-effect-free) write and auto-name
         // scheduling stay in arrival order with the other handlers.
         enqueueSessionUpdate(() => {
-          // Mid-session conversation fork (e.g. Claude /clear): the live
-          // session's agent id is null until first capture (that flip stays
-          // quiet), so a non-null -> DIFFERENT non-null flip on a running
-          // session is exactly a fork. The comparison runs synchronously in
-          // this push handler and syncSessions never re-enters it, so an HMR
-          // resync cannot replay the toast.
+          // Mid-session conversation move (Claude /clear, or a fork into
+          // Claude Code's background daemon): the live session's agent id is
+          // null until first capture (that flip stays quiet), so a non-null ->
+          // DIFFERENT non-null flip on a running session is exactly a move.
+          // Main changes the id only after the agent's own SessionStart hook
+          // named it, so a second process writing the same status file cannot
+          // raise this. The comparison runs synchronously in this push handler
+          // and syncSessions never re-enters it, so an HMR resync cannot
+          // replay the toast.
           const previousSession = useSessionStore.getState().sessions
             .find((existingSession) => existingSession.id === sessionId);
           const forkedConversation =
@@ -372,7 +375,7 @@ export function App() {
             const forkProjectId = session.projectId;
             useToastStore.getState().addToast({
               title: i18n._(msg`Conversation moved`),
-              message: i18n._(msg`Resume follows the conversation started by /clear.`),
+              message: i18n._(msg`Resume now follows the agent's new conversation.`),
               variant: 'info',
               // The card names no task, so a click is how the user finds which one.
               onOpen: forkTask && forkProjectId

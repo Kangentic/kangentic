@@ -3,7 +3,7 @@
 ## Adapter contract
 
 * [Agent adapter interface](adapter-interface.md) - The AgentAdapter methods and required properties, the fifteen-agent matrix of resume flags and MCP delivery, agent resolution order, per-agent first-output and exit key sequences, session history file locations, the launch overlay lift, and the task_xml prompt template.
-* [Optional adapter properties](optional-properties.md) - Every optional AgentAdapter member and which adapters set it, such as getSubmissionVerifier, answerFromContext, parseTranscript, onWorktreeRemoved, supportsPlanAutoApproval, kangenticMcp, remoteExecution, launchOptions and pastedImageNativeExtensions.
+* [Optional adapter properties](optional-properties.md) - Every optional AgentAdapter member and which adapters set it, such as getSubmissionVerifier, answerFromContext, parseTranscript, onWorktreeRemoved, stopBackgroundSession, supportsPlanAutoApproval, kangenticMcp, remoteExecution, launchOptions and pastedImageNativeExtensions.
 * [Adapter types and capability discovery](adapter-types.md) - The fields of AgentCapabilities, CommandOptions, AdapterRuntimeStrategy and SpawnSessionInput, and how each capability-discovery.ts finds models and effort levels, from Claude's hidden /model picker probe to history scans, agy models, cursor-agent --list-models and Grok's models_cache.json.
 
 ## Shared mechanisms

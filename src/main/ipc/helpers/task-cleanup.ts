@@ -1,11 +1,14 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import PQueue from 'p-queue';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorktreeManager, prepareWorktreeForRemoval, GitQueuePriority } from '../../git/worktree-manager';
 import { readWorktreeHead } from '../../git/worktree-head';
 import { getOpenProjectDb, getProjectDb } from '../../db/database';
 import { agentRegistry } from '../../agent/agent-registry';
+import type { AgentAdapter } from '../../agent/agent-adapter';
+import type { SessionRecord } from '../../../shared/types';
 import { parseStoredCliTarget, parseWslCliPath, type CliPlace } from '../../agent/shared/cli-target';
 import { isWslDistroRunning, resolveWslDistroFacts } from '../../agent/shared/wsl-distro';
 import type { IpcContext } from '../ipc-context';
@@ -14,6 +17,7 @@ import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
 import { isShuttingDown } from '../../shutdown-state';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
+import { backgroundSessionHoldingConversation } from '../../transition-engine/resume-id-reconcile';
 import { closeTaskWindows } from './task-windows';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
@@ -58,6 +62,9 @@ export async function reapTaskLeftovers(
   } = {},
 ): Promise<void> {
   if (tasks.length === 0) return;
+  // Before the reap, which would otherwise kill it: a conversation moved into
+  // the agent CLI's own background session is still the task's agent.
+  await stopTaskBackgroundSessions(context, projectPath ?? null, tasks.map((task) => task.id));
   // Held for the whole reap, so a bulk delete's reaps, which the host runs in
   // two batches a second apart, still make one toast.
   const releaseReport = leftoverProcessReports.beginReap();
@@ -98,6 +105,84 @@ export async function reapTaskLeftovers(
     console.warn(`[TASK-REAP] Leftover reap failed for ${tasks.length} task(s) (non-fatal):`, error);
   } finally {
     releaseReport();
+  }
+}
+
+/** How many of a task's newest session records are checked for a conversation in a background session. */
+const BACKGROUND_SESSION_RECORDS_PER_TASK = 3;
+
+/**
+ * How many records one call checks and stops at once. A bulk or project delete
+ * checks many, and each stop lists every background session on the machine,
+ * which can start the CLI's supervisor, so they run a few at a time rather
+ * than one after another (a stop can take its whole 10 s budget) or all at once.
+ */
+const BACKGROUND_SESSION_STOP_CONCURRENCY = 2;
+
+/**
+ * Stop the agent CLI's own background session holding a task's conversation,
+ * for each of the tasks (Claude Code's `/bg` moves a conversation into one,
+ * which outlives the task's PTY: see `AgentAdapter.stopBackgroundSession`).
+ * It ends the task's own agent through the CLI's own stop, where the reap
+ * after it would kill it with no exit of its own, and before the worktree it
+ * works in is removed.
+ *
+ * Not gated on "Stop leftover processes": that setting is about what the agent
+ * left running, and this is the agent itself, which every terminal transition
+ * ends. Runs a CLI only for a record whose own hooks show its conversation
+ * moved into a background session (`backgroundSessionHoldingConversation`), so
+ * a task that never did costs a few file reads. The CLI is the project's
+ * configured one, so a record whose CLI ran somewhere that path no longer
+ * reaches is left to the reap. Best-effort: never throws.
+ */
+async function stopTaskBackgroundSessions(context: IpcContext, projectPath: string | null, taskIds: readonly string[]): Promise<void> {
+  if (!projectPath || taskIds.length === 0) return;
+  try {
+    const project = context.projectRepo.list().find((candidate) => candidate.path === projectPath);
+    const db = project ? getOpenProjectDb(project.id) : null;
+    if (!db) return;
+    const sessionRepo = new SessionRepository(db);
+    const cliPathOverrides = context.configManager.getEffectiveConfig(projectPath).agent.cliPaths;
+    const records = taskIds.flatMap((taskId) => sessionRepo.listForTaskNewestFirst(taskId).slice(0, BACKGROUND_SESSION_RECORDS_PER_TASK));
+    /** One detection per adapter for the whole call. */
+    const cliPaths = new Map<string, Promise<string | null>>();
+    const cliPathOf = (adapter: AgentAdapter): Promise<string | null> => {
+      let cliPath = cliPaths.get(adapter.name);
+      if (!cliPath) {
+        cliPath = adapter.detect(cliPathOverrides[adapter.name] ?? null).then((detection) => (detection.found && detection.path ? detection.path : null));
+        cliPaths.set(adapter.name, cliPath);
+      }
+      return cliPath;
+    };
+    const stopped = new Set<string>();
+    const stopForRecord = async (record: SessionRecord): Promise<void> => {
+      try {
+        const agentSessionId = record.agent_session_id;
+        if (!agentSessionId) return;
+        const adapter = agentRegistry.getBySessionType(record.session_type);
+        if (!adapter?.stopBackgroundSession) return;
+        const backgroundId = await backgroundSessionHoldingConversation({
+          adapter,
+          projectPath,
+          recordId: record.id,
+          agentSessionId,
+          cwd: record.cwd ?? null,
+          cliTarget: parseStoredCliTarget(record.cli_target),
+        });
+        if (!backgroundId || stopped.has(backgroundId)) return;
+        // Claimed before the first await below, so two records naming one
+        // conversation never stop it twice.
+        stopped.add(backgroundId);
+        const cliPath = await cliPathOf(adapter);
+        if (cliPath) await adapter.stopBackgroundSession({ agentSessionId: backgroundId, cliPath });
+      } catch (error) {
+        console.warn(`[TASK-REAP] could not stop a background session for record ${record.id.slice(0, 8)} before the reap (non-fatal):`, error);
+      }
+    };
+    const queue = new PQueue({ concurrency: BACKGROUND_SESSION_STOP_CONCURRENCY });
+    await Promise.all(records.map((record) => queue.add(() => stopForRecord(record))));
+  } catch (error) {
+    console.warn('[TASK-REAP] could not stop a background session before the reap (non-fatal):', error);
   }
 }
 

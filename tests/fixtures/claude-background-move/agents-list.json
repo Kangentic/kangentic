@@ -1,0 +1,31 @@
+[
+  {
+    "id": "a5d43424",
+    "cwd": "C:\\Users\\dev\\projects\\app\\.kangentic\\worktrees\\1",
+    "kind": "background",
+    "startedAt": 1793488181616,
+    "sessionId": "a5d43424-eaa8-4b41-b6e3-f4b758bc4de8",
+    "name": "Fork then background rig",
+    "state": "stopped"
+  },
+  {
+    "pid": 78436,
+    "cwd": "C:\\Users\\dev\\projects\\app",
+    "kind": "interactive",
+    "startedAt": 1793491071136,
+    "sessionId": "c32d75aa-9c51-4693-85d6-7b36c4a5658a",
+    "name": "954-ca",
+    "status": "busy"
+  },
+  {
+    "pid": 58004,
+    "id": "59769594",
+    "cwd": "C:\\Users\\dev\\projects\\app\\.kangentic\\worktrees\\2",
+    "kind": "background",
+    "startedAt": 1793491194567,
+    "sessionId": "59769594-7995-49c4-9410-5a1b408802b9",
+    "name": "Agents listing capture",
+    "status": "idle",
+    "state": "blocked"
+  }
+]

@@ -853,6 +853,38 @@ export interface AgentAdapter {
   locateResumeHistoryFile?(agentSessionId: string, cwd: string, place?: CliPlace | null): Promise<string | null>;
 
   /**
+   * Optional: stop the agent CLI's own background session that holds the
+   * conversation `agentSessionId`, when one is running. An agent CLI can move a
+   * terminal's conversation into a background session of its own (Claude
+   * Code's `/bg`), run by a process outside the task's PTY. Ending the PTY
+   * ends only the terminal's client, and a `--resume` would then run a second
+   * process on the conversation beside it.
+   *
+   * Called before a resume of the conversation (`reconcileResumeAgentSessionId`)
+   * and on a terminal transition before the leftover reap (`reapTaskLeftovers`),
+   * so the agent ends through the CLI's own stop rather than the reap's kill.
+   * Both call it only when the session record's own SessionStart hooks show the
+   * conversation started there (`statusFile.parseSessionStart`'s
+   * `inBackgroundSession`, `backgroundSessionHoldingConversation`), so an
+   * ordinary resume runs no CLI. `cliPath` is the CLI the spawn resolved, which
+   * also names its place (a WSL distro). Resolves true once the CLI's stop ran
+   * for a session holding the conversation, false when none did. Both callers
+   * go on either way. Never throws.
+   */
+  stopBackgroundSession?(options: { agentSessionId: string; cliPath: string }): Promise<boolean>;
+
+  /**
+   * Optional: the id a `--resume` should name to reach the conversation
+   * `agentSessionId`. Claude Code moves a conversation into a background session
+   * under a new id whose transcript holds no conversation until that session's
+   * first turn, so until then `--resume <new id>` answers "No conversation
+   * found" while the conversation it continued from still resumes. Returns
+   * `agentSessionId` itself whenever it resumes as it is or nothing better is
+   * proven. Never throws.
+   */
+  resolveResumableSessionId?(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<string>;
+
+  /**
    * Optional: prove that a conversation's history file no longer exists, so a
    * resume of it would fail ("No conversation found") and the spawn can start
    * fresh instead (`assessResumeConversation`, resume-conversation-guard.ts).

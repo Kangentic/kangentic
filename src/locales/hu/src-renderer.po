@@ -1480,9 +1480,8 @@ msgid "Restart to update"
 msgstr "Újraindítás a frissítéshez"
 
 #: src/renderer/App.tsx
-#, fuzzy
-msgid "Resume follows the conversation started by /clear."
-msgstr "A folytatás a /clear által indított beszélgetést követi."
+msgid "Resume now follows the agent's new conversation."
+msgstr ""
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts

@@ -3,10 +3,15 @@
  *
  * The status-file channel (Claude's statusline -> status.json) is the
  * authoritative, continuous id-report channel: its payload carries the CURRENT
- * session id on every write, and a mid-session fork (the user runs /clear,
- * Claude Code forks the conversation to a brand-new id) is visible ONLY here.
- * SessionStart/SessionEnd hooks empirically never fire at /clear (validated
- * across 1,557 real session dirs, CLI v2.1.187 through v2.1.220).
+ * session id on every write, so a mid-session move (the user runs /clear,
+ * Claude Code continues under a brand-new id) re-reports here.
+ *
+ * Every parser in this file lacks `statusFile.parseSessionStart`, so these
+ * cases pin the channel as such an adapter sees it: every id change is a
+ * switch. An adapter that declares it (Claude) switches only once a
+ * SessionStart hook that moves the conversation named the id, because more
+ * than one process can write one status file; that gate is pinned in
+ * session-telemetry-conversation-switch.test.ts.
  *
  * Contract pinned by this file:
  *  - The status-file channel is CHANGE-SENSITIVE: it fires onAgentSessionId on

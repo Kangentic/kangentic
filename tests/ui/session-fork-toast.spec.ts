@@ -3,9 +3,10 @@
  *
  * When a running session's agentSessionId flips from one non-null value to a
  * DIFFERENT non-null value on a SESSION_STATUS push, the live conversation
- * forked (Claude /clear moves the conversation to a brand-new session id and
- * the status-file reconcile re-reports it). App.tsx's onStatus handler shows
- * one info toast so the fork is never silent.
+ * moved (Claude /clear, or a fork into Claude Code's background daemon, moves
+ * it to a new session id; main follows once the agent's SessionStart hook
+ * names it). App.tsx's onStatus handler shows one info toast so the move is
+ * never silent. The copy names no slash command, since a fork raises it too.
  *
  * The null -> id flip (first capture after spawn) must stay quiet: every
  * session starts with agentSessionId null on the wire and captures its id
@@ -227,7 +228,7 @@ test.describe('Conversation-fork toast (agentSessionId flip on a running session
     const forkToast = page.locator('[data-testid="toast"]').filter({ hasText: FORK_TOAST_TEXT });
     await expect(forkToast).toBeVisible({ timeout: 5000 });
     await expect(forkToast.getByTestId('toast-title')).toHaveText('Conversation moved');
-    await expect(forkToast.getByTestId('toast-body')).toHaveText('Resume follows the conversation started by /clear.');
+    await expect(forkToast.getByTestId('toast-body')).toHaveText("Resume now follows the agent's new conversation.");
 
     // A repeat push with the SAME (already-reconciled) id must not re-toast:
     // after the first upsert the store already holds agent-b.

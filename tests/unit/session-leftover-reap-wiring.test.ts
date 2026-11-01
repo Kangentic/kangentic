@@ -41,6 +41,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import type { Task, Swimlane } from '../../src/shared/types';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
@@ -50,7 +51,7 @@ import type { TaskRepository } from '../../src/main/db/repositories/task-reposit
 // Shared call-order tracker. Reset per test.
 // ---------------------------------------------------------------------------
 
-const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, latestSession } = vi.hoisted(() => ({
+const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, mockListForTaskNewestFirst, latestSession } = vi.hoisted(() => ({
   callOrder: [] as string[],
   // The task's newest session record, as `getLatestForTask` answers it. Null
   // (no record) unless a test sets one; a held pause keeps a move from spawning.
@@ -59,6 +60,8 @@ const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, latestSessio
   // open database, and the `cli_target` rows its sessions recorded.
   mockGetOpenProjectDb: vi.fn((_projectId: string): unknown => null),
   mockListCliTargetsOfTasks: vi.fn((_taskIds: readonly string[]): string[] => []),
+  // The task's session records, newest first (`stopTaskBackgroundSessions`).
+  mockListForTaskNewestFirst: vi.fn((_taskId: string): unknown[] => []),
 }));
 
 // ---------------------------------------------------------------------------
@@ -81,6 +84,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     // No own-record row, so the capture sites fall back to getLatestForTask.
     findByAnyId = vi.fn(() => undefined);
     listCliTargetsOfTasks = (taskIds: readonly string[]) => mockListCliTargetsOfTasks(taskIds);
+    listForTaskNewestFirst = (taskId: string) => mockListForTaskNewestFirst(taskId);
     getLatestForTask = vi.fn(() => latestSession.record);
     getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();
@@ -198,6 +202,10 @@ vi.mock('../../src/main/ipc/helpers/task-windows', () => ({
 // ---------------------------------------------------------------------------
 
 import { cleanupTaskSession, cleanupTaskResources, reapTaskLeftovers, leftoverSweepOptions } from '../../src/main/ipc/helpers/task-cleanup';
+import { agentRegistry } from '../../src/main/agent/agent-registry';
+import { ClaudeStatusParser } from '../../src/main/agent/adapters/claude/status-parser';
+import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
+import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 import { clearSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
 
@@ -301,6 +309,8 @@ beforeEach(() => {
   mockGetOpenProjectDb.mockReturnValue(null);
   mockListCliTargetsOfTasks.mockReset();
   mockListCliTargetsOfTasks.mockReturnValue([]);
+  mockListForTaskNewestFirst.mockReset();
+  mockListForTaskNewestFirst.mockReturnValue([]);
 });
 
 // ---------------------------------------------------------------------------
@@ -455,6 +465,311 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
 // records. Here the records name a distro, and the REAL wslCliDistrosOf reads
 // them through the project's open database. It reads them on Windows only.
 // ---------------------------------------------------------------------------
+
+// ---------------------------------------------------------------------------
+// A conversation the agent CLI moved into its own background session (Claude
+// Code's `/bg`) outlives the task's PTY. A terminal transition stops it through
+// the CLI's own stop BEFORE the reap, which would otherwise kill it with no exit
+// of its own (measured on 2.1.316: `claude stop` ran its SessionEnd hook).
+// ---------------------------------------------------------------------------
+
+describe('a conversation in the agent CLI\'s own background session stops before the reap', () => {
+  const RECORD_ID = 'record-bg-0001';
+  const MOVED = '0005843e-b5d5-4bc9-8a45-38ae97f6cdc2';
+  const CLI_PATH = 'C:\\Users\\dev\\.local\\bin\\claude.exe';
+  /** The conversation a record stored before a background move, in the stale-id cases. */
+  const STALE = '6e21471d-887a-42d3-97d3-fcfedac9dd51';
+  /** Only passed through to the move check, never read from disk. */
+  const RECORD_CWD = '/mock/project/.kangentic/worktrees/bg-1';
+  let projectPath: string;
+  let adapter: AgentAdapter;
+  let detect: ReturnType<typeof vi.fn>;
+  let confirmsBackgroundMove: ReturnType<typeof vi.fn>;
+  let stopBackgroundSession: ReturnType<typeof vi.fn>;
+
+  function writeEvents(lines: string[], recordId = RECORD_ID): void {
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', recordId);
+    fs.mkdirSync(sessionDir, { recursive: true });
+    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), lines.map((line) => line + '\n').join(''), 'utf8');
+  }
+
+  /** A distinct, UUID-shaped conversation id per index. */
+  function conversationId(index: number): string {
+    return `0000000${index}-b5d5-4bc9-8a45-38ae97f6cdc2`;
+  }
+
+  /** A session record as the repository hands it back, stored on `agentSessionId`. */
+  function recordOf(recordId: string, agentSessionId: string, extra: Record<string, unknown> = {}): Record<string, unknown> {
+    return { id: recordId, task_id: 'task-bg-1', agent_session_id: agentSessionId, session_type: 'claude_agent', ...extra };
+  }
+
+  /** Events showing the record's own stored conversation in a background session (a `fork` SessionStart naming it). */
+  function writeMovedRecordEvents(recordId: string, agentSessionId: string): void {
+    writeEvents([claudeSessionStartLine(agentSessionId, 'fork', 2)], recordId);
+  }
+
+  /** The `agentSessionId` of every `stopBackgroundSession` call so far, sorted (stops run two at a time, so their order varies). */
+  function stoppedConversationIds(): string[] {
+    return stopBackgroundSession.mock.calls
+      .map((call) => (call[0] as { agentSessionId: string }).agentSessionId)
+      .sort();
+  }
+
+  function makeContext(sessionManager: MockSessionManager, stopLeftoverProcesses = true): IpcContext {
+    return {
+      sessionManager,
+      currentProjectId: null,
+      currentProjectPath: null,
+      projectRepo: { list: vi.fn(() => [{ id: 'proj-bg', path: projectPath }]) },
+      configManager: {
+        load: vi.fn(() => ({ stopLeftoverProcesses })),
+        getEffectiveConfig: vi.fn(() => ({ agent: { cliPaths: {} }, git: { autoCleanup: false } })),
+      },
+      mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
+    } as unknown as IpcContext;
+  }
+
+  beforeEach(() => {
+    projectPath = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-bg-reap-'));
+    mockGetOpenProjectDb.mockImplementation((projectId: string) => (projectId === 'proj-bg' ? { name: 'open-project-db' } : null));
+    mockListForTaskNewestFirst.mockReturnValue([
+      { id: RECORD_ID, task_id: 'task-bg-1', agent_session_id: MOVED, session_type: 'claude_agent' },
+    ]);
+    stopBackgroundSession = vi.fn(async () => { callOrder.push('stopBackgroundSession'); return true; });
+    detect = vi.fn(async () => ({ found: true, path: CLI_PATH, version: '2.1.316' }));
+    // Not a move by default; the stale-id cases say what the CLI's record shows.
+    confirmsBackgroundMove = vi.fn(async () => false);
+    adapter = {
+      name: 'claude',
+      runtime: {
+        statusFile: {
+          parseStatus: () => null,
+          parseEvent: () => null,
+          isFullRewrite: true,
+          parseSessionStart: ClaudeStatusParser.parseSessionStart,
+          confirmsBackgroundMove,
+        },
+      },
+      detect,
+      stopBackgroundSession,
+    } as unknown as AgentAdapter;
+    vi.spyOn(agentRegistry, 'getBySessionType').mockImplementation((sessionType) => (sessionType === 'claude_agent' ? adapter : undefined));
+  });
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+    fs.rmSync(projectPath, { recursive: true, force: true });
+  });
+
+  it('stops the background session holding the conversation, then reaps', async () => {
+    writeEvents([claudeSessionStartLine('6e21471d-887a-42d3-97d3-fcfedac9dd51', 'resume', 1), claudeSessionStartLine(MOVED, 'fork', 2)]);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: MOVED, cliPath: CLI_PATH });
+    expect(callOrder).toEqual(['stopBackgroundSession', 'reap']);
+  });
+
+  it('stops it with "Stop leftover processes" off too: it is the task\'s own agent, not a leftover', async () => {
+    writeEvents([claudeSessionStartLine('6e21471d-887a-42d3-97d3-fcfedac9dd51', 'startup', 1), claudeSessionStartLine(MOVED, 'fork', 2)]);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager, false), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledWith(projectPath, expect.anything(), expect.objectContaining({ stop: false }));
+  });
+
+  it('runs no CLI for a conversation that never moved into a background session', async () => {
+    writeEvents([claudeSessionStartLine(MOVED, 'resume', 1)]);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stopBackgroundSession).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('checks only each task\'s 3 newest records', async () => {
+    const indexes = [1, 2, 3, 4, 5];
+    // Newest first, each moved into a background session under its own stored id.
+    for (const index of indexes) writeMovedRecordEvents(`record-bg-${index}`, conversationId(index));
+    mockListForTaskNewestFirst.mockReturnValue(indexes.map((index) => recordOf(`record-bg-${index}`, conversationId(index))));
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stoppedConversationIds()).toEqual([1, 2, 3].map((index) => conversationId(index)));
+    expect(callOrder).toEqual(['stopBackgroundSession', 'stopBackgroundSession', 'stopBackgroundSession', 'reap']);
+  });
+
+  it('stops a conversation two records name once', async () => {
+    writeMovedRecordEvents('record-bg-a', MOVED);
+    writeMovedRecordEvents('record-bg-b', MOVED);
+    mockListForTaskNewestFirst.mockReturnValue([recordOf('record-bg-a', MOVED), recordOf('record-bg-b', MOVED)]);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: MOVED, cliPath: CLI_PATH });
+    expect(callOrder).toEqual(['stopBackgroundSession', 'reap']);
+  });
+
+  it('detects the CLI once per adapter however many records need a stop', async () => {
+    const indexes = [1, 2, 3];
+    for (const index of indexes) writeMovedRecordEvents(`record-bg-${index}`, conversationId(index));
+    mockListForTaskNewestFirst.mockReturnValue(indexes.map((index) => recordOf(`record-bg-${index}`, conversationId(index))));
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    // Three distinct conversations stopped, through one detection.
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(3);
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(callOrder.at(-1)).toBe('reap');
+  });
+
+  it('stops nothing when the CLI is not found, and still reaps', async () => {
+    writeEvents([claudeSessionStartLine(MOVED, 'fork', 2)]);
+    detect.mockResolvedValue({ found: false });
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    // The record's events do show a move, so the CLI was looked for.
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(stopBackgroundSession).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('still reaps when the stop throws', async () => {
+    writeEvents([claudeSessionStartLine(MOVED, 'fork', 2)]);
+    stopBackgroundSession.mockImplementation(async () => {
+      callOrder.push('stopBackgroundSession');
+      throw new Error('claude stop failed');
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalled();
+    expect(callOrder).toEqual(['stopBackgroundSession', 'reap']);
+  });
+
+  it('still reaps when detecting the CLI throws', async () => {
+    writeEvents([claudeSessionStartLine(MOVED, 'fork', 2)]);
+    detect.mockRejectedValue(new Error('spawn failed'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    expect(detect).toHaveBeenCalledTimes(1);
+    expect(stopBackgroundSession).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('skips an adapter that cannot stop a background session, and still reaps', async () => {
+    writeEvents([claudeSessionStartLine(MOVED, 'fork', 2)]);
+    delete adapter.stopBackgroundSession;
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    // No CLI is looked for either.
+    expect(detect).not.toHaveBeenCalled();
+    expect(stopBackgroundSession).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('follows a record stored on a stale id to the background session the CLI confirms it moved to', async () => {
+    writeEvents([claudeSessionStartLine(STALE, 'resume', 1), claudeSessionStartLine(MOVED, 'fork', 2)]);
+    mockListForTaskNewestFirst.mockReturnValue([
+      recordOf(RECORD_ID, STALE, { cwd: RECORD_CWD, cli_target: '{"kind":"wsl","distro":"Ubuntu"}' }),
+    ]);
+    confirmsBackgroundMove.mockResolvedValue(true);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    // The move check gets the record's cwd and its parsed target, not the raw column.
+    expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+      cwd: RECORD_CWD,
+      fromAgentSessionId: STALE,
+      toAgentSessionId: MOVED,
+      cliTarget: { kind: 'wsl', distro: 'Ubuntu' },
+    });
+    expect(stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: MOVED, cliPath: CLI_PATH });
+    expect(callOrder).toEqual(['stopBackgroundSession', 'reap']);
+  });
+
+  it('stops nothing for a record stored on a stale id when the CLI says the other session is a /fork copy', async () => {
+    writeEvents([claudeSessionStartLine(STALE, 'resume', 1), claudeSessionStartLine(MOVED, 'fork', 2)]);
+    mockListForTaskNewestFirst.mockReturnValue([recordOf(RECORD_ID, STALE, { cwd: RECORD_CWD })]);
+    confirmsBackgroundMove.mockResolvedValue(false);
+    const sessionManager = makeSessionManager();
+
+    await reapTaskLeftovers(makeContext(sessionManager), projectPath, [{ id: 'task-bg-1', worktree_path: null }]);
+
+    // Asked, with no target for a record that ran on this machine, and refused.
+    expect(confirmsBackgroundMove).toHaveBeenCalledWith({
+      cwd: RECORD_CWD,
+      fromAgentSessionId: STALE,
+      toAgentSessionId: MOVED,
+      cliTarget: null,
+    });
+    expect(stopBackgroundSession).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('runs no more than 2 stops at once over a bulk reap', async () => {
+    const tasks = [1, 2, 3, 4].map((index) => ({ id: `task-bg-${index}`, worktree_path: null }));
+    const recordByTask = new Map<string, Record<string, unknown>>();
+    tasks.forEach((task, position) => {
+      const index = position + 1;
+      writeMovedRecordEvents(`record-bg-t${index}`, conversationId(index));
+      recordByTask.set(task.id, recordOf(`record-bg-t${index}`, conversationId(index), { task_id: task.id }));
+    });
+    mockListForTaskNewestFirst.mockImplementation((taskId: string) => [recordByTask.get(taskId)]);
+
+    let releaseGate!: () => void;
+    const gate = new Promise<void>((resolve) => { releaseGate = resolve; });
+    let inFlight = 0;
+    let peak = 0;
+    stopBackgroundSession.mockImplementation(async () => {
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      await gate;
+      inFlight -= 1;
+      return true;
+    });
+    const sessionManager = makeSessionManager();
+
+    const reaping = reapTaskLeftovers(makeContext(sessionManager), projectPath, tasks);
+    try {
+      await vi.waitFor(() => expect(stopBackgroundSession.mock.calls.length).toBeGreaterThanOrEqual(2));
+      // Intentional fixed wait: a third stop that must NOT start cannot be polled
+      // for. Each stop begins only after real file reads, so this is the budget
+      // an unbounded fan-out needs to get its other two in flight.
+      await new Promise((resolve) => setTimeout(resolve, 200));
+      expect(stopBackgroundSession).toHaveBeenCalledTimes(2);
+      expect(inFlight).toBe(2);
+    } finally {
+      releaseGate();
+    }
+    await reaping;
+
+    expect(stopBackgroundSession).toHaveBeenCalledTimes(4);
+    expect(peak).toBe(2);
+    expect(inFlight).toBe(0);
+    expect(sessionManager.reapTaskProcesses).toHaveBeenCalledTimes(1);
+  });
+});
 
 describe('the distros a reap also runs in (real wslCliDistrosOf)', () => {
   const PROJECT_PATH = '/mock/project';

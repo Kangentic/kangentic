@@ -640,6 +640,8 @@ export class TransitionEngine {
           sessionRepo: this.sessionRepo,
           // The conversation resumes where this spawn's CLI runs.
           place: cliTarget,
+          // Stops the CLI's own background session holding the conversation, if any.
+          cliPath: detection.path,
         })
       : null;
 

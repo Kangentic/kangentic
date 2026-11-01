@@ -147,6 +147,36 @@ describe('assessResumeConversation - never-started', () => {
     await expect(assess({})).resolves.toBe('unknown');
   });
 
+  it('ignores a status report about another conversation, as a background spare writing the same file leaves', async () => {
+    // Claude Code's background daemon ran an empty spare with the task's own
+    // --settings, so the spare's write (zero totals, a transcript it never
+    // wrote) can be the last one in the record's status file. The events file
+    // still holds the resumed conversation's own SessionStart and turns.
+    const spareId = '9dfc0083-eb3a-4c38-bb6c-c4d991525d2b';
+    writeStatusFile({
+      raw: JSON.stringify({
+        session_id: spareId,
+        transcript_path: path.join(projectsRoot, '-work-project', `${spareId}.jsonl`),
+        model: { id: 'claude-opus-4-8', display_name: 'Opus 4.8' },
+        cost: { total_cost_usd: 0, total_duration_ms: 1388, total_api_duration_ms: 0 },
+        context_window: { total_input_tokens: 0, total_output_tokens: 0, context_window_size: 1000000, current_usage: null, used_percentage: null },
+      }),
+    });
+    const sessionDir = path.join(projectPath, '.kangentic', 'sessions', RECORD_ID);
+    fs.writeFileSync(path.join(sessionDir, 'events.jsonl'), [
+      JSON.stringify({
+        ts: 1,
+        type: 'session_start',
+        hookContext: JSON.stringify({ session_id: AGENT_SESSION_ID, transcript_path: transcriptPath, hook_event_name: 'SessionStart', source: 'resume' }),
+      }),
+      JSON.stringify({ ts: 2, type: 'tool_start', tool: 'Read' }),
+    ].join('\n') + '\n', 'utf8');
+    fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
+    fs.writeFileSync(transcriptPath, '{"type":"user"}\n', 'utf8');
+
+    await expect(assess({})).resolves.toBe('unknown');
+  });
+
   it('never reads zero totals on a row as no turns', async () => {
     // The path is written on the first status tick, before any metrics
     // capture, so a row with a path and zero totals proves nothing. Without the
