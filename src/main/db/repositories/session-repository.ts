@@ -234,10 +234,12 @@ export class SessionRepository {
     id: string,
     expectedFrom: SessionRecordStatus | SessionRecordStatus[],
     to: SessionRecordStatus,
-    extra?: { exit_code?: number; suspended_at?: string; exited_at?: string; suspended_by?: SuspendedBy | null },
+    extra?: { exit_code?: number; suspended_at?: string; exited_at?: string; suspended_by?: SuspendedBy | null; agent_session_id?: null },
   ): boolean {
     const sets = ['status = ?'];
     const params: unknown[] = [to];
+
+    if (extra?.agent_session_id === null) sets.push('agent_session_id = NULL');
 
     if (extra?.exit_code !== undefined) {
       sets.push('exit_code = ?');
