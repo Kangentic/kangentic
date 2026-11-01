@@ -174,24 +174,32 @@ const SESSION_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 
 /**
  * The session this transcript says the conversation moved on to: the id its
- * LAST record, `continued-in`, names, or null. Only the last record counts: a
- * `--resume` of the conversation the move left appends to it, and from then on
- * that transcript holds the conversation again.
+ * last `continued-in` record names, while no turn follows it, or null.
+ * Measured on 2.1.316: `/bg` writes bookkeeping after the record (`cost-state`,
+ * `file-history-snapshot`, `last-prompt`), so the record is not the last one.
+ * A turn after it (a `user` or `assistant` record) means a `--resume` of the
+ * conversation the move left took it up again, and that transcript holds it.
  */
 async function continuedInOf(transcriptPath: string): Promise<string | null> {
-  const lastRecord = parseJsonlRecords(await readTailBytes(transcriptPath, CONTINUED_IN_TAIL_BYTES), false).at(-1);
-  if (lastRecord?.type !== 'continued-in') return null;
-  const nextId = lastRecord.continuedInSessionId;
-  return typeof nextId === 'string' && SESSION_ID_SHAPE.test(nextId) ? nextId : null;
+  const records = parseJsonlRecords(await readTailBytes(transcriptPath, CONTINUED_IN_TAIL_BYTES), false);
+  for (let index = records.length - 1; index >= 0; index--) {
+    const record = records[index];
+    if (record.type === 'user' || record.type === 'assistant') return null;
+    if (record.type !== 'continued-in') continue;
+    const nextId = record.continuedInSessionId;
+    return typeof nextId === 'string' && SESSION_ID_SHAPE.test(nextId) ? nextId : null;
+  }
+  return null;
 }
 
 /**
  * The background session `/bg` moved the conversation `agentSessionId` into,
  * by Claude's own files alone (`backgroundSessionOf`), or null. Two cases:
  *
- * - The conversation's own transcript ends by continuing in another session:
- *   the conversation moved there, and the session that holds it now is the
- *   last one the chain of such records names. A terminal stopped between
+ * - The conversation's own transcript continues in another session, with no
+ *   turn after that record (`continuedInOf`): the conversation moved there,
+ *   and the session that holds it now is the last one the chain of such
+ *   records names. A terminal stopped between
  *   `/bg` and the live switch still holds this id, and so does a row Earlier
  *   offers for a move whose background session wrote no transcript.
  * - A transcript in its folder ends by continuing in it: the conversation IS

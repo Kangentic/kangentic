@@ -554,13 +554,26 @@ describe('resolveClaudeResumableSessionId', () => {
       await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(secondMove);
     });
 
-    it('names nothing for a conversation resumed after the move, a /fork copy, an ordinary conversation, or a missing transcript', async () => {
-      writeTranscript(MOVED, metadataOnly(MOVED));
-      // `--resume` of the conversation the move left appends to it: it holds the conversation again.
+    it('names the moved-to session past the bookkeeping /bg writes after the record', async () => {
       writeTranscript(ORIGINAL, [
         ...withTurn(ORIGINAL),
         { type: 'continued-in', continuedInSessionId: MOVED },
-        { type: 'permission-mode', permissionMode: 'default', sessionId: ORIGINAL },
+        { type: 'cost-state', totalCostUSD: 0.03 },
+        { type: 'file-history-snapshot', snapshot: { trackedFileBackups: {} } },
+        { type: 'last-prompt', lastPrompt: 'Reply with the single word ok.' },
+      ]);
+
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+    });
+
+    it('names nothing for a conversation that took a turn after the move, a /fork copy, an ordinary conversation, or a missing transcript', async () => {
+      writeTranscript(MOVED, metadataOnly(MOVED));
+      // A `--resume` of the conversation the move left took it up again: its transcript holds it.
+      writeTranscript(ORIGINAL, [
+        ...withTurn(ORIGINAL),
+        { type: 'continued-in', continuedInSessionId: MOVED },
+        { type: 'cost-state', totalCostUSD: 0.03 },
+        ...withTurn(ORIGINAL),
       ]);
       writeTranscript(OTHER, withTurn(OTHER));
       const forkCopy = 'c0f9e5a1-1111-4d5c-9b1e-2a6f0d3c4b5e';
@@ -628,7 +641,7 @@ describe('resolveClaudeResumableSessionId', () => {
     });
   });
 
-  // The two files under tests/fixtures/claude-background-move/ are sanitized live
+  // The transcript files under tests/fixtures/claude-background-move/ are live
   // captures from Claude Code 2.1.316 after `/bg`. The synthetic transcripts above
   // prove the logic; these prove it reads what Claude Code really writes, so a fixture
   // written to match the code cannot hide a wrong record type or field name.
@@ -672,6 +685,22 @@ describe('resolveClaudeResumableSessionId', () => {
 
       await expect(claudeBackgroundSessionOf({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_FORK);
       await expect(resolveClaudeResumableSessionId({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_MOVED);
+    });
+
+    // moved-transcript-tail-after-bg.jsonl is the end of a terminal's transcript
+    // after /bg, captured in a /preview: the continued-in record, then the
+    // bookkeeping /bg wrote after it. That terminal was open at a quit, its
+    // background session wrote no transcript, and Earlier offered only this
+    // conversation. Red-green: reading the LAST record as the move missed it,
+    // and the resume left the background session running.
+    it('names the background session from a transcript /bg wrote bookkeeping after the move into', async () => {
+      const capturedLeft = '657761ac-b3a8-45aa-a679-2a2e427de508';
+      const capturedBackground = '96502751-8955-4743-9f1a-2226c6de1521';
+      const userRecord = JSON.stringify({ type: 'user', message: { role: 'user', content: 'Reply with the single word ok.' }, sessionId: capturedLeft }) + '\n';
+      const tail = fs.readFileSync(path.join(FIXTURE_FOLDER, 'moved-transcript-tail-after-bg.jsonl'));
+      fs.writeFileSync(path.join(projectsFolder, `${capturedLeft}.jsonl`), Buffer.concat([Buffer.from(userRecord, 'utf8'), tail]));
+
+      await expect(claudeBackgroundSessionOf({ agentSessionId: capturedLeft, cwd: 'C:\\work' })).resolves.toBe(capturedBackground);
     });
   });
 });

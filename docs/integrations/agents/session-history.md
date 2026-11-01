@@ -651,9 +651,10 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    no session record, and whose events file is deleted with its session directory.
    `backgroundSessionOf` reads the agent's own transcripts instead, with no CLI, and names the
    background session from either side of the move. Claude's names the session the
-   conversation's own transcript ends by continuing in (its LAST record, so a `--resume` of the
-   conversation the move left, which appends to it, ends that), or the conversation itself when
-   another transcript in its folder ends by continuing in it. Listing and searching a folder of
+   conversation's own transcript continues in, while no turn follows that record, or the
+   conversation itself when another transcript in its folder ends by continuing in it. `/bg`
+   writes bookkeeping after the record (`cost-state`, `file-history-snapshot`, `last-prompt`),
+   and a turn after it means a `--resume` of the conversation the move left took it up again. Listing and searching a folder of
    156 transcripts took 6 to 11 ms. The background session's own transcript need not exist: in a
    `/preview` one appeared 1.7 s after the move's record, one left idle for 30 s wrote none, and
    two stopped within seconds had none. So the search starts from the folder the cwd maps to,
