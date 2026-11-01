@@ -28,6 +28,7 @@ import {
   isReadOnlyVolumeError,
   isResourceUnavailableError,
   isPrereleaseWithNoMatchingRelease,
+  stripUrlQueries,
 } from '../../src/main/updater';
 
 /**
@@ -120,6 +121,38 @@ describe('isTransientUpdaterError', () => {
     });
   });
 
+  /**
+   * DESKTOP-24. `doDownload` hands its callback a plain Error, so the HTTP_ERROR_ cases above
+   * only pass because they set a code by hand: a real download failure has none,
+   * and these go through the message. The URL is a placeholder.
+   */
+  describe('A download failure, which carries no code', () => {
+    const downloadFailure = (status: number): Error => makeError({
+      message: `Cannot download "https://assets.example.test/app.zip?sig=fake&jwt=fake", status ${status}: Status text`,
+    });
+
+    it.each([618, 500, 502, 503, 504, 408, 429])('classifies status %s as transient', (status) => {
+      const error = downloadFailure(status);
+      expect((error as NodeJS.ErrnoException).code).toBeUndefined();
+      expect(isTransientUpdaterError(error)).toBe(true);
+    });
+
+    it.each([400, 401, 403, 404, 410])('keeps status %s loud', (status) => {
+      expect(isTransientUpdaterError(downloadFailure(status))).toBe(false);
+    });
+
+    it('does not read a status out of the URL itself', () => {
+      const error = makeError({
+        message: 'Cannot download "https://assets.example.test/status 503:/app.zip", status 404: Not Found',
+      });
+      expect(isTransientUpdaterError(error)).toBe(false);
+    });
+
+    it('does not claim another sentence that ends in the same status', () => {
+      expect(isTransientUpdaterError(makeError({ message: 'Unexpected status 503: Busy' }))).toBe(false);
+    });
+  });
+
   describe('Free-form transient messages', () => {
     it('classifies "Request has been aborted by the server" as transient', () => {
       expect(
@@ -196,6 +229,30 @@ describe('isTransientUpdaterError', () => {
       });
       expect(isTransientUpdaterError(wrapped)).toBe(false);
     });
+  });
+});
+
+describe('stripUrlQueries', () => {
+  it('removes a signed query and keeps the host, the path and the rest of the sentence', () => {
+    expect(stripUrlQueries(
+      'Cannot download "https://assets.example.test/1/app.zip?sp=r&sig=fake%2Bvalue&jwt=a.b.c", status 403: Forbidden',
+    )).toBe('Cannot download "https://assets.example.test/1/app.zip", status 403: Forbidden');
+  });
+
+  it('removes a fragment, and handles every URL in the text', () => {
+    expect(stripUrlQueries('from http://a.example.test/x#token to https://b.example.test/y?q=1 done'))
+      .toBe('from http://a.example.test/x to https://b.example.test/y done');
+  });
+
+  it('stops at a single quote too', () => {
+    expect(stripUrlQueries("open 'https://a.example.test/x?sig=fake' failed"))
+      .toBe("open 'https://a.example.test/x' failed");
+  });
+
+  it('leaves text with no URL query unchanged', () => {
+    for (const text of ['Is this a question? Yes', 'https://a.example.test/x', 'status 618: expired', '']) {
+      expect(stripUrlQueries(text)).toBe(text);
+    }
   });
 });
 
@@ -722,6 +779,64 @@ describe('against the installed electron-updater source', () => {
     // renamed, the gate goes blind and this goes red instead.
     expect(gitHubProviderSource).toContain('No published versions on GitHub');
     expect(gitHubProviderSource).toContain('ERR_UPDATER_NO_PUBLISHED_VERSIONS');
+  });
+
+  /**
+   * The DESKTOP-24 gate matches doDownload's message by hand because that throw
+   * has no code. Upstream may fix that (electron-builder#10548) or reword it, and
+   * either would leave the gate quietly blind, which is how this bug started: the
+   * HTTP_ERROR_ branch looked covered and could never match a download. So this
+   * renders the REAL template and runs the predicate on the result. Resolved from
+   * electron-updater's own directory, because that is the copy it loads.
+   */
+  describe('doDownload, in the builder-util-runtime electron-updater loads', () => {
+    const runtimeRequire = createRequire(requireFromTest.resolve('electron-updater'));
+    const httpExecutorSource = fs.readFileSync(
+      path.join(path.dirname(runtimeRequire.resolve('builder-util-runtime')), 'httpExecutor.js'),
+      'utf-8',
+    );
+    const templateMatch = /options\.callback\(new Error\(`(Cannot download [^`]*)`\)\)/.exec(httpExecutorSource);
+
+    const renderedMessage = (statusCode: number): string => (templateMatch as RegExpExecArray)[1]
+      .replace('${requestOptions.protocol || "https:"}', 'https:')
+      .replace('${requestOptions.hostname}', 'assets.example.test')
+      .replace('${requestOptions.path}', '/app.zip?sig=fake&jwt=fake')
+      .replace('${response.statusCode}', String(statusCode))
+      .replace('${response.statusMessage}', 'Status text');
+
+    it('still hands its callback a plain Error, so there is no code for the HTTP_ERROR_ branch to read', () => {
+      expect(templateMatch).not.toBeNull();
+    });
+
+    it('renders with no placeholder left, so the fixture below is the real text', () => {
+      expect(renderedMessage(618)).not.toContain('${');
+    });
+
+    it.each([618, 503])('is transient at status %s through the real template', (statusCode) => {
+      expect(isTransientUpdaterError(makeError({ message: renderedMessage(statusCode) }))).toBe(true);
+    });
+
+    it.each([403, 404])('stays loud at status %s through the real template', (statusCode) => {
+      expect(isTransientUpdaterError(makeError({ message: renderedMessage(statusCode) }))).toBe(false);
+    });
+
+    it('carries the query in the text that the updater reports, which is why stripUrlQueries exists', () => {
+      const message = renderedMessage(403);
+      expect(message).toContain('sig=fake');
+      expect(stripUrlQueries(message)).not.toContain('sig=');
+      expect(stripUrlQueries(message)).toContain('https://assets.example.test/app.zip"');
+    });
+  });
+
+  it('still logs an emitted error through its own logger, which is the breadcrumb route', () => {
+    // updaterLogger has to strip a URL query because of this listener: it runs
+    // ahead of ours and writes the whole stack. If it goes, the strip in
+    // tagUpdaterLine is only guarding the Cannot download differentially lines.
+    const appUpdaterSource = fs.readFileSync(
+      path.join(updaterOutDir, 'AppUpdater.js'),
+      'utf-8',
+    );
+    expect(appUpdaterSource).toContain('this._logger.error(`Error: ${error.stack || error.message}`)');
   });
 
   it('still derives allowPrerelease from the running version', () => {

@@ -49,7 +49,7 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
-import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
+import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -2286,46 +2286,14 @@ app.whenReady().then(async () => {
           crashCount: String(pendingGpuEscalation.count),
         },
         // Content goes in a context, never a tag, matching restart-policy.ts.
-        // previousRunExit separates the two shapes seen so far: 'abrupt'
-        // means the escalating run ended in a browser-process kill
-        // (DESKTOP-W's shape); 'clean' or 'failsafe' means Chromium
-        // recovered on its own (DESKTOP-15's). TWO feature-status reads,
-        // deliberately not one: featureStatusAtEscalation is what Chromium's
-        // GPU mode was at the record's latest write, a death or a fallback
-        // (captured back then); featureStatusOnReport is what it is on THIS
-        // boot, which may already differ (a machine that recovers on its own,
-        // or one still stuck) - reporting only the live read would silently
-        // claim to describe the failure while actually describing whatever
-        // came up afterwards.
         {
-          gpu_process: {
-            reason: pendingGpuEscalation.reason,
-            exitCode: pendingGpuEscalation.exitCode,
-            count: pendingGpuEscalation.count,
-            // The deaths that counted as GPU faults. `count` includes kills
-            // and session-teardown exits, which the recovery ignores, so the
-            // gap between the two says how much of the record was noise.
-            faultDeathCount: gpuFaultSummary.faultCount,
-            firstAt: pendingGpuEscalation.firstAt,
-            lastAt: pendingGpuEscalation.lastAt,
-            escalatedInVersion: pendingGpuEscalation.appVersion,
-            featureStatusAtEscalation: pendingGpuEscalation.featureStatus,
+          gpu_process: buildGpuProcessContext(pendingGpuEscalation, {
             featureStatusOnReport: app.getGPUFeatureStatus(),
             previousRunExit: previousRunProps.lastRunExit ?? 'unknown',
-            // The SEQUENCE, which is the thing a single end-state snapshot
-            // could never say: how Chromium walked its fallback ladder. Each
-            // entry names the rung its death left behind, so the death that
-            // triggered a fallback already reads the lower one. This is what
-            // the next occurrence needs for anyone to name a cause.
-            deaths: pendingGpuEscalation.deaths,
-            // Each step down the ladder that Chromium announced, which on a
-            // launch-failure ladder is the only trace of the incident. On
-            // Linux each step carries whether the GPU's zygote was alive.
-            modeChanges: pendingGpuEscalation.modeChanges,
-            gpuInfoOnReport: summarizeGpuInfo(gpuInfoOnReport),
+            gpuInfoOnReport,
             killedTheLastRun,
             softwareRenderingEngaged: graphicsMode.engagedNow,
-          },
+          }),
         },
       );
     }

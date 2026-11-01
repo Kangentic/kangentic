@@ -29,9 +29,48 @@ export function manifestPath(): string {
   return path.join(process.resourcesPath, 'app-update.yml');
 }
 
+/** A URL's query or fragment, up to the whitespace or quote that ends the URL. */
+const URL_QUERY_PATTERN = /(\bhttps?:\/\/[^\s"'?#]*)[?#][^\s"']*/gi;
+
+/**
+ * Remove the query and fragment from every URL in `text`, keeping the host and
+ * path a triage reads.
+ *
+ * A release asset downloads from a signed link, so a download failure's text
+ * carries `sig=` and `jwt=`. That text leaves the app by three routes, and this
+ * is applied on each: the `[electron-updater]` log line, the `app_error` count,
+ * and the Sentry report. The breadcrumb policy keeps URLs in a console line, so
+ * it does not catch this.
+ */
+export function stripUrlQueries(text: string): string {
+  return text.replace(URL_QUERY_PATTERN, '$1');
+}
+
 function tagUpdaterLine(message: unknown): string {
-  // breadcrumb-ok: electron-updater's own text (versions, feed URLs, cache paths), whose paths the policy redacts
-  return `[electron-updater] ${String(message)}`;
+  // Stripped here rather than in the 'error' handler below. AppUpdater's
+  // constructor registers its own 'error' listener, which logs `error.stack`
+  // through this logger before our listener runs, and it is a kept breadcrumb
+  // that rides the next event of any kind, even after a suppressed failure.
+  // breadcrumb-ok: electron-updater's own text (versions, feed URLs, cache paths), whose paths the policy redacts and whose URL queries are stripped above
+  return `[electron-updater] ${stripUrlQueries(String(message))}`;
+}
+
+/**
+ * `error` with the query removed from every URL in its message and stack, or
+ * `error` itself when neither holds one. A copy, so upstream's object stays as
+ * it was thrown, and a copy of the stack too, because the issue groups on those
+ * frames. Sentry reads the frames from `stack` and the title from `message`.
+ */
+function withoutUrlQueries(error: Error): Error {
+  const message = stripUrlQueries(error.message);
+  const stack = error.stack === undefined ? undefined : stripUrlQueries(error.stack);
+  if (message === error.message && stack === error.stack) return error;
+  const copy: Error & { code?: string } = new Error(message);
+  copy.name = error.name;
+  copy.stack = stack;
+  const code = (error as NodeJS.ErrnoException).code;
+  if (code !== undefined) copy.code = code;
+  return copy;
 }
 
 /**
@@ -62,6 +101,16 @@ export function manifestExists(): boolean {
 }
 
 /**
+ * The message builder-util-runtime's `doDownload` hands its callback for a status
+ * of 400 or more. This pattern names the transient ones, the same statuses the
+ * `HTTP_ERROR_` branch below names. That error is a plain Error with no `code`,
+ * so the code branch can never see a download failure. 618 is an expired signed
+ * link (DESKTOP-24): the next check gets a fresh one. A drift guard in updater-error-classifier.test.ts reads the template
+ * from httpExecutor.js, so an upstream reword fails there instead of going quiet.
+ */
+const DOWNLOAD_STATUS_TRANSIENT_PATTERN = /Cannot download ".*", status (5\d\d|408|429|618):/;
+
+/**
  * Returns true if the error is a known-transient download/network failure
  * that should not surface as `app_error` telemetry. Structural failures
  * (signature mismatch, bad manifest, disk full, permission denied, 4xx
@@ -84,6 +133,7 @@ export function isTransientUpdaterError(error: Error): boolean {
   if (/net::ERR_/.test(errorMessage)) return true;
   if (/Request has been aborted by the server/i.test(errorMessage)) return true;
   if (/Cannot pipe ".*":/i.test(errorMessage)) return true;
+  if (DOWNLOAD_STATUS_TRANSIENT_PATTERN.test(errorMessage)) return true;
 
   return false;
 }
@@ -538,7 +588,8 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     if (checkRetrying || downloadRetrying) return;
     // One preview for every branch below, so widening it (or routing it through
     // sanitizeErrorMessage) stays a one-line change rather than six.
-    const errorPreview = error.message.slice(0, 80);
+    const messageWithoutQueries = stripUrlQueries(error.message);
+    const errorPreview = messageWithoutQueries.slice(0, 80);
     if (isTransientUpdaterError(error)) {
       const errorCode = (error as NodeJS.ErrnoException).code;
       console.log('[UPDATER] Suppressing transient error telemetry:',
@@ -547,7 +598,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
     trackEvent('app_error', {
       source: 'updater',
-      message: sanitizeErrorMessage(error.message),
+      message: sanitizeErrorMessage(messageWithoutQueries),
     });
     // A feed failure that is transient underneath its structural wrapper is
     // counted above but never filed as an issue: GitHub returned a 504 on a
@@ -602,7 +653,7 @@ export function initUpdater(mainWindow: BrowserWindow): void {
     }
     // Handled, so Sentry's global handlers never see it; forward the real
     // error so structural updater failures are diagnosable, not just counted.
-    reportHandledError(error, { source: 'updater' });
+    reportHandledError(withoutUrlQueries(error), { source: 'updater' });
   });
 
   // Schedule checks

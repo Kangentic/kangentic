@@ -246,6 +246,30 @@ describe('updaterLogger', () => {
     expect(errorSpy).toHaveBeenCalledWith('[electron-updater] Error: Squirrel failed');
     expect(debugSpy).toHaveBeenCalledWith('[electron-updater] File has 12 changed blocks');
   });
+
+  /**
+   * DESKTOP-24's second route. AppUpdater's constructor logs `error.stack`
+   * through this logger before the app's own 'error' listener runs, whatever
+   * that listener then decides, so a signed URL stays in the breadcrumb ring and
+   * rides the next event even when the failure itself is suppressed. The policy
+   * keeps URLs in a console line, so this assertion goes through it.
+   */
+  it('keeps a signed download URL out of the line and out of the breadcrumb it becomes', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    updaterLogger.error(
+      'Error: Error: Cannot download "https://assets.example.test/app.zip?sig=fake&jwt=fake", status 618: Status text',
+    );
+
+    const line = errorSpy.mock.calls[0][0] as string;
+    expect(line).toContain('https://assets.example.test/app.zip"');
+    expect(line).not.toContain('sig=');
+    expect(line).not.toContain('jwt=');
+
+    const crumb = filterBreadcrumb({ category: 'console', level: 'error', data: { arguments: [line] } });
+    expect(crumb?.message).toContain('status 618');
+    expect(crumb?.message).not.toContain('sig=');
+  });
 });
 
 /**

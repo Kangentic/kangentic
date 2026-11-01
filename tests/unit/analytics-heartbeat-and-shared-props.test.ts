@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
-vi.mock('electron', () => ({ app: { isPackaged: true } }));
+vi.mock('electron', () => ({ app: { isPackaged: true }, net: { request: vi.fn() } }));
 
 const mocks = vi.hoisted(() => ({
   initialize: vi.fn().mockResolvedValue(undefined),

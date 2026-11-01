@@ -191,22 +191,33 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     ).toMatch(/^\s*catch/);
   });
 
-  it("reports two distinct GPU feature-status reads: the escalating run's persisted state and a live read at report time", () => {
+  it('builds the gpu_process context from the record through buildGpuProcessContext, with a live feature-status read', () => {
     const tryBlock = escalationReportTryBlock();
 
-    // Pinned as full source expressions, not just the two key names: a
-    // collapse that sources BOTH from the live call would keep two
-    // differently-named keys in the payload while destroying the distinction
-    // the module's own comment says both exist to preserve (a machine that
-    // has since recovered vs. one still stuck reads identically to Sentry).
+    // The record-derived fields moved into the pure builder, and
+    // gpu-health.test.ts pins each one against a real record (and through
+    // Sentry's normalize). What only this file can see is that the report
+    // actually goes through the builder, handing it the record it just read.
     expect(
       tryBlock,
-      "featureStatusAtEscalation must be sourced from the persisted record (pendingGpuEscalation.featureStatus) - Chromium's GPU mode AT THE DEATH that produced the escalation, not a live read taken now",
-    ).toContain('featureStatusAtEscalation: pendingGpuEscalation.featureStatus');
+      'the gpu_process context must come from buildGpuProcessContext. An object built inline here loses the shape that survives Sentry\'s depth 3 normalization (DESKTOP-29)',
+    ).toContain('gpu_process: buildGpuProcessContext(pendingGpuEscalation, {');
     expect(
       tryBlock,
       "featureStatusOnReport must be sourced from a LIVE app.getGPUFeatureStatus() call made at report time, not from the persisted record - the reporting boot's GPU mode may already differ from the escalating run's",
     ).toContain('featureStatusOnReport: app.getGPUFeatureStatus()');
+
+    // buildGpuProcessContext summarizes the GPU info itself. Summarizing here
+    // as well runs the summary twice: gpuDevice is a string after the first
+    // pass, so the second reads no devices and silently empties the adapter data.
+    expect(
+      tryBlock,
+      'the report block must hand buildGpuProcessContext the RAW getGPUInfo result as `gpuInfoOnReport,`. The builder summarizes it itself, so a call-site `gpuInfoOnReport: summarizeGpuInfo(gpuInfoOnReport)` would summarize twice and silently empty the adapter data',
+    ).toMatch(/\bgpuInfoOnReport,/);
+    expect(
+      INDEX_CODE,
+      'summarizeGpuInfo must not appear in src/main/index.ts. buildGpuProcessContext owns the summary; calling it here too summarizes twice (gpuDevice is already a string after the first pass), which silently empties the adapter data',
+    ).not.toContain('summarizeGpuInfo');
   });
 
   it('reportPathIsTheLaterRead: the module-scope graphics peek comes first and never clears', () => {
@@ -481,20 +492,7 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
     ).toBeLessThan(readIndex);
   });
 
-  it("sources escalatedInVersion from the persisted record's own appVersion, not from the reporting run's live app.getVersion()", () => {
-    const tryBlock = escalationReportTryBlock();
-
-    expect(
-      tryBlock,
-      'escalatedInVersion must read pendingGpuEscalation.appVersion - the app version that PRODUCED the escalation, not the one doing the reporting. Confusing the two misattributes a still-crashing build to a version that has since been fixed.',
-    ).toContain('escalatedInVersion: pendingGpuEscalation.appVersion');
-    expect(
-      tryBlock,
-      'escalatedInVersion must not be sourced from a live app.getVersion() call - that would silently report the CURRENT (reporting) build instead of the one that actually escalated',
-    ).not.toContain('escalatedInVersion: app.getVersion()');
-  });
-
-  it('reports a fallback-only record (no GPU death at all, the DESKTOP-W launch-failure shape) under its own message, with its mode changes', () => {
+  it('reports a fallback-only record (no GPU death at all, the DESKTOP-W launch-failure shape) under its own message', () => {
     const tryBlock = escalationReportTryBlock();
 
     expect(
@@ -509,10 +507,6 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       tryBlock,
       'the reported Error must be built from the branched message, not a second inline literal that could ignore the branch',
     ).toContain('new Error(gpuReportMessage)');
-    expect(
-      tryBlock,
-      'the gpu_process context must carry modeChanges: on a launch-failure ladder it is the only trace of the incident',
-    ).toContain('modeChanges: pendingGpuEscalation.modeChanges');
   });
 
   it('binds each report message to its OWN arm of the count > 0 ternary, not the other one', () => {
@@ -553,15 +547,6 @@ describe('the GPU-health escalation report is wired into src/main/index.ts', () 
       fallbackMessageIndex,
       "the fallback-only string ('GPU left hardware acceleration...') must be the ELSE arm: it has to sit after the ternary's :, not before it",
     ).toBeGreaterThan(colonIndex);
-  });
-
-  it('carries faultDeathCount from gpuFaultSummary.faultCount, so a report can tell how much of the record was real GPU faults versus kills and teardown exits', () => {
-    const tryBlock = escalationReportTryBlock();
-
-    expect(
-      tryBlock,
-      "the gpu_process context must carry faultDeathCount: gpuFaultSummary.faultCount. pendingGpuEscalation.count also collects kills and session-teardown exits alongside real GPU faults, so without this field a report cannot show how much of the record's count was noise rather than an actual fault",
-    ).toContain('faultDeathCount: gpuFaultSummary.faultCount');
   });
 
   it("sources previousRunExit from previousRunProps.lastRunExit with an 'unknown' fallback, the exact field name and sentinel that already drifted once (commit cf620796)", () => {

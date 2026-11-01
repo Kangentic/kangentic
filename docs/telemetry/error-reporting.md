@@ -323,8 +323,11 @@ in one Sentry org, one triage surface.
   The filter fails closed, the opposite of `beforeSendEvent`: a throw drops the crumb. The
   `[SHUTDOWN] pty-drain:*` lines pass byte-identical. electron-updater's own lines, which carried
   the Squirrel and package-manager detail on past updater issues, go through a tagged logger in
-  `src/main/updater.ts`, with its debug output kept out. Events uploaded before this change still
-  carry the unfiltered trail.
+  `src/main/updater.ts`, with its debug output kept out. That logger also strips every URL's query
+  and fragment, because the policy keeps URLs in a console line and `AppUpdater` logs a failed
+  download's whole stack, signed link included, before the app's own `error` listener runs. A
+  suppressed failure would otherwise leave the link in the ring for the next event. Events uploaded
+  before this change still carry the unfiltered trail.
 
 ## Handled errors and event context
 
@@ -550,6 +553,19 @@ in one Sentry org, one triage surface.
   `modeChanges` (the fallback steps above),
   `gpuInfoOnReport` (`app.getGPUInfo('complete')`, the one call of it in this path, naming the
   machine's actual graphics stack), `killedTheLastRun`, and `softwareRenderingEngaged`.
+
+  `buildGpuProcessContext` in `gpu-health.ts` builds this object. Sentry normalizes contexts to
+  depth 3, which turned every entry of `deaths` and `modeChanges` into `[Object]` and
+  `gpuInfoOnReport.gpuDevice` into `[Array]`, so DESKTOP-29 arrived with none of the fields that
+  explain it and the Linux reading had never reached Sentry. Each `deaths` and `modeChanges` entry
+  is now one line, as in `launch-failed code=1002 at=<iso> compositing=<value> webgl=<value>`, and a
+  `modeChanges` line on Linux ends with `zygote=<state> schedulingEntities=<n>
+  maxUserProcesses=<limit>`. `gpuDevice` sits a level deeper, where any array flattens, so it is one
+  string with its first four adapters joined by `; `. `normalizeDepth` stays at the default, because raising it
+  is global, grows every event, and widens what `redact-event-paths.ts` walks.
+  `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
+  `normalize`. The other contexts were audited for the same flattening and hold only flat values:
+  `host_memory`, `native_crash`, `task_reap`, `call_site` (a list of strings) and `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with
   `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
@@ -648,9 +664,19 @@ in one Sentry org, one triage surface.
   suppressions above are not uniform about it, and the split is older than any of them.
   `isTransientUpdaterError` gates ABOVE `trackEvent`, so the classes it catches (a raw
   `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `ENETUNREACH`, `EPIPE`, an `HTTP_ERROR_5xx`
-  / `408` / `429` / `618`, a `net::ERR_`, an aborted request, a failed pipe) produce no event at
-  all. That was the deliberate call when it was written: keep network blips out of `app_error`
+  / `408` / `429` / `618`, a download whose message reads `Cannot download "...", status 5xx | 408 |
+  429 | 618:`, a `net::ERR_`, an aborted request, a failed pipe) produce no event at all. That was the deliberate call when it was written: keep network blips out of `app_error`
   entirely. Every gate added since sits BELOW `trackEvent` and keeps the count.
+
+  A failed download never matches the `HTTP_ERROR_` branch. `doDownload` passes a plain Error with
+  no `code` to its callback, so those statuses are matched in its message, `Cannot download "...", status <code>:`.
+  DESKTOP-24 was a signed link that expired while the machine slept (status 618), and the next
+  check gets a fresh link. `tests/unit/updater-error-classifier.test.ts` renders the template it
+  reads from the `httpExecutor.js` electron-updater loads and runs the predicate on the result, so
+  an upstream fix or reword fails a test instead of going quiet. A 403 or 404 stays reportable, and
+  its URL holds `sig=` and `jwt=`. `stripUrlQueries` in `updater.ts` removes every URL's query and
+  fragment from what leaves the app: the report's message and stack, the `app_error` message, and
+  the `[electron-updater]` log line (see "Breadcrumbs are filtered at the source").
 
   The practical consequence: one underlying network failure is counted or not depending on
   whether electron-updater rewrapped it. A feed fetch that fails with an intact errno is
