@@ -9,6 +9,7 @@ sources:
   - resource: src/main/ipc/helpers/task-git.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
   - resource: src/main/git/git-fetch-scheduler.ts
+  - resource: src/main/git/spare-worktree.ts
   - resource: scripts/measure-spare-worktree.mjs
 ---
 # Spare worktree audit (2026-10-31)
@@ -27,6 +28,32 @@ build for.
 Bar 1 assumes the agent starts while the init script runs. Build the spare only after the change
 that does that has landed, and re-measure then (see "When to revisit"). The cost a user sees is a
 non-numeric worktree folder for the life of every task that takes a spare.
+
+**Built (2026-11-01)** once that change had landed and bar 1 was measured again (see "Re-measured
+after the agent started during the script"). The design is in
+[The spare worktree](../architecture/worktrees/worktree-creation.md#the-spare-worktree). It differs
+from "What building it would take" in two places. Spares take a reserved prefix with a new suffix
+per build (`spare_<8 hex>`), not one reserved name, because the task that adopts one keeps its
+folder for good. And the refill waits until no init script runs in any project, not only in its
+own, the gate the Done deleter already uses.
+
+## Re-measured after the agent started during the script (2026-11-01)
+
+The change that starts the agent while the init script runs has landed, so bar 1 was measured again
+on the same pnpm workspace. Each side is one worktree start into a column that starts an agent,
+read from the project log and the session's events. The second start was a throwaway task whose
+agent replied with one word.
+
+| | Before the change | After it |
+| --- | --- | --- |
+| `pnpm install --frozen-lockfile` | 27.0 s | 29.7 s |
+| Agent launch to SessionStart | 7.75 s, starting when the script ended | 4.6 s, during the script (launched 0.16 s in) |
+| Script end to the opening prompt | about 8 s | 1.9 s (adopted 0.13 s after, then a 1.0 s paste settle) |
+
+The agent's start is now 4.6 s, not the 7.8 s bar 1 assumed. With the claim's 4.8 s,
+`saving = max(29.7, 4.6) - max(4.8, 4.6) = 24.9 s`, against 17.5 s before. In a claim the agent
+launches after the claim's git step, about 1.6 s in, so it is ready at about 6.2 s and is the
+longer of the two: a served start saves about 23.5 s. Bar 1 holds with more room than before.
 
 ## The bars, fixed before measuring
 
@@ -77,9 +104,10 @@ Three runs of `git worktree move` on an installed spare:
   54.3 s. That is twice a cold creation.
 
 So a spare is adopted in place. The task records the spare's own folder as its `worktree_folder`,
-for good. That needs no rule change. It does change two things a user sees: the window title and
-the `/preview` title show `#N` only for a numeric folder, because they parse the folder name. The
-spare's name must also never be all digits, which would collide with a display number.
+for good. That needs no rule change. It would change two things a user sees: the window title and
+the `/preview` title would show `#N` only for a numeric folder, because they parse the folder name.
+The build reads the number from the task row instead. The spare's name must also never be all
+digits, which would collide with a display number.
 
 A first smoke run of the move probe was discarded. The board removed another task's worktree on its
 way to Done during that run, so the disk was busy. The three runs above had the project idle.
@@ -164,9 +192,18 @@ spare saves about a minute a day there, plus the wait whenever someone watches a
 
 ## When to revisit
 
-- When the change that starts the agent while the init script runs has landed. Re-measure the spawn
-  time; bar 1 assumed 7.8 s.
-- Before turning spares on for an npm project: measure its idle disk cost.
+- Done 2026-11-01: the change that starts the agent while the init script runs landed, and the
+  spawn time measured 4.6 s against the 7.8 s bar 1 assumed (see the re-measure above).
+- After a few days of served starts: time one from the log (`[SPARE] task <id8> took`, the
+  `create step=init-script` line, then the opening prompt) and set it beside the re-measure.
+- Done 2026-11-01, in part: an npm install copies its packages, and this repository's own
+  `node_modules` measured 1.9 GB, almost twice bar 4's 1 GB. `npm ci` also deletes `node_modules`
+  before it installs, so a claim's catch-up under it is a whole install and the spare saves
+  nothing. The build therefore stops refilling once a claim's catch-up takes at least half the
+  spare's own install, per init script (see
+  [The spare worktree](../architecture/worktrees/worktree-creation.md#the-spare-worktree)). An npm
+  project whose script is an incremental `npm install` keeps its spare and pays the copy's disk.
+  That idle cost was not measured on a real npm project with an init script.
 - If the project's lockfile churn rises well above 13 changes a month, measure a spare that is
   several lockfile changes behind.
 

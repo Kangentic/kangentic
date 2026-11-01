@@ -261,8 +261,9 @@ export interface WorktreeSetup {
  * `prepareStaleWorktreeForCreation` runs the same check outside the git queue
  * and clears nothing where `ensureWorktree` stops short. The base-branch guards
  * (no commits, an unresolvable base) need git and stay in `ensureWorktree`.
+ * `ensureTaskWorktree` runs it too, before it offers a task a spare worktree.
  */
-function worktreeSkipBeforeBase(
+export function worktreeSkipBeforeBase(
   task: { worktree_path: string | null; use_worktree?: number | null },
   projectPath: string,
   worktreesEnabled: boolean,
@@ -278,6 +279,18 @@ function worktreeSkipBeforeBase(
   if (!isGitRepo(projectPath)) return 'not-a-repo';
   if (isInsideWorktree(projectPath)) return 'nested-worktree';
   return null;
+}
+
+/**
+ * The per-command `-c core.longpaths=true` a checkout passes on Windows, to
+ * prevent "Filename too long" errors when the project contains deeply nested
+ * files (e.g. .NET migrations). It does not modify the project's git config.
+ * Windows-only (uses the \\?\ extended-length path prefix); macOS/Linux have
+ * a 1024-4096 byte PATH_MAX and are unaffected. Read per call, not at module
+ * load, so a test that stubs `process.platform` sees its own platform.
+ */
+function longPathsCommandConfig(): string[] {
+  return process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : [];
 }
 
 /** One `[WORKTREE] create step=<name> done in <n>ms` line, timed from `startedAt`. */
@@ -951,22 +964,7 @@ export class WorktreeManager {
     options?.onProgress?.('fetching');
     // Read alongside the fetch; it only shapes the `worktree add` below and never rejects.
     const checkoutWorkersConfigPromise = parallelCheckoutConfig(this.git);
-    const fetchStartedAt = Date.now();
-    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
-      signal: options?.signal,
-      onOutcome: options?.onFetchOutcome,
-    });
-    // A fetch that actually landed `origin/<branch>` wins (freshest code). Otherwise fall back
-    // to a ref already OBSERVED to resolve, because both of fetchIfStale's other outcomes give
-    // a start point that can fail `git worktree add`: on failure it returns the bare branch
-    // name, which does not resolve for a base that exists only as `origin/<branch>`; and on
-    // success it reports the fetch PROCESS exit code, which is not the same as the ref landing
-    // in refs/remotes/origin/ (a narrowed remote.origin.fetch refspec, or a fetch that only
-    // populated FETCH_HEAD, both exit 0). resolveWorktreeBase re-verifies for the same reason.
-    const startPoint = fetched === `origin/${baseBranch}` && await refResolvesLocally(this.projectPath, fetched)
-      ? fetched
-      : (options?.verifiedStartPoint ?? fetched);
-    logCreateStep('fetch', fetchStartedAt);
+    const startPoint = await this.resolveCreationStartPoint(baseBranch, options);
     options?.onProgress?.('creating-worktree');
     options?.signal?.throwIfAborted();
 
@@ -1037,12 +1035,7 @@ export class WorktreeManager {
       logCreateStep('stale-dir', staleStartedAt, ` (reuseHusk=${reuseEmptyHusk})`);
       options?.signal?.throwIfAborted();
     }
-    // On Windows, enable long paths to prevent "Filename too long" errors
-    // when the project contains deeply nested files (e.g. .NET migrations).
-    // The -c flag is per-command and does not modify the project's git config.
-    // This setting is Windows-only (uses \\?\ extended-length path prefix);
-    // macOS/Linux have 1024-4096 byte PATH_MAX and are unaffected.
-    const longPathsConfig = process.platform === 'win32' ? ['-c', 'core.longpaths=true'] : [];
+    const longPathsConfig = longPathsCommandConfig();
     // Reusing an empty husk needs --force so git clears any stale
     // `.git/worktrees/<id>` registration whose directory still exists (plain
     // prune only removes registrations for missing dirs). --force is gated on
@@ -1064,17 +1057,69 @@ export class WorktreeManager {
     }
     logCreateStep('worktree-add', addStartedAt);
 
-    // Post-creation configuration. `core.longpaths` and sparse-checkout's
-    // `extensions.worktreeConfig` land in the repo's SHARED `.git/config` (a
-    // plain `git config` from a linked worktree writes there); the sparse
-    // settings and the base branch land in this worktree's own
-    // `config.worktree`. They were previously wrapped in Promise.all under the
-    // assumption they touched independent parts of the .git state - but on
-    // Windows concurrent writes to the same config file intermittently race on
-    // the lock ("could not lock config file... File exists"), silently
-    // swallowing sparse-checkout init and leaving `.claude/commands/`
-    // materialized. Serial execution costs a handful of milliseconds and
-    // eliminates the race.
+    await this.configureNewWorktree(worktreePath, baseBranch);
+
+    // `branchExists` took the no-start-point form of `worktree add` above, so
+    // `baseBranch` describes a cut that never happened. Report nothing rather
+    // than a guess (see `WorktreeCreateResult.baseBranch`), unless the branch is
+    // this task's own and still at the start point.
+    const cutHere = !branchExists || attachesAtStartPoint;
+    return {
+      worktreePath,
+      branchName,
+      worktreeFolder: folderName,
+      baseBranch: cutHere ? baseBranch : null,
+      // Read off the new branch itself: right after the cut its tip IS the
+      // commit it was cut at, whatever ref name the start point went by.
+      forkPointSha: cutHere ? await this.branchTip(branchName) : null,
+    };
+  }
+
+  /**
+   * The start point a new worktree's branch is cut from: fetch `baseBranch`
+   * (throttled), then take `origin/<base>` only when the fetch demonstrably
+   * landed it, else `verifiedStartPoint`, else whatever the fetch returned.
+   * Logs `create step=fetch`. Shared by `createWorktree`, a spare worktree's
+   * build and a task's claim of one, so all three cut from the same ref.
+   */
+  async resolveCreationStartPoint(
+    baseBranch: string,
+    options?: { signal?: AbortSignal; verifiedStartPoint?: string; onFetchOutcome?: (outcome: FetchIfStaleOutcome) => void },
+  ): Promise<string> {
+    const fetchStartedAt = Date.now();
+    const fetched = await fetchIfStale(this.git, this.projectPath, baseBranch, {
+      signal: options?.signal,
+      onOutcome: options?.onFetchOutcome,
+    });
+    // A fetch that actually landed `origin/<branch>` wins (freshest code). Otherwise fall back
+    // to a ref already OBSERVED to resolve, because both of fetchIfStale's other outcomes give
+    // a start point that can fail `git worktree add`: on failure it returns the bare branch
+    // name, which does not resolve for a base that exists only as `origin/<branch>`; and on
+    // success it reports the fetch PROCESS exit code, which is not the same as the ref landing
+    // in refs/remotes/origin/ (a narrowed remote.origin.fetch refspec, or a fetch that only
+    // populated FETCH_HEAD, both exit 0). resolveWorktreeBase re-verifies for the same reason.
+    const startPoint = fetched === `origin/${baseBranch}` && await refResolvesLocally(this.projectPath, fetched)
+      ? fetched
+      : (options?.verifiedStartPoint ?? fetched);
+    logCreateStep('fetch', fetchStartedAt);
+    options?.signal?.throwIfAborted();
+    return startPoint;
+  }
+
+  /**
+   * Post-creation configuration of a worktree `git worktree add` just made.
+   * `core.longpaths` and sparse-checkout's `extensions.worktreeConfig` land in
+   * the repo's SHARED `.git/config` (a plain `git config` from a linked
+   * worktree writes there); the sparse settings and the base branch land in
+   * this worktree's own `config.worktree`. They were previously wrapped in
+   * Promise.all under the assumption they touched independent parts of the
+   * .git state - but on Windows concurrent writes to the same config file
+   * intermittently race on the lock ("could not lock config file... File
+   * exists"), silently swallowing sparse-checkout init and leaving
+   * `.claude/commands/` materialized. Serial execution costs a handful of
+   * milliseconds and eliminates the race. Logs `create step=configure`.
+   */
+  private async configureNewWorktree(worktreePath: string, baseBranch: string): Promise<void> {
     const configureStartedAt = Date.now();
     const wtGit = gitAt(worktreePath);
 
@@ -1114,21 +1159,87 @@ export class WorktreeManager {
       // Non-fatal -- merge-back falls back to 'main'
     }
     logCreateStep('configure', configureStartedAt);
+  }
 
-    // `branchExists` took the no-start-point form of `worktree add` above, so
-    // `baseBranch` describes a cut that never happened. Report nothing rather
-    // than a guess (see `WorktreeCreateResult.baseBranch`), unless the branch is
-    // this task's own and still at the start point.
-    const cutHere = !branchExists || attachesAtStartPoint;
-    return {
-      worktreePath,
-      branchName,
-      worktreeFolder: folderName,
-      baseBranch: cutHere ? baseBranch : null,
-      // Read off the new branch itself: right after the cut its tip IS the
-      // commit it was cut at, whatever ref name the start point went by.
-      forkPointSha: cutHere ? await this.branchTip(branchName) : null,
-    };
+  /**
+   * The git phase of a spare worktree's build (`spare-worktree.ts`): a
+   * detached `git worktree add` of `<worktrees>/<folderName>` at the fetched
+   * `baseBranch`, configured exactly as a task's worktree is (long paths,
+   * sparse checkout, `kangentic.baseBranch`). No branch: the task that claims
+   * the spare creates its own (`switchSpareToNewBranch`). Callers wrap it in
+   * `withLock`. Throws when the folder already exists, which a fresh random
+   * name never should.
+   */
+  async createSpareCheckout(
+    folderName: string,
+    baseBranch: string,
+    options?: { signal?: AbortSignal; verifiedStartPoint?: string },
+  ): Promise<string> {
+    const worktreesDir = worktreesRootFor(this.projectPath);
+    const worktreePath = path.join(worktreesDir, folderName);
+    if (fs.existsSync(worktreePath)) {
+      throw new Error(`Cannot build a spare worktree at ${worktreePath}: the folder already exists.`);
+    }
+    await fs.promises.mkdir(worktreesDir, { recursive: true });
+    const checkoutWorkersConfigPromise = parallelCheckoutConfig(this.git);
+    const startPoint = await this.resolveCreationStartPoint(baseBranch, options);
+    const commandConfig = [...longPathsCommandConfig(), ...await checkoutWorkersConfigPromise];
+    const addStartedAt = Date.now();
+    try {
+      await this.git.raw([...commandConfig, 'worktree', 'add', '--detach', worktreePath, startPoint]);
+    } catch (error) {
+      throw withPathLengthCause(error, worktreePath);
+    }
+    logCreateStep('worktree-add', addStartedAt, ` (spare, detached at ${startPoint})`);
+    await this.configureNewWorktree(worktreePath, baseBranch);
+    return worktreePath;
+  }
+
+  /**
+   * True when local branch `branchName` exists. Never rejects. Reads the hash
+   * rather than trusting the exit alone: the git client rejects a failed command
+   * only when it wrote to stderr, so `--quiet` would read a missing branch as
+   * present.
+   */
+  async localBranchExists(branchName: string): Promise<boolean> {
+    try {
+      const sha = (await this.git.raw(['rev-parse', '--verify', `refs/heads/${branchName}^{commit}`])).trim();
+      return sha.length > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * A task's claim of a spare worktree, its one mutation of the checkout:
+   * `git switch -c <branchName> <startPoint>` in the spare, which moves the
+   * spare's detached HEAD to the fetched base (a fast-forward when the base only
+   * moved on, and still right when it was rewritten), then records
+   * `kangentic.baseBranch`. Returns the fork point, the new branch's tip.
+   *
+   * The spare stays where it is. It is never `git worktree move`d: pnpm links
+   * packages with junctions holding absolute targets, and `.modules.yaml`
+   * records the old folder, so a moved spare has every package link dangling,
+   * and `pnpm install --frozen-lockfile` then exits 0 over the broken tree
+   * (docs/audits/spare-worktree-audit.md). Callers wrap it in `withLock`.
+   */
+  async switchSpareToNewBranch(
+    sparePath: string,
+    branchName: string,
+    startPoint: string,
+    baseBranch: string,
+  ): Promise<string | null> {
+    const spareGit = gitAt(sparePath);
+    const commandConfig = [...longPathsCommandConfig(), ...await parallelCheckoutConfig(spareGit)];
+    const switchStartedAt = Date.now();
+    await spareGit.raw([...commandConfig, 'switch', '-c', branchName, startPoint]);
+    logCreateStep('switch', switchStartedAt, ` (spare, ${branchName} at ${startPoint})`);
+    try {
+      await writeWorktreeBaseBranch(spareGit, baseBranch);
+    } catch {
+      // Non-fatal, as in configureNewWorktree.
+    }
+    return this.branchTip(branchName);
   }
 
   /** The branch's tip commit (full hash), or null when it does not resolve. */
@@ -1179,6 +1290,33 @@ export class WorktreeManager {
     setup: WorktreeSetup,
     options?: { signal?: AbortSignal },
   ): Promise<void> {
+    await this.copyWorktreeFiles(worktreePath, setup, options);
+
+    // Link node_modules from root so worktree agents can run typecheck/test
+    // without a slow npm install. Non-fatal if it fails. Linking is the default
+    // (undefined/true link); only an explicit `false` skips it, e.g. so an
+    // initScript install can own the worktree's deps instead of sharing root's.
+    const shouldLinkNodeModules = setup.linkNodeModules ?? true;
+    if (shouldLinkNodeModules) {
+      const linkStartedAt = Date.now();
+      await linkNodeModules(worktreePath, this.projectPath);
+      logCreateStep('link-node-modules', linkStartedAt);
+    }
+    options?.signal?.throwIfAborted();
+  }
+
+  /**
+   * Copy the configured files from the project root into a worktree, the first
+   * step of `prepareWorktreeFiles`. Alone, it is what a task's claim of a spare
+   * worktree runs: the spare's node_modules link step must not run again,
+   * because `linkNodeModules` deletes a real node_modules directory, which is
+   * the spare's install.
+   */
+  async copyWorktreeFiles(
+    worktreePath: string,
+    setup: Pick<WorktreeSetup, 'copyFiles'>,
+    options?: { signal?: AbortSignal },
+  ): Promise<void> {
     options?.signal?.throwIfAborted();
 
     // Copy specified files into the worktree (skip .claude/ entries --
@@ -1203,18 +1341,6 @@ export class WorktreeManager {
       copiedCount++;
     }
     logCreateStep('copy-files', copyStartedAt, ` (files=${copiedCount})`);
-    options?.signal?.throwIfAborted();
-
-    // Link node_modules from root so worktree agents can run typecheck/test
-    // without a slow npm install. Non-fatal if it fails. Linking is the default
-    // (undefined/true link); only an explicit `false` skips it, e.g. so an
-    // initScript install can own the worktree's deps instead of sharing root's.
-    const shouldLinkNodeModules = setup.linkNodeModules ?? true;
-    if (shouldLinkNodeModules) {
-      const linkStartedAt = Date.now();
-      await linkNodeModules(worktreePath, this.projectPath);
-      logCreateStep('link-node-modules', linkStartedAt);
-    }
     options?.signal?.throwIfAborted();
   }
 
@@ -1351,7 +1477,12 @@ export class WorktreeManager {
    */
   async removeWorktree(
     worktreePath: string,
-    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile },
+    /**
+     * `ownCreation`: the caller holds this path in the creation registry and is
+     * removing what it made (a spare worktree's build or claim discarding it).
+     * Every other removal refuses a held path.
+     */
+    options?: { timeoutMs?: number; removalProfile?: WorktreeRemovalProfile; ownCreation?: boolean },
   ): Promise<boolean> {
     const { removed } = await this.removeWorktreeInternal(worktreePath, options);
     // One of the two notification points for the whole app, with
@@ -1390,9 +1521,11 @@ export class WorktreeManager {
    * with nothing changed: the caller then removes the worktree in place, as
    * before this existed.
    */
-  async moveWorktreeAside(worktreePath: string, options?: { timeoutMs?: number }): Promise<boolean> {
+  async moveWorktreeAside(worktreePath: string, options?: { timeoutMs?: number; ownCreation?: boolean }): Promise<boolean> {
     assertRemovableWorktreePath(this.projectPath, worktreePath);
-    if (isWorktreeCreationInFlight(worktreePath)) {
+    // `ownCreation`: as for `removeWorktree`, the caller holds the path and is
+    // discarding what it made (a spare worktree).
+    if (!options?.ownCreation && isWorktreeCreationInFlight(worktreePath)) {
       console.warn(`[WORKTREE] move aside skipped: ${worktreePath} (a creation is still setting it up)`);
       return false;
     }

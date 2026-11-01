@@ -15,6 +15,8 @@ sources:
 
 When worktrees are enabled (default), each task gets its own git branch and working directory. This allows multiple agents to work in parallel without merge conflicts.
 
+A project with a Post-worktree script keeps one spare worktree with the script already run. The next new task that uses the project's default base and an auto-named branch starts in it, which skips most of the install, and Kangentic makes the next spare once no script is running. That task's folder under `.kangentic/worktrees/` is named `spare_<8 hex>` instead of its number, for as long as the task lives. When a spare saves no time, as with `npm ci`, which reinstalls everything on every run, Kangentic stops making spares for that script.
+
 A task WITHOUT a worktree runs in the project folder itself: the checkout you have open in your editor (and the one Kangentic runs from), shared with every other task that has no worktree. Nothing prevents two such agents from editing the same tree at once; Kangentic only refuses to switch that folder's branch under a live agent. This happens when you choose Project instead of Worktree in the Branch row, and also when the project cannot have a worktree at all: it is not a git repository, it has no commits yet, or the project folder is itself a git worktree (git cannot nest them). A remote-execution agent gets no local worktree either, but runs in its server directory rather than the project folder.
 
 Where an agent works is always visible:

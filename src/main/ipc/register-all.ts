@@ -15,6 +15,7 @@ import { setOffMainExecutor } from '../utility-process/off-main-exec';
 import { setOffMainPtySpawner } from '../utility-process/off-main-pty';
 import { setOffMainCliSpawner } from '../utility-process/off-main-cli';
 import { setIdentityTreeStop } from '../git/zombie-reaper';
+import { spareWorktreePool } from '../git/spare-worktree';
 import { PATHS } from '../config/paths';
 import { ConfigManager } from '../config/config-manager';
 import { BoardConfigManager } from '../config/board-config-manager';
@@ -283,6 +284,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     mobileBridgeService,
     boardEvents,
     desktopNotifier,
+    spareWorktrees: spareWorktreePool,
   };
 
   // The bridge needs IpcContext (SessionManager, repos, DiffService,

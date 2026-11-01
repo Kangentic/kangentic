@@ -4,6 +4,7 @@ import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { answerSessionPool } from './retrieval/answer-session-pool';
 import { stopAllCliRuns } from './agent/shared/cli-print';
+import { spareWorktreePool } from './git/spare-worktree';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
@@ -126,6 +127,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     // answer, a task summary, a title. Each runs detached (POSIX) or outlives
     // the app (Windows), so one left here keeps running after the quit.
     runCleanupStep('stopAllCliRuns', () => stopAllCliRuns());
+
+    // And a spare worktree's build: its init script runs outside any session,
+    // so no PTY kill reaches it. The abort kills the script's tree in place.
+    // What it leaves has no ready record, and the next open's pass deletes it.
+    runCleanupStep('spareWorktreePool.abortAllBuilds', () => spareWorktreePool.abortAllBuilds());
 
     // Close active project's file watchers before killing sessions
     runCleanupStep('boardConfigManager.detach', () => dependencies.getBoardConfigManager().detach());

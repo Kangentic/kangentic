@@ -16,6 +16,7 @@ import type { MobileBridgeService } from '../mobile-bridge/mobile-bridge-service
 import type { BoardEventBus } from '../mobile-bridge/board-event-bus';
 import type { DesktopNotifier } from '../notifications/desktop-notifier';
 import type { CommandTerminalHistory } from './helpers/command-terminal-history';
+import type { SpareWorktreePool } from '../git/spare-worktree';
 
 export interface IpcContext {
   mainWindow: BrowserWindow;
@@ -123,4 +124,11 @@ export interface IpcContext {
    * src/main/ipc/helpers/command-terminal-history.ts.
    */
   commandTerminalHistory?: CommandTerminalHistory;
+  /**
+   * The pre-installed spare worktrees of projects with a Post-Worktree Script
+   * (`spareWorktreePool`). Its presence is what turns spares on in
+   * `ensureTaskWorktree`, so a context built for a test that sets none keeps
+   * every creation exactly as before. See src/main/git/spare-worktree.ts.
+   */
+  spareWorktrees?: SpareWorktreePool;
 }

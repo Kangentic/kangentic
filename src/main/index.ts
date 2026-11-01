@@ -74,6 +74,7 @@ import { PATHS } from './config/paths';
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
+import { findTaskByWorktreePath } from './worktree-task-lookup';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
@@ -1652,7 +1653,16 @@ const createWindow = () => {
     // would silently clobber it. Nothing in the main-window tree writes one.
     if (mainWindow) {
       const appLabel = __KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic';
-      mainWindow.setTitle(computeWindowTitle(appLabel, cwd, getPreviewTaskTitle));
+      // The number is read from the worktree's task row in this instance's own
+      // databases, never parsed from the folder name (a task that adopted a
+      // spare worktree lives in `spare_<8 hex>`).
+      const worktreeCwd = cwd;
+      mainWindow.setTitle(computeWindowTitle(
+        appLabel,
+        worktreeCwd,
+        getPreviewTaskTitle,
+        () => (worktreeCwd ? findTaskByWorktreePath(PATHS.configDir, worktreeCwd)?.displayId ?? null : null),
+      ));
     }
 
     // Await the preload that started during createWindow -- typically already resolved

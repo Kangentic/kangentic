@@ -25,6 +25,7 @@ import { closeProjectTaskWindows, closeTaskWindows } from '../helpers/task-windo
 import { endWorkflowAgentsOfProject } from '../../workflows/workflow-agent';
 import { detachProjectFromWorkflows } from '../../workflows/workflow-project-delete';
 import { searchProjectEntries } from '../helpers/project-entry-search';
+import { discardProjectSpares, sweepSpareWorktreesAtOpen } from '../helpers/spare-worktrees';
 import { notifyConversationExpired } from '../helpers/task-git';
 import { clearConversationExpired } from '../helpers/pending-conversation-expired';
 import { trackEvent } from '../../analytics/analytics';
@@ -250,6 +251,10 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
         }
       }
     }
+    // The spare worktree, and a build still making one: moved aside for the
+    // link-safe deleter in step 7. The rmSync there follows links, and a
+    // spare's pnpm junctions would take it out of the project.
+    await discardProjectSpares(context, projectPath, null);
   }
 
   // 3. Strip injected hooks from all registered agents (legacy cleanup --
@@ -707,6 +712,7 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
         .then(() => {
           cleanupStaleResourcesAsync(openedProject.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, openedProject.id), leftoverSweepOptions(context, openedProject.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${openedProject.name}:`, error));
+          sweepSpareWorktreesAtOpen(context, openedProject.path, taskRepo);
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
@@ -928,6 +934,7 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
       cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
         .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
+      sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
 
       await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
       await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, project.id) });
@@ -1078,6 +1085,7 @@ export function registerProjectHandlers(context: IpcContext): void {
           await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
           cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
             .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
+          sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
 
           await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
             .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));

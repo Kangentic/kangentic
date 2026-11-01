@@ -2,7 +2,9 @@ import path from 'node:path';
 import { gitAt } from '../../git/git-client';
 import { IPC } from '../../../shared/ipc-channels';
 import { TaskRepository } from '../../db/repositories/task-repository';
-import { WorktreeManager, GitQueuePriority, prepareStaleWorktreeForCreation, type GitWaitProgress } from '../../git/worktree-manager';
+import { WorktreeManager, GitQueuePriority, prepareStaleWorktreeForCreation, type GitWaitProgress, type WorktreeCreateResult, type WorktreeSetup } from '../../git/worktree-manager';
+import { firstLineOf, type SpareInputs, type SpareWorktreePool } from '../../git/spare-worktree';
+import { isSpareEligible, referencedWorktreeFolders, spareHooksFor, spareInputsFor } from './spare-worktrees';
 import { prepareWorktreeFolder, taskWorktreePathFor } from '../../git/task-worktree-folder';
 import { runWorktreeCreation, isWorktreeCreationInFlight, registerBackgroundSetup } from '../../git/worktree-creation-registry';
 import { holdTaskMessage } from '../../held-messages/held-messages';
@@ -438,6 +440,13 @@ function recordWorktreeSkip(task: Task, tasks: TaskRepository, reason: WorktreeS
  *   stop a removal can reach (`abortWorktreeSetup`). A failure is reported on
  *   the task and to its agent (`reportBackgroundSetupFailure`), and changes
  *   nothing else.
+ *
+ * A task that has never had a worktree, with no custom branch and no base
+ * branch of its own, first tries to adopt the project's pre-installed spare
+ * worktree in place (`adoptSpareWorktree`), and only creates one when there is
+ * no spare or the claim failed. A start that could have taken a spare asks the
+ * pool for the next one once it settles. Spares are on only when the context
+ * carries the pool (`IpcContext.spareWorktrees`).
  */
 export async function ensureTaskWorktree(
   context: IpcContext,
@@ -471,6 +480,12 @@ export async function ensureTaskWorktree(
   // instead of being relocated. See TaskRepository.recoverLegacyWorktreeFolder.
   prepareWorktreeFolder(task, tasks, resolvedProjectPath);
   const worktreeManager = new WorktreeManager(resolvedProjectPath);
+  // Spare worktrees are on when the context carries the pool. Both flags are
+  // set inside the creation: whether this start could have taken a spare, and
+  // whether it ended with a worktree, which together ask for the next spare.
+  const sparePool = context.spareWorktrees;
+  let spareEligibleStart = false;
+  let madeWorktree = false;
   // Creation runs in two phases. The git phase runs in the project's git
   // queue; the setup phase (copy files, node_modules link, the Post-Worktree
   // Script) runs after the queue is released, so a slow script never stalls
@@ -497,17 +512,50 @@ export async function ensureTaskWorktree(
     }
     options?.signal?.throwIfAborted();
 
+    const effectiveBaseBranch = resolveEffectiveBaseBranch(context, task, resolvedProjectPath);
+    const onFetchOutcome = makeBaseFetchOutcomeHandler(context, task, effectiveBaseBranch, options?.projectId);
+    const recordCreatedWorktree = (created: WorktreeCreateResult): void => {
+      tasks.recordWorktree(task.id, created.worktreePath, created.branchName, created.worktreeFolder, created.baseBranch, created.forkPointSha);
+      Object.assign(task, tasks.getById(task.id));
+      madeWorktree = true;
+    };
+
+    // A pre-installed spare first, for a task that may take one. Ahead of the
+    // stale-directory clear below, which a claimed task never needs. Any
+    // failure of the claim comes back here as null, with the spare discarded,
+    // and the task gets a fresh worktree in this same creation.
+    const spareInputs = sparePool && isSpareEligible(task, resolvedProjectPath, config.git.worktreesEnabled)
+      ? spareInputsFor(context, resolvedProjectPath)
+      : null;
+    if (sparePool && spareInputs) {
+      spareEligibleStart = true;
+      const adopted = await adoptSpareWorktree({
+        pool: sparePool,
+        task,
+        tasks,
+        projectPath: resolvedProjectPath,
+        inputs: spareInputs,
+        setup: config.git,
+        worktreeManager,
+        scriptMode,
+        signal: options?.signal,
+        onProgress: options?.onProgress,
+        onFetchOutcome,
+        record: recordCreatedWorktree,
+      });
+      if (adopted) return adopted.earlyAgent;
+    }
+
     // A leftover directory's node_modules is the slow part of clearing it, so
     // it goes here, outside the queue, and the clear inside the queue finds
     // only the checkout left.
     await prepareStaleWorktreeForCreation(task, resolvedProjectPath, config.git, options?.onProgress);
 
-    const effectiveBaseBranch = resolveEffectiveBaseBranch(context, task, resolvedProjectPath);
     const result = await worktreeManager.withLock(
       () => worktreeManager.ensureWorktree(task, config.git, {
         onProgress: options?.onProgress,
         signal: options?.signal,
-        onFetchOutcome: makeBaseFetchOutcomeHandler(context, task, effectiveBaseBranch, options?.projectId),
+        onFetchOutcome,
       }),
       { label: `create-worktree:${task.id.slice(0, 8)}`, onWaitProgress: options?.onWaitProgress },
     );
@@ -532,10 +580,11 @@ export async function ensureTaskWorktree(
       void surfaceWorktreeBaseDrift(context, task, resolvedProjectPath, options?.signal, options?.projectId, probeGeneration);
       return null;
     }
-    const recordCreatedWorktree = (): void => {
-      tasks.recordWorktree(task.id, result.worktreePath, result.branchName, result.worktreeFolder, result.baseBranch, result.forkPointSha);
-      Object.assign(task, tasks.getById(task.id));
-    };
+    // This task's init script runs next, so no spare's install shares the disk
+    // with it. Asked after the git phase, not before the queue: a yield sends
+    // the build loop back to its wait, which ends at once while no script runs
+    // yet, and the next build's git phase would then queue beside this task's.
+    if (config.git.initScript?.trim()) sparePool?.yieldBuilds();
 
     if (!scriptMode) {
       // Setup, after the lock. Recorded only once it succeeds: a failed or
@@ -545,7 +594,7 @@ export async function ensureTaskWorktree(
         onProgress: options?.onProgress,
         signal: options?.signal,
       });
-      recordCreatedWorktree();
+      recordCreatedWorktree(result);
       return null;
     }
 
@@ -555,7 +604,7 @@ export async function ensureTaskWorktree(
 
     if (scriptMode.mode === 'background') {
       // The agent starts on its prompt now, so the task needs its worktree now.
-      recordCreatedWorktree();
+      recordCreatedWorktree(result);
       returnBeforeScript();
       await runBackgroundSetupScript(context, worktreeManager, result.worktreePath, config.git, task, options?.projectId ?? null);
       return null;
@@ -580,13 +629,24 @@ export async function ensureTaskWorktree(
     }
     const earlyAgent = await launched;
     try {
-      recordCreatedWorktree();
+      recordCreatedWorktree(result);
     } catch (error) {
       await earlyAgent?.discard();
       throw error;
     }
     return earlyAgent;
   });
+  if (sparePool) {
+    // Once the start has settled, its script included (a background script
+    // runs on past the early return below), a start that could have taken a
+    // spare asks for one for the next task. The pool waits until no init
+    // script runs before it builds.
+    void creation.then(() => {
+      if (spareEligibleStart && madeWorktree) {
+        sparePool.request(resolvedProjectPath, spareHooksFor(context, resolvedProjectPath, tasks));
+      }
+    }, () => undefined);
+  }
   if (scriptMode?.mode !== 'background') return creation;
   // A background script's failure is reported inside the creation, so a
   // rejection here can only come before the worktree was recorded, which the
@@ -599,6 +659,78 @@ export async function ensureTaskWorktree(
 export type InitScriptMode =
   | { mode: 'hold-prompt'; launchAgent: (worktreePath: string) => Promise<EarlyAgentHandle | null> }
   | { mode: 'background' };
+
+/**
+ * Adopt a pre-installed spare worktree for `task` (`spare-worktree.ts`), inside
+ * the task's creation hold. The pool takes a ready spare in the git queue and
+ * puts the task's auto branch on the fetched base there. Then the copied files
+ * again (never the node_modules link: it would delete the spare's install), and
+ * the init script again, a short catch-up install. Hold-prompt starts the agent
+ * at the spare first, exactly as a new worktree's does.
+ *
+ * The script runs BEFORE the worktree is recorded in every mode, background
+ * included (it waits the few seconds instead of returning early), so every
+ * failure lands before the record. A failure discards the early agent and waits
+ * for its exit, then discards the spare, and returns null so the caller creates
+ * a fresh worktree in the same hold. An abort does the same, then rethrows.
+ */
+async function adoptSpareWorktree(input: {
+  pool: SpareWorktreePool;
+  task: Task;
+  tasks: TaskRepository;
+  projectPath: string;
+  inputs: SpareInputs;
+  setup: WorktreeSetup;
+  worktreeManager: WorktreeManager;
+  scriptMode: InitScriptMode | undefined;
+  signal?: AbortSignal;
+  onProgress?: (phase: string) => void;
+  onFetchOutcome: (outcome: FetchIfStaleOutcome) => void;
+  record: (created: WorktreeCreateResult) => void;
+}): Promise<{ earlyAgent: EarlyAgentHandle | null } | null> {
+  const { pool, task, worktreeManager, signal } = input;
+  const shortId = task.id.slice(0, 8);
+  const claimed = await pool.claim({
+    projectPath: input.projectPath,
+    task,
+    inputs: input.inputs,
+    referencedFolders: () => referencedWorktreeFolders(input.tasks),
+    signal,
+    onProgress: input.onProgress,
+    onFetchOutcome: input.onFetchOutcome,
+  });
+  if (!claimed) return null;
+  const { result, release } = claimed;
+  let launched: Promise<EarlyAgentHandle | null> | null = null;
+  try {
+    await worktreeManager.copyWorktreeFiles(result.worktreePath, input.setup, { signal });
+    pool.yieldBuilds();
+    if (input.scriptMode?.mode === 'hold-prompt') {
+      launched = input.scriptMode.launchAgent(result.worktreePath).catch((error: unknown) => {
+        if (!isAbortError(error)) console.warn(`[INIT-SCRIPT] Early agent launch failed for task ${shortId}:`, error);
+        return null;
+      });
+    }
+    const catchUpStartedAt = Date.now();
+    await worktreeManager.runWorktreeInitScript(result.worktreePath, input.setup, { onProgress: input.onProgress, signal });
+    const catchUpMs = Date.now() - catchUpStartedAt;
+    const earlyAgent = launched ? await launched : null;
+    input.record(result);
+    console.log(`[SPARE] task ${shortId} adopted ${result.worktreeFolder} on ${result.branchName}`);
+    // Before the creation settles, so the refill it asks for reads the finding:
+    // a catch-up as slow as the spare's own install means spares save nothing here.
+    await pool.noteCatchUp(input.projectPath, input.inputs.initScript, catchUpMs, claimed.buildInstallMs);
+    return { earlyAgent };
+  } catch (error) {
+    if (launched) await (await launched)?.discard();
+    await pool.discard(input.projectPath, result.worktreePath);
+    if (isAbortError(error) || signal?.aborted) throw error;
+    console.warn(`[SPARE] claim failed for task ${shortId}, creating a fresh worktree: ${firstLineOf(error)}`);
+    return null;
+  } finally {
+    release();
+  }
+}
 
 /**
  * Run a recorded worktree's setup script after its agent has started on its

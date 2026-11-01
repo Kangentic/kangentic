@@ -87,6 +87,24 @@ Uses real temp files with mocked `os.homedir()`.
 - The move-failure stale cleanup skips whole while a newer creation holds a candidate path (`task-move-stale-branch-cleanup.test.ts`); the backlog pass skips a held task whole, and the orphan sweep skips a held path, including one claimed while it runs (`resource-cleanup.test.ts`, `prune-orphaned-dirs.test.ts`)
 - The MCP delete and the project delete wait for a creation at the path before they remove it (`mcp-project-context.test.ts`)
 
+**Spare worktree** (`spare-worktree-claim.test.ts`, a real repo with a bare origin and a real script):
+- An eligible task adopts the spare at its folder, on its own auto branch, at origin's new tip, with the copied file and the script run again and the ready record gone; the claim asks for the next spare, which is built
+- A task with its own base branch, and one with a custom branch, each get a fresh numeric worktree and leave the spare ready
+- A claim whose catch-up script fails discards the spare and creates a fresh worktree on the same branch; the refill's failed build runs once and ends the loop
+- Background mode runs the claim's catch-up before the worktree is recorded, and a failing one falls back to a fresh worktree; an abort during the catch-up discards the spare and records nothing, and an already-aborted start leaves the spare ready
+- The claim discards a spare built from other settings, leaves the spare for a task whose auto branch exists or whose base no longer resolves, takes the newest ready spare, skips a held one and one a task row names, and two tasks started together never share one
+- A failed claim whose spare cannot be moved aside or removed still frees its branch (the discard detaches HEAD first), so the fresh worktree checks it out
+- Hold-prompt: the agent starts at the spare, and a failed claim discards it before the fresh worktree starts another
+- The startup pass removes a spare with no ready record and one with stale settings, keeps a ready one, and keeps a spare folder a task adopted
+- A task setup that runs an init script stops a spare build, which builds again once no script runs
+- A claim whose catch-up is as slow as the spare's own install (an `npm ci`) records the finding and is not refilled; the startup pass keeps the finding, and a changed init script builds again
+- Building a spare imports nothing from the agent adapters, so no trust entry is written for it
+- The pool's lifecycle (`spare-worktree-pool-lifecycle.test.ts`): `stop` returns while a task's init script still runs, aborts and discards a build in progress, and waits for a claim's hold; the quit ends every loop and build, and leaves an aborted build's folder for the startup pass; a failed build ends the loop; two requests build one spare, null inputs or a usable spare build none, and a request that lands as the loop finishes restarts it; `discardProjectSpares` keeps a spare a task row names and every spare when the rows cannot be read
+- The records (`spare-worktree-records.test.ts`): the no-saving finding at, above and under the ratio, the ready record's and the finding's validation, `spareInputsMatch` per field, the sweep's record-file pass, and the spare folder name
+- Eligibility and wiring (`spare-worktree-eligibility.test.ts`): each exclusion of `isSpareEligible`, the refill asked only by an eligible start that made a worktree, after its script, and `yieldBuilds` only when the project has an init script
+- The wiring of the quit's `abortAllBuilds` (`shutdown-history-wiring.test.ts`), the project delete's discard (`project-delete-removed-worktrees.test.ts`) and the relocate's stop and discard (`project-relocate.test.ts`); `ownCreation` lets a holder move aside or remove its own held path (`worktree-removal-own-creation.test.ts`); the task lookup's order and misses (`worktree-task-lookup.test.ts`)
+- The orphan sweep keeps a spare folder (`prune-orphaned-dirs.test.ts`); `tryHoldWorktreeCreation` holds a free path at once and refuses a held one (`worktree-creation-registry.test.ts`); the window and `/preview` titles read an adopted spare's number from its task row (`window-utils.test.ts`, `preview-task-title.test.ts`)
+
 **Removal:**
 - `removeWorktree` calls `git worktree remove --force`
 - `removeWorktree` falls back to `rmSync` + `git worktree prune` on failure
