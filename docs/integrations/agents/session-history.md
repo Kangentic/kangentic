@@ -652,8 +652,8 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    `isInBackgroundSession` reads the agent's own transcripts instead, with no CLI. Claude's is
    true when a transcript in the conversation's folder ends by continuing in it. Listing and
    searching a folder of 156 transcripts took 6 to 11 ms. The background session's own
-   transcript need not exist: in a `/preview` one appeared 1.7 s after the move's record, and in
-   three later runs none was written before the session's first turn. So the search starts from
+   transcript need not exist: in a `/preview` one appeared 1.7 s after the move's record, one
+   left idle for 30 s wrote none, and two stopped within seconds had none. So the search starts from
    the folder the cwd maps to, and `resolveResumableSessionId` reads a missing transcript as one
    with no turn. On that evidence the terminal's end runs `stopBackgroundSession` through the
    project's configured Claude: the leftover reaper starts the stop at the removal, while the
