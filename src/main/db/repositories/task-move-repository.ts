@@ -28,8 +28,49 @@ interface TaskMoveRow {
   at: string;
 }
 
+/** A task in a column with an agent limit, and when it entered that column. */
+export interface CappedColumnTask {
+  taskId: string;
+  swimlaneId: string;
+  swimlaneName: string;
+  maxAgents: number;
+  /** The order the column works in: earliest first. */
+  enteredAt: string;
+}
+
 export class TaskMoveRepository {
   constructor(private db: Database.Database) {}
+
+  /**
+   * Every live task in a column with an agent limit. One statement rather than a
+   * lookup per task, since the queue asks this on every spawn and promotion and
+   * an unlimited board has nothing to return.
+   *
+   * A task's place is its latest entry into its column. A reorder records no
+   * move, so dragging within the column changes nothing, and a rollback is not
+   * an entry: a move that failed puts the task back where it stood. A task placed
+   * there before moves were recorded falls back to its creation.
+   */
+  listCappedColumnTasks(): CappedColumnTask[] {
+    const rows = this.db.prepare(`
+      SELECT tasks.id AS task_id, tasks.swimlane_id, swimlanes.name AS swimlane_name, swimlanes.max_agents,
+        COALESCE(
+          (SELECT MAX(moves.at) FROM task_moves moves
+            WHERE moves.task_id = tasks.id AND moves.to_swimlane_id = tasks.swimlane_id AND moves.origin != 'rollback'),
+          tasks.created_at
+        ) AS entered_at
+      FROM tasks
+      JOIN swimlanes ON swimlanes.id = tasks.swimlane_id
+      WHERE swimlanes.max_agents >= 1 AND tasks.archived_at IS NULL
+    `).all() as Array<{ task_id: string; swimlane_id: string; swimlane_name: string; max_agents: number; entered_at: string }>;
+    return rows.map((row) => ({
+      taskId: row.task_id,
+      swimlaneId: row.swimlane_id,
+      swimlaneName: row.swimlane_name,
+      maxAgents: row.max_agents,
+      enteredAt: row.entered_at,
+    }));
+  }
 
   /**
    * When the task last entered this column, or null when no move into it was

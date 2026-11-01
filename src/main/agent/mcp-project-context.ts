@@ -290,6 +290,9 @@ export function buildCommandContextForProject(
       // just the currently-active one. Best-effort: writeBackForProject never
       // throws.
       ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
+      // A limit turned off lets the next tasks start in ANY project. This starts
+      // what already waits, so it needs none of the scoping below.
+      ipcContext.sessionManager.drainQueue();
       // The same live-session propagation the Board Manager's own save runs. This
       // path used to do NOTHING here, so an agent editing a column missed even
       // the model/effort injection the UI path has, on top of the auto_spawn

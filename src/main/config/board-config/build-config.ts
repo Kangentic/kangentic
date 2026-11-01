@@ -80,6 +80,8 @@ export function buildBoardConfigFromDb(params: {
       if (lane.session_spawn_strategy !== 'create_or_resume') column.sessionSpawnStrategy = lane.session_spawn_strategy;
       // A To Do or Done column never approves plans (apply-config forces Manual).
       if (lane.plan_approval !== 'manual' && lane.role !== 'todo' && lane.role !== 'done') column.planApproval = lane.plan_approval;
+      // A To Do or Done column runs no agent, so it has no limit to share.
+      if (lane.max_agents !== null && lane.role !== 'todo' && lane.role !== 'done') column.maxAgents = lane.max_agents;
 
       const existingColumn = params.existingTeamConfig?.columns?.find((candidate) => candidate.id === lane.id)
         ?? params.existingTeamConfig?.columns?.find((candidate) => candidate.name === lane.name)

@@ -127,6 +127,7 @@ vi.mock('../../src/main/db/repositories/task-repository', () => {
     // The spawn pass re-reads its task under the task lock.
     getById = vi.fn((id: string) => taskRepoList().find((task: Task) => task.id === id));
     setWorktreeSkipReason = (...args: unknown[]) => taskRepoSetWorktreeSkipReasonMock(...args);
+    listCappedColumnTasks = () => [];
   }
   return { TaskRepository: FakeTaskRepository };
 });

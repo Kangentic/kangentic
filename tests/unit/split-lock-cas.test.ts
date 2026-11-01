@@ -220,6 +220,10 @@ function createMockContext() {
       webContents: { send: vi.fn() },
     },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       listSessions: vi.fn(() => []),
       getSession: vi.fn(() => null),
       // Required by reconcileTaskSessionRef's heal-by-taskId fallback.

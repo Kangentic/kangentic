@@ -21,6 +21,7 @@ import { resolveIsolatedSwimlaneId } from '../session-isolation';
 import { retireRecord, markRecordSuspended } from '../session-lifecycle';
 import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
+import { orderByColumnEntry } from '../column-capacity';
 import { prepareAgentSpawn, type PreparedSpawn } from './prepare-spawn';
 import { demoteMissingWorktree } from './missing-worktree';
 import { startStartupTimer } from './timing';
@@ -522,8 +523,10 @@ export async function resumeSuspendedSessions(
   // Pause, which leaves no live session, still shows as the record's status.
   // A skipped task keeps its session directory and releases its command's
   // hold (see auto-spawn.ts).
+  //
+  // In column-entry order, so a limited column's slot goes to its first task.
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+    orderByColumnEntry(spawnInputs, taskRepo.listCappedColumnTasks()).map((input) => withTaskLock(input.task.id, async () => {
       // Until spawn() takes the command, this pass owns its hold. spawn()
       // releases a spawn that never runs, and a session that ran owns its own.
       let handedToSpawn = false;

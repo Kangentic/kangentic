@@ -10,6 +10,7 @@ sources:
   - resource: src/renderer/stores/board-store/task-move-confirm-slice.ts
   - resource: src/renderer/stores/board-store/task-completion-slice.ts
   - resource: src/renderer/stores/session-store.ts
+  - resource: src/shared/queue-place.ts
   - resource: src/renderer/stores/session-lifecycle-hooks.ts
   - resource: src/renderer/stores/config-store.ts
   - resource: src/renderer/stores/project-store.ts
@@ -42,7 +43,7 @@ State: `sessions`, `activeSessionId`, `detailTaskId`, `dialogSessionIds`, `sessi
 - **HMR instance pin (Pattern E)** - The store instance is pinned in `import.meta.hot.data.sessionStore`, so a re-eval (usually a `session-store/` slice edit) cannot hand part of the tree a second, empty store. Re-sync alone could not cover renderer-only state that no `load*` call restores: the browser-pane sets reading empty for one commit unmounted every live `<webview>`. It pins WITHOUT self-accepting, unlike the other Pattern E stores, because it sits in an import cycle (session-store -> the arrival-focus arbiter -> dictation-target -> session-store) and Vite turns an `invalidate()` from inside a cycle into a full page reload. The separate `project-store` <-> `session-store` cycle was broken outright via `stores/session-lifecycle-hooks.ts` and is guarded by `tests/unit/renderer-store-import-cycles.test.ts`. Measure any change here with `scripts/hmr-guest-probe.mjs`. See `.claude/rules/hmr-patterns.md`.
 - **Project switch cleanup** -- On project switch, `activeSessionId`, `dialogSessionIds`, `detailTaskId`, `sessionUsage`, and `sessionEvents` are cleared before re-syncing. A generation counter invalidates in-flight syncs from the previous project. `sessionActivity` and `sessions` are preserved for sidebar badge rendering. After sync completes, any `_pendingOpenTaskId` (set by notification click) is applied and cleared.
 - **Event capping** -- max 500 events per session to bound DOM size in ActivityLog.
-- **Queue position** -- `getQueuePosition()` returns 1-indexed position sorted by startedAt.
+- **Queue place.** `queueSnapshot` is main's report of who waits for a slot and why (`sessions.getQueueSnapshot`, `sessions.onQueueChanged`), since only main sees columns, order and other projects' titles. `useQueuePlace(sessionId)` reads a session's place through `queuePlaceOf` (`src/shared/queue-place.ts`). A column's line counts its running agent first; a task its column does not hold back counts among queued tasks only.
 
 ## ConfigStore (`config-store.ts`)
 

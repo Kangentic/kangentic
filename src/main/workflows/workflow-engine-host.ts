@@ -7,6 +7,8 @@ import { isSqliteError } from '../db/sqlite-error';
 import { TaskRepository } from '../db/repositories/task-repository';
 import { setHomeLinkRemover } from '../db/repositories/workflow-home-links';
 import { SwimlaneRepository } from '../db/repositories/swimlane-repository';
+import { TaskMoveRepository } from '../db/repositories/task-move-repository';
+import { columnKey, columnRoom } from '../transition-engine/column-capacity';
 import { WorkflowRepository } from '../db/repositories/workflow-repository';
 import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { forgetRecentFetches } from '../git/fetch-throttle';
@@ -459,11 +461,32 @@ export class WorkflowEngineHost {
       if (now < failure.retryAt) blocked.add(key);
     }
     const freeSlots = this.context.sessionManager.getFreeAgentSlots() - this.inFlightSlots.size;
-    const intents = planPass(snapshots, freeSlots, blocked);
+    const intents = planPass(snapshots, freeSlots, blocked, this.columnRoomReader());
     return {
       intents: unreadProjectIds.size > 0 ? withoutUnreadOutcomes(intents, snapshots, unreadProjectIds) : intents,
       titles,
       taskCounts,
+    };
+  }
+
+  /**
+   * Room left in a column with an agent limit, read once per column per pass. A
+   * project that is not open reads as no limit: its start would go on to queue,
+   * which is safe, and a limit nothing can read must not hold a workflow.
+   */
+  private columnRoomReader(): (projectId: string, swimlaneId: string) => number {
+    const known = new Map<string, number>();
+    return (projectId, swimlaneId) => {
+      const key = columnKey(projectId, swimlaneId);
+      const cached = known.get(key);
+      if (cached !== undefined) return cached;
+      const db = getOpenProjectDb(projectId);
+      const column = db ? new SwimlaneRepository(db).getById(swimlaneId) : null;
+      const room = db && column && column.max_agents !== null
+        ? columnRoom(column, new TaskMoveRepository(db).listCappedColumnTasks(), this.context.sessionManager.listColumnClaims(projectId))
+        : Number.POSITIVE_INFINITY;
+      known.set(key, room);
+      return room;
     };
   }
 

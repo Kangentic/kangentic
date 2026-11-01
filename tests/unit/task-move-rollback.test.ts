@@ -172,6 +172,10 @@ interface MockSessionManager {
   killByTaskId: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
+  drainQueue: ReturnType<typeof vi.fn>;
+  columnBlocks: ReturnType<typeof vi.fn>;
+  isResuming: ReturnType<typeof vi.fn>;
+  holdColumnSlot: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
   findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
 }
@@ -249,6 +253,10 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
+    holdColumnSlot: vi.fn(() => () => undefined),
     // Phase 1 reconciles task.session_id against the registry before the
     // Priority ladder; a live row for the pointed-at id keeps these fixtures
     // on the branches they exercise.
@@ -517,6 +525,37 @@ describe('handleTaskMove outer-catch rollback', () => {
       targetSwimlaneId: SOURCE_LANE_ID,
       targetPosition: task.position,
     });
+  });
+
+  // =========================================================================
+  // Test 4b: A failed move re-checks the line AFTER the rollback write
+  //
+  // The move released its old column's slot when it committed. When Phase 2
+  // then fails and the task is put back, no process ends, so nothing else
+  // starts the next task waiting for that slot. handleTaskMove drains the queue
+  // once Phase 1 settles (a different call, before the failure) and must drain
+  // it again after the rollback. Order is the point: a drain that ran only
+  // before the rollback would leave the next waiting task queued.
+  // =========================================================================
+
+  it('drains the column queue after the rollback write, not only after Phase 1', async () => {
+    taskRepo.getById
+      .mockReturnValueOnce({ ...task, swimlane_id: SOURCE_LANE_ID, session_id: null })
+      .mockReturnValueOnce({ ...task, swimlane_id: TARGET_LANE_ID, session_id: null });
+
+    const context = makeContext(taskRepo, swimlaneRepo);
+
+    await expect(
+      handleTaskMove(context as never, MOVE_INPUT, 'renderer'),
+    ).rejects.toThrow('Worktree setup failed');
+
+    // Phase 1 forward move + rollback reverse move.
+    expect(taskRepo.move).toHaveBeenCalledTimes(2);
+    const rollbackMoveOrder = taskRepo.move.mock.invocationCallOrder[1];
+    const drainOrders = context.sessionManager.drainQueue.mock.invocationCallOrder;
+    // The Phase 1 drain and the post-rollback drain.
+    expect(drainOrders.length).toBeGreaterThanOrEqual(2);
+    expect(Math.max(...drainOrders)).toBeGreaterThan(rollbackMoveOrder);
   });
 
   // =========================================================================

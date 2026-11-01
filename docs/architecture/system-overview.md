@@ -316,7 +316,7 @@ Stale-thinking detection is no longer a `SessionManager` constant. It now lives 
 
 Limits concurrent PTY sessions (default: 8, configurable via `config.agent.maxConcurrentSessions`).
 
-When a session is requested and the limit is reached, it gets a `queued` status placeholder. When a running session exits or suspends, `notifySlotFreed()` promotes the next queued entry.
+When a session is requested and the limit is reached, it gets a `queued` status placeholder. When a running session exits or suspends, `notifySlotFreed()` promotes the next queued entry. A column's own agent limit (`swimlanes.max_agents`) shares this queue through an injected gate, which holds entries back and picks by column-entry order (see [A column's agent limit](sessions/spawn-flow.md#a-columns-agent-limit)).
 
 Uses a reentrancy-safe double-check loop: a `_processing` flag prevents concurrent promotion, and a `_dirty` flag ensures re-iteration if the queue changed during a spawn await.
 

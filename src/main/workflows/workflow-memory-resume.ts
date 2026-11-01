@@ -29,8 +29,10 @@ import { workflowStepApplies } from './workflow-step';
  *   only once the last one's turn is under way and memory still reads fine.
  *   Recovery's nudges wait in the same queue, so a place this no longer asks
  *   for leaves the line at once.
- * - **Within the agent limits.** Never past the app's free agent slots. When
- *   the per-column agent limit lands (#953), its check belongs here too.
+ * - **Within the agent limits.** Never past the app's free agent slots, and
+ *   never into a column that has its one agent. A paused task is not queued, so
+ *   it rejoins behind tasks already waiting there; queuing it instead would hold
+ *   the gate and spend a resume of the day's limit on a task that has not run.
  * - **Through the Resume button's own path** (`resumeTaskSession`), marked
  *   `'memory'`: the resume's catch-up then hands the agent's turn to the
  *   workflow's unblock pass at once.
@@ -113,9 +115,10 @@ export async function resumeMemoryPausedWorkflowTasks(context: IpcContext, now: 
         console.warn(`[WORKFLOW] The memory resume of task ${taskId.slice(0, 8)} failed at its ${step} step:`, error);
       },
     });
-    if (session && acceptance !== 'live') {
+    if (session && acceptance !== 'live' && session.status !== 'queued') {
       // A resume that ran: it counts toward the day's limit, and the gate
-      // waits for its turn to be under way.
+      // waits for its turn to be under way. One that lost a race for a slot
+      // queued instead, ran nothing, and must not hold the gate while it waits.
       history.resumedAt.push(now);
       history.failuresInRow = 0;
       history.lastFailedAt = null;
@@ -179,6 +182,7 @@ function nextCandidate(context: IpcContext, now: number): ResumeCandidate | null
       if (!task || task.archived_at || !workflowStepApplies(task, project.id)) continue;
       const column = swimlanes.getById(task.swimlane_id);
       if (!column || column.role === 'todo' || column.role === 'done') continue;
+      if (context.sessionManager.columnBlocks({ taskId: task.id, projectId: project.id })) continue;
       // Its question was already told; it would only idle again.
       if (runs.isWaitingOnUser(task.id, column.id, moves.visitStartedAt(task.id, column.id))) continue;
       const suspendedAt = pause.suspendedAt ? Date.parse(pause.suspendedAt) : now;

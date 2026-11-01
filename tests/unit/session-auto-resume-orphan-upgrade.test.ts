@@ -82,6 +82,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 // and taskRepoUpdateMock so tests can assert on session_id clears.
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
+    listCappedColumnTasks() { return []; }
     list = () => taskRepoList();
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
   }

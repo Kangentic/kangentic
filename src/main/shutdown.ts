@@ -8,7 +8,7 @@ import { spareWorktreePool } from './git/spare-worktree';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
-import { markRecordSuspended, markRecordExited } from './transition-engine/session-lifecycle';
+import { markRecordSuspended, settleQueuedRecord } from './transition-engine/session-lifecycle';
 import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers/session-metrics';
 import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
@@ -213,9 +213,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
               markRecordSuspended(sessionRepo, record.id, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             } else if (record && record.status === 'queued') {
-              // Queued sessions never started Claude CLI - mark as exited
-              // (not suspended) since there's nothing to resume.
-              markRecordExited(sessionRepo, record.id);
+              // A queued fresh start never ran, so it exits with nothing to
+              // resume. A queued resume stays resumable, or a task waiting its
+              // turn in a column would relaunch without its conversation.
+              settleQueuedRecord(sessionRepo, record, session.resuming, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             }
           }

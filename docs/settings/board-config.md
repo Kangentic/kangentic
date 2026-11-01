@@ -41,7 +41,8 @@ session spawn strategy, plan-exit target). A task selects one and rides its ladd
 in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
 *identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
 only strategy is profile-scoped. Plan approval is not part of a profile either: it is the column's
-own, every profile shares it, and the Column Manager disables it while a profile is selected.
+own, every profile shares it, and the Column Manager disables it while a profile is selected. The
+same goes for a column's agent limit.
 
 Profiles are authored in the Column Manager and stored under a `profiles` key in
 `kangentic.json`. Unlike shortcuts they are **team-only** - never `kangentic.local.json` - because
@@ -199,6 +200,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "modelOverride": null,
       "effortOverride": null,
       "handoffContext": false,
+      "maxAgents": 1,
       "sessionTarget": "main",
       "sessionSpawnStrategy": "create_or_resume",
       "archived": false,
@@ -250,6 +252,10 @@ picker has listed that family, so a gateway model named `"Workhorse"` reaches th
 before the first picker scan on a machine, write the alias in lowercase. What an alias means is
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
+
+**`maxAgents` is written only when a column has a limit.** An absent key is no limit, not "keep
+what is here", so a teammate turning the limit off reaches every machine. To Do and Done never carry
+one, and a value under 1 reads as no limit.
 
 **`planApproval` is written only when it is `"automatic"`** (`"planApproval": "automatic"` on a
 column whose `permissionMode` is `"plan"`). The export omits it at `"manual"`, and

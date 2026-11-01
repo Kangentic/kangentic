@@ -8,6 +8,38 @@ interface QueueEntry {
 type SpawnFn = (input: SpawnSessionInput) => Promise<void>;
 type ActiveCountFn = () => number;
 
+export type QueuedInput = SpawnSessionInput & { id: string };
+
+/** What a gate reads about a start. */
+export type GatedInput = Pick<SpawnSessionInput, 'taskId' | 'projectId' | 'transient' | 'workflowId'>;
+
+/** A task holding, or reserving, an agent slot in whichever column it is in. */
+export interface ColumnHolder {
+  projectId: string;
+  taskId: string;
+  /** Null for a slot a restart is keeping. */
+  sessionId: string | null;
+}
+
+/** A Command Terminal and a workflow's own agent belong to no column. */
+export function isColumnExempt(input: Pick<SpawnSessionInput, 'transient' | 'workflowId'>): boolean {
+  return Boolean(input.transient || input.workflowId);
+}
+
+/**
+ * What the queue asks about a limit it cannot see for itself, a column's agent
+ * limit today. The queue stays free of database code: the gate is injected, and
+ * with no gate the queue is the plain FIFO it always was.
+ */
+export interface QueueGate {
+  /** Whether this input has to wait even with a global slot free. */
+  mustWait(input: GatedInput, queued: readonly QueuedInput[]): boolean;
+  /** The index of the next entry to start, or -1 when none can. */
+  pick(queued: readonly QueuedInput[]): number;
+  /** How many entries are waiting on the gate rather than on a global slot. */
+  countBlocked(queued: readonly QueuedInput[]): number;
+}
+
 /**
  * Manages session concurrency with a reentrancy-safe queue.
  *
@@ -23,6 +55,7 @@ export class SessionQueue {
   private _dirty = false;
   private spawner: SpawnFn;
   private getActiveCount: ActiveCountFn;
+  private gate: QueueGate | null = null;
 
   constructor(opts: {
     spawner: SpawnFn;
@@ -40,9 +73,30 @@ export class SessionQueue {
     this.notifySlotFreed();
   }
 
-  /** Check if a new session should be queued (active count >= limit). */
-  shouldQueue(): boolean {
-    return this.getActiveCount() >= this.maxConcurrent;
+  /** Install the gate. This does not drain: a gate that frees entries needs a `notifySlotFreed()` after it. */
+  setGate(gate: QueueGate): void {
+    this.gate = gate;
+  }
+
+  /**
+   * Check if a new session should be queued: the global limit is reached, or the
+   * gate says this input waits. A gate that throws admits, because a limit that
+   * cannot be read must not strand a task.
+   */
+  shouldQueue(input?: GatedInput): boolean {
+    if (this.getActiveCount() >= this.maxConcurrent) return true;
+    return input ? this.gateBlocks(input) : false;
+  }
+
+  /** Whether the gate alone holds this input, whatever the global count reads. */
+  gateBlocks(input: GatedInput): boolean {
+    if (!this.gate) return false;
+    try {
+      return this.gate.mustWait(input, this.queuedInputs());
+    } catch (error) {
+      console.error('[SessionQueue] mustWait threw, admitting:', error);
+      return false;
+    }
   }
 
   /** Add an entry to the queue. The input must have `id` set by the caller. */
@@ -92,7 +146,9 @@ export class SessionQueue {
       do {
         this._dirty = false;
         while (this.queue.length > 0 && !isShuttingDown() && this.getActiveCount() < this.maxConcurrent) {
-          const next = this.queue.shift()!;
+          const index = this.pickNext();
+          if (index < 0) break;
+          const [next] = this.queue.splice(index, 1);
           try {
             await this.spawner(next.input);
           } catch (err) {
@@ -108,6 +164,21 @@ export class SessionQueue {
     }
   }
 
+  private queuedInputs(): QueuedInput[] {
+    return this.queue.map((entry) => entry.input);
+  }
+
+  /** The gate's choice, or the head with no gate or a gate that threw. */
+  private pickNext(): number {
+    if (!this.gate) return 0;
+    try {
+      return this.gate.pick(this.queuedInputs());
+    } catch (error) {
+      console.error('[SessionQueue] pick threw, taking the head:', error);
+      return 0;
+    }
+  }
+
   /** Clear all entries from the queue. */
   clear(): void {
     this.queue.length = 0;
@@ -115,6 +186,22 @@ export class SessionQueue {
 
   get length(): number {
     return this.queue.length;
+  }
+
+  /** Entries waiting on the gate, which hold no claim on a global slot. */
+  get blockedCount(): number {
+    if (!this.gate || this.queue.length === 0) return 0;
+    try {
+      return this.gate.countBlocked(this.queuedInputs());
+    } catch (error) {
+      console.error('[SessionQueue] countBlocked threw, counting none:', error);
+      return 0;
+    }
+  }
+
+  /** Queued inputs in queue order, for anything that reports the line. */
+  get entries(): readonly QueuedInput[] {
+    return this.queuedInputs();
   }
 
   get maxConcurrentSessions(): number {

@@ -203,6 +203,10 @@ function makeSessionManager() {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
+    holdColumnSlot: vi.fn(() => () => undefined),
     // A live row, so Phase 1's reconcile keeps the pointer.
     getSession: vi.fn((id: string) => ({ id, status: 'running' })),
     findLiveSessionByTaskId: vi.fn(() => null),

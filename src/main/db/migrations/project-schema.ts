@@ -1632,6 +1632,16 @@ export function runProjectMigrations(db: Database.Database): void {
     db.exec("ALTER TABLE swimlanes ADD COLUMN plan_approval TEXT NOT NULL DEFAULT 'manual'");
   }
 
+  // Migration: add max_agents to swimlanes. How many agents run in the column at
+  // once. NULL means no limit, which is what every existing column already does,
+  // so no backfill is needed. A number rather than a flag, though the UI only
+  // offers 1, so a later choice of limit needs no migration.
+  const hasMaxAgents = (db.pragma('table_info(swimlanes)') as Array<{ name: string }>)
+    .some((column) => column.name === 'max_agents');
+  if (!hasMaxAgents) {
+    db.exec('ALTER TABLE swimlanes ADD COLUMN max_agents INTEGER DEFAULT NULL');
+  }
+
   // Migration: record the outcome of a task's most recent auto_command
   // injection, so a failure is observable instead of being a console warning
   // nobody sees. Written by the injection reporter; read by the renderer to

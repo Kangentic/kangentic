@@ -9,7 +9,7 @@ sources:
 ---
 # Session IPC channels
 
-## Sessions (47 channels)
+## Sessions (49 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `session:spawn` | invoke | Spawn PTY session (may queue) |
@@ -41,6 +41,8 @@ sources:
 | `session:exit` | on | Session exited (includes `projectId`) |
 | `session:status` | on | Session changed - pushes full `Session` object (includes `projectId`) |
 | `session:removed` | on | Session left main's registry for good (`SessionManager.remove()`: a To Do reset, a task or project delete, a session reset, an aborted spawn). Carries the row's last `Session` snapshot and `projectId`. Its own channel because the status handler can only upsert; the renderer drops the row and every per-session map entry keyed on the id. The main-side handler also purges that session from the background usage and event buffers, so a tick held for `BACKGROUND_FLUSH_MS` cannot flush after the removal and write its numbers back under a row the renderer has dropped |
+| `session:queueSnapshot` | invoke | The line for an agent slot (`QueueSnapshot`): each column with an agent limit and its holders and waiting tasks, plus every queued session in queue order, across projects. Only main can build it, since it knows the columns, their entry order and other projects' titles (`src/main/ipc/helpers/queue-snapshot.ts`). Answers `sessions.getQueueSnapshot` |
+| `session:queueChanged` | on | The line changed (`QueueSnapshot`). Coalesced in main (100 ms) and sent only when the snapshot differs from the last one, so a board with nothing queued pushes nothing. Declared in the Agent Monitor pop-out's `channels`, so a detached monitor and a hosted task detail hear it. Renderer side: `sessions.onQueueChanged` |
 | `session:usage` | on | Usage data updated (includes `projectId`) |
 | `session:activity` | on | Activity state or reason changed (includes `projectId`, `taskId`). Two main-side emitters feed this one channel: `activity` on a real state transition, and `activity-reason` when the state holds but the reason's kind moves (a fan-out starting mid-turn, say). Only the first reaches the desktop notifier, the mobile push notifier, turn-completion auto-move, and the activity-interval recorder, which all read an `activity` emit as a transition. On the idle that ends a turn in which the session moved its own task or paused its own workflow, main adds `inOwnCall: true` to the idle reason it broadcasts (`markOwnCallIdle`), and the renderer raises no idle toast and does no auto-focus for it. |
 | `session:event` | on | Structured event (includes `projectId`) |

@@ -327,6 +327,8 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // hosted task detail cannot keep a row main has dropped.
       IPC.SESSION_REMOVED,
       IPC.SESSION_EXIT,
+      // A queued card's place in line, and a hosted task detail's line of tasks.
+      IPC.SESSION_QUEUE_CHANGED,
       IPC.CONFIG_CHANGED,
       // This window can host a task detail (and therefore a live terminal) for a
       // project the board is not on, so it needs the per-session pushes a terminal

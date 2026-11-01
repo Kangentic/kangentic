@@ -67,6 +67,7 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
+  settleQueuedRecord: vi.fn(),
   promoteRecord: vi.fn(),
   recoverStaleSessionId: vi.fn(),
 }));
@@ -92,7 +93,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 
 // Import under test AFTER all mocks are registered.
 import { applySuspendDbWrites } from '../../src/main/ipc/handlers/session-reconcile';
-import { markRecordExited, markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
+import { markRecordExited, markRecordSuspended, settleQueuedRecord } from '../../src/main/transition-engine/session-lifecycle';
 
 const PROJECT_ID = 'proj-1';
 const PROJECT_PATH = '/mock/project';
@@ -162,6 +163,7 @@ function makeContext(taskRepo: { getById: ReturnType<typeof vi.fn>; update: Retu
     currentProjectId: PROJECT_ID,
     currentProjectPath: PROJECT_PATH,
     sessionManager: {
+      isResuming: vi.fn(() => false),
       getUsageCache: vi.fn(() => ({})),
       getEventsForSession: vi.fn(() => []),
     },
@@ -214,7 +216,7 @@ describe('applySuspendDbWrites git-churn capture wiring', () => {
 
     expect(hoisted.captureGitChurn).not.toHaveBeenCalled();
     expect(hoisted.resolveDefaultBaseBranch).not.toHaveBeenCalled();
-    expect(vi.mocked(markRecordExited)).toHaveBeenCalledWith(expect.anything(), 'rec-queued');
+    expect(vi.mocked(settleQueuedRecord)).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'rec-queued' }), false, 'user');
     expect(vi.mocked(markRecordSuspended)).not.toHaveBeenCalled();
     expect(taskRepo.update).toHaveBeenCalledWith({ id: TASK_ID, session_id: null });
   });

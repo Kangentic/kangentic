@@ -297,6 +297,10 @@ msgid "Paused"
 msgstr "已暂停"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Queued {position}/{total}..."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "排队中..."
 
@@ -443,6 +447,14 @@ msgstr "查看全部"
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "View conversation"
 msgstr "查看对话"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a free agent slot."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a slot in {columnName}."
+msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

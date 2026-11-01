@@ -181,6 +181,7 @@ function makeIpcContext(projectResult: Project | null): IpcContext {
       list: vi.fn(() => (projectResult ? [projectResult] : [])),
     },
     boardEvents: { emitBoardChanged: vi.fn() },
+    sessionManager: { drainQueue: vi.fn() },
   } as unknown as IpcContext;
 }
 
@@ -705,17 +706,41 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     const send = vi.fn();
     const writeBackForProject = vi.fn();
     const emitBoardChanged = vi.fn();
+    const drainQueue = vi.fn();
     const ipcContext = {
       projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
       mainWindow: { isDestroyed: () => false, webContents: { send } },
       boardConfigManager: { writeBackForProject },
       boardEvents: { emitBoardChanged },
+      sessionManager: { drainQueue },
     } as unknown as IpcContext;
-    return { ipcContext, send, writeBackForProject, emitBoardChanged };
+    return { ipcContext, send, writeBackForProject, emitBoardChanged, drainQueue };
   }
 
   // onSwimlaneUpdated only reads id + name off the swimlane.
   const fakeSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'To Do' }) as unknown as Swimlane;
+
+  // A column's agent limit turned off or raised by an agent frees room for tasks
+  // already queued, yet no session exits to re-check the line. Red-green: delete
+  // the `sessionManager.drainQueue()` call in onSwimlaneUpdated and this fails.
+  it('re-checks the agent queue once after a column update', () => {
+    const { ipcContext, drainQueue } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneUpdated(fakeSwimlane());
+
+    expect(drainQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-checks the agent queue for a background project too (no active-project gate)', () => {
+    const { ipcContext, drainQueue } = makeWriteBackContext();
+    (ipcContext as unknown as { currentProjectId: string }).currentProjectId = 'some-other-project-id';
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneUpdated(fakeSwimlane(), { id: 'lane-1', name: 'Backlog' } as unknown as Swimlane);
+
+    expect(drainQueue).toHaveBeenCalledTimes(1);
+  });
 
   it('writes back the targeted project id and path (project-scoped)', () => {
     const { ipcContext, writeBackForProject } = makeWriteBackContext();
@@ -811,7 +836,7 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
       mainWindow: { isDestroyed: () => false, webContents: { send } },
       boardConfigManager: { writeBackForProject: vi.fn() },
       boardEvents: { emitBoardChanged },
-      sessionManager: { removeByTaskId: vi.fn() },
+      sessionManager: { removeByTaskId: vi.fn(), drainQueue: vi.fn() },
     } as unknown as IpcContext;
     return { ipcContext, send, emitBoardChanged };
   }
@@ -920,6 +945,7 @@ describe('buildCommandContextForProject - onSwimlaneUpdated strategy propagation
       boardConfigManager: { writeBackForProject: vi.fn() },
       boardEvents: { emitBoardChanged: vi.fn() },
       currentProjectId,
+      sessionManager: { drainQueue: vi.fn() },
     } as unknown as IpcContext;
     return { ipcContext };
   }

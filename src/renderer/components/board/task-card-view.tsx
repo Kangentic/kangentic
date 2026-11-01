@@ -1,6 +1,6 @@
 import React, { useCallback, useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
-import { Loader2, CirclePause, Paperclip, Globe } from 'lucide-react';
+import { Loader2, CirclePause, Clock, Paperclip, Globe } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { formatRelativeTime } from '../../lib/datetime';
 import { stripMarkdown } from '../../utils/strip-markdown';
@@ -9,6 +9,7 @@ import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
 import { useTaskProgress } from '../../utils/task-progress';
 import { useNow } from '../../hooks/useNow';
+import { useQueuePlace } from '../../hooks/useQueuePlace';
 import { isContextWindowKnown, contextWindowDisplayPercent } from '../../utils/format-tokens';
 import { requiresUserInteraction, isActive } from '../../../shared/activity-state';
 import { ActivityMark } from '../ActivityMark';
@@ -38,17 +39,11 @@ import { canTaskRunAutomations } from '../../../shared/automation-manifest';
  * The card's bottom bar, in the ONE shape every populated state shares: a label row,
  * `mb-1.5`, and an `h-1` track - structurally identical to `ContextUsageFooter`.
  *
- * Height is the thing that matters here. dnd-kit runs a ResizeObserver that is live
- * only while a drag is in flight, and `useSortable` asks it to re-measure every card
- * BELOW a resized one in the lane. So a card that grows as its agent spawns stalls
- * the pointer for a frame - which showed up as a brief hitch right at the moment
- * "Creating worktree..." gave way to a live agent. Rendering the same skeleton for
- * preparing, queued, suspended and running means that transition costs no layout at
- * all, which is what lets session updates apply during a drag instead of being
- * frozen until the drop.
- *
- * The track is inert here (an empty groove); only the running state fills it, via
- * `ContextUsageFooter`.
+ * A card with no agent running draws no context track: an empty groove says nothing,
+ * and the space it held was only ever there for the track. So a card grows by the
+ * track's height when its agent starts and `ContextUsageFooter` takes over. dnd-kit
+ * re-measures the cards below a resized one while a drag is in flight, which costs
+ * that one frame. The status line itself stays the same height in every state.
  *
  * `tip` is the full status label, which the bar truncates. The label is already on the
  * span as text, so a screen reader hears it there and the tip describes nothing.
@@ -61,15 +56,53 @@ export function CardStatusBar({
 }: { children: React.ReactNode; testId: string; tip?: string; divider?: boolean }) {
   return (
     <div className={divider ? 'mt-2 pt-2 border-t border-edge' : 'mt-2'} data-testid={testId}>
-      <div className="flex items-center justify-between mb-1.5">
+      <div className="flex items-center justify-between">
         <Tooltip label={tip ?? ''} describe={false}>
           <span className="text-xs text-fg-faint flex items-center gap-1 min-w-0">
             {children}
           </span>
         </Tooltip>
       </div>
-      <div className="w-full h-1 bg-surface-hover rounded-full overflow-hidden" />
     </div>
+  );
+}
+
+/**
+ * A queued card's words and tip, in the footer and on a compact card alike. The
+ * count waits for main's report, so a card that has not heard it yet reads as a
+ * plain queued card.
+ */
+function useQueuedStatus(sessionId: string | undefined): { label: string; tip: string | undefined } {
+  const { t } = useLingui();
+  const place = useQueuePlace(sessionId);
+  if (!place) return { label: t`Queued...`, tip: undefined };
+  const { position, total } = place;
+  const label = t`Queued ${position}/${total}...`;
+  if (place.kind === 'global') return { label, tip: t`Waiting for a free agent slot.` };
+  const columnName = place.line.columnName;
+  return { label, tip: t`Waiting for a slot in ${columnName}.` };
+}
+
+function QueuedFooter({ sessionId, divider, testId }: { sessionId: string | undefined; divider: boolean; testId?: string }) {
+  const { label, tip } = useQueuedStatus(sessionId);
+  return (
+    <CardStatusBar testId={testId ?? 'status-bar'} divider={divider} tip={tip}>
+      <Clock size={12} className="shrink-0" />
+      <span className="truncate">{label}</span>
+    </CardStatusBar>
+  );
+}
+
+/** A compact card has no footer, so its one line under the title says it instead. */
+function QueuedCompactLine({ sessionId }: { sessionId: string | undefined }) {
+  const { label, tip } = useQueuedStatus(sessionId);
+  return (
+    <Tooltip label={tip ?? ''} describe={false}>
+      <span className="text-xs text-fg-faint mt-1 flex items-center gap-1 min-w-0" data-testid="task-card-queued-line">
+        <Clock size={12} className="shrink-0" />
+        <span className="truncate">{label}</span>
+      </span>
+    </Tooltip>
   );
 }
 
@@ -318,11 +351,16 @@ export type PendingFooterState = 'starting' | 'resuming' | 'queued' | 'paused';
 
 /**
  * The footer for a session that has no model to report: starting or resuming
- * (spinning), queued (spinning), or paused. One home for the words, shared by the
- * board card and the Agent Monitor's card, in the same skeleton as the running
- * footer so the card keeps its height when one gives way to the other.
+ * (spinning), queued (a still clock and its place in line), or paused. One home for
+ * the words, shared by the board card and the Agent Monitor's card.
  */
-export function PendingFooter({ state, divider, testId }: { state: PendingFooterState; divider: boolean; testId?: string }) {
+export function PendingFooter({ state, divider, testId, sessionId }: {
+  state: PendingFooterState;
+  divider: boolean;
+  testId?: string;
+  /** The queued session, for its place in line. */
+  sessionId?: string;
+}) {
   if (state === 'paused') {
     return (
       <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
@@ -331,14 +369,7 @@ export function PendingFooter({ state, divider, testId }: { state: PendingFooter
       </CardStatusBar>
     );
   }
-  if (state === 'queued') {
-    return (
-      <CardStatusBar testId={testId ?? 'status-bar'} divider={divider}>
-        <Loader2 size={12} className="animate-spin shrink-0" />
-        <Trans>Queued...</Trans>
-      </CardStatusBar>
-    );
-  }
+  if (state === 'queued') return <QueuedFooter sessionId={sessionId} divider={divider} testId={testId} />;
   return (
     <CardStatusBar testId={testId ?? 'usage-bar'} divider={divider}>
       <Loader2 size={12} className="animate-spin shrink-0" />
@@ -510,7 +541,9 @@ function TaskCardBodyContent({ task, view, density, hideDisplayId, idleFooter }:
       {/* One tone for every line, the `text-fg-muted` the newest line already
           had. Nothing on this card gets brighter or dimmer than it is today;
           the well is what says the agent wrote this. */}
-      {shownTrail && trailMode ? (
+      {isCompactDensity && displayState.kind === 'queued' ? (
+        <QueuedCompactLine sessionId={view.sessionId} />
+      ) : shownTrail && trailMode ? (
         <div className="mt-1">
           <CardMessageTrail entries={shownTrail} lines={excerptLines} mode={trailMode} lineClass="text-fg-muted" terminal />
         </div>
@@ -587,7 +620,7 @@ function TaskCardFooter({ view, idleFooter, divider }: { view: TaskCardViewModel
         </CardStatusBar>
       );
     case 'queued':
-      return <PendingFooter state="queued" divider={divider} />;
+      return <PendingFooter state="queued" divider={divider} sessionId={view.sessionId} />;
     case 'suspended':
       return <PendingFooter state="paused" divider={divider} />;
     case 'none':

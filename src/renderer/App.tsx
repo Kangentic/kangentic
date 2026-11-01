@@ -401,6 +401,12 @@ export function App() {
       }));
     }
 
+    // The line for an agent slot, which only main can see across projects.
+    cleanups.push(sessions.onQueueChanged((snapshot) => {
+      useSessionStore.getState().setQueueSnapshot(snapshot);
+    }));
+    void useSessionStore.getState().syncQueueSnapshot();
+
     // Desktop-notification helpers, now used only by the spawn-stall and
     // auto-move handlers: the idle and exit desktop notifications moved to main
     // (src/main/notifications/desktop-notifier.ts), which owns their cooldown.
@@ -1526,6 +1532,7 @@ if (import.meta.hot) {
     // reconciliation, which a history-opened dialog is exempt from.
     void useAnnouncementsStore.getState().loadActive();
     void useAnnouncementsStore.getState().loadHistory();
+    void useSessionStore.getState().syncQueueSnapshot();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 

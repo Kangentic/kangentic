@@ -41,14 +41,15 @@ Get detailed column configuration: description, auto-spawn, permission mode, ses
 |-----------|------|----------|-------------|
 | `column` | string | Yes | Column name (case-insensitive) |
 
-`Session`, `On enter`, `Handoff context`, and `Plan approval` always print, even at their defaults.
+`Session`, `On enter`, `Handoff context`, `Agents at once`, and `Plan approval` always print, even at their defaults. `Agents at once` reads `no limit` or the number.
 The overrides below them print only when set, because "no override" is the absence of a value; a
 session track is never absent, so hiding the default would leave a caller unable to tell a
 main-session column from a failed write. `Plan approval` reads `Plan approval: manual` or
 `Plan approval: automatic`, with `(applies only while permission mode is plan)` after it on a
 column that is not in plan mode, and `data.planApproval` carries the value. `Auto-command timing`
 is the one middle case: it prints only alongside an
-`autoCommand`, since it does nothing without one.
+`autoCommand`, since it does nothing without one. In `data`, `maxAgents` carries the column's
+limit, and `null` when there is none.
 
 Also returns `taskOrder`: the column's tasks top to bottom, each with its `position` (the
 zero-based ordinal slot described under [kangentic_list_tasks](task-read-tools.md#kangentic_list_tasks)). That makes
@@ -84,6 +85,7 @@ The role columns (To Do, Done) are editable here like any other: rename, describ
 | `effortOverride` | string \| null | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Valid values are agent-specific. `null` inherits the agent default. For the ACTIVE project this reaches sessions already running in the column: an effort change restarts them in place with `--resume` and the new `--effort`. |
 | `permissionMode` | string \| null | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto`. `null` uses project default. |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `maxAgents` | number \| null | No | How many agents run in this column at once. Other tasks wait and start in the order they entered the column. `1` runs one at a time; `null` removes the limit. Below 1 is refused |
 | `sessionTarget` | string | No | `main` or `isolated`. Which session a task runs on here: `main` continues the task's own conversation, `isolated` gives the column its own, keyed to the column. Not nullable, since the underlying column is NOT NULL: pass `"main"` to go back to the default. |
 | `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. What the column does with that session on entry. Not nullable; pass `"create_or_resume"` to go back to the default. |
 | `planExitTargetColumn` | string \| null | No | Column to auto-move the task to when an agent in plan mode exits planning. `null` disables. |
@@ -102,7 +104,7 @@ strategy still sits at the outgoing track's default, and restating a `sessionTar
 already has changes nothing. To get a persistent isolated track (one long side conversation that
 resumes), pass `sessionTarget: "isolated"` and `sessionSpawnStrategy: "create_or_resume"` together.
 
-This mirrors the Column Manager's Session and On enter fields exactly; the rule is shared code
+This mirrors the Column Manager's "Which conversation this column uses" and On enter fields exactly; the rule is shared code
 (`src/shared/session-track.ts`), not two implementations.
 
 **Cross-project edits write the setting but do not reconcile.** When you target another board with
@@ -133,6 +135,7 @@ every lane, including the archived Done lane.
 | `effortOverride` | string | No | Adapter-specific effort/reasoning level (e.g. Claude `"low"`, `"high"`, `"xhigh"`) |
 | `permissionMode` | string | No | One of: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, `auto` |
 | `handoffContext` | boolean | No | Enable multi-agent handoff context preservation when entering this column |
+| `maxAgents` | number \| null | No | How many agents run in this column at once. See [kangentic_update_column](#kangentic_update_column). |
 | `sessionTarget` | string | No | `main` (default) or `isolated`. `isolated` gives the column its own conversation instead of continuing the task's. |
 | `sessionSpawnStrategy` | string | No | `create_or_resume` or `always_spawn_new`. Defaults to `always_spawn_new` when `sessionTarget` is `isolated`, `create_or_resume` otherwise. |
 | `planExitTargetColumn` | string | No | Column to auto-move the task to when an agent in plan mode exits planning |

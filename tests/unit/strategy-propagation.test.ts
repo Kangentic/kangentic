@@ -120,6 +120,10 @@ function makeContext() {
     // project context".
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path: '/mock/project', default_model: null, default_effort: null })) },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       getSession: (...args: unknown[]) => mockGetSession(...args),
       getUsageCache: () => mockUsageCache,
       getFirstReportedEffort: (sessionId: string) => mockFirstReportedEffort[sessionId] ?? null,
@@ -142,6 +146,10 @@ function makeContextWithProjectRowPath(path: string | undefined) {
     currentProjectPath: '/mock/project',
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-1', path, default_model: null, default_effort: null })) },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       getSession: (...args: unknown[]) => mockGetSession(...args),
       getUsageCache: () => mockUsageCache,
       getFirstReportedEffort: (sessionId: string) => mockFirstReportedEffort[sessionId] ?? null,
@@ -175,6 +183,14 @@ function restartedTaskIds(): string[] {
 }
 
 describe('propagateStrategyToLiveSessions', () => {
+  it('re-checks the line even with no strategy change: turning a column\'s limit off changes none', () => {
+    const context = makeContext() as unknown as { sessionManager: { drainQueue: ReturnType<typeof vi.fn> } };
+
+    propagateStrategyToLiveSessions(context as never, 'TEST', [], 'proj-1');
+
+    expect(context.sessionManager.drainQueue).toHaveBeenCalledTimes(1);
+  });
+
   it('restarts with the applying-settings phase when the task\'s resolved effort changed', () => {
     propagateStrategyToLiveSessions(makeContext(), 'TEST', [{
       task: makeTask(),

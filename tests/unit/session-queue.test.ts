@@ -3,7 +3,7 @@
  * that manages session spawning order and slot limits.
  */
 import { describe, it, expect, vi } from 'vitest';
-import { SessionQueue } from '../../src/main/pty/session-queue';
+import { SessionQueue, type QueueGate } from '../../src/main/pty/session-queue';
 import type { SpawnSessionInput } from '../../src/shared/types';
 
 function makeQueueInput(taskId: string, id: string): SpawnSessionInput & { id: string } {
@@ -195,5 +195,109 @@ describe('SessionQueue', () => {
     expect(queue.maxConcurrentSessions).toBe(7);
     queue.setMaxConcurrent(3);
     expect(queue.maxConcurrentSessions).toBe(3);
+  });
+
+  describe('with a gate', () => {
+    const allow: QueueGate = { mustWait: () => false, pick: () => 0, countBlocked: () => 0 };
+
+    it('a blocked head does not hold up the entries behind it', async () => {
+      const spawner = vi.fn().mockResolvedValue(undefined);
+      const queue = new SessionQueue({ spawner, getActiveCount: () => 0, maxConcurrent: 5 });
+      queue.setGate({
+        ...allow,
+        pick: (queued) => queued.findIndex((input) => input.taskId !== 'blocked'),
+      });
+      queue.enqueue(makeQueueInput('blocked', 'sess-blocked'));
+      queue.enqueue(makeQueueInput('free', 'sess-free'));
+
+      queue.notifySlotFreed();
+
+      await vi.waitFor(() => expect(spawner).toHaveBeenCalledTimes(1));
+      expect(spawner).toHaveBeenCalledWith(makeQueueInput('free', 'sess-free'));
+      expect(queue.entries.map((input) => input.taskId)).toEqual(['blocked']);
+    });
+
+    it('stops without spinning when nothing can start', async () => {
+      const spawner = vi.fn().mockResolvedValue(undefined);
+      const pick = vi.fn(() => -1);
+      const queue = new SessionQueue({ spawner, getActiveCount: () => 0, maxConcurrent: 5 });
+      queue.setGate({ ...allow, pick });
+      queue.enqueue(makeQueueInput('t1', 'sess-1'));
+
+      queue.notifySlotFreed();
+
+      await vi.waitFor(() => expect(pick).toHaveBeenCalledTimes(1));
+      expect(spawner).not.toHaveBeenCalled();
+      expect(queue.length).toBe(1);
+    });
+
+    it('a drain that lands during a spawn still re-checks the gate', async () => {
+      let release: (() => void) | null = null;
+      let columnOpen = false;
+      const spawner = vi.fn().mockImplementation(async (input: SpawnSessionInput) => {
+        if (input.taskId === 'first') await new Promise<void>((resolve) => { release = resolve; });
+      });
+      const queue = new SessionQueue({ spawner, getActiveCount: () => 0, maxConcurrent: 5 });
+      queue.setGate({
+        ...allow,
+        pick: (queued) => queued.findIndex((input) => input.taskId === 'first' || columnOpen),
+      });
+      queue.enqueue(makeQueueInput('first', 'sess-first'));
+      queue.enqueue(makeQueueInput('second', 'sess-second'));
+
+      queue.notifySlotFreed();
+      await vi.waitFor(() => expect(spawner).toHaveBeenCalledTimes(1));
+      columnOpen = true;
+      queue.notifySlotFreed();
+      release!();
+
+      await vi.waitFor(() => expect(spawner).toHaveBeenCalledTimes(2));
+      expect(queue.length).toBe(0);
+    });
+
+    it('a throwing pick falls back to the head', async () => {
+      const spawner = vi.fn().mockResolvedValue(undefined);
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      const queue = new SessionQueue({ spawner, getActiveCount: () => 0, maxConcurrent: 5 });
+      queue.setGate({ ...allow, pick: () => { throw new Error('database gone'); } });
+      queue.enqueue(makeQueueInput('t1', 'sess-1'));
+
+      queue.notifySlotFreed();
+
+      await vi.waitFor(() => expect(spawner).toHaveBeenCalledTimes(1));
+      errorLog.mockRestore();
+    });
+
+    it('shouldQueue asks the gate only with a global slot free, and a throw admits', () => {
+      const mustWait = vi.fn(() => true);
+      let active = 3;
+      const queue = new SessionQueue({ spawner: vi.fn(), getActiveCount: () => active, maxConcurrent: 3 });
+      queue.setGate({ ...allow, mustWait });
+      const input = makeQueueInput('t1', 'sess-1');
+
+      expect(queue.shouldQueue(input)).toBe(true);
+      expect(mustWait).not.toHaveBeenCalled();
+
+      active = 0;
+      expect(queue.shouldQueue(input)).toBe(true);
+      expect(mustWait).toHaveBeenCalledTimes(1);
+
+      const errorLog = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      queue.setGate({ ...allow, mustWait: () => { throw new Error('database gone'); } });
+      expect(queue.shouldQueue(input)).toBe(false);
+      errorLog.mockRestore();
+    });
+
+    it('blockedCount reads the gate and costs nothing on an empty queue', () => {
+      const countBlocked = vi.fn(() => 1);
+      const queue = new SessionQueue({ spawner: vi.fn(), getActiveCount: () => 5, maxConcurrent: 5 });
+      queue.setGate({ ...allow, countBlocked });
+
+      expect(queue.blockedCount).toBe(0);
+      expect(countBlocked).not.toHaveBeenCalled();
+
+      queue.enqueue(makeQueueInput('t1', 'sess-1'));
+      expect(queue.blockedCount).toBe(1);
+    });
   });
 });

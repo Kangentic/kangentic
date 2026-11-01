@@ -10,7 +10,7 @@ import type {
 import type { TaskChangesPanelSlice } from './task-changes-panel-slice';
 import type { TransientSessionSlice } from './transient-session-slice';
 import type { RateLimitSnapshot } from '../../utils/rate-limit-window';
-import type { ConversationTabRequest } from '../../../shared/types';
+import type { ConversationTabRequest, QueueSnapshot } from '../../../shared/types';
 
 /** A one-shot capture of a task's terminal scrollback viewport at the moment
  *  its conversation viewer was opened. See `pendingTuiAnchor` below. */
@@ -172,6 +172,8 @@ export interface CoreSessionSlice {
   sessionMessageTrails: Record<string, AssistantMessageTrailEntry[]>;
   sessionEvents: Record<string, SessionEvent[]>;
   seenIdleSessions: Record<string, boolean>;
+  /** Who is waiting for an agent slot and why, as main last reported it. */
+  queueSnapshot: QueueSnapshot;
   /** Command label to show in the terminal overlay (e.g. "/code-review") keyed by task ID. */
   pendingCommandLabel: Record<string, string>;
   /** Spawn progress label from main process (e.g. "Fetching latest...") keyed by task ID. */
@@ -259,7 +261,9 @@ export interface CoreSessionSlice {
 
   getRunningCount: () => number;
   getQueuedCount: () => number;
-  getQueuePosition: (sessionId: string) => { position: number; total: number } | null;
+  setQueueSnapshot: (snapshot: QueueSnapshot) => void;
+  /** Re-read the line from main: on boot and after a Fast Refresh. */
+  syncQueueSnapshot: () => Promise<void>;
 }
 
 export type SessionStore = CoreSessionSlice & TaskChangesPanelSlice & TransientSessionSlice;

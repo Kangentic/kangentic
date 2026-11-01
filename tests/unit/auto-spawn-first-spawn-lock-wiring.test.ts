@@ -56,6 +56,7 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
+    listCappedColumnTasks() { return []; }
     // The spawn pass re-reads its task under the task lock: answer with what the
     // discovery pass was handed.
     listed = new Map<string, unknown>();

@@ -43,7 +43,7 @@ The base is not part of the branch name; the task's worktree records it as `kang
 
 ## Session Queue
 
-When the max concurrent sessions limit is reached, new sessions are queued automatically. Queued tasks show a "Queued" indicator on their card. When a running session exits or is suspended, the next queued session promotes automatically (FIFO order).
+When the max concurrent sessions limit is reached, new sessions are queued automatically. Queued tasks show their place in line on their card, such as "Queued 2/5...", and the task window lists the whole line. When a running session exits or is suspended, the next queued session promotes automatically (FIFO order). A column can also [run one agent at a time](columns-and-automations.md#running-one-agent-at-a-time), and its tasks then wait in the order they entered it.
 
 The limit counts agents, not memory. On Windows each running agent reserves about 1 GB of commit, so a high limit can run the machine short before it fills. See [Low memory warning](troubleshooting.md#low-memory-warning-windows).
 

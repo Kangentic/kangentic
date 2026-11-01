@@ -7,6 +7,7 @@ import { writeTransaction } from '../transaction';
 import { cachedStatement } from '../statement-cache';
 import { removeLinksInWorkflowHome } from './workflow-home-links';
 import { isPlanApproval } from '../../../shared/plan-approval';
+import { TaskMoveRepository, type CappedColumnTask } from './task-move-repository';
 
 /**
  * Raw row from SQLite - labels and skipped columns stored as JSON strings, the
@@ -693,6 +694,11 @@ export class TaskRepository {
       }
     });
     tx();
+  }
+
+  /** Every live task in a column with an agent limit (see `TaskMoveRepository`). */
+  listCappedColumnTasks(): CappedColumnTask[] {
+    return new TaskMoveRepository(this.db).listCappedColumnTasks();
   }
 
   /** One `task_moves` row. Called inside the transaction that made the move. */

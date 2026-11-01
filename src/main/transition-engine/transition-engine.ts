@@ -1291,6 +1291,7 @@ export class TransitionEngine {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.firstPromptMayBeTyped) return null;
     if (this.sessionManager.getFreeAgentSlots() <= 0 || this.sessionManager.hasSessionForTask(task.id)) return null;
+    if (this.sessionManager.columnBlocks({ taskId: task.id, projectId: appConfig.projectId })) return null;
 
     const intent = resolveSpawnIntent({
       taskId: task.id,

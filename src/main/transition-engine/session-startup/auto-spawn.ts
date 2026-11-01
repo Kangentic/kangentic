@@ -14,6 +14,7 @@ import { NEVER_AUTO_SPAWN_ROLES } from '../../../shared/types';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isShuttingDown } from '../../shutdown-state';
 import { withTaskLock } from '../../ipc/task-lifecycle-lock';
+import { orderByColumnEntry } from '../column-capacity';
 import { isMoveInFlight } from '../../ipc/handlers/task-move-controllers';
 import { isResumeInFlight } from '../../ipc/handlers/session-resume-controllers';
 import { isTaskWorkflowPaused } from '../../workflows/workflow-home';
@@ -420,8 +421,10 @@ export async function autoSpawnTasks(
   // under the prepared session's id, so a skip releases that hold. A hold
   // never released keeps the folder's file in place for the rest of the run:
   // no later session's release can empty the folder's holds.
+  //
+  // In column-entry order, so a limited column's slot goes to its first task.
   const spawnResults = await Promise.allSettled(
-    spawnInputs.map((input) => withTaskLock(input.task.id, async () => {
+    orderByColumnEntry(spawnInputs, taskRepo.listCappedColumnTasks()).map((input) => withTaskLock(input.task.id, async () => {
       // Until spawn() takes the command, this pass owns its hold. spawn()
       // releases a spawn that never runs, and a session that ran owns its own.
       let handedToSpawn = false;

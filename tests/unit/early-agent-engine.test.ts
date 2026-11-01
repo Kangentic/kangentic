@@ -78,6 +78,7 @@ function makeSessionManager() {
     }),
     getShell: vi.fn(async () => 'bash'),
     getFreeAgentSlots: vi.fn(() => 4),
+    columnBlocks: vi.fn(() => false),
     hasSessionForTask: vi.fn(() => false),
     isHiddenUntilAdopted: vi.fn((sessionId: string) => hidden.has(sessionId)),
     adoptSession: vi.fn((sessionId: string) => hidden.delete(sessionId)),
@@ -198,6 +199,11 @@ describe('launchEarlyAgent', () => {
     const noSlot = makeSessionManager();
     noSlot.getFreeAgentSlots.mockReturnValue(0);
     expect(await makeEngine(noSlot, makeSessionRepo()).engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' })).toBeNull();
+
+    // A column with its one agent holds the task back with slots to spare.
+    const fullColumn = makeSessionManager();
+    fullColumn.columnBlocks.mockReturnValue(true);
+    expect(await makeEngine(fullColumn, makeSessionRepo()).engine.launchEarlyAgent({ task: makeTask() as never, worktreePath: WORKTREE, agentOverride: 'claude' })).toBeNull();
 
     const hasRow = makeSessionManager();
     hasRow.hasSessionForTask.mockReturnValue(true);

@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
+import type { QueueSnapshot } from '../shared/types';
 import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
@@ -327,6 +328,12 @@ const api: ElectronAPI = {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, session: Session, projectId?: string) => callback(sessionId, session, projectId);
       ipcRenderer.on(IPC.SESSION_REMOVED, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_REMOVED, handler);
+    },
+    getQueueSnapshot: () => ipcRenderer.invoke(IPC.SESSION_QUEUE_SNAPSHOT),
+    onQueueChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: QueueSnapshot) => callback(snapshot);
+      ipcRenderer.on(IPC.SESSION_QUEUE_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_QUEUE_CHANGED, handler);
     },
     onUsage: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage, projectId?: string) => callback(sessionId, data, projectId);
