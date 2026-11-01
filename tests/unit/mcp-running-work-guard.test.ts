@@ -406,6 +406,52 @@ describe('the running-work guard', () => {
     });
   });
 
+  describe('a move from the phone (no callerKind)', () => {
+    const phoneContext = (): CommandContext => (
+      { ...context, callerKind: undefined, callerTaskId: undefined, callerSessionId: undefined, via: 'phone' as const }
+    );
+
+    it.each(['To Do', 'Done'])('moves a task with a live agent to %s synchronously, reading nothing', (columnName) => {
+      readTaskRunningWork.mockResolvedValue(LIVE_AGENT);
+      const task = otherTask();
+
+      // Not awaited: a person's move returns a plain response, never a promise.
+      const response = handleMoveTask({ taskId: task.id, column: columnName }, phoneContext()) as CommandResponse;
+
+      expect(response.success).toBe(true);
+      expect(readTaskRunningWork).not.toHaveBeenCalled();
+      expect(onTaskMove).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('a move the workflow lock already refuses', () => {
+    it('answers the lock and reads no running work, even for a live agent', () => {
+      readTaskRunningWork.mockResolvedValue(LIVE_AGENT);
+      const workflows = new WorkflowRepository(database);
+      const workflow = workflows.create({ title: 'Usage budgets' });
+      workflows.markStarted(workflow.id);
+      const task = otherTask();
+      tasks.setWorkflowMembership(task.id, {
+        workflow_id: workflow.id,
+        workflow_project_id: PROJECT_ID,
+        route_start_swimlane_id: null,
+        route_last_swimlane_id: null,
+        skipped_swimlane_ids: [],
+        canvas_x: null,
+        canvas_y: null,
+        plan_approval: null,
+      });
+
+      // Synchronous: the lock answers before the guard is asked.
+      const response = handleMoveTask({ taskId: task.id, column: 'To Do' }, context) as CommandResponse;
+
+      expect(response.success).toBe(false);
+      expect(response.error).toBe(WORKFLOW_REFUSALS.toDoNeedsRemove(`#${task.display_id}`, 'Usage budgets'));
+      expect(readTaskRunningWork).not.toHaveBeenCalled();
+      expect(onTaskMove).not.toHaveBeenCalled();
+    });
+  });
+
   describe('a move to any other column', () => {
     it('reads nothing: that move keeps the work', () => {
       readTaskRunningWork.mockResolvedValue(LIVE_AGENT);
@@ -446,6 +492,18 @@ describe('the running-work guard', () => {
       const response = await handleRunAutomation({ column: 'Planning', automation: 'Send it', task: task.id }, context);
 
       expect(response.success).toBe(true);
+      expect(onRunAutomation).toHaveBeenCalledOnce();
+    });
+
+    it('runs a row aimed at To Do for a call with no callerKind (the phone), reading nothing', async () => {
+      addMoveRow('To Do');
+      readTaskRunningWork.mockResolvedValue(LIVE_AGENT);
+      const phoneContext = { ...context, callerKind: undefined, callerTaskId: undefined, callerSessionId: undefined, via: 'phone' as const };
+
+      const response = await handleRunAutomation({ column: 'Planning', automation: 'Send it', task: otherTask().id }, phoneContext);
+
+      expect(response.success).toBe(true);
+      expect(readTaskRunningWork).not.toHaveBeenCalled();
       expect(onRunAutomation).toHaveBeenCalledOnce();
     });
 
