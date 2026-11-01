@@ -8,6 +8,10 @@ msgstr ""
 "Language: en\n"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "\"{query}\""
+msgstr "\"{query}\""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "{name} (needs you)"
 msgstr "{name} (needs you)"
 
@@ -23,6 +27,10 @@ msgstr "{name} (starting)"
 msgid "{name} (working)"
 msgstr "{name} (working)"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "A terminal has this conversation open."
+msgstr "A terminal has this conversation open."
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 msgid "Add terminal"
 msgstr "Add terminal"
@@ -30,6 +38,10 @@ msgstr "Add terminal"
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 msgid "Available once the terminal starts"
 msgstr "Available once the terminal starts"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Clear search"
+msgstr "Clear search"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -50,6 +62,14 @@ msgstr "Couldn't check out branch"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Couldn't open the window"
 msgstr "Couldn't open the window"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Couldn't remove conversation"
+msgstr "Couldn't remove conversation"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Couldn't rename conversation"
+msgstr "Couldn't rename conversation"
 
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 msgid "Couldn't rename terminal"
@@ -117,6 +137,18 @@ msgstr "Hide panel"
 msgid "Hide rail"
 msgstr "Hide rail"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "In conversations"
+msgstr "In conversations"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Indexing is off, so conversation text was not searched"
+msgstr "Indexing is off, so conversation text was not searched"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+msgstr "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
 msgid "Its process may still be running."
@@ -129,6 +161,10 @@ msgstr "Maximize panel"
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Move to its own window"
 msgstr "Move to its own window"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "No conversations match"
+msgstr "No conversations match"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Open folder"
@@ -146,7 +182,16 @@ msgstr "Open project folder"
 msgid "Rail width"
 msgstr "Rail width"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Remove"
+msgstr "Remove"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Remove this conversation?"
+msgstr "Remove this conversation?"
+
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Rename"
 msgstr "Rename"
 
@@ -163,6 +208,10 @@ msgid "Restore the grid"
 msgstr "Restore the grid"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Resume"
+msgstr "Resume"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Resume {name}"
 msgstr "Resume {name}"
 
@@ -174,6 +223,18 @@ msgstr "Resuming conversation..."
 msgctxt "Agent status"
 msgid "Running"
 msgstr "Running"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Search conversations"
+msgstr "Search conversations"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Search conversations..."
+msgstr "Search conversations..."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Searching conversations..."
+msgstr "Searching conversations..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx

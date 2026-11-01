@@ -23,6 +23,7 @@ import { canResumeConversationById } from '../../agent/shared/workflow-agent-cap
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
+  CommandTerminalHistorySearchResult,
   SpawnTransientSessionInput,
   SpawnTransientSessionResult,
   PermissionMode,
@@ -419,8 +420,11 @@ export async function startCommandTerminal(
 
     resumedSessionId = session.id;
     // A resumed terminal keeps the name it had. Seeded before any prompt, so
-    // the namer (first write wins) leaves it alone.
-    if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
+    // the namer (first write wins) leaves it alone. A name a user chose or
+    // cleared goes back in as a user's name, which keeps the namer off even
+    // when the row holds no name.
+    if (resume?.namedByUser) context.sessionManager.renameCommandTerminal(session.id, resume.label);
+    else if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
 
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a
@@ -444,7 +448,7 @@ async function resolveResumedConversation(
   context: IpcContext,
   projectId: string,
   agentSessionId: string,
-): Promise<{ agentSessionId: string; agentName: string; label: string | null; cliTarget: string | null; cwd: string }> {
+): Promise<{ agentSessionId: string; agentName: string; label: string | null; namedByUser: boolean; cliTarget: string | null; cwd: string }> {
   const history = context.commandTerminalHistory;
   const row = history?.find(projectId, agentSessionId) ?? null;
   const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
@@ -456,7 +460,14 @@ async function resolveResumedConversation(
   if (!row || !resumable) {
     throw new CommandTerminalStartError('conversation-gone', 'That conversation can no longer be resumed.');
   }
-  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label, cliTarget: row.cli_target ?? null, cwd: row.cwd };
+  return {
+    agentSessionId: row.agent_session_id,
+    agentName: row.agent_name,
+    label: row.label,
+    namedByUser: row.named_by_user === 1,
+    cliTarget: row.cli_target ?? null,
+    cwd: row.cwd,
+  };
 }
 
 /** The branch the checkout is on, or "unknown" when git cannot say. */
@@ -582,6 +593,29 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_LIST, (_, projectId: unknown) => {
     if (typeof projectId !== 'string' || !context.projectRepo.getById(projectId)) return [];
     return context.commandTerminalHistory?.list(projectId) ?? [];
+  });
+
+  // An Earlier row's Rename and Remove. By conversation, within the project the
+  // row was shown for; a project that names no project changes nothing, and a
+  // conversation a live terminal holds is refused (false). Null is a clear.
+  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_RENAME, (_, projectId: unknown, agentSessionId: unknown, name: unknown) => {
+    if (typeof projectId !== 'string' || typeof agentSessionId !== 'string' || (name !== null && typeof name !== 'string')) return false;
+    if (!context.projectRepo.getById(projectId)) return false;
+    return context.commandTerminalHistory?.rename(projectId, agentSessionId, name) ?? false;
+  });
+
+  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_REMOVE, (_, projectId: unknown, agentSessionId: unknown) => {
+    if (typeof projectId !== 'string' || typeof agentSessionId !== 'string') return false;
+    if (!context.projectRepo.getById(projectId)) return false;
+    return context.commandTerminalHistory?.remove(projectId, agentSessionId) ?? false;
+  });
+
+  // The Earlier search's text half. Names and first prompts match in the
+  // renderer from the list it already has; only the transcripts need this.
+  ipcMain.handle(IPC.COMMAND_TERMINAL_HISTORY_SEARCH, (_, projectId: unknown, query: unknown) => {
+    const nothing: CommandTerminalHistorySearchResult = { indexingOff: false, hits: [] };
+    if (typeof projectId !== 'string' || typeof query !== 'string' || !context.projectRepo.getById(projectId)) return nothing;
+    return context.commandTerminalHistory?.searchText(projectId, query) ?? nothing;
   });
 
   // Routed by the input's project, never the one the main window shows: a

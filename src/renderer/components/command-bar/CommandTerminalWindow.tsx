@@ -43,6 +43,7 @@ import { useToastStore } from '../../stores/toast-store';
 import { shortcutIcon } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
+import { commandTerminalTitle } from '../../../shared/command-terminal-name';
 import { useLayerStore, windowIdsInReadingOrder } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
@@ -611,7 +612,7 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           {rename.editing ? (
             <CommandTerminalNameField
               initialName={windowTitle}
-              slot={slot}
+              placeholder={commandTerminalTitle(slot)}
               onCommit={(value, byKey) => {
                 rename.commit(value, byKey);
                 if (byKey) focusThisTerminal();

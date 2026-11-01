@@ -2030,8 +2030,8 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!hasFirstPromptColumn) {
     db.exec('ALTER TABLE command_terminal_history ADD COLUMN first_prompt TEXT DEFAULT NULL');
   }
-  // The prune keeps the newest ended rows, so it filters and sorts on ended_at.
-  db.exec('CREATE INDEX IF NOT EXISTS idx_command_terminal_history_ended ON command_terminal_history(ended_at)');
+  // Only the 50-row prune read this index, and the prune is gone.
+  db.exec('DROP INDEX IF EXISTS idx_command_terminal_history_ended');
 
   // Migration: where a session's agent CLI ran when it was not this machine
   // (#286), as JSON (`StoredCliTarget`): the WSL distro a CLI installed there
@@ -2109,6 +2109,16 @@ export function runProjectMigrations(db: Database.Database): void {
     .some((column) => column.name === 'start_head_sha');
   if (!hasStartHeadSha) {
     db.exec('ALTER TABLE sessions ADD COLUMN start_head_sha TEXT DEFAULT NULL');
+  }
+
+  // Whether a user chose this conversation's name, or cleared it, so a resumed
+  // terminal keeps the namer off even when the row holds no name. 0 for every
+  // existing row: its name, if any, still seeds the terminal, which is what
+  // those rows already did.
+  const hasNamedByUser = (db.pragma('table_info(command_terminal_history)') as Array<{ name: string }>)
+    .some((column) => column.name === 'named_by_user');
+  if (!hasNamedByUser) {
+    db.exec('ALTER TABLE command_terminal_history ADD COLUMN named_by_user INTEGER NOT NULL DEFAULT 0');
   }
 }
 

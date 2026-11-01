@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type Database from 'better-sqlite3';
 import { getProjectDb } from '../../db/database';
+import { CommandTerminalHistoryRepository } from '../../db/repositories/command-terminal-history-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { agentRegistry } from '../../agent/agent-registry';
 import type {
@@ -13,6 +14,7 @@ import type {
 } from '../../agent/agent-adapter';
 import type { SessionRecord, StoredCliTarget, TranscriptEntry } from '../../../shared/types';
 import { mayReadPlaceUnattended, placeFromStored, placeOfRecord, type CliPlace } from '../../agent/shared/cli-target';
+import { COMMAND_TERMINAL_CORPUS } from '../corpora';
 import { RetrievalStore } from '../retrieval-store';
 import { awaitWriteTurn } from '../write-budget';
 import { timeSyncWork } from '../../diagnostics/event-loop-lag';
@@ -201,6 +203,9 @@ interface WalkedTranscript {
 export interface ConversationIndexerDeps {
   getDb: (projectId: string) => Database.Database;
   getAdapter: (sessionType: string) => AdapterLike | undefined;
+  /** The adapter of a Command Terminal conversation, whose row keeps the agent's
+   *  name: it has no `sessions` row, so no session type. */
+  getAdapterByName: (agentName: string) => AdapterLike | undefined;
   /** fs.stat wrapper returning null when the path is absent/unreadable. */
   stat: (filePath: string) => { mtimeMs: number; size: number } | null;
   now: () => string;
@@ -255,6 +260,7 @@ function parseResumePoint(json: string | null | undefined): ResumePoint | null {
 const defaultDeps: ConversationIndexerDeps = {
   getDb: getProjectDb,
   getAdapter: (sessionType) => agentRegistry.getBySessionType(sessionType) as AdapterLike | undefined,
+  getAdapterByName: (agentName) => agentRegistry.get(agentName) as AdapterLike | undefined,
   stat: defaultStat,
   now: () => new Date().toISOString(),
   chunker: chunkTranscript,
@@ -278,13 +284,23 @@ export class ConversationIndexer {
   }
 
   /** Compute the source-file signature for staleness comparison. */
-  private async sourceSignature(adapter: AdapterLike, record: SessionRecord): Promise<SourceSignature> {
-    if (!adapter.locateSessionHistoryFile || !record.agent_session_id) {
+  private sourceSignature(adapter: AdapterLike, record: SessionRecord): Promise<SourceSignature> {
+    return this.signatureOf(adapter, record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path);
+  }
+
+  private async signatureOf(
+    adapter: AdapterLike,
+    agentSessionId: string | null,
+    cwd: string,
+    place: CliPlace | null,
+    reportedPath: string | null,
+  ): Promise<SourceSignature> {
+    if (!adapter.locateSessionHistoryFile || !agentSessionId) {
       return { path: null, mtimeMs: null, size: null };
     }
     let path: string | null;
     try {
-      path = await adapter.locateSessionHistoryFile(record.agent_session_id, record.cwd, placeOfRecord(record), record.transcript_path);
+      path = await adapter.locateSessionHistoryFile(agentSessionId, cwd, place, reportedPath);
     } catch {
       path = null;
     }
@@ -484,6 +500,119 @@ export class ConversationIndexer {
       await this.resumePointAfter(walked, sourcePath, record),
     );
     return 'indexed';
+  }
+
+  /**
+   * Read one Command Terminal conversation into the Earlier search's corpus, or
+   * drop it from there when its row is gone or nobody used it (Remove, a purged
+   * transcript, an unused terminal). Run when a conversation ends and by the
+   * project-open sweep, never per turn: nothing searches a live conversation, so
+   * it walks from byte 0 with no resume point. Its turns stay out of the token
+   * ledger, which never counted Command Terminals. A transcript the agent has
+   * since purged keeps its chunks until the row goes. Never throws.
+   */
+  async indexCommandTerminalConversation(projectId: string, agentSessionId: string): Promise<IndexOutcome> {
+    try {
+      return await this.readCommandTerminalConversation(this.deps.getDb(projectId), agentSessionId);
+    } catch (error) {
+      console.warn(`[retrieval] Command Terminal conversation ${agentSessionId} failed to index:`, error);
+      return 'error';
+    }
+  }
+
+  private async readCommandTerminalConversation(db: Database.Database, agentSessionId: string): Promise<IndexOutcome> {
+    const store = new RetrievalStore(db);
+    const row = new CommandTerminalHistoryRepository(db).get(agentSessionId);
+    if (!row?.touched_at) {
+      store.deleteDocument(COMMAND_TERMINAL_CORPUS, agentSessionId);
+      return 'skipped';
+    }
+    const writeState = (signature: SourceSignature, status: IndexStateRow['status'], entryCount: number, chunkCount: number): void => {
+      store.setIndexState({
+        corpus: COMMAND_TERMINAL_CORPUS,
+        docId: agentSessionId,
+        sessionId: null,
+        sourcePath: signature.path,
+        sourceMtimeMs: signature.mtimeMs,
+        sourceSize: signature.size,
+        entryCount,
+        chunkCount,
+        status,
+        indexedAt: this.deps.now(),
+        resumePoint: null,
+      });
+    };
+
+    const adapter = this.deps.getAdapterByName(row.agent_name);
+    if (!adapter?.parseTranscript && !adapter?.parseTranscriptWindow) {
+      writeState({ path: null, mtimeMs: null, size: null }, 'unsupported', 0, 0);
+      return 'unsupported';
+    }
+    const place = placeOfRecord(row);
+    if (!(await this.deps.mayReadPlace(place))) return 'skipped';
+
+    const signature = await this.signatureOf(adapter, agentSessionId, row.cwd, place, null);
+    if (!needsIndex(store.getIndexState(COMMAND_TERMINAL_CORPUS, agentSessionId), signature)) return 'skipped';
+
+    let walked: WalkedTranscript;
+    try {
+      walked = await this.walkTranscript(adapter, agentSessionId, row.cwd, null, place, null);
+    } catch {
+      writeState(signature, 'error', 0, 0);
+      return 'error';
+    }
+    const sourceSignature = { ...signature, path: walked.sourcePath ?? signature.path };
+    if (walked.entryCount === 0) {
+      writeState(sourceSignature, 'missing-source', 0, 0);
+      return 'missing-source';
+    }
+    store.upsertDocument(
+      {
+        corpus: COMMAND_TERMINAL_CORPUS,
+        docId: agentSessionId,
+        sessionId: null,
+        taskId: null,
+        agentSessionId,
+        metaJson: null,
+      },
+      walked.chunks,
+    );
+    writeState(sourceSignature, 'ok', walked.entryCount, walked.chunks.length);
+    return 'indexed';
+  }
+
+  /**
+   * The project-open pass over Command Terminal conversations: drop the
+   * documents whose row is gone, then read the rows that changed or were never
+   * read, newest first and capped as the session backfill is, so a first open
+   * after the upgrade amortizes across opens. Never throws: the sweeps after it
+   * in `index.sweep` still run, and the next open tries again.
+   */
+  async sweepCommandTerminalConversations(projectId: string, shouldContinue: () => boolean): Promise<void> {
+    try {
+      const db = this.deps.getDb(projectId);
+      const store = new RetrievalStore(db);
+      for (;;) {
+        if (!shouldContinue()) return;
+        const orphans = store.orphanedCommandTerminalDocuments(ORPHAN_PAGE);
+        if (orphans.length === 0) break;
+        for (const docId of orphans) {
+          if (!shouldContinue()) return;
+          timeSyncWork('index:purge-deleted', () => store.deleteDocument(COMMAND_TERMINAL_CORPUS, docId));
+          await awaitWriteTurn(db);
+        }
+      }
+
+      let parsedThisSweep = 0;
+      for (const row of new CommandTerminalHistoryRepository(db).listUsed()) {
+        if (!shouldContinue() || parsedThisSweep >= MAX_SESSIONS_PER_SWEEP) return;
+        const outcome = await this.indexCommandTerminalConversation(projectId, row.agent_session_id);
+        if (outcome === 'indexed' || outcome === 'error' || outcome === 'missing-source') parsedThisSweep += 1;
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+    } catch (error) {
+      console.warn(`[retrieval] Command Terminal sweep of ${projectId} stopped:`, error);
+    }
   }
 
   /**
@@ -818,7 +947,7 @@ export class ConversationIndexer {
     // their own indexer and survive. The purge takes write turns, and one
     // stopped part way leaves the old version, so the next sweep finishes it.
     if (store.getMeta(CHUNKER_VERSION_KEY) !== String(this.deps.chunkerVersion)) {
-      if (!await store.purgeCorpora(['conversation', 'change'], () => awaitWriteTurn(db), shouldContinue)) return;
+      if (!await store.purgeCorpora(['conversation', 'change', COMMAND_TERMINAL_CORPUS], () => awaitWriteTurn(db), shouldContinue)) return;
       store.setMeta(CHUNKER_VERSION_KEY, String(this.deps.chunkerVersion));
     }
 

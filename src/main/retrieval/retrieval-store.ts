@@ -1,7 +1,7 @@
 import type Database from 'better-sqlite3';
 import { hasVecSupport } from './vec-support';
 import { BOARD_TASK_FACTS_SQL, type BoardTaskFactsRow } from './board-task-facts';
-import { EMBEDDED_CORPORA, isIndexCorpus, INDEX_CORPORA, vecTableName, type IndexCorpus } from './corpora';
+import { COMMAND_TERMINAL_CORPUS, EMBEDDED_CORPORA, isIndexCorpus, INDEX_CORPORA, vecTableName, type IndexCorpus } from './corpora';
 import {
   CONVERSATION_VEC_COPY_KEY,
   CONVERSATION_VEC_TABLE,
@@ -449,6 +449,25 @@ export class RetrievalStore {
              WHERE state.corpus = chunk.corpus AND state.doc_id = chunk.doc_id)
         LIMIT ?`,
     ).all(limit) as Array<{ corpus: string; docId: string }>;
+  }
+
+  /**
+   * Command Terminal documents whose `command_terminal_history` row is gone,
+   * from the index state and the chunks alike: a writer that died between its
+   * chunk batches and its state row (written last) leaves chunks with no state.
+   */
+  orphanedCommandTerminalDocuments(limit: number): string[] {
+    const rows = this.cachedStatement(
+      `SELECT doc_id AS docId FROM memory_index_state
+        WHERE corpus = @corpus
+          AND doc_id NOT IN (SELECT agent_session_id FROM command_terminal_history)
+       UNION
+       SELECT DISTINCT doc_id AS docId FROM memory_chunks
+        WHERE corpus = @corpus
+          AND doc_id NOT IN (SELECT agent_session_id FROM command_terminal_history)
+       LIMIT @limit`,
+    ).all({ corpus: COMMAND_TERMINAL_CORPUS, limit }) as Array<{ docId: string }>;
+    return rows.map((row) => row.docId);
   }
 
   /** How many of one document's chunks sit below `seq`: equal to `seq` while

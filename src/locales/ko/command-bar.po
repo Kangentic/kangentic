@@ -9,6 +9,11 @@ msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "\"{query}\""
+msgstr "\"{query}\""
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "{name} (needs you)"
 msgstr "{name} (응답 필요)"
 
@@ -27,6 +32,11 @@ msgstr "{name} (시작 중)"
 msgid "{name} (working)"
 msgstr "{name} (작업 중)"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "A terminal has this conversation open."
+msgstr "터미널에서 이 대화를 열고 있습니다."
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 #, fuzzy
 msgid "Add terminal"
@@ -36,6 +46,11 @@ msgstr "터미널 추가"
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "터미널이 시작되면 사용 가능"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Clear search"
+msgstr "검색 지우기"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -61,6 +76,16 @@ msgstr "분기를 체크아웃할 수 없음"
 #, fuzzy
 msgid "Couldn't open the window"
 msgstr "창을 열 수 없습니다"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't remove conversation"
+msgstr "대화를 제거할 수 없습니다"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't rename conversation"
+msgstr "대화 이름을 바꿀 수 없습니다"
 
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
@@ -144,6 +169,21 @@ msgstr "패널 숨기기"
 msgid "Hide rail"
 msgstr "레일 숨기기"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "In conversations"
+msgstr "대화 내용"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Indexing is off, so conversation text was not searched"
+msgstr "인덱싱이 꺼져 있어 대화 내용을 검색하지 않았습니다"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+msgstr "이전 항목에서 사라지며 더 이상 검색할 수 없습니다. 에이전트의 기록은 유지됩니다."
+
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
 #, fuzzy
@@ -159,6 +199,11 @@ msgstr "패널 최대화"
 #, fuzzy
 msgid "Move to its own window"
 msgstr "별도 창으로 이동"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "No conversations match"
+msgstr "일치하는 대화 없음"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #, fuzzy
@@ -180,7 +225,18 @@ msgstr "프로젝트 폴더 열기"
 msgid "Rail width"
 msgstr "레일 너비"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove"
+msgstr "제거"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove this conversation?"
+msgstr "이 대화를 제거할까요?"
+
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "이름 바꾸기"
@@ -202,6 +258,11 @@ msgstr "그리드 복원"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Resume"
+msgstr "재개"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Resume {name}"
 msgstr "{name} 재개"
 
@@ -215,6 +276,21 @@ msgstr "대화 재개 중..."
 msgctxt "Agent status"
 msgid "Running"
 msgstr "실행 중"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations"
+msgstr "대화 검색"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations..."
+msgstr "대화 검색..."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Searching conversations..."
+msgstr "대화 검색 중..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx

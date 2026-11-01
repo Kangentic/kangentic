@@ -9,6 +9,11 @@ msgstr ""
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "\"{query}\""
+msgstr "「{query}」"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "{name} (needs you)"
 msgstr "{name}（需要你处理）"
 
@@ -27,6 +32,11 @@ msgstr "{name}（启动中）"
 msgid "{name} (working)"
 msgstr "{name}（工作中）"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "A terminal has this conversation open."
+msgstr "有终端正在打开此对话。"
+
 #: src/renderer/components/command-bar/NewTerminalButton.tsx
 msgid "Add terminal"
 msgstr "添加终端"
@@ -35,6 +45,10 @@ msgstr "添加终端"
 #, fuzzy
 msgid "Available once the terminal starts"
 msgstr "终端启动后可用"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Clear search"
+msgstr "清除搜索"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -55,6 +69,16 @@ msgstr "无法检出分支"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "Couldn't open the window"
 msgstr "无法打开窗口"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't remove conversation"
+msgstr "无法移除对话"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Couldn't rename conversation"
+msgstr "无法重命名对话"
 
 #: src/renderer/components/command-bar/useCommandTerminalRename.ts
 #, fuzzy
@@ -126,6 +150,21 @@ msgstr "隐藏面板"
 msgid "Hide rail"
 msgstr "隐藏侧栏"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "In conversations"
+msgstr "在对话中"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Indexing is off, so conversation text was not searched"
+msgstr "索引已关闭，因此未搜索对话文本"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "It leaves Earlier and can no longer be searched. The agent keeps its transcript."
+msgstr "它将从「更早的对话」中移除，且无法再被搜索。代理会保留其对话记录。"
+
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #: src/renderer/components/command-bar/stop-command-terminal.ts
 msgid "Its process may still be running."
@@ -138,6 +177,11 @@ msgstr "最大化面板"
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Move to its own window"
 msgstr "移至独立窗口"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "No conversations match"
+msgstr "没有匹配的对话"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 msgid "Open folder"
@@ -156,7 +200,17 @@ msgstr "打开项目文件夹"
 msgid "Rail width"
 msgstr "侧栏宽度"
 
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Remove"
+msgstr "移除"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Remove this conversation?"
+msgstr "移除此对话？"
+
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Rename"
 msgstr "重命名"
 
@@ -174,6 +228,11 @@ msgid "Restore the grid"
 msgstr "恢复网格"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Resume"
+msgstr "恢复"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Resume {name}"
 msgstr "恢复 {name}"
 
@@ -185,6 +244,21 @@ msgstr "正在恢复对话..."
 msgctxt "Agent status"
 msgid "Running"
 msgstr "运行中"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations"
+msgstr "搜索对话"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Search conversations..."
+msgstr "搜索对话..."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Searching conversations..."
+msgstr "正在搜索对话..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
