@@ -861,6 +861,10 @@ msgstr "Jump to start"
 msgid "just now"
 msgstr "just now"
 
+#: src/renderer/hooks/useAddProject.ts
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic can't write to that folder."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
 msgstr "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."

@@ -127,8 +127,9 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, other {「{taskTitle}」已空闲 # 分钟。}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
-msgstr ""
+msgstr "「{taskTitle}」：「{automationName}」在 {columnName} 运行失败。"
 
 #: src/renderer/lib/paused-for-memory.ts
 msgid "{amount, plural, one {{projectName}, waited # day} other {{projectName}, waited # days}}"
@@ -869,6 +870,11 @@ msgstr "跳到开头"
 msgid "just now"
 msgstr "刚刚"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic 无法写入该文件夹。"
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
 msgstr "Kangentic 将移动磁盘上的文件夹。所有任务、历史记录和工作树都会随之移动。"
@@ -1197,8 +1203,9 @@ msgid "Restart to update"
 msgstr "重启以更新"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "恢复操作现在将跟随智能体的新对话。"
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1273,8 +1280,9 @@ msgid "Settings"
 msgstr "设置"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "设置脚本运行失败"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
