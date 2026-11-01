@@ -56,7 +56,7 @@ export function GitTab({ config }: { config: AppConfig }) {
       <SettingsCard
         icon={<GitFork size={16} />}
         {...settingProps('git.worktreesEnabled')}
-        searchIds={['git.autoCleanup', 'git.linkNodeModules', 'git.copyFiles', 'git.initScript']}
+        searchIds={['git.autoCleanup', 'git.linkNodeModules', 'git.copyFiles', 'git.initScript', 'git.holdPromptForInitScript']}
         checked={worktreesEnabled}
         onChange={(value) => updateProject({ git: { worktreesEnabled: value } })}
       >
@@ -97,6 +97,13 @@ export function GitTab({ config }: { config: AppConfig }) {
                 className="placeholder-fg-faint"
               />
             </CardRow>
+            {config.git.initScript?.trim() ? (
+              <CardToggleRow
+                {...settingProps('git.holdPromptForInitScript')}
+                checked={config.git.holdPromptForInitScript}
+                onChange={(value) => updateProject({ git: { holdPromptForInitScript: value } })}
+              />
+            ) : null}
           </>
         ) : null}
       </SettingsCard>

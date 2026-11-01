@@ -76,6 +76,12 @@ export interface PreparedSpawn {
   startOver: StartOverReason | null;
   /** When the deleted conversation last ran (UTC ISO), for an `expired` start-over's notice. */
   expiredLastActiveAt: string | null;
+  /**
+   * The agent draws its input box in the alternate screen and any screen before
+   * it outside (`firstPromptMayBeTyped` answered true for this launch), so a
+   * background paste waits for the box (`SpawnSessionInput.inputInAlternateScreen`).
+   */
+  inputInAlternateScreen: boolean;
 }
 
 export type PrepareResult =
@@ -399,6 +405,7 @@ export async function prepareAgentSpawn(input: {
       prompt,
       startOver,
       expiredLastActiveAt,
+      inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
     },
   };
 }

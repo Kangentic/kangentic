@@ -363,6 +363,7 @@
       copyFiles: [],
       initScript: null,
       linkNodeModules: true,
+      holdPromptForInitScript: true,
       prAutoRefresh: true,
       autoFetch: true,
       prBypassCountsAsReady: true,
@@ -670,6 +671,7 @@
       copyFiles: git.copyFiles ? git.copyFiles.slice() : undefined,
       initScript: git.initScript,
       linkNodeModules: git.linkNodeModules,
+      holdPromptForInitScript: git.holdPromptForInitScript,
       prAutoRefresh: git.prAutoRefresh,
       autoFetch: git.autoFetch,
       prBypassCountsAsReady: git.prBypassCountsAsReady,
@@ -1709,13 +1711,13 @@
         };
       },
       onSpawnWarning: function (callback) {
-        // Tests fire this via window.__mockFireTaskSpawnWarning(taskId, message, projectId).
+        // Tests fire this via window.__mockFireTaskSpawnWarning(taskId, message, projectId, kind).
         if (!window.__mockTaskSpawnWarningListeners) window.__mockTaskSpawnWarningListeners = [];
         window.__mockTaskSpawnWarningListeners.push(callback);
         if (!window.__mockFireTaskSpawnWarning) {
-          window.__mockFireTaskSpawnWarning = function (taskId, message, projectId) {
+          window.__mockFireTaskSpawnWarning = function (taskId, message, projectId, kind) {
             var listeners = (window.__mockTaskSpawnWarningListeners || []).slice();
-            listeners.forEach(function (listener) { listener(taskId, message, projectId); });
+            listeners.forEach(function (listener) { listener(taskId, message, projectId, kind); });
           };
         }
         // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.

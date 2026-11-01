@@ -1081,6 +1081,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "投入程度越高回答越慢，但有助於跨多個任務的計數；摘要一律使用代理的預設值。"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "按住快速鍵說話，即可將語音輸入到終端機或文字欄位。"
 
@@ -2210,6 +2214,10 @@ msgstr "終端機文字大小（像素）"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Test connection"
 msgstr "測試連線"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "The agent, model and permissions new sessions start with."

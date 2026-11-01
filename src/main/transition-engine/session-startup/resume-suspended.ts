@@ -588,6 +588,7 @@ export async function resumeSuspendedSessions(
           // which workflow recovery reads off the resume (`resumedBy`).
           resumedBy: 'recovery',
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+          inputInAlternateScreen: input.inputInAlternateScreen,
           ...(restoredGrid ? { restoredGrid } : {}),
           shell: input.shell,
           cliTarget: input.cliTarget,

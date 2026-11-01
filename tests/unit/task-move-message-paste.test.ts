@@ -348,6 +348,7 @@ function makeHarness(
       listSessions: vi.fn(() => []),
       suspend: vi.fn(async () => {}),
       getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+      awaitInputReady: vi.fn(async () => true),
       findLiveSessionByTaskId: vi.fn(() => null),
       getUsageCache: vi.fn((): Record<string, unknown> => ({})),
       getFirstReportedEffort: vi.fn((): string | null => null),

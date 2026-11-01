@@ -1081,6 +1081,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "推理强度越高回答越慢，有助于跨任务计数；摘要始终使用智能体的默认值。"
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "按住即说键，向终端或文本框口述内容。"
 
@@ -2210,6 +2214,10 @@ msgstr "终端文字大小（像素）"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Test connection"
 msgstr "测试连接"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "The agent, model and permissions new sessions start with."

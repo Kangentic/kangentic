@@ -329,6 +329,16 @@ export class ClaudeAdapter implements AgentAdapter {
   readonly supportsCallerSessionId = true;
   /** `claude --resume <id> -- "<prompt>"`: the resumed session runs the prompt as its next turn. */
   readonly resumePromptDelivery = 'command-line' as const;
+  /**
+   * `claude` with no prompt opens the same interactive session `claude -- "<prompt>"`
+   * does, at an empty input box, and a prompt typed or pasted there is the
+   * conversation's first message. Only on the fullscreen renderer, whose input
+   * box is in the alternate screen: the classic one never enters it, so the
+   * spawn could never tell its input box from a screen drawn before it.
+   */
+  firstPromptMayBeTyped(options: SpawnCommandOptions): boolean {
+    return this.commandBuilder.drawsInAlternateScreen(options);
+  }
   // A Claude installed in a WSL distro, configured by its \\wsl.localhost path:
   // run in the distro's shell, its hooks through the WSL transport, its trust,
   // settings and transcripts in the distro's home (cli-target.ts).

@@ -58,7 +58,10 @@ function makeContext() {
   return {
     projectRepo: { getById: vi.fn(() => ({ id: 'proj-test', path: '/mock/project' })) },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
-    sessionManager: { getSession: vi.fn((id: string) => ({ id, status: 'running' })) },
+    sessionManager: {
+      getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+      awaitInputReady: vi.fn(async () => true),
+    },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn(), hasPending: vi.fn(() => false) },
     terminalSubmit: { submitContent: vi.fn(async () => undefined) },
   };

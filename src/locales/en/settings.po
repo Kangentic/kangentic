@@ -1081,6 +1081,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Higher effort answers slower and can help counts across many tasks; summaries always use the agent's default."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr "Hold prompt for script"
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Hold push-to-talk to speak into a terminal or text field."
 
@@ -2210,6 +2214,10 @@ msgstr "Terminal text size in pixels"
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Test connection"
 msgstr "Test connection"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 msgid "The agent, model and permissions new sessions start with."

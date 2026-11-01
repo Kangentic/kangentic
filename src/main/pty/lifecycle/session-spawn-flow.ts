@@ -527,8 +527,10 @@ export async function performSpawn(
   });
   // Seed a fresh task spawn as thinking - it is already processing its initial
   // prompt - so the indicator does not flash idle during boot. Resumes and
-  // transient command terminals start idle: they wait for the user.
-  context.telemetry.initSession(id, input.agentParser, !input.resuming && !input.transient);
+  // transient command terminals start idle: they wait for the user, and so
+  // does a fresh spawn launched with no prompt (`seedIdle`, an agent started
+  // while its worktree's setup script runs).
+  context.telemetry.initSession(id, input.agentParser, !input.resuming && !input.transient && input.seedIdle !== true);
   context.loadEarlierRuns?.(id);
 
   // Dev-only trace recorder: register the session directory so passive

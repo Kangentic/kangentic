@@ -22,7 +22,7 @@ import { reportAutomationFailures } from './automation-failures';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { isHeldPause } from '../../../shared/held-pause';
-import { runSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
+import { runSpawnPreamble, previewSpawnPreamble, projectModelDefaultsApply } from '../../transition-engine/spawn-preamble';
 import { isResumeEligible } from '../../transition-engine/spawn-intent';
 import { resolveIsolatedSwimlaneId, resolveForceFresh } from '../../transition-engine/session-isolation';
 import { resolveEffectiveAutoCommand, resolveColumnMessage, applyProfileToLane } from '../../transition-engine/column-strategy';
@@ -31,7 +31,9 @@ import { loadTaskProfile } from './task-profile';
 import { buildCommandInjectionVerifier } from '../../transition-engine/injection-plan';
 import type { CommandVerifier } from '../../transition-engine/terminal-submit-scheduler';
 import { reportAutoCommandOutcome } from './auto-command-outcome';
-import { deliverAgentMessageInBackground, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import { deliverAgentMessageInBackground, deliverOpeningPromptAndWait, isSlashCommand, pasteAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
+import type { EarlyAgentHandle } from '../../transition-engine/early-agent';
+import { isWorktreeCreationInFlight } from '../../git/worktree-creation-registry';
 import {
   claimHeldMessages,
   commitWhenSessionRuns,
@@ -42,7 +44,7 @@ import {
 } from '../../held-messages/held-messages';
 import type { AgentStartReport } from '../../automations/automation-runner';
 import { emitSpawnProgress, createProgressCallback, clearSpawnProgress } from '../../transition-engine/spawn-progress';
-import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyConversationExpired, notifySpawnBlocked } from './task-git';
+import { ensureTaskWorktree, ensureTaskBranchCheckout, notifyConversationExpired, notifySpawnBlocked, type InitScriptMode } from './task-git';
 import { createExpiredRecapSources } from '../../transition-engine/expired-recap-sources';
 import { getProjectRepos } from './project-repos';
 import { withTaskLock } from '../task-lifecycle-lock';
@@ -87,6 +89,17 @@ function laneMaySpawn(lane: Pick<Swimlane, 'role'>): boolean {
 }
 
 /**
+ * Whether a start into `lane` may run an agent at all, before anything about
+ * the task is read: the column's `auto_spawn`, which an explicit user Start
+ * lifts, and its role, which nothing lifts (the flag itself can be written onto
+ * a role lane over MCP or by a Board Profile fold). `spawnAgent`, the auto-spawn
+ * gates and the early launcher all ask it, so they agree on which columns start one.
+ */
+function laneStartsAgent(lane: Pick<Swimlane, 'auto_spawn' | 'role'>, explicitStart: boolean | undefined): boolean {
+  return (Boolean(lane.auto_spawn) || explicitStart === true) && laneMaySpawn(lane);
+}
+
+/**
  * Resolve the column-derived spawn overrides handed to
  * `engine.resumeSuspendedSession` and `engine.executeTransition`.
  *
@@ -123,6 +136,12 @@ export function resolveSpawnOverrides(
     forceFresh: resolveForceFresh(lane),
   };
 }
+
+/**
+ * How a failed opening prompt is named where a column's command would be
+ * ("<task> did not run its first prompt."). English, as every command text is.
+ */
+const OPENING_PROMPT_LABEL = 'its first prompt';
 
 /** The run log's reason for a column message not sent because the task's conversation expired. */
 const EXPIRED_CONVERSATION_SKIP_REASON = 'Not sent. The agent\'s conversation had expired, so it started a new one from a recap and is waiting for you.';
@@ -280,6 +299,31 @@ export interface AgentSpawnOptions {
    * a person.
    */
   resumedBy?: SessionResumer;
+  /**
+   * The agent the caller launched while the task's new worktree ran its setup
+   * script (`createEarlyAgentLauncher`). The spawn adopts it in place of a
+   * fresh launch when the launch it would make matches, and types the opening
+   * prompt in; anything else discards it. Settled either way by the time this
+   * call returns, so the caller only discards it on its own early exits.
+   */
+  earlyAgent?: EarlyAgentHandle;
+  /**
+   * The task's setup script, still running in its worktree while this agent
+   * starts on its prompt (`git.holdPromptForInitScript` off). Prefixed to the
+   * opening prompt as one English line, so the agent does not run the script's
+   * work itself. See `setupStillRunningNote`.
+   */
+  setupStillRunning?: string;
+}
+
+/**
+ * The line an agent's opening prompt starts with when the worktree's setup
+ * script is still running (`AgentSpawnOptions.setupStillRunning`). English: an
+ * agent reads it.
+ */
+export function setupStillRunningNote(initScript: string): string {
+  return `The worktree's setup script is still running in the background: \`${initScript}\`. `
+    + 'Do not run it yourself. Commands that need what it installs or builds may fail until it finishes, and you will be told if it fails.';
 }
 
 /**
@@ -456,17 +500,13 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
   const run = async (): Promise<void> => {
   // Guard: if the target column doesn't want agents, no-op. An explicit user
   // Start overrides the column's default, as the desktop's Resume button does.
-  if (!toLane.auto_spawn && !options.explicitStart) return;
-
-  // Guard: a To Do or Done column never spawns, whatever its flag says. The
-  // move path branches on role before it gets here (task-move.ts), and the
-  // startup and reconcile paths gate on NEVER_AUTO_SPAWN_ROLES, but the flag
-  // itself can be written onto a role lane over MCP (update_column) or by a
-  // Board Profile fold, and this chokepoint used to honor it for a task
-  // created, promoted, or restored straight into To Do. The renderer treats
-  // a To Do task as sessionless (its card opens the edit form), so a live
-  // agent there would be invisible.
-  if (!laneMaySpawn(toLane)) return;
+  // And a To Do or Done column never spawns, whatever its flag says. The move
+  // path branches on role before it gets here (task-move.ts), and the startup
+  // and reconcile paths gate on NEVER_AUTO_SPAWN_ROLES, but this chokepoint
+  // used to honor the flag for a task created, promoted, or restored straight
+  // into To Do. The renderer treats a To Do task as sessionless (its card
+  // opens the edit form), so a live agent there would be invisible.
+  if (!laneStartsAgent(toLane, options.explicitStart)) return;
 
   // Guard: if the task is held paused (the user paused it, or Kangentic did
   // while it waited on the user), don't auto-resume. Only an explicit user
@@ -859,16 +899,60 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
     try {
       // Always pass targetAgent so the column's agent_override is respected.
       // Without it a first-time spawn would fall through to the project default.
+      // An agent launched while the worktree's setup script ran is offered to
+      // the engine, which adopts it in place of a fresh launch when it matches.
+      // The setup note (the script still running, background mode) rides the
+      // engine's prompt prefix, as a handoff's pointer does.
+      // A slash command in the prompt slot runs only as the prompt's first
+      // word, so the note stays off it.
+      const setupNote = options.setupStillRunning
+        && !(promptSlotOpen && opening.prompt && isSlashCommand(opening.prompt))
+        ? options.setupStillRunning
+        : undefined;
       const outcome = await engine.resumeSuspendedSession(
         beforeSpawn, toLane.permission_mode, skipPromptTemplate, opening.prompt, signal,
         targetAgent,
-        undefined,
+        setupNote,
         {
           ...resolveSpawnOverrides(beforeSpawn, toLane, project),
           ...(options.resumedBy ? { resumedBy: options.resumedBy } : {}),
+          earlyAgent: options.earlyAgent,
         },
       );
       startedAgentInGroup = true;
+      // The spawn adopted the early agent, whose command line could not carry
+      // the prompt: it goes in now, and everything below waits for it, exactly
+      // as everything waits behind a prompt that rode the command line.
+      const typedOpening = outcome?.typedOpening ?? null;
+      let typedOpeningLanded = true;
+      const adoptedSessionId = typedOpening !== null ? tasks.getById(task.id)?.session_id : null;
+      if (typedOpening !== null && adoptedSessionId) {
+        const notSent = await deliverOpeningPromptAndWait(context, {
+          taskId: task.id,
+          sessionId: adoptedSessionId,
+          prompt: typedOpening,
+          verifier: resolveInjectionVerifier(targetAgent, sessionRepo, task.id),
+          signal,
+        });
+        typedOpeningLanded = notSent === null;
+        // An agent left with no first prompt sits idle; say so, as a column
+        // message that did not run is said. A cancel is the user's own move.
+        if (notSent !== null) {
+          reportAutoCommandOutcome(context, tasks, task, {
+            taskId: task.id,
+            sessionId: adoptedSessionId,
+            commands: [OPENING_PROMPT_LABEL],
+            outcome: notSent.outcome,
+            unconfirmedCommands: [OPENING_PROMPT_LABEL],
+            discardedDraft: null,
+            interruptedTurn: false,
+            escalated: false,
+            reason: notSent.reason,
+          }, options.projectId);
+        }
+      } else if (typedOpening !== null) {
+        typedOpeningLanded = false;
+      }
       // The agent deleted the conversation this move would have resumed, so
       // the task started over from a recap that asks the agent to summarize and
       // wait. The column's messages, the one in the prompt slot included, are
@@ -936,8 +1020,14 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       if (heldClaim !== null && startedSessionId) {
         if (opening.heldAfterTurn) {
           heldAfterLeadTurn = true;
+        } else if (heldInPrompt && unsentPrompt === null && !typedOpeningLanded) {
+          // They were in the opening prompt typed into an adopted agent, and it
+          // did not land: back on hold for the next start.
+          heldClaim.release({ flush: true });
+          heldHandedOff = true;
         } else if (heldInPrompt && unsentPrompt === null) {
-          // They rode the command line; they count as delivered once it runs.
+          // They rode the command line (or the opening typed in its place);
+          // they count as delivered once it runs.
           commitWhenSessionRuns(context, heldClaim, startedSessionId);
           heldHandedOff = true;
         } else {
@@ -1149,10 +1239,132 @@ export async function spawnAgent(options: AgentSpawnOptions): Promise<void> {
       await run();
     } finally {
       if (heldClaim !== null && !heldHandedOff) heldClaim.release({ flush: true });
+      // An early agent nothing adopted (a guard returned, a legacy row or a
+      // handoff started the agent, the spawn failed) is not this task's agent.
+      await options.earlyAgent?.discard();
     }
   };
 
   return project?.name ? runWithProjectLogContext(project.name, runAndSettleHeld) : runAndSettleHeld();
+}
+
+/**
+ * How a new worktree's setup script and the task's agent overlap for this
+ * project (`ensureTaskWorktree`'s `initScript` option), or undefined to run the
+ * script before the agent as before. With `git.holdPromptForInitScript` on, the
+ * agent boots during the script and its prompt waits; off, the agent starts on
+ * its prompt at once and the script runs on in the background.
+ *
+ * `launch` is `createEarlyAgentLauncher` for the spawn the caller will make.
+ * A move and an auto-spawn are the callers; the others keep the full wait.
+ */
+export function resolveInitScriptMode(
+  context: IpcContext,
+  projectPath: string | null,
+  launch: (worktreePath: string) => Promise<EarlyAgentHandle | null>,
+): InitScriptMode | undefined {
+  if (!projectPath) return undefined;
+  const git = context.configManager.getEffectiveConfig(projectPath).git;
+  if (!git?.initScript?.trim()) return undefined;
+  return git.holdPromptForInitScript === false ? { mode: 'background' } : { mode: 'hold-prompt', launchAgent: launch };
+}
+
+/**
+ * The note `spawnAgent` puts before the opening prompt when the worktree's
+ * setup script runs on in the background, or undefined when it does not.
+ * Read after `ensureTaskWorktree` returns, with the worktree it created (null
+ * when it created none: only a NEW worktree runs its script). A script that
+ * already finished gets no note.
+ */
+export function setupStillRunningFor(
+  context: IpcContext,
+  projectPath: string | null,
+  mode: InitScriptMode | undefined,
+  createdWorktreePath: string | null,
+): string | undefined {
+  if (mode?.mode !== 'background' || !createdWorktreePath || !projectPath) return undefined;
+  if (!isWorktreeCreationInFlight(createdWorktreePath)) return undefined;
+  const initScript = context.configManager.getEffectiveConfig(projectPath).git?.initScript?.trim();
+  return initScript ? setupStillRunningNote(initScript) : undefined;
+}
+
+/**
+ * Build the launcher `ensureTaskWorktree` calls, in its hold-prompt mode, once
+ * a new worktree's files are in place and its setup script is starting: it
+ * starts the task's agent then, with no prompt, for `spawnAgent` to adopt once
+ * the script exits (`AgentSpawnOptions.earlyAgent`).
+ *
+ * It launches nothing (returns null) unless the spawn the caller is about to
+ * make would start this agent fresh and first: the task still has no session,
+ * the column would spawn (its `auto_spawn`, its role, no held pause), the
+ * column's first enter row needs the agent or there is none
+ * (`agentStartsFirstOnEnter`), and it is no handoff. The agent, permission
+ * mode and overrides come from `previewSpawnPreamble`, which writes nothing:
+ * this runs without the task lock, inside the worktree creation's hold, where
+ * taking the lock could deadlock against a caller that holds it across
+ * `ensureTaskWorktree`. The spawn runs the real preamble later and adopts the
+ * agent only if its launch is still the same.
+ *
+ * Never throws: any failure launches nothing and the spawn starts the agent as
+ * it always did.
+ */
+export function createEarlyAgentLauncher(input: {
+  context: IpcContext;
+  tasks: TaskRepository;
+  automations: AutomationRepository;
+  automationRuns: AutomationRunRepository;
+  attachments: AttachmentRepository;
+  taskId: string;
+  toLane: Swimlane;
+  /** See `AgentSpawnOptions.settingsSourceLane`. */
+  settingsSourceLane?: Swimlane | null;
+  projectId: string;
+  projectPath: string | null;
+  explicitStart?: boolean;
+  signal?: AbortSignal;
+}): (worktreePath: string) => Promise<EarlyAgentHandle | null> {
+  const { context, tasks } = input;
+  return async (worktreePath) => {
+    try {
+      const task = tasks.getById(input.taskId);
+      if (!task || task.session_id) return null;
+      const toLane = applyProfileToLane(input.toLane, loadTaskProfile(context, task, input.projectPath)) ?? input.toLane;
+      if (!laneStartsAgent(toLane, input.explicitStart)) return null;
+      // Built here, for a launch that may happen, rather than by every move.
+      const sessionRepo = new SessionRepository(getProjectDb(input.projectId));
+      const latestSession = sessionRepo.getLatestForTask(task.id);
+      // spawnAgent's held-pause check. Its `resumesEntry` lift is a Resume's,
+      // which never comes through a launcher (a move and an auto-spawn do).
+      if (isHeldPause(latestSession) && !input.explicitStart) return null;
+      const engine = createTransitionEngine(
+        context, input.automations, input.automationRuns, tasks, sessionRepo, input.attachments, input.projectId, input.projectPath,
+      );
+      if (!engine.agentStartsFirstOnEnter(toLane)) return null;
+      const project = context.projectRepo.getById(input.projectId);
+      const { task: previewTask, resolution } = previewSpawnPreamble({
+        task,
+        hasSessionRecord: latestSession !== undefined,
+        settingsLane: input.settingsSourceLane === undefined ? toLane : input.settingsSourceLane,
+        destinationLane: toLane,
+        project,
+        globalPermissionMode: () => context.configManager.getEffectiveConfig(input.projectPath || undefined).agent.permissionMode,
+      });
+      if (resolution.isHandoff) return null;
+      return await engine.launchEarlyAgent({
+        task: previewTask,
+        worktreePath,
+        permissionOverride: toLane.permission_mode,
+        agentOverride: resolution.agent,
+        spawnOverrides: resolveSpawnOverrides(previewTask, toLane, project),
+        signal: input.signal,
+      });
+    } catch (error) {
+      if (!isAbortError(error)) {
+        console.warn(`[spawnAgent] Could not start the agent of task ${input.taskId.slice(0, 8)} during its setup script; it starts after it:`, error);
+      }
+      return null;
+    }
+  };
 }
 
 /**
@@ -1247,10 +1459,9 @@ function readAutoSpawnGates(
   // spawnAgent's own fold could ever see them. spawnAgent folds again
   // internally, which is idempotent.
   const toLane = applyProfileToLane(rawLane, loadTaskProfile(context, fullTask, projectPath)) ?? rawLane;
-  if (!toLane.auto_spawn && !options.explicitStart) return null;
-  // Same role gate as spawnAgent, and for the same reason: a profile fold
-  // or an MCP update can leave the flag on for a To Do column.
-  if (!laneMaySpawn(toLane)) return null;
+  // Same column and role gate as spawnAgent, and for the same reason: a
+  // profile fold or an MCP update can leave the flag on for a To Do column.
+  if (!laneStartsAgent(toLane, options.explicitStart)) return null;
 
   return { fullTask, toLane };
 }
@@ -1319,19 +1530,38 @@ export async function autoSpawnForTask(
       // finally clears the label on every exit: the blocked returns, a Phase 3
       // gate that changed during the git phase, and an abort.
       const onProgress = createProgressCallback(context.mainWindow, fullTask.id);
+      // The agent started while a new worktree ran its setup script, for the
+      // Phase 3 spawn to adopt. Discarded in the `finally` on every path that
+      // does not reach that spawn (a no-op once adopted).
+      let earlyAgent: EarlyAgentHandle | null = null;
       try {
         // === Phase 2 (unlocked, slow) ===
         // The signal cancels an in-flight fetch; an AbortError is rethrown
         // past the per-step notice, since a cancelled spawn is not a blocked
         // one, and lands in the outer catch's abort branch.
+        const initScriptMode = resolveInitScriptMode(context, projectPath, createEarlyAgentLauncher({
+          context,
+          tasks,
+          automations,
+          automationRuns,
+          attachments,
+          taskId: fullTask.id,
+          toLane: plan.toLane,
+          projectId,
+          projectPath,
+          explicitStart: options.explicitStart,
+          signal,
+        }));
+        const hadWorktree = Boolean(fullTask.worktree_path);
         try {
-          await ensureTaskWorktree(context, fullTask, tasks, projectPath, { signal, onProgress, projectId });
+          earlyAgent = await ensureTaskWorktree(context, fullTask, tasks, projectPath, { signal, onProgress, projectId, initScript: initScriptMode });
         } catch (worktreeError) {
           if (isAbortError(worktreeError)) throw worktreeError;
           console.error('[auto-spawn] Worktree creation failed:', worktreeError);
           notifySpawnBlocked(context, fullTask, 'worktree', worktreeError, projectId);
           return;
         }
+        const setupStillRunning = setupStillRunningFor(context, projectPath, initScriptMode, hadWorktree ? null : fullTask.worktree_path);
 
         // Checkout the task's branch for non-worktree tasks. ensureTaskBranchCheckout
         // decides for itself whether there is anything to check out, and refuses to
@@ -1374,11 +1604,14 @@ export async function autoSpawnForTask(
             context, engine, tasks, sessionRepo, task: current.fullTask, fromSwimlaneId: '*', toLane: current.toLane,
             projectId, projectPath, attachments, signal,
             explicitStart: options.explicitStart,
+            earlyAgent: earlyAgent ?? undefined,
+            setupStillRunning,
           });
 
           console.log(`[auto-spawn] Spawned agent for "${task.title}" in ${current.toLane.name}`);
         });
       } finally {
+        await earlyAgent?.discard();
         clearSpawnProgress(context.mainWindow, fullTask.id);
       }
     } catch (err) {

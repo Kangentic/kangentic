@@ -1338,6 +1338,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Höherer Aufwand antwortet langsamer und kann bei Zählungen über viele Aufgaben helfen; Zusammenfassungen nutzen immer den Standard des Agenten."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Push-to-Talk halten und in Terminal oder Textfeld sprechen."
@@ -2735,6 +2739,10 @@ msgstr "Textgröße im Terminal in Pixeln"
 #, fuzzy
 msgid "Test connection"
 msgstr "Verbindung testen"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

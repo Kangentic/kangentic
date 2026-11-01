@@ -123,7 +123,7 @@ These settings appear in both App Settings (as defaults) and Project Settings (a
 
 - `theme`, `themeFollowsSystem`, `themeLight`, `themeDark` (the Theme tab; the four travel together)
 - `agent.permissionMode`
-- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.prAutoRefresh`, `git.autoFetch`, `git.prBypassCountsAsReady`
+- `git.worktreesEnabled`, `git.autoCleanup`, `git.defaultBaseBranch`, `git.copyFiles`, `git.initScript`, `git.linkNodeModules`, `git.holdPromptForInitScript`, `git.prAutoRefresh`, `git.autoFetch`, `git.prBypassCountsAsReady`
 - `browser.enabled`, `browser.defaultUrl`
 - `agent.execution` (per-agent local/remote mode + server working directory; editable inline in the Agent tab for the currently-selected agent, but NOT seeded into new projects - see below)
 

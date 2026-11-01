@@ -238,7 +238,8 @@ describe('worktree reuse drift probe', () => {
       return branch;
     });
 
-    await expect(ensureTaskWorktree(context, task, stubTasksRepo, '/project')).resolves.toBeUndefined();
+    // A reused worktree starts no agent early, so there is no handle to hand back.
+    await expect(ensureTaskWorktree(context, task, stubTasksRepo, '/project')).resolves.toBeNull();
 
     await vi.waitFor(() => {
       expect(getInFlightSpawnProgress()[task.id]).toBe('Starting agent... (base fetch failed)');
@@ -247,6 +248,7 @@ describe('worktree reuse drift probe', () => {
         task.id,
         expect.stringContaining("could not fetch latest 'main' from origin (network unreachable)"),
         undefined,
+        'base-not-refreshed',
       );
     });
   });
@@ -346,6 +348,7 @@ describe('worktree reuse drift probe', () => {
       task.id,
       expect.stringContaining('network unreachable'),
       undefined,
+      'base-not-refreshed',
     );
   });
 
@@ -409,7 +412,7 @@ describe('worktree reuse drift probe', () => {
     emitSpawnProgress(window, task.id, 'starting-agent');
     mockRunGitWithTimeout.mockRejectedValue(new Error('git exploded'));
 
-    await expect(ensureTaskWorktree(context, task, stubTasksRepo, '/project')).resolves.toBeUndefined();
+    await expect(ensureTaskWorktree(context, task, stubTasksRepo, '/project')).resolves.toBeNull();
 
     await vi.waitFor(() => {
       expect(mockRunGitWithTimeout).toHaveBeenCalled();

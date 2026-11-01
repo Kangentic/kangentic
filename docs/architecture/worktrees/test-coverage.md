@@ -82,7 +82,7 @@ Uses real temp files with mocked `os.homedir()`.
 - Each step logs `create step=<name> done in <n>ms`, and the `[INIT-SCRIPT]` completed, failed and stopped lines carry the elapsed time
 - `prepareStaleWorktreeForCreation` clears only a stale directory, never a live worktree, and nothing with worktrees off
 - `removeWorktree` refuses a path whose creation is in flight; `createWorktree`'s own stale-directory clear still runs while its creation holds the path
-- `ensureTaskWorktree` sets up after the lock is released and records only after the setup succeeds; a second same-task creation waits and reuses (`task-git-remote-worktree-skip.test.ts`)
+- `ensureTaskWorktree` sets up after the lock is released and records only after the setup succeeds, except in the background mode (`git.holdPromptForInitScript` off), which records once the files are set up while the script runs on under the creation's hold; a second same-task creation waits and reuses (`task-git-remote-worktree-skip.test.ts`)
 - With a real repo and a real blocking script (`worktree-setup-outside-queue.test.ts`): another task's creation, a Done-move removal and auto-fetch all finish while the script runs; an in-queue removal refuses and an outside-queue one waits; an abort kills the script before the creation settles
 - The move-failure stale cleanup skips whole while a newer creation holds a candidate path (`task-move-stale-branch-cleanup.test.ts`); the backlog pass skips a held task whole, and the orphan sweep skips a held path, including one claimed while it runs (`resource-cleanup.test.ts`, `prune-orphaned-dirs.test.ts`)
 - The MCP delete and the project delete wait for a creation at the path before they remove it (`mcp-project-context.test.ts`)

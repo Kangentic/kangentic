@@ -37,6 +37,14 @@ contract was kept in sync across three files by prose comments alone.
   (`src/main/transition-engine/spawn-preamble.ts`): `lockAdvancedOverridesOnFirstSpawn`, THEN
   `resolveTargetAgent`, in that order - a just-locked `agent_override` must be what resolution
   picks up, and the resolved agent must be what the engine receives.
+- **An agent started during a worktree's setup script is adopted by `spawnAgent`, never a third
+  spawn path.** `TransitionEngine.launchEarlyAgent` starts a task's agent, hidden and with no
+  prompt, while its new worktree's post-worktree script runs. Its one caller is
+  `createEarlyAgentLauncher` (`agent-spawn.ts`), which resolves the launch through
+  `previewSpawnPreamble`: the preamble's lock computed on a copy, written nowhere, since the
+  launcher runs without the task lock. The task gets that agent only through `spawnAgent`'s own
+  engine call, after the real preamble ran: the engine adopts it when the launch it would make is
+  the same (`launchKey`) and discards it otherwise.
 - Permission mode is resolved only via `resolveEffectivePermissionMode` (same module): a lane
   forcing `'plan'` always wins, else task -> lane -> global. No inline copies of that ternary.
 - The **settings lane** the lock resolves against is the lane whose inherited values the New
@@ -122,8 +130,9 @@ contract was kept in sync across three files by prose comments alone.
 ## Enforcement (self-maintaining)
 
 - **Test:** `tests/unit/spawn-entry-point-parity.test.ts` statically scans `src/main` and fails
-  on (a) any `executeTransition` / `resumeSuspendedSession` / `executeSingleAutomation` call site
-  outside the classified files, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
+  on (a) any `executeTransition` / `resumeSuspendedSession` / `executeSingleAutomation` /
+  `launchEarlyAgent` call site outside the classified files, with `launchEarlyAgent` pinned to its
+  one caller in `agent-spawn.ts` and that file to `previewSpawnPreamble`, (b) any `sessionManager.spawn(` call site outside the classified spawn sinks, (c) a
   chokepoint that stops calling `runSpawnPreamble` / `resolveEffectivePermissionMode`, (d)
   any `lockAdvancedOverridesOnFirstSpawn` call outside `spawn-preamble.ts`, (e) any
   `<receiver>.buildCommand(` call site with no earlier `<receiver>.ensureTrust(` on that same

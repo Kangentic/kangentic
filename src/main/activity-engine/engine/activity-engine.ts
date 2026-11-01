@@ -736,6 +736,29 @@ export class ActivityEngine {
   }
 
   /**
+   * Start an idle session's idle clock (`idleTimestamp`, `needsUserSince`) over
+   * from now. For an agent launched while its worktree's setup script ran and
+   * adopted by its task once the script ended: it sat idle at its input box the
+   * whole time with nothing to wait on, so the board must not show it as having
+   * waited on the user since launch, and the idle-timeout sweep must not count
+   * that time. Pushes the restamped reason, whose `since` is the clock. Returns
+   * whether the session was idle; a no-op otherwise.
+   */
+  restartIdleClock(sessionId: string): boolean {
+    if (this.disposed) return false;
+    const state = this.states.get(sessionId);
+    if (!state) return false;
+    if (state.activity !== 'idle') return false;
+    const nowMs = this.now();
+    state.idleTimestamp = nowMs;
+    if (state.needsUserSince !== null) state.needsUserSince = nowMs;
+    const { activity, reason } = deriveActivityAndReason(state);
+    state.lastPushedReason = reason;
+    this.callbacks.onActivityChange(sessionId, activity, reason);
+    return true;
+  }
+
+  /**
    * Watcher liveness keep-alive (Subsystem B). The process-tree watcher
    * confirmed every engine-tracked bg shell is still present in the OS tree
    * this cycle (no deficit). Unlike `markThinkingSignal` - which moves only

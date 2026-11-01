@@ -70,6 +70,41 @@ export function isWorktreeCreationInFlight(worktreePath: string): boolean {
 }
 
 /**
+ * The controllers of setup scripts that run after their worktree was recorded
+ * (the background mode of `ensureTaskWorktree`, where the agent starts on its
+ * prompt while the script runs). No caller's signal reaches such a script,
+ * since the move that started it has already returned, so a removal stops it
+ * here instead of waiting out the install.
+ */
+const backgroundSetups = new Map<string, AbortController>();
+
+/**
+ * Hold `controller` as the stop for the setup script running at
+ * `worktreePath` after its worktree was recorded. Returns the release, which
+ * the creation calls once the script has settled.
+ */
+export function registerBackgroundSetup(worktreePath: string, controller: AbortController): () => void {
+  const key = creationKey(worktreePath);
+  backgroundSetups.set(key, controller);
+  return () => {
+    if (backgroundSetups.get(key) === controller) backgroundSetups.delete(key);
+  };
+}
+
+/**
+ * Stop the setup script still running at `worktreePath` after its worktree was
+ * recorded. Returns whether one was running. The creation's hold ends once the
+ * script's process tree is gone (`spawnWithAbort`), so a caller that then waits
+ * on `waitForWorktreeCreation` waits only for that, not for the install.
+ */
+export function abortWorktreeSetup(worktreePath: string): boolean {
+  const controller = backgroundSetups.get(creationKey(worktreePath));
+  if (!controller) return false;
+  controller.abort();
+  return true;
+}
+
+/**
  * Wait until no creation for `worktreePath` is in flight. For a removal that
  * runs outside the git queue: it waits here rather than deleting a directory a
  * setup script is still writing to. Resolves `true` when it had to wait.

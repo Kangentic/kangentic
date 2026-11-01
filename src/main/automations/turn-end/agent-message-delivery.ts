@@ -5,6 +5,7 @@ import type { InjectionReport } from '../../transition-engine/terminal-submit-sc
 import { deliverExitMessage, EXIT_BUDGET_ABORT_REASON } from '../../ipc/helpers/exit-message-delivery';
 import { waitForTurnCompletion, type TurnCompletionResult } from '../../transition-engine/turn-completion';
 import { trackMessageDelivery } from './turn-end-passes';
+import { AGENT_READY_CEILING_MS } from '../../pty/lifecycle/agent-output-tracker';
 
 /**
  * How a column's message reaches a live agent: typed as keystrokes, or pasted.
@@ -282,13 +283,24 @@ async function runBackgroundPaste(
       report('failed', SESSION_GONE_REASON);
       return;
     }
+    const deadline = Date.now() + BACKGROUND_TURN_WAIT_MS;
+    // A screen the agent shows before its input box (Claude's approval of a
+    // new project MCP server) would take the paste and its Enter as an answer.
+    // The stale-thinking reclaim reads such an agent idle after 3 minutes, so
+    // the turn wait alone does not keep the paste out of it.
+    const atInput = await context.sessionManager.awaitInputReady(input.sessionId, BACKGROUND_TURN_WAIT_MS, signal);
+    if (!atInput) {
+      if (signal.aborted) report('cancelled', SUPERSEDED_REASON);
+      else if (!isSessionLive(context, input.sessionId)) report('failed', SESSION_GONE_REASON);
+      else report('failed', 'The agent did not reach its input box in time to deliver the message.');
+      return;
+    }
     // The turn has to end AND the scheduler has to be done with this task. A
     // keystroke burst scheduled ahead of the paste (the warm move's `/effort`,
     // an earlier row) may be waiting on this same turn end; it starts then,
     // and its typing breaks the quiet the next wait needs, so the loop lands
     // the paste after it. Each wait takes at least the 1.5 s quiet window, so
     // the loop never spins.
-    const deadline = Date.now() + BACKGROUND_TURN_WAIT_MS;
     for (;;) {
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal,
@@ -336,4 +348,90 @@ function turnWaitFailure(result: Exclude<TurnCompletionResult, 'completed'>, abo
   if (result === 'exited') return 'The agent exited before the message could be delivered.';
   if (result === 'timeout') return "The agent's turn did not end in time to deliver the message.";
   return abortReason;
+}
+
+/**
+ * How long the opening prompt waits for an adopted agent's screen to settle
+ * after it is ready. The agent has been at its input box for the whole setup
+ * script by then, so this is the short tail of a script shorter than the boot.
+ */
+const OPENING_SETTLE_WAIT_MS = 15_000;
+/**
+ * How long the adopted agent's screen must be quiet before its opening goes
+ * in. It is idle at its input box, not ending a turn, so this only lets the
+ * repaint after its terminal mounts (and resizes it) finish: measured, that
+ * mount is the one burst of output after adoption. The paste engine keeps its
+ * own settle on top.
+ */
+const OPENING_QUIET_MS = 500;
+const OPENING_ABORT_REASON = 'The task moved on before its opening prompt was sent.';
+
+/**
+ * Type a task's opening prompt into an agent its spawn adopted
+ * (`SpawnOutcome.typedOpening`: launched while the task's worktree ran its
+ * setup script, before the prompt was ready), and wait for it to land. The
+ * prompt is what the command line would have carried, so it goes as the
+ * command line would deliver it: whole, and first.
+ *
+ * Waits for the agent to be on screen (`awaitAgentReady`, bounded by the same
+ * ceiling the launch overlay uses) and for its screen to be quiet, then
+ * delivers through the decision every path uses (`shouldPaste`): a bracketed
+ * paste for text with line breaks (the task template's XML), keystrokes for one
+ * line or a slash command, which a paste would never run (a column whose message
+ * is the opening prompt, such as `/code-review`). Awaited either way, so the
+ * column's later messages, held messages and pastes are all scheduled after it.
+ *
+ * Returns null once the prompt reached the agent, or why it did not. Never
+ * throws: a failure is logged and returned, and the agent stays up for the
+ * user. A cancel (the task moved on) is reported as `cancelled`, which the
+ * caller does not announce.
+ */
+export async function deliverOpeningPromptAndWait(
+  context: IpcContext,
+  input: {
+    taskId: string;
+    sessionId: string;
+    prompt: string;
+    verifier: CommandVerifier | null;
+    signal?: AbortSignal;
+  },
+): Promise<{ outcome: 'failed' | 'cancelled'; reason: string } | null> {
+  const taskLabel = input.taskId.slice(0, 8);
+  const signal = input.signal ?? new AbortController().signal;
+  try {
+    const ready = await context.sessionManager.awaitAgentReady(input.sessionId, AGENT_READY_CEILING_MS);
+    if (!ready && !isSessionLive(context, input.sessionId)) {
+      console.warn(`[agent-message] Task ${taskLabel}: the agent exited before its opening prompt was sent`);
+      return { outcome: 'failed', reason: 'The agent exited before its first prompt was sent.' };
+    }
+    const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
+      signal,
+      quietMs: OPENING_QUIET_MS,
+      timeoutMs: OPENING_SETTLE_WAIT_MS,
+    });
+    if (settled === 'aborted') return { outcome: 'cancelled', reason: OPENING_ABORT_REASON };
+    if (settled === 'exited') {
+      console.log(`[agent-message] Task ${taskLabel}: opening prompt not sent (the agent exited)`);
+      return { outcome: 'failed', reason: 'The agent exited before its first prompt was sent.' };
+    }
+    // A timeout still sends: the agent has been ready a while and only its
+    // screen is busy, which typed input waits out in the CLI's own buffer.
+    if (shouldPaste(input.prompt)) {
+      await context.terminalSubmit.submitContent(input.sessionId, input.prompt, {
+        source: `automation:${taskLabel}`,
+        signal,
+      });
+    } else {
+      await deliverExitMessage(
+        context, input.taskId, input.sessionId, input.prompt, 'immediate', input.verifier, signal, OPENING_ABORT_REASON,
+      );
+    }
+    console.log(`[agent-message] Task ${taskLabel}: opening prompt sent to the adopted agent`);
+    return null;
+  } catch (error) {
+    if (signal.aborted) return { outcome: 'cancelled', reason: OPENING_ABORT_REASON };
+    const detail = error instanceof Error ? error.message : String(error);
+    console.error(`[agent-message] Task ${taskLabel}: the opening prompt could not be sent: ${detail}`);
+    return { outcome: 'failed', reason: `Its first prompt could not be sent: ${detail}` };
+  }
 }

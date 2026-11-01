@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Agent adapter interface
-description: The AgentAdapter methods and required properties, the fifteen-agent matrix of resume flags and MCP delivery, agent resolution order, per-agent first-output and exit key sequences, session history file locations, the launch overlay lift, and the task_xml prompt template.
+description: The AgentAdapter methods and required properties, the fifteen-agent matrix of resume flags and MCP delivery, which agents may take their first prompt typed, agent resolution order, per-agent first-output and exit key sequences, session history file locations, the launch overlay lift, and the task_xml prompt template.
 tags: [agents, adapters]
 sources:
   - resource: src/main/agent/agent-adapter.ts
@@ -74,6 +74,49 @@ runs on a resumed one, so Kangentic keeps the message off the command and types 
 agent is ready. A `no-resume` agent has no session id to resume by, so every start is fresh.
 `tests/unit/resume-prompt-delivery-parity.test.ts` builds each adapter's real resume command with a
 marked prompt and holds the value to what the builder does.
+
+### First prompt typed (`firstPromptMayBeTyped`)
+
+An optional method, asked per launch with the options the command is built from, lets a task's
+agent start while its new worktree runs its Post-Worktree Script, with the first prompt typed in
+once the script exits ([Worktree creation](../../architecture/worktrees/worktree-creation.md#the-agent-starts-while-the-script-runs)).
+It answers true only for a CLI whose fresh launch with no prompt is the same interactive session,
+so a prompt typed or pasted into its input box is the same first message the command line would
+carry, and whose input box is drawn in the alternate screen with any screen before it (an update
+offer, a sign-in, a folder trust or MCP server approval) drawn outside it. That second condition
+needs a run to check. The spawn adopts the early agent only once its TUI has entered the alternate
+screen, and launches it as before otherwise, because a typed prompt's Enter would answer such a
+screen. A launch that will not draw in the alternate screen at all answers false and is not
+started early: Claude's does on its classic renderer (a `tui` choice of `default`, or the user's
+own `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN`). An agent without the capability starts after the
+script, as before, unless the project turns `git.holdPromptForInitScript` off, which needs no
+typing.
+
+The same answer marks the session (`SpawnSessionInput.inputInAlternateScreen`), so a background
+paste (a held message, a Send message row, the setup-failure note) waits until the TUI has entered
+the alternate screen or the agent has taken a prompt (`SessionManager.awaitInputReady`). An agent
+left on a boot screen otherwise reads as idle once the stale-thinking reclaim fires, 3 minutes in,
+and the paste would answer the screen. The answer reads the environment Kangentic runs with, and
+on macOS and Linux that is only the login shell's `PATH`, so a renderer variable set only in a
+shell profile reaches Claude but not the answer. Such a launch draws classic and never enters the
+alternate screen, which is why a prompt the agent has taken also ends the wait.
+
+The verdicts for the other agents were measured on 2026-10-31 by launching each installed CLI with
+no prompt in a fresh git repository on Windows (120 by 32 cells), watching for 14 s; no turn ran.
+
+| Verdict | Agents | Why |
+|---|---|---|
+| Declared | Claude | Seen in a preview on 2.1.316: the promptless launch enters the alternate screen at its input box and the pasted task prompt is the first message. An unapproved project MCP server's approval screen comes first and outside the alternate screen, so the spawn relaunches that agent as before |
+| Not declared | Gemini, Droid, Kimi | The promptless launch never entered the alternate screen, so the spawn could never adopt it. Gemini drew its folder trust and Droid its sign-in on the main screen |
+| Not declared | Codex, OpenCode, Copilot, Grok, Antigravity, Qwen | Each entered the alternate screen within 2.3 s and drew its boot screens inside it: Codex's sign-in, OpenCode's update offer, a selection menu over Copilot's input box, Grok's data-sharing opt-in, Antigravity's sign-in and folder trust. Qwen showed none in the run, but draws nothing before the alternate screen, so its recorded update and MCP approval screens are inside it too. Being in the alternate screen does not mean the input box is up |
+| Not declared yet | Goose | Opens `goose session` with no prompt; not installed where the others were measured |
+| Not declared | Aider | `--message` sends one message and exits; without it Aider is an interactive chat, a different run |
+| Not declared | Cursor | Only its `default` permission mode is interactive; every other mode is a `stream-json` print run |
+| Not declared | Ollama | A prompt is one turn that exits; without one `ollama run` opens a REPL |
+| Not declared | Oz (Warp) | `oz agent run` is a one-shot runner with no input box |
+
+`tests/unit/first-prompt-typed-parity.test.ts` holds every registered adapter to this table and
+builds each declared adapter's fresh command with no prompt.
 
 The Kangentic MCP column, by `kangenticMcp`: Claude, Codex, Copilot, Kimi, OpenCode, Grok, Cursor,
 Qwen and Gemini are `'per-session'`; Droid and Antigravity are `'shared-folder'`, because each

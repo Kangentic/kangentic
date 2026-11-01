@@ -1014,11 +1014,13 @@ export function App() {
     // cooldown-guards it, so this toasts verbatim. Current project only, same
     // as onSpawnBlocked: the message names a task from that project's board.
     if (tasks?.onSpawnWarning) {
-      cleanups.push(tasks.onSpawnWarning((_taskId, message, warningProjectId) => {
+      cleanups.push(tasks.onSpawnWarning((_taskId, message, warningProjectId, kind) => {
         const activeProjectId = useProjectStore.getState().currentProject?.id;
         if (warningProjectId && warningProjectId !== activeProjectId) return;
         useToastStore.getState().addToast({
-          title: i18n._(msg`Base branch not refreshed`),
+          title: kind === 'setup-script-failed'
+            ? i18n._(msg`Setup script failed`)
+            : i18n._(msg`Base branch not refreshed`),
           message,
           variant: 'warning',
           durationMs: 12000,

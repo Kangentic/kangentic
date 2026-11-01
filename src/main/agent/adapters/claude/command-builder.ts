@@ -131,6 +131,14 @@ function overlaySettingsLayer<T extends Record<string, unknown>>(base: T, overla
   return merged as T;
 }
 
+/**
+ * Whether a renderer variable is on as Claude reads one: `1`, `true`, `yes`
+ * or `on`, in any case. `0`, `false` and an empty value are off.
+ */
+function isEnvironmentFlagOn(value: string | undefined): boolean {
+  return value !== undefined && ['1', 'true', 'yes', 'on'].includes(value.trim().toLowerCase());
+}
+
 /** True for a parsed settings file that is a JSON object, not an array, `null` or a scalar. */
 function isPlainSettingsObject(parsed: unknown): parsed is ClaudeSettings {
   return typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed);
@@ -273,6 +281,25 @@ export class CommandBuilder {
       if (Object.keys(usersOwn).length > 0) return usersOwn;
     }
     return this.fullscreenByDefault(options) ? { CLAUDE_CODE_NO_FLICKER: '1' } : null;
+  }
+
+  /**
+   * Whether this spawn draws on the fullscreen renderer, in the alternate
+   * screen, read from the variables `rendererEnvironment` hands it in the
+   * order Claude ranks them: `CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN` on draws
+   * classic whatever else is set, then `CLAUDE_CODE_NO_FLICKER` decides. No
+   * variable means a renderer the user chose (`tui: "default"`), which is
+   * classic, since Kangentic sets the variable whenever fullscreen is chosen
+   * or nothing is.
+   */
+  drawsInAlternateScreen(
+    options: Pick<CommandOptions, 'cwd' | 'projectRoot' | 'cliTarget'>,
+    environment: NodeJS.ProcessEnv = process.env,
+  ): boolean {
+    const renderer = this.rendererEnvironment(options, environment);
+    if (!renderer) return false;
+    if (isEnvironmentFlagOn(renderer.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN)) return false;
+    return isEnvironmentFlagOn(renderer.CLAUDE_CODE_NO_FLICKER);
   }
 
   buildClaudeCommand(options: CommandOptions): string {

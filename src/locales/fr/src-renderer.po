@@ -1572,6 +1572,10 @@ msgstr "Session terminée"
 msgid "Settings"
 msgstr "Paramètres"
 
+#: src/renderer/App.tsx
+msgid "Setup script failed"
+msgstr ""
+
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
 msgid "Shift+Click adds a secondary sort"

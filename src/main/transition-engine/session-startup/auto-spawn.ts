@@ -464,6 +464,7 @@ export async function autoSpawnTasks(
           isolatedSwimlaneId: input.isolatedSwimlaneId,
           permissionMode: input.permissionMode,
           exitSequence: input.adapter.getExitSequence?.() ?? ['\x03'],
+          inputInAlternateScreen: input.inputInAlternateScreen,
           shell: input.shell,
           cliTarget: input.cliTarget,
         });

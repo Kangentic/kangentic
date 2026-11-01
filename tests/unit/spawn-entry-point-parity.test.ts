@@ -55,7 +55,10 @@ const SOURCE_EXTENSIONS = new Set(['.ts', '.tsx']);
  */
 const ENGINE_SINK_FILES: Record<string, string> = {
   'src/main/ipc/helpers/agent-spawn.ts':
-    'spawnAgent: the shared board-spawn chokepoint itself; runs runSpawnPreamble before every engine call',
+    'spawnAgent: the shared board-spawn chokepoint itself; runs runSpawnPreamble before every engine call. '
+    + 'Its createEarlyAgentLauncher is the one caller of launchEarlyAgent, which starts an agent during '
+    + "the worktree's setup script from previewSpawnPreamble's resolution and writes nothing: spawnAgent "
+    + 'adopts that agent only through resumeSuspendedSession, after the real preamble ran',
   'src/main/ipc/handlers/session-resume.ts':
     'resumeTaskSession (the SESSION_RESUME handler, and start-session for a paused task): in-place '
     + 'resume of the task in its CURRENT lane; not a first-spawn entry point (agent stickiness comes '
@@ -191,13 +194,24 @@ function collectReceiverCalls(methodName: string): ReceiverCall[] {
 // cannot spawn. It reaches the same engine from outside it, so leaving it
 // unscanned would mean a second public entry point growing its own callers
 // with no test watching, which is the exact shape this scan exists to stop.
-const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession|executeSingleAutomation)\s*\(/;
+// `launchEarlyAgent` is here for the same reason: it starts an agent outside a
+// spawn (during a worktree's setup script), so a caller of its own must be a
+// deliberate decision.
+const ENGINE_SINK_PATTERN = /\.(executeTransition|resumeSuspendedSession|executeSingleAutomation|launchEarlyAgent)\s*\(/;
 /** The same names, global, for counting every occurrence in one file. */
 const ENGINE_SINK_PATTERN_GLOBAL = new RegExp(ENGINE_SINK_PATTERN.source, 'g');
 const PTY_SINK_PATTERN = /sessionManager\.spawn\s*\(/;
 
 describe('spawn entry-point parity: engine sinks', () => {
-  it('every direct engine.executeTransition / resumeSuspendedSession / executeSingleAutomation call site is classified', () => {
+  it('launchEarlyAgent has exactly one caller, the launcher in agent-spawn.ts', () => {
+    const callers = collectSinkCalls(/\.launchEarlyAgent\s*\(/).map((call) => call.relativePath);
+    expect(callers).toEqual(['src/main/ipc/helpers/agent-spawn.ts']);
+    const source = fs.readFileSync(path.join(REPO_ROOT, 'src/main/ipc/helpers/agent-spawn.ts'), 'utf-8');
+    // It resolves the launch the way the spawn will, without the lock's write.
+    expect(source).toMatch(/previewSpawnPreamble\(/);
+  });
+
+  it('every direct engine.executeTransition / resumeSuspendedSession / executeSingleAutomation / launchEarlyAgent call site is classified', () => {
     const unclassified = collectSinkCalls(ENGINE_SINK_PATTERN)
       .filter((call) => !(call.relativePath in ENGINE_SINK_FILES))
       .map((call) => call.location);

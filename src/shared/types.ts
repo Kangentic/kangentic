@@ -4308,6 +4308,17 @@ export interface AppConfig {
      */
     linkNodeModules: boolean;
     /**
+     * What a task's agent does while its new worktree runs `initScript`. On
+     * (the default), the agent starts at once but gets its first prompt only
+     * once the script succeeds, and a failed script fails the task as it always
+     * did. Off, the prompt goes at once too, with a note that the script is
+     * still running, and a failed script is reported on the task and to the
+     * agent instead. Applies to an agent that can take its first prompt typed
+     * (`AgentAdapter.firstPromptMayBeTyped`); any other agent starts after the
+     * script when on.
+     */
+    holdPromptForInitScript: boolean;
+    /**
      * Keep the open project's PRs current in the background. On, each PR whose
      * state can still change is checked about 2 minutes after its own last
      * check, one call at a time and at least 10 s apart
@@ -5067,6 +5078,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     copyFiles: [],
     initScript: null,
     linkNodeModules: true,
+    holdPromptForInitScript: true,
     prAutoRefresh: true,
     autoFetch: true,
     prBypassCountsAsReady: true,
@@ -7281,7 +7293,42 @@ export interface SpawnSessionInput {
    * readers and its reap.
    */
   cliTarget?: StoredCliTarget | null;
+  /**
+   * Start the session idle rather than seeded as thinking, for a fresh task
+   * spawn that carries no prompt: an agent launched while its worktree's setup
+   * script runs, whose first prompt is typed in once the script ends.
+   */
+  seedIdle?: boolean;
+  /**
+   * Keep the session out of the task's view until `SessionManager.adoptSession`:
+   * no `session-changed` or other session event reaches a listener, it is not
+   * listed, not the task's live session, and not writable. Set only for an
+   * agent launched while its worktree's setup script runs
+   * (`TransitionEngine.launchEarlyAgent`), which nothing may type into before
+   * its first prompt and which the database knows nothing of until adopted.
+   */
+  hiddenUntilAdopted?: boolean;
+  /**
+   * The agent draws its input box in the alternate screen, and any screen it
+   * shows first (Claude's approval of a new project MCP server) outside it
+   * (`AgentAdapter.firstPromptMayBeTyped` answered true for this launch). A
+   * background paste then waits for the alternate screen, or for the agent to
+   * take a prompt (`SessionManager.awaitInputReady`), so it never answers that
+   * screen.
+   */
+  inputInAlternateScreen?: boolean;
 }
+
+/**
+ * What a spawn warning (`TASK_SPAWN_WARNING`) is about. The agent started
+ * either way.
+ * - `base-not-refreshed`: the base branch could not be fetched, so the
+ *   worktree may start from a stale base.
+ * - `setup-script-failed`: the worktree's setup script failed after the agent
+ *   was already working (`git.holdPromptForInitScript` off), so the task kept
+ *   its agent and worktree, and the agent was told.
+ */
+export type SpawnWarningKind = 'base-not-refreshed' | 'setup-script-failed';
 
 export interface SpawnTransientSessionInput {
   projectId: string;
@@ -7897,7 +7944,11 @@ export interface ElectronAPI {
      * start its agent" would be a lie here. Cooldown-guarded in main so a bulk
      * unarchive while offline produces one toast per project, not one per task.
      */
-    onSpawnWarning: (callback: (taskId: string, message: string, projectId?: string) => void) => () => void;
+    /**
+     * A spawn went ahead with something wrong the user should know. `kind`
+     * picks the toast's title; absent means `'base-not-refreshed'`.
+     */
+    onSpawnWarning: (callback: (taskId: string, message: string, projectId?: string, kind?: SpawnWarningKind) => void) => () => void;
     /**
      * A column's auto_command finished delivering, and the result is worth
      * telling the user about.

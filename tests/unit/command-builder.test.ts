@@ -2722,6 +2722,20 @@ describe('Merged Settings -- TUI Fullscreen Default', () => {
     const secondSettings = JSON.parse(fs.readFileSync(path.join(tmpDir, '.kangentic', 'sessions', 'tui-edit-2', 'settings.json'), 'utf-8'));
     expect(secondSettings.tui).toBe('default');
   });
+
+  it('O: drawsInAlternateScreen reads the renderer variables in the order Claude ranks them', () => {
+    // An agent started during a setup script is adopted only once its TUI enters the alternate
+    // screen, so a classic launch must say so up front rather than be started for nothing.
+    vi.spyOn(os, 'homedir').mockReturnValue(tempHome);
+    const builder = new CommandBuilder();
+    const options = { cwd: tmpDir };
+    expect(builder.drawsInAlternateScreen(options, {})).toBe(true);
+    expect(builder.drawsInAlternateScreen(options, { CLAUDE_CODE_NO_FLICKER: 'TRUE' })).toBe(true);
+    expect(builder.drawsInAlternateScreen(options, { CLAUDE_CODE_NO_FLICKER: '0' })).toBe(false);
+    expect(builder.drawsInAlternateScreen(options, { CLAUDE_CODE_NO_FLICKER: '1', CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN: '1' })).toBe(false);
+    writeProjectSettings({ tui: 'default' });
+    expect(builder.drawsInAlternateScreen(options, {})).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -2798,6 +2812,16 @@ describe('ClaudeAdapter.buildEnv renderer environment', () => {
     const { fromAdapter, fromBuilder } = adapterAndBuilderAnswers();
     expect(fromBuilder).toBeNull();
     expect(fromAdapter).toBeNull();
+  });
+
+  it('firstPromptMayBeTyped answers true only for a launch on the fullscreen renderer', () => {
+    const adapter = new ClaudeAdapter();
+    expect(adapter.firstPromptMayBeTyped(spawnOptions() as never)).toBe(true);
+    vi.stubEnv('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', '1');
+    expect(adapter.firstPromptMayBeTyped(spawnOptions() as never)).toBe(false);
+    vi.stubEnv('CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN', undefined);
+    fs.writeFileSync(path.join(projectDir, '.claude', 'settings.json'), JSON.stringify({ tui: 'default' }));
+    expect(adapter.firstPromptMayBeTyped(spawnOptions() as never)).toBe(false);
   });
 });
 

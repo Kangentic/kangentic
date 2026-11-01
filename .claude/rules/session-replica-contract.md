@@ -39,6 +39,15 @@ a black terminal with a populated context bar instead of the edit form.
   way: `handleSpawnFailure` pushes its exited placeholder on `session-changed` before its `exit`,
   so the drop happens there too, and the exit lands on a row the replica holds.
   `spawn-failure-handler.test.ts` pins the order.
+- **A session hidden until adopted is not in the replica, by decision.** An agent launched while
+  its task's new worktree runs its setup script (`spawn({ hiddenUntilAdopted })`) is a registry
+  row no listener sees: `SessionManager.emit` keeps every event of its own from listeners except
+  the raw output signals, `listSessions` and the caches a sync reads leave it out, and its
+  removal pushes nothing, since the replica never held it. Its exit, which lands after that
+  removal, stays hidden too: the id is dropped only once the exit has gone to `awaitExit`. `adoptSession` is its first push, one
+  `session-changed`, after which it is an ordinary row. So a sync and every push agree that it
+  does not exist until then. `session-manager-hidden-session.test.ts` pins it. The replica
+  property test needs no model of it: no push or listing ever carries one.
 - **A status push only upserts; a removal push only removes.** `sessions.onStatus` maps to
   `upsertSession`, `sessions.onRemoved` maps to `removeSession`, and neither handler does the
   other's job. `removeSession` is the one push-driven writer that takes a row OUT.

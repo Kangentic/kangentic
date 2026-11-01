@@ -1377,6 +1377,11 @@ export class SessionTelemetry {
     this.activityEngine.markIdleAuthoritative(sessionId);
   }
 
+  /** See `ActivityEngine.restartIdleClock`. */
+  restartIdleClock(sessionId: string): boolean {
+    return this.activityEngine.restartIdleClock(sessionId);
+  }
+
   /** See `ActivityEngine.markBackgroundShellsAsServices`. Null for a session the engine does not track. */
   markBackgroundShellsAsServices(sessionId: string, shellIds: readonly string[]): BackgroundShellServiceOutcome[] | null {
     const outcomes = this.activityEngine.markBackgroundShellsAsServices(sessionId, shellIds);

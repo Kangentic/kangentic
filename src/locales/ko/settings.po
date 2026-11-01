@@ -1338,6 +1338,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "노력 수준이 높을수록 답변이 느리지만 여러 작업에 걸친 집계에 도움이 될 수 있습니다. 요약은 항상 에이전트 기본값을 사용합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "푸시투토크를 누른 채 터미널이나 입력란에 말하세요."
@@ -2735,6 +2739,10 @@ msgstr "터미널 텍스트 크기(픽셀)"
 #, fuzzy
 msgid "Test connection"
 msgstr "연결 테스트"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

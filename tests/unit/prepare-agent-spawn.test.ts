@@ -354,6 +354,34 @@ describe('prepareAgentSpawn - task process tag', () => {
   });
 });
 
+describe('prepareAgentSpawn - an input box in the alternate screen', () => {
+  // A recovered Claude can boot to an MCP approval too; the spawn's flag is what
+  // keeps a held message's paste out of that screen (SessionManager.awaitInputReady).
+  it('marks the spawn when the adapter answers firstPromptMayBeTyped true for this launch, asked with its command options', async () => {
+    const { adapter, capturedCommandOptions } = makeCaptureAdapter();
+    const firstPromptMayBeTyped = vi.fn(() => true);
+    agentRegistryGetMock.mockReturnValue({ ...adapter, firstPromptMayBeTyped } as AgentAdapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ task: makeTask() }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.inputInAlternateScreen).toBe(true);
+    expect(firstPromptMayBeTyped).toHaveBeenCalledWith(capturedCommandOptions[0]);
+  });
+
+  it('leaves it unmarked for an adapter without the capability', async () => {
+    const { adapter } = makeCaptureAdapter();
+    agentRegistryGetMock.mockReturnValue(adapter);
+
+    const result = await prepareAgentSpawn(makeSpawnInput({ task: makeTask() }));
+
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.inputInAlternateScreen).toBe(false);
+  });
+});
+
 describe('prepareAgentSpawn - the session id a folder-shared hold is taken under', () => {
   // The caller spawns under `sessionRecordId`, and the session layer releases
   // with that id, so the builder must hold under the same one.

@@ -31,6 +31,17 @@ Do NOT wrap long-running I/O already serialized elsewhere (`ensureTaskWorktree`,
 `cleanupTaskResources`, etc. are serialized per project by `WorktreeManager.projectQueues`, and a
 new worktree's setup script, which runs after the queue, per worktree path by the creation
 registry in `src/main/git/worktree-creation-registry.ts`).
+
+One spawn runs outside the lock by design: the agent `createEarlyAgentLauncher` starts while a
+new worktree's setup script runs (`TransitionEngine.launchEarlyAgent`). It runs inside the
+creation registry's hold, and four callers hold the task lock across `ensureTaskWorktree`, so
+taking the lock there could deadlock against them. It is safe without it because it changes no
+per-task state anyone reads: nothing is written to the database, and its session is hidden
+until adopted (`SessionManager.adoptSession`), so `task.session_id`, the registry's live-session
+lookups and every listener pass over it. The adoption, the only step that makes it the task's,
+runs inside `spawnAgent` under the lock, after the Phase 3 re-checks. A start that reaches the
+task lock first spawns normally, and `SessionManager.spawn` ends the hidden agent before it does.
+
 Pure read-only handlers and synchronous-only paths do not need the lock; if you never `await`,
 you cannot race.
 

@@ -1338,6 +1338,10 @@ msgid "Higher effort answers slower and can help counts across many tasks; summa
 msgstr "Чем выше уровень усилий, тем медленнее ответы, но точнее подсчёты по многим задачам; сводки всегда используют уровень агента по умолчанию."
 
 #: src/renderer/components/settings/settings-registry.ts
+msgid "Hold prompt for script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Hold push-to-talk to speak into a terminal or text field."
 msgstr "Удерживайте клавишу записи для диктовки в терминал или поле."
@@ -2735,6 +2739,10 @@ msgstr "Размер текста терминала в пикселях"
 #, fuzzy
 msgid "Test connection"
 msgstr "Проверить подключение"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The agent gets its first prompt once the script succeeds, not at once while the script still runs."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/AgentTab.tsx
 #, fuzzy

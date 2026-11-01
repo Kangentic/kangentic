@@ -469,6 +469,31 @@ export interface AgentAdapter {
    */
   readonly resumePromptDelivery: 'command-line' | 'typed' | 'no-resume';
 
+  /**
+   * Whether a FRESH launch with no prompt opens the agent's interactive input,
+   * where a prompt typed in (keystrokes, or a bracketed paste) is the same first
+   * message the command line would have carried. True lets a task's agent start
+   * while its new worktree's setup script runs, its first prompt typed in once
+   * the script exits (`TransitionEngine.launchEarlyAgent`). Absent or false, the
+   * agent starts only after the script, as before.
+   *
+   * Declare it only for a CLI whose promptless launch is that same interactive
+   * session. A CLI that runs a one-shot job, or switches to another mode, when
+   * no prompt is given (a `run`/`-p` print mode, a REPL with other semantics)
+   * must leave it off: a prompt typed into it is not the task's first message.
+   * Its input box must also be drawn in the alternate screen, and any screen
+   * it shows before it (an update offer, a sign-in, an MCP server approval)
+   * outside it: the spawn adopts the early agent only once its TUI has
+   * entered the alternate screen (`SessionManager.awaitAltScreen`), and
+   * relaunches it as before otherwise, so the user answers that screen.
+   *
+   * Asked per launch, with the options the command is built from, so a launch
+   * that will not draw in the alternate screen at all (Claude on its classic
+   * renderer) answers false and is not started early: it could never be
+   * adopted, and would only cost a launch and the adoption's wait.
+   */
+  firstPromptMayBeTyped?(options: SpawnCommandOptions): boolean;
+
   /** Supported permission modes with agent-specific labels. */
   readonly permissions: AgentPermissionEntry[];
 

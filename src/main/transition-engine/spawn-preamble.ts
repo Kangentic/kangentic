@@ -117,33 +117,10 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   globalPermissionMode: () => PermissionMode;
   tasks: Pick<TaskRepository, 'update'>;
 }): void {
-  const { task, hasSessionRecord, settingsLane, project, globalPermissionMode, tasks } = options;
-
-  // Board Profile mode: the ladder IS the contract, not a snapshot to freeze.
-  // Locking here would resolve the task's first column and pin those values for
-  // its whole life, which is exactly the per-column variation a profile exists
-  // to provide - Planning in Opus xhigh would silently become Merge in Opus
-  // xhigh too.
-  //
-  // The guard below already covers this, since a profile task is always in
-  // 'column_settings' mode (TaskRepository enforces the exclusivity). This
-  // states the intent explicitly so the behavior does not silently depend on
-  // that invariant holding somewhere else.
-  if (task.profile_id) return;
-
-  const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
-  const isLeavingTodo = settingsLane?.role === 'todo';
-  if ((!isFirstEverSpawn && !isLeavingTodo) || task.run_mode !== 'agent_override') return;
-
-  const lockedAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
-  // The project-level model/effort fallback only applies when the locked agent
-  // IS the project's default agent; see projectModelDefaultsApply.
-  const projectFallback = projectModelDefaultsApply(lockedAgent, project?.default_agent);
-  const lockedModel = task.model_override ?? settingsLane?.model_override
-    ?? (projectFallback ? project?.default_model : null) ?? null;
-  const lockedEffort = task.effort_override ?? settingsLane?.effort_override
-    ?? (projectFallback ? project?.default_effort : null) ?? null;
-  const lockedPermission = task.permission_mode ?? settingsLane?.permission_mode ?? globalPermissionMode();
+  const { task, tasks } = options;
+  const locked = advancedOverridesToLock(options);
+  if (!locked) return;
+  const { lockedAgent, lockedModel, lockedEffort, lockedPermission, reason } = locked;
 
   tasks.update({
     id: task.id,
@@ -158,9 +135,96 @@ export function lockAdvancedOverridesOnFirstSpawn(options: {
   task.permission_mode = lockedPermission;
   console.log(
     `[spawn-preamble] Locked Advanced overrides for task ${task.id.slice(0, 8)}`
-    + ` ${isFirstEverSpawn ? 'on first spawn' : 'on leaving To Do'}:`
+    + ` ${reason === 'first-spawn' ? 'on first spawn' : 'on leaving To Do'}:`
     + ` agent=${lockedAgent} model=${lockedModel ?? 'null'} effort=${lockedEffort ?? 'null'} permission=${lockedPermission}`,
   );
+}
+
+/**
+ * The values `lockAdvancedOverridesOnFirstSpawn` would lock, or null when it
+ * would lock nothing. Reads only: the lock writes what this returns, and the
+ * preview (`previewSpawnPreamble`) applies it to a copy.
+ */
+function advancedOverridesToLock(options: {
+  task: Task;
+  hasSessionRecord: boolean;
+  settingsLane: Pick<Swimlane, 'role' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
+  project: SpawnPreambleProjectDefaults | null | undefined;
+  globalPermissionMode: () => PermissionMode;
+}): {
+  lockedAgent: string;
+  lockedModel: string | null;
+  lockedEffort: string | null;
+  lockedPermission: PermissionMode;
+  reason: 'first-spawn' | 'leaving-todo';
+} | null {
+  const { task, hasSessionRecord, settingsLane, project, globalPermissionMode } = options;
+
+  // Board Profile mode: the ladder IS the contract, not a snapshot to freeze.
+  // Locking here would resolve the task's first column and pin those values for
+  // its whole life, which is exactly the per-column variation a profile exists
+  // to provide - Planning in Opus xhigh would silently become Merge in Opus
+  // xhigh too.
+  //
+  // The guard below already covers this, since a profile task is always in
+  // 'column_settings' mode (TaskRepository enforces the exclusivity). This
+  // states the intent explicitly so the behavior does not silently depend on
+  // that invariant holding somewhere else.
+  if (task.profile_id) return null;
+
+  const isFirstEverSpawn = !hasSessionRecord && task.agent === null;
+  const isLeavingTodo = settingsLane?.role === 'todo';
+  if ((!isFirstEverSpawn && !isLeavingTodo) || task.run_mode !== 'agent_override') return null;
+
+  const lockedAgent = task.agent_override ?? settingsLane?.agent_override ?? project?.default_agent ?? DEFAULT_AGENT;
+  // The project-level model/effort fallback only applies when the locked agent
+  // IS the project's default agent; see projectModelDefaultsApply.
+  const projectFallback = projectModelDefaultsApply(lockedAgent, project?.default_agent);
+  const lockedModel = task.model_override ?? settingsLane?.model_override
+    ?? (projectFallback ? project?.default_model : null) ?? null;
+  const lockedEffort = task.effort_override ?? settingsLane?.effort_override
+    ?? (projectFallback ? project?.default_effort : null) ?? null;
+  const lockedPermission = task.permission_mode ?? settingsLane?.permission_mode ?? globalPermissionMode();
+  return {
+    lockedAgent,
+    lockedModel,
+    lockedEffort,
+    lockedPermission,
+    reason: isFirstEverSpawn ? 'first-spawn' : 'leaving-todo',
+  };
+}
+
+/**
+ * What `runSpawnPreamble` would resolve, without writing anything: the task as
+ * the override lock would leave it (a copy) and the agent resolution. For a
+ * caller that launches the agent before the spawn runs (an early launch during
+ * the worktree's setup script, `createEarlyAgentLauncher`), which takes no task
+ * lock and so may not persist the lock. The spawn runs the real preamble
+ * later, and adopts the early agent only if its launch still matches.
+ */
+export function previewSpawnPreamble(options: {
+  task: Task;
+  hasSessionRecord: boolean;
+  settingsLane: Pick<Swimlane, 'role' | 'agent_override' | 'model_override' | 'effort_override' | 'permission_mode'> | null;
+  destinationLane: Pick<Swimlane, 'agent_override'> | null;
+  project: SpawnPreambleProjectDefaults | null | undefined;
+  globalPermissionMode: () => PermissionMode;
+}): { task: Task; resolution: AgentResolution } {
+  const task: Task = { ...options.task };
+  const locked = advancedOverridesToLock({ ...options, task });
+  if (locked) {
+    task.agent_override = locked.lockedAgent;
+    task.model_override = locked.lockedModel;
+    task.effort_override = locked.lockedEffort;
+    task.permission_mode = locked.lockedPermission;
+  }
+  const resolution = resolveTargetAgent({
+    taskAgentOverride: task.agent_override,
+    columnAgent: options.destinationLane?.agent_override ?? null,
+    taskAgent: task.agent,
+    projectDefaultAgent: options.project?.default_agent ?? null,
+  });
+  return { task, resolution };
 }
 
 /**

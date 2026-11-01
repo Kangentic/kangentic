@@ -6,7 +6,7 @@ import type { WorktreeSkipReason } from '../../shared/types';
 import { taskUsesWorktree, storedWorktreeChoice } from '../../shared/worktree-choice';
 import { describeWorktreePathLengthCause } from '../../shared/windows-path-budget';
 import { worktreesRootFor, taskWorktreeFolderFor, taskWorktreePathFor } from './task-worktree-folder';
-import { isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
+import { abortWorktreeSetup, isWorktreeCreationInFlight, waitForWorktreeCreation } from './worktree-creation-registry';
 import { isGitRepo, isInsideWorktree } from './git-checks';
 import { resolveWorktreeBase, describeUnresolvableBase, refResolvesLocally } from './base-branch';
 import { linkNodeModules, removeNodeModulesPath, removeNodeModulesLinkOnly } from './node-modules-link';
@@ -1164,6 +1164,21 @@ export class WorktreeManager {
     setup: WorktreeSetup,
     options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
   ): Promise<void> {
+    await this.prepareWorktreeFiles(worktreePath, setup, options);
+    await this.runWorktreeInitScript(worktreePath, setup, options);
+  }
+
+  /**
+   * The fast half of the setup phase: copy the configured files and link
+   * node_modules. Split from the script so a caller that starts the agent while
+   * the script runs (`ensureTaskWorktree`'s init-script modes) has every file
+   * the CLI reads at launch in place first.
+   */
+  async prepareWorktreeFiles(
+    worktreePath: string,
+    setup: WorktreeSetup,
+    options?: { signal?: AbortSignal },
+  ): Promise<void> {
     options?.signal?.throwIfAborted();
 
     // Copy specified files into the worktree (skip .claude/ entries --
@@ -1200,6 +1215,18 @@ export class WorktreeManager {
       await linkNodeModules(worktreePath, this.projectPath);
       logCreateStep('link-node-modules', linkStartedAt);
     }
+    options?.signal?.throwIfAborted();
+  }
+
+  /**
+   * The slow half of the setup phase: the user's Post-Worktree Script, run
+   * after `prepareWorktreeFiles`. Resolves at once when no script is set.
+   */
+  async runWorktreeInitScript(
+    worktreePath: string,
+    setup: WorktreeSetup,
+    options?: { onProgress?: (phase: string) => void; signal?: AbortSignal },
+  ): Promise<void> {
     options?.signal?.throwIfAborted();
 
     // Run the user's Post-Worktree Script (git.initScript) last, so it sees the
@@ -1742,6 +1769,9 @@ export function parseWorktreeBranches(porcelain: string): Map<string, string> {
  * (`worktree-creation-registry.ts`): its setup script runs outside the git queue
  * and may still be writing here. A move aborts its task's creation before it
  * cleans up, so that wait is as long as the script's process tree takes to die.
+ * A script running after its worktree was recorded (the background mode, where
+ * the agent was not held for it) has no move left to abort it, so it is stopped
+ * here first, and the wait is again only for its tree to die.
  */
 export async function prepareWorktreeForRemoval(
   worktreePath: string,
@@ -1749,6 +1779,9 @@ export async function prepareWorktreeForRemoval(
   deadline?: number,
 ): Promise<void> {
   const waitStartedAt = Date.now();
+  if (abortWorktreeSetup(worktreePath)) {
+    console.log(`[WORKTREE] remove step=setup-stop: stopped the setup script still running in ${worktreePath}`);
+  }
   if (await waitForWorktreeCreation(worktreePath)) {
     console.log(`[WORKTREE] remove step=creation-wait done in ${Date.now() - waitStartedAt}ms: ${worktreePath}`);
   }

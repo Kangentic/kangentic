@@ -14,6 +14,7 @@ import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
 import path from 'node:path';
 import { waitForViteReady, gotoVite, toastCountRightNow } from './helpers';
+import type { SpawnWarningKind } from '../../src/shared/types';
 
 test.describe.configure({ mode: 'parallel' });
 
@@ -71,14 +72,14 @@ async function launch(): Promise<{ browser: Browser; page: Page }> {
   return { browser, page };
 }
 
-function fireSpawnWarning(page: Page, projectId: string | undefined, message: string, taskId = 'task-warning') {
+function fireSpawnWarning(page: Page, projectId: string | undefined, message: string, taskId = 'task-warning', kind?: SpawnWarningKind) {
   return page.evaluate(
-    ([id, msg, targetProjectId]) => {
+    ([id, msg, targetProjectId, warningKind]) => {
       (window as unknown as {
-        __mockFireTaskSpawnWarning: (taskId: string, message: string, projectId?: string) => void;
-      }).__mockFireTaskSpawnWarning(id, msg, targetProjectId);
+        __mockFireTaskSpawnWarning: (taskId: string, message: string, projectId?: string, kind?: SpawnWarningKind) => void;
+      }).__mockFireTaskSpawnWarning(id, msg, targetProjectId, warningKind);
     },
-    [taskId, message, projectId] as const,
+    [taskId, message, projectId, kind] as const,
   );
 }
 
@@ -97,6 +98,21 @@ test.describe('task:spawnWarning push', () => {
       await expect(toast.getByTestId('toast-title')).toHaveText('Base branch not refreshed');
       await expect(toast.getByTestId('toast-body')).toHaveText(WARNING_MESSAGE);
       expect(await toastCountRightNow(page, 'Agent didn\'t start')).toBe(0);
+    } finally {
+      await browser.close();
+    }
+  });
+
+  test('titles a failed background setup script by its kind', async () => {
+    const { browser, page } = await launch();
+    try {
+      // The agent kept working while the worktree's setup script ran, and the
+      // script failed: same channel, its own title.
+      await fireSpawnWarning(page, CURRENT_PROJECT_ID, 'init script exited with code 1: ERR_PNPM_OUTDATED_LOCKFILE', 'task-setup', 'setup-script-failed');
+
+      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'ERR_PNPM_OUTDATED_LOCKFILE' });
+      await expect(toast).toBeVisible({ timeout: 5000 });
+      await expect(toast.getByTestId('toast-title')).toHaveText('Setup script failed');
     } finally {
       await browser.close();
     }

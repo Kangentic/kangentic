@@ -33,7 +33,9 @@ import { resolveTaskTemplateVars } from '../agent/shared';
 import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
-import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget } from '../agent/shared/cli-target';
+import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
+import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
+import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
 import { mapHandoffSessionPath } from '../agent/shared/prompt-xml';
 import { agentRegistry } from '../agent/agent-registry';
 import { AgentCliNotFoundError } from '../agent/shared/agent-cli-not-found';
@@ -108,6 +110,51 @@ export interface SpawnOverrides {
    * the workflow's memory resume passes `'memory'`.
    */
   resumedBy?: SessionResumer;
+  /**
+   * An agent launched while the task's worktree ran its setup script
+   * (`launchEarlyAgent`). A fresh spawn whose launch matches it adopts it
+   * instead of starting another, and hands its prompt back in
+   * `SpawnOutcome.typedOpening`. Any other spawn discards it first.
+   */
+  earlyAgent?: EarlyAgentHandle;
+}
+
+/** What a spawn passes `resolveLaunch`: its decisions so far, the ids, and the command-line prompt. */
+interface LaunchInput {
+  task: Task;
+  agentName: string;
+  adapter: AgentAdapter;
+  detectionPath: string;
+  cliTarget: CliTarget | null;
+  permissionMode: PermissionMode;
+  cwd: string;
+  canResume: boolean;
+  ptySessionId: string;
+  agentSessionId: string | null;
+  prompt: string | undefined;
+  nonInteractive: boolean;
+  spawnOverrides: SpawnOverrides | undefined;
+}
+
+/** The launch a spawn makes, short of building the command and starting the PTY. */
+interface ResolvedLaunch {
+  sessionDir: string;
+  statusOutputPath: string;
+  eventsOutputPath: string;
+  bypassAvailable: boolean;
+  shell: string;
+  commandOptions: SpawnCommandOptions;
+  /** A resume's prompt kept off the command line, to be typed in (`resumePromptRidesCommandLine`). */
+  resumePromptKeptOff: boolean;
+  /** `launchKeyOf` for this launch, which an adoption compares. */
+  launchKey: string;
+  /**
+   * The adapter may take this launch's first prompt typed
+   * (`firstPromptMayBeTyped`): it draws its input box in the alternate screen
+   * and any screen before it outside, so a background paste waits for the box
+   * (`SessionManager.awaitInputReady`), and an early launch is worth making.
+   */
+  inputInAlternateScreen: boolean;
 }
 
 /**
@@ -169,6 +216,16 @@ export interface SpawnOutcome {
    * caller skipped its typed fallback and the column's message never arrived.
    */
   unsentPrompt: string | null;
+  /**
+   * Set when the spawn adopted an agent launched while the task's worktree ran
+   * its setup script (`SpawnOverrides.earlyAgent`): the opening prompt that
+   * agent's command line could not carry, since it launched before the prompt
+   * was ready. The caller types it in, and waits for it to land, before it
+   * sends the agent anything else. It is the spawn's whole command-line prompt,
+   * so the caller treats it exactly as a prompt that rode the command line.
+   * Null or absent otherwise.
+   */
+  typedOpening?: string | null;
 }
 
 /** Options shared by every way into an automation group. */
@@ -294,6 +351,19 @@ export class TransitionEngine {
     if (!runnable.ok) return this.recordTaskHeld(automations, task, column, englishText(runnable.reason), options.alreadyDelivered);
 
     return this.runAutomationGroup(automations, task, column, trigger, options);
+  }
+
+  /**
+   * Whether the agent is the first thing a column's enter group starts: the
+   * column has no enter row, or its first one needs the agent (and starts it).
+   * False when a row that needs no agent (a script, a webhook, a legacy Start
+   * agent row) runs first: such a row may prepare what the agent reads at
+   * launch, so an agent may not start ahead of it (`launchEarlyAgent`'s caller).
+   */
+  agentStartsFirstOnEnter(column: Pick<Swimlane, 'id'>): boolean {
+    if (!this.automationRepo) return true;
+    const first = this.automationRepo.getForTrigger(column.id, 'enter')[0];
+    return first === undefined || automationNeedsAgent(first.type);
   }
 
   /**
@@ -561,6 +631,86 @@ export class TransitionEngine {
     return this.executeSpawnAgent(config, task, templateVars, permissionOverride, undefined, signal, agentOverride, undefined, spawnOverrides);
   }
 
+  /**
+   * The launch a spawn makes for these ids and this command-line prompt, short
+   * of building the command: the session's output paths, the shell, the CLI
+   * path the shell can run, and the command options. Creates nothing, so an
+   * adoption can compute the launch it would make and compare it with the one
+   * an early agent made (`launchKey`).
+   */
+  private async resolveLaunch(input: LaunchInput): Promise<ResolvedLaunch> {
+    const appConfig = this.getConfig();
+    const { adapter, cliTarget, permissionMode, cwd, task } = input;
+    // Directory is named by ptySessionId (internal), NOT agentSessionId (CLI-specific).
+    const projectRoot = appConfig.projectPath || cwd;
+    const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', input.ptySessionId);
+    const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
+    // A plan Kangentic approves into a bypass column can switch to bypass only
+    // in a session launched with it available. The writer reads both facts.
+    const bypassAvailable = planSpawnNeedsBypass({
+      permissionMode,
+      agentApprovesPlans: adapter.supportsPlanAutoApproval === true,
+      projectId: appConfig.projectId,
+      taskId: task.id,
+    });
+
+    const shell = shellForTarget(cliTarget) ?? await this.sessionManager.getShell();
+    // A `.cmd` head under a PowerShell or Git Bash host hands the multi-line
+    // prompt to cmd.exe, which keeps only its first line (#353). Swap in the
+    // sibling shim the host can run, else flatten the prompt. Sits after
+    // ensureTrust and before buildCommand (spawn-entry-point-parity). The
+    // session row persists the ORIGINAL prompt: flattening is a delivery
+    // detail, not what the user wrote.
+    let launch = await resolveShimLaunch({ agentPath: input.detectionPath, shell, prompt: input.prompt });
+    // A resume's prompt rides its command line only where it arrives whole
+    // (resume-prompt-delivery.ts). Otherwise it is kept off the command line
+    // and handed back in `unsentPrompt`, and the caller types it in.
+    const resumePromptKeptOff = input.canResume && input.prompt !== undefined && input.prompt.trim() !== ''
+      && !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt: input.prompt, launchStrategy: launch.strategy, shell });
+    if (resumePromptKeptOff) launch = { ...launch, prompt: undefined };
+    const executionTarget = resolveExecutionTarget(input.agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
+    const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
+    const commandOptions: SpawnCommandOptions = {
+      agentPath: launch.agentPath,
+      taskId: task.id,
+      prompt: launch.prompt,
+      cwd,
+      permissionMode,
+      projectRoot: appConfig.projectPath || undefined,
+      sessionId: input.agentSessionId ?? undefined,
+      resume: input.canResume,
+      nonInteractive: input.nonInteractive,
+      statusOutputPath,
+      eventsOutputPath,
+      shell,
+      mcpServerEnabled: appConfig.mcpServerEnabled,
+      // Carries this session's own id so the MCP server can identify the caller
+      // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
+      mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, input.ptySessionId),
+      mcpServerToken: appConfig.mcpServerToken,
+      model: input.spawnOverrides?.model ?? undefined,
+      effort: input.spawnOverrides?.effort ?? undefined,
+      executionTarget,
+      launchOptions,
+      taskProcessTag: task.id,
+      // The session's own id, which a folder-shared adapter file is held under.
+      ptySessionId: input.ptySessionId,
+      bypassAvailable,
+      cliTarget,
+    };
+    return {
+      sessionDir,
+      statusOutputPath,
+      eventsOutputPath,
+      bypassAvailable,
+      shell,
+      commandOptions,
+      resumePromptKeptOff,
+      launchKey: launchKeyOf(input.agentName, commandOptions),
+      inputInAlternateScreen: adapter.firstPromptMayBeTyped?.(commandOptions) === true,
+    };
+  }
+
   private async executeSpawnAgent(config: ActionConfig, task: Task, vars: Record<string, string>, permissionOverride?: PermissionMode | null, resumePrompt?: string, signal?: AbortSignal, agentOverride?: string, handoffPromptPrefix?: string, spawnOverrides?: SpawnOverrides): Promise<SpawnOutcome> {
     const appConfig = this.getConfig();
 
@@ -750,6 +900,51 @@ export class TransitionEngine {
       }
     }
     const canResume = intent.mode === 'resume';
+    // A fresh spawn takes the template over `resumePrompt` (resolveSpawnIntent),
+    // so a resume that started over, or a forced-fresh spawn, left the carried
+    // message out. A recap-only start withholds it on purpose instead.
+    const templateTookSlot = !canResume && !recapOnly
+      && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
+    // What every launch this spawn resolves shares; an adoption's and the
+    // fresh one's differ only in their ids, prompt and resume.
+    const launchBase = {
+      task,
+      agentName,
+      adapter,
+      detectionPath: detection.path,
+      cliTarget,
+      permissionMode,
+      cwd,
+      nonInteractive: config.nonInteractive ?? false,
+      spawnOverrides,
+    };
+
+    // An agent launched while the task's worktree ran its setup script. A fresh
+    // spawn with the same launch takes it over and types its prompt in; any
+    // other spawn discards it before starting its own, so the task never has
+    // two agents.
+    const earlyAgent = spawnOverrides?.earlyAgent;
+    if (earlyAgent && !earlyAgent.isSettled()) {
+      const adopted = canResume || startOver !== null || recapOnly || handoffPromptPrefix
+        ? null
+        : await this.adoptEarlyAgent(earlyAgent, {
+          ...launchBase,
+          canResume: false,
+          ptySessionId: earlyAgent.sessionId,
+          agentSessionId: earlyAgent.agentSessionId,
+          prompt: undefined,
+        }, {
+          intent,
+          isolatedSwimlaneId,
+          openingPrompt: intent.prompt,
+          // Handed back as a launch hands it back, so the caller sends it after
+          // the opening, as it does after a template on the command line.
+          unsentPrompt: templateTookSlot ? resumePrompt ?? null : null,
+          signal,
+        });
+      if (adopted) return adopted;
+      await earlyAgent.discard();
+    }
 
     // agent_session_id: the agent CLI's real session ID for --resume/--session-id.
     // - Resume: the reconciled id above.
@@ -783,88 +978,9 @@ export class TransitionEngine {
         : handoffPromptPrefix;
     }
 
-    // Ensure the per-session directory exists and compute output paths.
-    // Directory is named by ptySessionId (internal), NOT agentSessionId (CLI-specific).
-    const projectRoot = appConfig.projectPath || cwd;
-    const sessionDir = path.join(projectRoot, '.kangentic', 'sessions', ptySessionId);
-    try {
-      fs.mkdirSync(sessionDir, { recursive: true });
-    } catch (err) {
-      console.error(`[spawnAgent] Failed to create session directory: ${sessionDir}`, err);
-      throw new Error(`Cannot create session directory at ${sessionDir}: ${(err as Error).message}`, { cause: err });
-    }
-    const { statusOutputPath, eventsOutputPath } = sessionOutputPaths(sessionDir);
-    // A plan Kangentic approves into a bypass column can switch to bypass only
-    // in a session launched with it available. The writer reads both facts.
-    const bypassAvailable = planSpawnNeedsBypass({
-      permissionMode,
-      agentApprovesPlans: adapter.supportsPlanAutoApproval === true,
-      projectId: appConfig.projectId,
-      taskId: task.id,
-    });
-
-    const shell = shellForTarget(cliTarget) ?? await this.sessionManager.getShell();
-    // A `.cmd` head under a PowerShell or Git Bash host hands the multi-line
-    // prompt to cmd.exe, which keeps only its first line (#353). Swap in the
-    // sibling shim the host can run, else flatten the prompt. Sits after
-    // ensureTrust and before buildCommand (spawn-entry-point-parity). The
-    // session row below persists the ORIGINAL prompt: flattening is a
-    // delivery detail, not what the user wrote.
-    let launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt });
-    // A resume's prompt rides its command line only where it arrives whole
-    // (resume-prompt-delivery.ts). Otherwise it is kept off the command line
-    // and handed back in `unsentPrompt`, and the caller types it in.
-    const resumePromptKeptOff = canResume && prompt !== undefined && prompt.trim() !== ''
-      && !resumePromptRidesCommandLine({ delivery: adapter.resumePromptDelivery, prompt, launchStrategy: launch.strategy, shell });
-    if (resumePromptKeptOff) launch = { ...launch, prompt: undefined };
-    const executionTarget = resolveExecutionTarget(agentName, appConfig.executionServers, appConfig.execution) ?? undefined;
-    const launchOptions = resolveLaunchOptions(adapter, appConfig.launchOptions);
-    const commandOptions = {
-      agentPath: launch.agentPath,
-      taskId: task.id,
-      prompt: launch.prompt,
-      cwd,
-      permissionMode,
-      projectRoot: appConfig.projectPath || undefined,
-      sessionId: agentSessionId ?? undefined,
-      resume: canResume,
-      nonInteractive: config.nonInteractive ?? false,
-      statusOutputPath,
-      eventsOutputPath,
-      shell,
-      mcpServerEnabled: appConfig.mcpServerEnabled,
-      // Carries this session's own id so the MCP server can identify the caller
-      // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
-      mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, ptySessionId),
-      mcpServerToken: appConfig.mcpServerToken,
-      model: spawnOverrides?.model ?? undefined,
-      effort: spawnOverrides?.effort ?? undefined,
-      executionTarget,
-      launchOptions,
-      taskProcessTag: task.id,
-      // The session's own id, which a folder-shared adapter file is held under.
-      ptySessionId,
-      bypassAvailable,
-      cliTarget,
-    };
-    const command = adapter.buildCommand(commandOptions);
-    notePlanApprovalSpawn(ptySessionId, { sessionDir, bypassAvailable });
-
-    let extraEnv: Record<string, string> | null;
-    try {
-      extraEnv = adapter.buildEnv?.(commandOptions) ?? null;
-
-      console.log(`[spawnAgent] agent=${agentName} Command: ${command.slice(0, 120)}...`);
-
-      // Last chance to abort before creating a PTY process
-      signal?.throwIfAborted();
-    } catch (error) {
-      // The built command never reached spawn() (an abort or a buildEnv
-      // failure), so release the hold it took. From the spawn() call on,
-      // spawn() releases a spawn that never runs and a session owns its own.
-      releaseCommandHold(adapter, cwd, ptySessionId);
-      throw error;
-    }
+    const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
+    const { statusOutputPath, eventsOutputPath, shell, resumePromptKeptOff } = launch;
+    const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
 
     // Where an isolated column's pass begins, so the main conversation, resumed
     // after it, can be told the commits it made. Read before the spawn: the
@@ -896,6 +1012,10 @@ export class TransitionEngine {
       isolatedSwimlaneId,
       permissionMode,
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
+      // An adapter that may take its first prompt typed draws its input box in
+      // the alternate screen and any screen before it outside, so a later
+      // background paste waits for the box (SessionManager.awaitInputReady).
+      inputInAlternateScreen: launch.inputInAlternateScreen,
       // The grid recorded on the record this spawn retires. Only used when no
       // in-memory predecessor speaks for it (a resume after a desktop restart).
       ...(intent.restoredGrid ? { restoredGrid: intent.restoredGrid } : {}),
@@ -906,51 +1026,25 @@ export class TransitionEngine {
 
     console.log(`[spawnAgent] PTY session created: id=${session.id.slice(0, 8)} status=${session.status}`);
 
-    this.taskRepo.update({
-      id: task.id,
-      session_id: session.id,
-      agent: agentName,
-    });
-
     // Persist session record for resume capability
-    if (this.sessionRepo) {
-      // Retire the old same-type record if resuming (suspended/orphaned -> exited).
-      // Type-scoped: only retires the matching agent's record, preserving
-      // other agents' suspended sessions for future resume.
-      if (intent.retireRecordId) {
-        retireRecord(this.sessionRepo, intent.retireRecordId);
-      }
-
-      this.sessionRepo.insert({
-        id: ptySessionId,
-        task_id: task.id,
-        session_type: adapter.sessionType,
-        isolated_swimlane_id: isolatedSwimlaneId,
-        agent_session_id: agentSessionId ?? null,
-        command,
-        cwd,
-        permission_mode: permissionMode,
-        prompt: prompt ?? null,
-        status: session.status as 'running' | 'queued',
-        exit_code: null,
-        started_at: new Date().toISOString(),
-        suspended_at: null,
-        exited_at: null,
-        suspended_by: null,
-        cli_target: serializeCliTarget(cliTarget),
-        start_head_sha: startHeadSha,
-      });
-
-      // Record the model/effort this spawn/resume actually applied via the CLI
-      // flags (the same `spawnOverrides` that fed `commandOptions`). This is the
-      // ground truth a later column transition diffs against, so a move into a
-      // same-valued column never restarts the session. null = agent default
-      // (no flag).
-      this.sessionRepo.updateAppliedSettings(ptySessionId, {
-        model: spawnOverrides?.model ?? null,
-        effort: spawnOverrides?.effort ?? null,
-      });
-    }
+    this.commitSessionRecord({
+      task,
+      agentName,
+      adapter,
+      // The id the spawn was given, which `sessionManager.spawn` keeps.
+      sessionId: ptySessionId,
+      status: session.status as 'running' | 'queued',
+      retireRecordId: intent.retireRecordId,
+      isolatedSwimlaneId,
+      agentSessionId: agentSessionId ?? null,
+      command,
+      cwd,
+      permissionMode,
+      prompt: prompt ?? null,
+      cliTarget,
+      spawnOverrides,
+      startHeadSha,
+    });
 
     // Told only once the new session exists: a spawn that failed or was
     // cancelled above started nothing to announce. A recap-only session's
@@ -963,15 +1057,342 @@ export class TransitionEngine {
     // thinking for 30 s, holding that delivery back; the restart path asserts
     // idle for the same reason. Any real turn hook clears it.
     if (resumePromptKeptOff) this.sessionManager.markIdleAuthoritative(session.id);
-    // A fresh spawn takes the template over `resumePrompt` (resolveSpawnIntent),
-    // so a resume that started over, or a forced-fresh spawn, left the carried
-    // message out. A recap-only start withholds it on purpose instead.
-    const templateTookSlot = !canResume && !recapOnly
-      && Boolean(resumePrompt?.trim()) && Boolean(spawnIntentOptions.promptTemplate);
     const unsentPrompt = resumePromptKeptOff
       ? prompt ?? null
       : (templateTookSlot ? resumePrompt ?? null : null);
     return { startOver, recapOnly, unsentPrompt };
+  }
+
+  /**
+   * Ready a resolved launch for its PTY: the session directory, the command,
+   * the plan approval note and the environment. Shared by a spawn and an early
+   * launch. A failure after the command was built releases the hold the build
+   * took, since no `sessionManager.spawn` follows to own it.
+   */
+  private prepareLaunch(
+    adapter: AgentAdapter,
+    launch: ResolvedLaunch,
+    ptySessionId: string,
+    cwd: string,
+    signal?: AbortSignal,
+  ): { command: string; extraEnv: Record<string, string> | null } {
+    try {
+      fs.mkdirSync(launch.sessionDir, { recursive: true });
+    } catch (error) {
+      console.error(`[spawnAgent] Failed to create session directory: ${launch.sessionDir}`, error);
+      throw new Error(`Cannot create session directory at ${launch.sessionDir}: ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+    }
+    const command = adapter.buildCommand(launch.commandOptions);
+    notePlanApprovalSpawn(ptySessionId, { sessionDir: launch.sessionDir, bypassAvailable: launch.bypassAvailable });
+    try {
+      const extraEnv = adapter.buildEnv?.(launch.commandOptions) ?? null;
+      console.log(`[spawnAgent] agent=${adapter.name} Command: ${command.slice(0, 120)}...`);
+      // Last chance to abort before creating a PTY process
+      signal?.throwIfAborted();
+      return { command, extraEnv };
+    } catch (error) {
+      // The built command never reached spawn() (an abort or a buildEnv
+      // failure), so release the hold it took. From the spawn() call on,
+      // spawn() releases a spawn that never runs and a session owns its own.
+      releaseCommandHold(adapter, cwd, ptySessionId);
+      throw error;
+    }
+  }
+
+  /**
+   * Make a started session the task's: its `session_id` and agent, then the
+   * session record a resume reads, retiring the one it replaces, with the model
+   * and effort its command applied. Shared by a spawn and an adoption.
+   */
+  private commitSessionRecord(record: {
+    task: Task;
+    agentName: string;
+    adapter: AgentAdapter;
+    sessionId: string;
+    status: 'running' | 'queued';
+    retireRecordId: string | null;
+    isolatedSwimlaneId: string | null;
+    agentSessionId: string | null;
+    command: string;
+    cwd: string;
+    permissionMode: PermissionMode;
+    prompt: string | null;
+    cliTarget: CliTarget | null;
+    spawnOverrides: SpawnOverrides | undefined;
+    /** Where an isolated column's pass begins (`SessionRecord.start_head_sha`); null when unread. */
+    startHeadSha: string | null;
+  }): void {
+    this.taskRepo.update({
+      id: record.task.id,
+      session_id: record.sessionId,
+      agent: record.agentName,
+    });
+    if (!this.sessionRepo) return;
+    // Retire the old same-type record if resuming (suspended/orphaned -> exited).
+    // Type-scoped: only retires the matching agent's record, preserving
+    // other agents' suspended sessions for future resume.
+    if (record.retireRecordId) retireRecord(this.sessionRepo, record.retireRecordId);
+    this.sessionRepo.insert({
+      id: record.sessionId,
+      task_id: record.task.id,
+      session_type: record.adapter.sessionType,
+      isolated_swimlane_id: record.isolatedSwimlaneId,
+      agent_session_id: record.agentSessionId,
+      command: record.command,
+      cwd: record.cwd,
+      permission_mode: record.permissionMode,
+      prompt: record.prompt,
+      status: record.status,
+      exit_code: null,
+      started_at: new Date().toISOString(),
+      suspended_at: null,
+      exited_at: null,
+      suspended_by: null,
+      cli_target: serializeCliTarget(record.cliTarget),
+      start_head_sha: record.startHeadSha,
+    });
+    // Record the model/effort this spawn/resume actually applied via the CLI
+    // flags (the same `spawnOverrides` that fed `commandOptions`). This is the
+    // ground truth a later column transition diffs against, so a move into a
+    // same-valued column never restarts the session. null = agent default
+    // (no flag).
+    this.sessionRepo.updateAppliedSettings(record.sessionId, {
+      model: record.spawnOverrides?.model ?? null,
+      effort: record.spawnOverrides?.effort ?? null,
+    });
+  }
+
+  /**
+   * Take over an agent launched while the task's worktree ran its setup script,
+   * in place of the fresh launch this spawn would make. Only when it is still
+   * running and hidden, and the launch this spawn would make with its ids and no
+   * command-line prompt is the one it was started with (`launchKey`). Commits it
+   * the way a spawn commits a new session (the task's `session_id`, the session
+   * record) and hands the opening prompt back as `typedOpening`, and a carried
+   * message the template left out as `unsentPrompt`, as a launch would. Returns
+   * null to have the caller discard it and launch as usual.
+   */
+  private async adoptEarlyAgent(
+    earlyAgent: EarlyAgentHandle,
+    launchInput: LaunchInput,
+    adoption: {
+      intent: ReturnType<typeof resolveSpawnIntent>;
+      isolatedSwimlaneId: string | null;
+      /** The prompt the launch's command line would have carried, typed in instead. */
+      openingPrompt: string | undefined;
+      /** The carried message the opening left out (`SpawnOutcome.unsentPrompt`). */
+      unsentPrompt: string | null;
+      signal?: AbortSignal;
+    },
+  ): Promise<SpawnOutcome | null> {
+    const { task, agentName, adapter, cwd, permissionMode } = launchInput;
+    const taskLabel = task.id.slice(0, 8);
+    if (earlyAgent.taskId !== task.id || earlyAgent.cwd !== cwd || earlyAgent.agentName !== agentName) {
+      console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: started for another task, folder or agent`);
+      return null;
+    }
+    if (!this.sessionManager.isHiddenUntilAdopted(earlyAgent.sessionId)) {
+      console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: it is no longer running`);
+      return null;
+    }
+    const { launchKey } = await this.resolveLaunch(launchInput);
+    if (launchKey !== earlyAgent.launchKey) {
+      console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: the spawn now launches it differently`);
+      return null;
+    }
+    // Its input box is in the alternate screen; a screen it shows first (an
+    // MCP server approval) is not, and typing there would answer it. Such an
+    // agent is relaunched as before, so the user answers that screen.
+    const inputReadyBudgetMs = earlyAgent.launchedAt + EARLY_AGENT_INPUT_READY_BUDGET_MS - Date.now();
+    const atInput = await this.sessionManager.awaitAltScreen(earlyAgent.sessionId, inputReadyBudgetMs, adoption.signal);
+    // A move that superseded this one ended the wait: no relaunch either.
+    adoption.signal?.throwIfAborted();
+    if (!atInput) {
+      console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: it is not at its input box (a screen it shows first, or no fullscreen renderer)`);
+      return null;
+    }
+    adoption.signal?.throwIfAborted();
+    if (!this.sessionManager.adoptSession(earlyAgent.sessionId)) {
+      console.log(`[spawnAgent] Early agent for task ${taskLabel} not adopted: it exited before the spawn took it over`);
+      return null;
+    }
+    earlyAgent.markAdopted();
+    // An agent that reports its own id (no `--session-id`) may have reported it
+    // while hidden, when no listener could record it; the live row has it.
+    const agentSessionId = this.sessionManager.getSession(earlyAgent.sessionId)?.agentSessionId ?? earlyAgent.agentSessionId;
+    // Where an isolated column's pass begins. The adopted agent has had no
+    // prompt, so it has made no commit yet. Never fails the adoption.
+    let startHeadSha: string | null = null;
+    if (adoption.isolatedSwimlaneId !== null && this.services.readStartHead) {
+      try {
+        startHeadSha = await this.services.readStartHead(cwd);
+      } catch {
+        startHeadSha = null;
+      }
+    }
+
+    this.commitSessionRecord({
+      task,
+      agentName,
+      adapter,
+      sessionId: earlyAgent.sessionId,
+      status: 'running',
+      retireRecordId: adoption.intent.retireRecordId,
+      isolatedSwimlaneId: adoption.isolatedSwimlaneId,
+      agentSessionId: agentSessionId ?? null,
+      command: earlyAgent.command,
+      cwd,
+      permissionMode,
+      prompt: adoption.openingPrompt ?? null,
+      cliTarget: launchInput.cliTarget,
+      spawnOverrides: launchInput.spawnOverrides,
+      startHeadSha,
+    });
+    console.log(
+      `[spawnAgent] task=${taskLabel} adopted the agent started during its setup script:`
+      + ` agent=${agentName} ptySessionId=${earlyAgent.sessionId.slice(0, 8)}`
+      + (adoption.openingPrompt?.trim() ? ', its opening prompt goes in now' : ', with no opening prompt'),
+    );
+    return {
+      startOver: null,
+      recapOnly: false,
+      unsentPrompt: adoption.unsentPrompt,
+      typedOpening: adoption.openingPrompt?.trim() ? adoption.openingPrompt : null,
+    };
+  }
+
+  /**
+   * Launch a task's agent while its new worktree's setup script runs, before
+   * the prompt can be sent. Nothing is written to the database, and the session
+   * is hidden until the task's spawn adopts it after the script exits
+   * (`SpawnOverrides.earlyAgent`), so a script that fails or a move that
+   * supersedes this one leaves only a process to discard.
+   *
+   * Returns null, launching nothing, unless the spawn would be fresh (no
+   * conversation to resume on the target track), the adapter can take this
+   * launch's first prompt typed (`firstPromptMayBeTyped`), a concurrency slot is
+   * free, and the task has no session row. The caller has already decided the agent, the
+   * permission mode and the overrides the spawn will use; an adoption that
+   * finds any of them changed discards this agent.
+   */
+  async launchEarlyAgent(input: {
+    task: Task;
+    /** The new worktree, which is not yet recorded on the task. */
+    worktreePath: string;
+    permissionOverride?: PermissionMode | null;
+    agentOverride: string;
+    spawnOverrides?: SpawnOverrides;
+    signal?: AbortSignal;
+  }): Promise<EarlyAgentHandle | null> {
+    const appConfig = this.getConfig();
+    const { task, signal } = input;
+    const taskLabel = task.id.slice(0, 8);
+    const agentName = input.agentOverride;
+    const adapter = agentRegistry.get(agentName);
+    if (!adapter?.firstPromptMayBeTyped) return null;
+    if (this.sessionManager.getFreeAgentSlots() <= 0 || this.sessionManager.hasSessionForTask(task.id)) return null;
+
+    const intent = resolveSpawnIntent({
+      taskId: task.id,
+      sessionType: adapter.sessionType,
+      isolatedSwimlaneId: input.spawnOverrides?.isolatedSwimlaneId ?? null,
+      sessionRepo: this.sessionRepo,
+      promptTemplate: undefined,
+      templateVars: {},
+      resumePrompt: undefined,
+      forceFresh: input.spawnOverrides?.forceFresh,
+    });
+    if (intent.mode === 'resume') return null;
+
+    const detection = await adapter.detect(appConfig.cliPathOverrides[agentName] ?? null);
+    if (!detection.found || !detection.path) return null;
+    const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+    const permissionMode = resolveEffectivePermissionMode(
+      task.permission_mode, input.permissionOverride, appConfig.permissionMode as PermissionMode,
+    );
+    const cwd = input.worktreePath;
+    await adapter.ensureTrust(cwd, cliTarget);
+    signal?.throwIfAborted();
+
+    const earlyPtySessionId = randomUUID();
+    const agentSessionId = adapter.supportsCallerSessionId ? randomUUID() : null;
+    const launch = await this.resolveLaunch({
+      task: { ...task, worktree_path: cwd },
+      agentName,
+      adapter,
+      detectionPath: detection.path,
+      cliTarget,
+      permissionMode,
+      cwd,
+      canResume: false,
+      ptySessionId: earlyPtySessionId,
+      agentSessionId,
+      prompt: undefined,
+      nonInteractive: false,
+      spawnOverrides: input.spawnOverrides,
+    });
+    // A launch that will not draw its input box in the alternate screen (Claude
+    // on its classic renderer) could never be adopted. Asked before the command
+    // is built, so nothing is held for a launch that does not happen.
+    if (!launch.inputInAlternateScreen) {
+      console.log(`[spawnAgent] task=${taskLabel} not started during its setup script: its launch draws no input box in the alternate screen`);
+      return null;
+    }
+    const { command, extraEnv } = this.prepareLaunch(adapter, launch, earlyPtySessionId, cwd, signal);
+
+    const launchedAt = Date.now();
+    const session = await this.sessionManager.spawn({
+      id: earlyPtySessionId,
+      taskId: task.id,
+      projectId: appConfig.projectId,
+      command,
+      cwd,
+      env: extraEnv ?? undefined,
+      statusOutputPath: launch.statusOutputPath,
+      eventsOutputPath: launch.eventsOutputPath,
+      resuming: false,
+      seedIdle: true,
+      hiddenUntilAdopted: true,
+      inputInAlternateScreen: launch.inputInAlternateScreen,
+      agentParser: adapter,
+      agentName: adapter.name,
+      agentSessionId,
+      isolatedSwimlaneId: input.spawnOverrides?.isolatedSwimlaneId ?? null,
+      permissionMode,
+      exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
+      shell: launch.shell,
+      cliTarget: toStoredCliTarget(cliTarget),
+    });
+    if (session.status !== 'running') return null;
+    // It sits at its input box with no prompt until adopted. Without this the
+    // status heartbeat (Claude's, while it boots) reads it as thinking, and the
+    // opening prompt's quiet wait would sit out its timeout after the script.
+    this.sessionManager.markIdleAuthoritative(session.id);
+    console.log(
+      `[spawnAgent] task=${taskLabel} started ${agentName} during its setup script:`
+      + ` ptySessionId=${earlyPtySessionId.slice(0, 8)}, its prompt waits for the script`,
+    );
+
+    const sessionManager = this.sessionManager;
+    return createEarlyAgentHandle({
+      sessionId: earlyPtySessionId,
+      taskId: task.id,
+      agentName,
+      agentSessionId,
+      command,
+      cwd,
+      launchKey: launch.launchKey,
+      launchedAt,
+      teardown: async () => {
+        // pty-teardown-grace: kill, take the exit wait while the row exists,
+        // remove, then wait, so the folder is free once this resolves.
+        sessionManager.kill(earlyPtySessionId);
+        const exited = sessionManager.awaitExit(earlyPtySessionId);
+        sessionManager.remove(earlyPtySessionId);
+        await exited;
+        console.log(`[spawnAgent] task=${taskLabel} discarded the agent started during its setup script`);
+      },
+    });
   }
 
 }
