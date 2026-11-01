@@ -39,8 +39,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   task's sessions have exited and before any worktree removal.** Today that is the Done branch of
   `handleTaskMove`, `cleanupTaskSession` (To Do, Backlog demote, task and bulk delete, unarchive
   into To Do), the MCP `onTaskDeleted` (any task, worktree or not), `PROJECT_DELETE` (archived
-  tasks included), and the startup sweep for archived and To Do tasks. A new terminal transition
-  calls it too, with the project path and each task's `worktree_path`. In a dev build, with
+  tasks included). The startup sweep for archived and To Do tasks reaps through
+  `reapTaskProcesses` directly, so it stops no background session, by decision. A new terminal
+  transition calls `reapTaskLeftovers` too, with the project path and each task's `worktree_path`. In a dev build, with
   stopping on, `reapTaskLeftovers` first stops a `/preview` running in each task worktree through
   the launcher's stop file (`src/devtools/main/worktree-preview-stop.ts`), so its Electron quits
   through the real quit path instead of outliving a terminate on a dead dev server. That stop file

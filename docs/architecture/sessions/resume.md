@@ -338,6 +338,14 @@ When a suspended task moves to an active column:
   own `status.json` and swaps the resumed id if a fork landed in the final seconds before suspend
   (the status watcher detaches before the CLI exits), under the same hook rule. Details and the
   empirical grounding: docs/integrations/agents/session-history.md, "Mid-session fork reconcile".
+- A conversation Claude Code's `/bg` moved into a background session of its own can still be
+  running there, because the supervisor runs it outside the task's PTY. When the record's own
+  events file shows that (`backgroundSessionHoldingConversation`), the same reconcile first stops
+  it through the CLI (`AgentAdapter.stopBackgroundSession`), so the resume never runs a second
+  process on the conversation, then asks `resolveResumableSessionId` for the id `--resume`
+  reaches: a background session that took no turn resumes by the conversation it continued. An
+  ordinary resume runs no CLI. See
+  [Claude Code background sessions](../../integrations/agents/session-history.md#claude-code-background-sessions-bg).
 - New PTY spawned with scrollback carried over from the most recently started previous row for the task (see [Spawn flow](spawn-flow.md#engine-spawn-board-driven-path))
 - New session DB record inserted, old record marked `exited`
 - The destination column's settings are re-applied as CLI flags on the resume

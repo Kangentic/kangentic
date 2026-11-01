@@ -668,7 +668,7 @@ Kangentic handles a `/bg` move with three more optional adapter members, all imp
    `claude agents --json --all`, the CLI's own stop. Before the search started from the cwd's
    folder, the second case was missed, the reap killed that session, and the CLI listed it
    `failed`. A terminal stopped between `/bg` and the live switch still holds the id the move
-   left, and its own record names the background session. An Earlier resume runs the stop
+   left, and that conversation's transcript names the background session. An Earlier resume runs the stop
    through the spawn's own Claude before the command is built. A quit stops nothing, so this is
    what stops a background session a terminal open at the quit left running, from either row:
    one that took no turn wrote no transcript, and Earlier offers only the conversation it left.

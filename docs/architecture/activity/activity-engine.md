@@ -321,8 +321,8 @@ One caller asserts provenance from OUTSIDE the hook stream. The ORDINARY setting
 Two status writes are never proof of work, because they compare two different conversations'
 totals: a session's FIRST write, whose cached usage is only the spawn's model seed while a resumed
 conversation reports its whole history, and a write whose agent session id differs from the last
-one reported (a `/resume` or `/clear` inside the session). `processStatusUpdate` treats either as
-a new baseline, with no previous usage to grow against, so neither force-thinks nor keeps a
+one reported (a `/resume` or `/clear` inside the session; Claude holds such a write until a hook names the id,
+see the next paragraph). `processStatusUpdate` treats either as a new baseline, with no previous usage to grow against, so neither force-thinks nor keeps a
 thinking state warm. Without it a Command Terminal resumed from its Earlier list, or switched
 with `/resume`, read as working for the heartbeat's 30 seconds.
 
