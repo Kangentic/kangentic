@@ -137,6 +137,22 @@ describe('readTailBytes', () => {
     expect(tail).toBe('333\n');
   });
 
+  it('keeps the first line when the window starts exactly where a line starts', async () => {
+    const file = path.join(root, 'line-start.jsonl');
+    // 12 bytes: "111\n222\n333\n". The last 8 bytes start on "222", a whole line.
+    writeFileSync(file, '111\n222\n333\n');
+
+    expect(await readTailBytes(file, 8)).toBe('222\n333\n');
+  });
+
+  it('drops the first line when the window starts one byte into it', async () => {
+    const file = path.join(root, 'one-byte-in.jsonl');
+    // The last 7 bytes start on "22", one byte past the start of "222".
+    writeFileSync(file, '111\n222\n333\n');
+
+    expect(await readTailBytes(file, 7)).toBe('333\n');
+  });
+
   it('returns the whole file (no drop) when it fits within maxBytes', async () => {
     const file = path.join(root, 'small.jsonl');
     writeFileSync(file, '111\n222\n');

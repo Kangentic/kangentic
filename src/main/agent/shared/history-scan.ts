@@ -136,9 +136,10 @@ export async function readHeadBytes(filePath: string, maxBytes: number): Promise
 
 /**
  * Read up to `maxBytes` from the tail of a file. When the read starts
- * mid-file, the truncated first partial line is dropped so callers parse only
- * whole records. Returns `''` on any failure. Used by Copilot, whose
- * model-bearing `session.shutdown` event lands at the end of the transcript.
+ * mid-file, a truncated first line is dropped so callers parse only whole
+ * records, and a window that starts exactly on a line keeps it. Returns `''` on
+ * any failure. Used by Claude's background-session checks, whose `continued-in`
+ * record lands near the end of a transcript.
  */
 export async function readTailBytes(filePath: string, maxBytes: number): Promise<string> {
   let handle;
@@ -148,14 +149,17 @@ export async function readTailBytes(filePath: string, maxBytes: number): Promise
     const readLength = Math.min(size, maxBytes);
     if (readLength <= 0) return '';
     const position = Math.max(0, size - readLength);
-    const buffer = Buffer.alloc(readLength);
-    const { bytesRead } = await handle.read(buffer, 0, readLength, position);
-    const text = buffer.toString('utf-8', 0, bytesRead);
-    if (position > 0) {
-      const newlineIndex = text.indexOf('\n');
-      return newlineIndex >= 0 ? text.slice(newlineIndex + 1) : text;
-    }
-    return text;
+    // Mid-file, the byte before the window is read too: a newline there means
+    // the window's first line is whole.
+    const lookBehindBytes = position > 0 ? 1 : 0;
+    const buffer = Buffer.alloc(readLength + lookBehindBytes);
+    const { bytesRead } = await handle.read(buffer, 0, readLength + lookBehindBytes, position - lookBehindBytes);
+    if (lookBehindBytes === 0) return buffer.toString('utf-8', 0, bytesRead);
+    if (bytesRead <= lookBehindBytes) return '';
+    const text = buffer.toString('utf-8', lookBehindBytes, bytesRead);
+    if (buffer[0] === 0x0a) return text;
+    const newlineIndex = text.indexOf('\n');
+    return newlineIndex >= 0 ? text.slice(newlineIndex + 1) : text;
   } catch {
     return '';
   } finally {
