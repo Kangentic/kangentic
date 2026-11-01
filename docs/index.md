@@ -27,6 +27,6 @@ okf_version: "0.2"
 
 ## Records
 
-* [Audits](audits/index.md) - Point-in-time findings kept for the reasoning they record: the code review fan-out, board drag performance, conversation history paging and the transcript pipeline.
+* [Audits](audits/index.md) - Point-in-time findings kept for the reasoning they record: the code review fan-out, board drag performance, conversation history paging, the transcript pipeline and a spare pre-installed worktree.
 * [Research](research/index.md) - Research written before a design: the Open Knowledge Format these docs follow, and the mobile companion app.
 * [Log](log.md) - Dated changes to these docs, newest first, with the measurements behind the concept layout.

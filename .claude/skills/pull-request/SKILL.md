@@ -168,11 +168,12 @@ message, and then go to Step 1.5.
 
 ## Step 1.5 - Compute the clean PUBLIC branch name (never rename the local branch)
 
-The local branch, the worktree folder, and `tasks.branch_name` together encode Kangentic's session
-identity: on a Done->back round-trip the worktree folder is re-derived from them
-(`src/main/git/worktree-manager.ts` `createWorktree`), and Claude keys its transcript by that
-folder's path, so renaming the LOCAL branch to a non-auto name can recreate the worktree at a
-different path and orphan the session. We therefore NEVER rename the local branch.
+Kangentic tracks a task's work by the local branch name stored in `tasks.branch_name`. The worktree
+folder no longer depends on the branch. It is chosen once, as the task's number, and never moves
+(`taskWorktreeFolderFor` in `src/main/git/task-worktree-folder.ts`). But on a Done->back round-trip
+`createWorktree` (`src/main/git/worktree-manager.ts`) looks up the stored name with
+`rev-parse --verify`. A renamed LOCAL branch no longer matches, so it cuts a NEW branch off the base
+and the task's commits are left behind. We therefore NEVER rename the local branch.
 
 A branch only needs to look professional where it is PUBLIC: the remote branch and the PR head. We
 push the unchanged local branch to a clean remote name and open the PR from that. PR state resolves

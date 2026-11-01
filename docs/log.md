@@ -1,5 +1,12 @@
 # Log
 
+## 2026-10-31
+
+**New audit:** `audits/spare-worktree-audit.md`, the measured decision on keeping a pre-installed
+spare worktree per project, with `scripts/measure-spare-worktree.mjs` behind its numbers. The same
+change corrects `integrations/agents/session-history.md`, which still said a worktree folder follows
+a renamed branch. Folders have been fixed at creation since 2026-07-30.
+
 ## 2026-10-22
 
 **Review note** on the second-round question set, before the end-to-end run. Five `expect` patterns

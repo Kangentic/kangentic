@@ -461,11 +461,14 @@ not reinstate a blanket transcript-presence check on the shared spawn path.
 
 ### Migrate-on-resume after a worktree rename (not the `canResumeSession` guard)
 
-A separate, narrower failure exists for the cwd-keyed agents: when a task's branch is renamed, its
-worktree directory is later recreated at a new path (the folder follows the renamed branch). The
-re-spawned agent then runs with the new worktree as cwd, so `--resume <id>` looks under the new
-cwd's slug and finds nothing - the transcript is intact, just orphaned under the old slug. A
-worktree rename is a per-cwd relocation, so `migrateResumeCwdIfRenamed`
+A separate, narrower failure exists for the cwd-keyed agents: on installs from before 2026-07-30,
+when a task's branch was renamed, its worktree directory was later recreated at a new path (the
+folder followed the renamed branch). The re-spawned agent then runs with the new worktree as cwd, so
+`--resume <id>` looks under the new cwd's slug and finds nothing - the transcript is intact, just
+orphaned under the old slug. Today a worktree folder is chosen once, as the task's number, and never
+moves (`taskWorktreeFolderFor` in `src/main/git/task-worktree-folder.ts`), so only a worktree made
+by an older install reaches this path. A worktree rename is a per-cwd relocation, so
+`migrateResumeCwdIfRenamed`
 (`src/main/transition-engine/resume-cwd-migration.ts`) reuses the same `onProjectRelocated(oldCwd,
 newCwd)` hook the project-move path uses to move the history to the new slug on the first resume,
 before any empty transcript is written.
