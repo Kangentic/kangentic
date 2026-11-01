@@ -63,9 +63,9 @@ import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 
 const REAP_REQUEST: TaggedReapRequest = { tasks: [], mainPid: 1, stop: true };
-const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 const STOP_REQUEST: StopProcessRequest = { pid: 4242, startKey: 'start-4242', mainPid: 1 };
-const STOP_ANSWER: StopProcessResult = { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
+const STOP_ANSWER: StopProcessResult = { outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null };
 
 function latestChild(): FakeChild {
   const child = forks[forks.length - 1];
