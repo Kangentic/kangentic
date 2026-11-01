@@ -77,7 +77,13 @@ const AUTOMATION_ROW_SCHEMA = z.object({
  * `autoCommand` still works and writes the first send_message enter row, which
  * covers the common case in one argument.
  */
-export function registerAutomationTools(server: McpServer, resolver: RequestResolver): void {
+export function registerAutomationTools(
+  server: McpServer,
+  resolver: RequestResolver,
+  // The task whose agent is calling, resolved from the request's caller
+  // segment; null for a caller with no task.
+  callerTaskId: string | null = null,
+): void {
   // --- kangentic_list_automations ---
   server.registerTool(
     'kangentic_list_automations',
@@ -136,7 +142,7 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
   server.registerTool(
     'kangentic_run_automation',
     {
-      description: 'Run ONE automation now, against the named task\'s CURRENT state. Use it to retry a failed automation or to test one you just wrote. Current state, not the state of the move that first ran it: the task may have moved since, and template variables such as {{toColumn}} resolve against where it is now, while {{fromColumn}} and {{trigger}} resolve empty because there is no move. It writes a fresh run row either way. It will NOT start an agent, so a send_message automation on a task with no live session is recorded skipped rather than spawning one. A move_to_column automation moves the task, but only while the task is still in that automation\'s column.',
+      description: 'Run ONE automation now, against the named task\'s CURRENT state. Use it to retry a failed automation or to test one you just wrote. Current state, not the state of the move that first ran it: the task may have moved since, and template variables such as {{toColumn}} resolve against where it is now, while {{fromColumn}} and {{trigger}} resolve empty because there is no move. It writes a fresh run row either way. It will NOT start an agent, so a send_message automation on a task with no live session is recorded skipped rather than spawning one. A move_to_column automation moves the task, but only while the task is still in that automation\'s column. A move_to_column automation aimed at To Do or Done, run on another task, is refused when that task holds running work, as kangentic_move_task refuses it. The error names what would be lost, and you ask the user.',
       inputSchema: z.object({
         column: z.string().describe('Column name the automation belongs to.'),
         automation: z.string().describe('Automation name on that column (case-insensitive). Read the names from kangentic_list_automations.'),
@@ -145,10 +151,11 @@ export function registerAutomationTools(server: McpServer, resolver: RequestReso
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
+    // The caller rides the context, never the params (see `CommandContext.callerKind`).
     async ({ column, automation, task, project }) => withProject(resolver, project, (ctx) => callHandler('run_automation', {
       column,
       automation,
       task,
-    }, ctx, 'Failed to run the automation')),
+    }, { ...ctx, callerKind: 'agent', callerTaskId }, 'Failed to run the automation')),
   );
 }

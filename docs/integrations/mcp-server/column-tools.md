@@ -163,7 +163,7 @@ the code. Passing `sessionTarget: "isolated"` alone is enough; `sessionSpawnStra
 
 Delete a swimlane (column) from the board. Refused in two cases, deliberately:
 
-- **The column still holds tasks.** Move them with `kangentic_move_task` (or delete them) first.
+- **The column still holds tasks.** Move them with `kangentic_move_task` (or delete them) first. An agent's move or delete of a task that holds running work is refused, so ask the user to move or delete those ([Running-work guard](task-tools.md#running-work-guard)).
   This tool never touches a task: bulk-moving or orphaning them is a far larger action than the
   caller asked for.
 - **The column is a role column** (To Do / Done). The board depends on both. Rename one instead if

@@ -4511,7 +4511,7 @@ export class SessionManager extends EventEmitter {
    * included, or a spawn still in flight: anything whose PTY the pty host
    * holds or is about to.
    */
-  private hasLiveOrStartingSession(taskId: string): boolean {
+  hasLiveOrStartingSession(taskId: string): boolean {
     if (this.registry.findLiveSessionByTaskId(taskId)) return true;
     for (const inFlight of this.spawnsInFlight.values()) {
       if (inFlight.taskId === taskId) return true;

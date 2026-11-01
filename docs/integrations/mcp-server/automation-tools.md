@@ -6,6 +6,7 @@ tags: [mcp, automations, columns]
 sources:
   - resource: src/main/agent/mcp-http/automation-tools.ts
   - resource: src/main/agent/commands/automation-commands.ts
+  - resource: src/main/agent/commands/running-work-guard.ts
   - resource: src/shared/automation-manifest.ts
     title: AUTOMATION_MANIFEST
 ---
@@ -196,7 +197,8 @@ and how many rows the one call answered. In `data`, the same facts are `run.chec
 ## kangentic_run_automation
 
 Run one automation now, against the named task's current state. Use it to retry a failed automation
-or to test one you just wrote.
+or to test one you just wrote. A Move to column row aimed at To Do or Done, run on another task, answers
+to the same [running-work guard](task-tools.md#running-work-guard) as `kangentic_move_task`.
 
 | Parameter | Type | Required | Description |
 |-----------|------|----------|-------------|

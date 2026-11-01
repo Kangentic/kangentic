@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 // The module under test (`mcp-project-context.ts`) pulls in several
 // Electron/Node-native dependencies through its own imports:
@@ -126,6 +129,21 @@ const readTaskChangesSpy = vi.hoisted(() => vi.fn());
 vi.mock('../../src/main/ipc/handlers/git-diff', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/ipc/handlers/git-diff')>()),
   readTaskChanges: readTaskChangesSpy,
+}));
+
+// The running-work read asks the task's base through `resolveEffectiveBaseBranch`
+// (tested where it lives) and reads the worktree through `readWorktreeWork`
+// (task-running-work.test.ts, against real git). Here only the context's wiring
+// of the base into the read is: which arguments the base is resolved with.
+const resolveEffectiveBaseBranchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/helpers/task-git', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/task-git')>()),
+  resolveEffectiveBaseBranch: resolveEffectiveBaseBranchSpy,
+}));
+const readWorktreeWorkSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-head')>()),
+  readWorktreeWork: readWorktreeWorkSpy,
 }));
 
 // RequestResolver is imported by mcp-project-context and called with `new`.
@@ -680,6 +698,36 @@ describe('buildCommandContextForProject - get_task_report reads', () => {
     expect(readTaskChangesSpy).toHaveBeenCalledOnce();
     expect(readTaskChangesSpy).toHaveBeenCalledWith(ipcContext, { projectId: DEFAULT_ID, taskId: 'task-1' }, { commitWebLinks: false });
     expect(result).toBe(changes);
+  });
+
+  it('readTaskRunningWork asks the session manager, so the guard hears about a live agent in production', async () => {
+    const { ipcContext, context } = makeReportContext();
+    const hasLiveOrStartingSession = vi.fn((taskId: string) => taskId === 'task-1');
+    (ipcContext.sessionManager as unknown as Record<string, unknown>).hasLiveOrStartingSession = hasLiveOrStartingSession;
+
+    const work = await context.readTaskRunningWork!({ id: 'task-1', worktree_path: null } as never);
+
+    expect(hasLiveOrStartingSession).toHaveBeenCalledWith('task-1');
+    expect(work).toEqual({ liveAgent: true, worktree: null });
+  });
+
+  it('readTaskRunningWork resolves the base of a worktree with no recorded cut from the IPC context, the task and the project path', async () => {
+    const { ipcContext, context } = makeReportContext();
+    (ipcContext.sessionManager as unknown as Record<string, unknown>).hasLiveOrStartingSession = vi.fn(() => false);
+    resolveEffectiveBaseBranchSpy.mockReturnValue('develop');
+    readWorktreeWorkSpy.mockResolvedValue({ branch: 'task/importer', commitsNotOnBase: 2, uncommittedFiles: 0 });
+    const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-project-context-'));
+    const task = { id: 'task-1', worktree_path: worktreePath, resolved_base_branch: null, branch_name: 'task/importer' } as never;
+
+    try {
+      const work = await context.readTaskRunningWork!(task);
+
+      expect(resolveEffectiveBaseBranchSpy).toHaveBeenCalledWith(ipcContext, task, '/projects/example');
+      expect(readWorktreeWorkSpy).toHaveBeenCalledWith(worktreePath, 'develop');
+      expect(work.worktree).toEqual({ readable: true, baseBranch: 'develop', branch: 'task/importer', commitsNotOnBase: 2, uncommittedFiles: 0 });
+    } finally {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    }
   });
 });
 
