@@ -72,6 +72,11 @@ vi.mock('../../src/main/pty/session-manager', () => {
       stopProcessByCreationTime = vi.fn(async (_pid: number, _startedAtMs: number) => 'stopped' as const);
       // registerAllIpc applies the configured session cap before anything spawns.
       setMaxConcurrent = vi.fn();
+      // registerAllIpc hands the manager the column agent limit's gate, and lists
+      // its holders and drains its queue when a config file is applied.
+      setQueueGate = vi.fn();
+      drainQueue = vi.fn();
+      listColumnHolders = vi.fn(() => []);
     },
   };
 });
@@ -108,6 +113,7 @@ vi.mock('../../src/main/config/board-config-manager', () => ({
     constructor() {}
     attach = vi.fn();
     detach = vi.fn();
+    setOnConfigApplied = vi.fn();
   },
 }));
 vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({

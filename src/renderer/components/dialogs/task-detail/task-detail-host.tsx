@@ -114,6 +114,15 @@ export interface TaskDetailHostValue {
    * So every opener in the task detail hides there rather than doing nothing.
    */
   canOpenConversation: boolean;
+
+  /**
+   * A hook returning the title the host's board has now for a task, or undefined
+   * when this host has no live copy of it. The agent queue lists tasks from a
+   * snapshot main sends only when the line changes, and a rename does not change
+   * the line, so a row reads the live title first. The board host subscribes to
+   * its task's title; the monitor's bundle holds one task and answers undefined.
+   */
+  useLiveTaskTitle: (taskId: string) => string | undefined;
 }
 
 const TaskDetailHostContext = createContext<TaskDetailHostValue | null>(null);
