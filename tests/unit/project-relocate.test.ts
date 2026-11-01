@@ -12,6 +12,11 @@
  *     sessions killed before any path rewriting.
  *   - The background deleter of removed worktrees is stopped and awaited after
  *     the diff watchers are released and before the folder moves.
+ *   - The spare worktree pool is stopped for the old path, awaited, before the
+ *     folder moves (a build holds handles inside it), and the project's spares
+ *     are discarded at the NEW path after git worktree repair, handed the task
+ *     rows so a spare a task names survives. Git projects only; a failed
+ *     repair does not skip the discard.
  *   - tasks.worktree_path and sessions.cwd rows under the old prefix are
  *     rewritten; rows outside it are untouched.
  *   - git worktree repair runs best-effort for git projects only, with the
@@ -55,6 +60,9 @@ const onProjectRelocatedMock = vi.hoisted(() => vi.fn(async () => {}));
 const moveDirectoryMock = vi.hoisted(() => vi.fn(async () => ({ strategy: 'rename' as const })));
 const removeDirectoryTreeMock = vi.hoisted(() => vi.fn(async () => {}));
 const stopRemovedWorktreeDeletionMock = vi.hoisted(() => vi.fn<(projectPath: string) => Promise<void>>(async () => {}));
+const discardProjectSparesMock = vi.hoisted(() =>
+  vi.fn<(context: unknown, projectPath: string, tasks: unknown) => Promise<void>>(async () => {}),
+);
 
 vi.mock('../../src/main/git/original-fs', () => ({
   default: {
@@ -107,6 +115,11 @@ vi.mock('../../src/main/fs/directory-move', () => ({
 vi.mock('../../src/main/git/removed-worktrees', () => ({
   stopRemovedWorktreeDeletion: stopRemovedWorktreeDeletionMock,
 }));
+// The project-side spare worktree discard. The pool's own stop is a method on
+// the context's spareWorktrees (see makeContext); this is the one other call.
+vi.mock('../../src/main/ipc/helpers/spare-worktrees', () => ({
+  discardProjectSpares: discardProjectSparesMock,
+}));
 // The handler statically imports agentRegistry; mock it so vitest does not load
 // every real adapter and its transitive dependencies. One adapter implements
 // the hook, one does not - exercising the skip.
@@ -155,6 +168,8 @@ interface ContextOptions {
   projects?: Project[];
   sessions?: Session[];
   currentProjectId?: string | null;
+  /** Leave `spareWorktrees` off the context, as an app with spares disabled does. */
+  withoutSparePool?: boolean;
 }
 
 function makeContext(options: ContextOptions = {}) {
@@ -187,6 +202,12 @@ function makeContext(options: ContextOptions = {}) {
     currentProjectPath: options.currentProjectId ? OLD_PATH : null,
     boardConfigManager: { detach: vi.fn(() => { callOrder.push('detach'); }) },
     diffWatcher: { releaseUnder: vi.fn(() => { callOrder.push('releaseUnder'); }) },
+    // Records nothing into callOrder by default, so the exact orders the older
+    // tests pin stay as they are. The spare tests below record it themselves
+    // (recordSpareSteps).
+    spareWorktrees: options.withoutSparePool
+      ? undefined
+      : { stop: vi.fn<(projectPath: string) => Promise<void>>(async () => {}) },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: sendMock } },
     callOrder,
     sendMock,
@@ -198,6 +219,29 @@ function makeContext(options: ContextOptions = {}) {
 
 function asIpcContext(context: ReturnType<typeof makeContext>): IpcContext {
   return context as unknown as IpcContext;
+}
+
+/**
+ * Make the spare pool's stop, the spare discard and the git worktree repair
+ * write their name into the context's callOrder as they run, so a test can read
+ * where they sit among the move and the path update. The stop's body is the
+ * test's own when it passes one (a gate); the others record and return.
+ */
+function recordSpareSteps(
+  context: ReturnType<typeof makeContext>,
+  stopBody: () => Promise<void> = async () => {},
+): void {
+  context.spareWorktrees?.stop.mockImplementation(async () => {
+    context.callOrder.push('stopSpares');
+    await stopBody();
+  });
+  discardProjectSparesMock.mockImplementation(async () => {
+    context.callOrder.push('discardProjectSpares');
+  });
+  runGitWithTimeoutMock.mockImplementationOnce(async () => {
+    context.callOrder.push('repair');
+    return { stdout: '', stderr: '' };
+  });
 }
 
 function createDeferred(): { promise: Promise<void>; resolve: () => void } {
@@ -221,6 +265,10 @@ beforeEach(() => {
   // clearAllMocks keeps implementations, so a gated one from a test would leak.
   stopRemovedWorktreeDeletionMock.mockReset();
   stopRemovedWorktreeDeletionMock.mockImplementation(async () => {});
+  discardProjectSparesMock.mockReset();
+  // mockReset also drops a leftover once-queued implementation, which a test
+  // that queued one and never reached the git repair would otherwise leak.
+  runGitWithTimeoutMock.mockReset();
   // New location exists as a directory in the common case (repoint mode).
   mockFs.existing.add(NEW_PATH);
   mockFs.directories.add(NEW_PATH);
@@ -468,6 +516,72 @@ describe('relocateProject', () => {
     expect(runGitWithTimeoutMock).not.toHaveBeenCalled();
   });
 
+  it('stops the spare worktree pool for the old path, before the project path is rewritten', async () => {
+    const context = makeContext();
+    recordSpareSteps(context);
+
+    await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    expect(context.spareWorktrees?.stop).toHaveBeenCalledTimes(1);
+    expect(context.spareWorktrees?.stop).toHaveBeenCalledWith(OLD_PATH);
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopSpares', 'updatePath']);
+  });
+
+  it('discards the spare worktrees at the new path after git worktree repair, handed the project task rows', async () => {
+    isGitRepoMock.mockReturnValue(true);
+    const context = makeContext();
+    dbState.tasks = [{ id: 'task-1', worktree_path: null }];
+    recordSpareSteps(context);
+
+    await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    expect(discardProjectSparesMock).toHaveBeenCalledTimes(1);
+    const [contextArgument, pathArgument, tasksArgument] = discardProjectSparesMock.mock.calls[0];
+    expect(contextArgument).toBe(context);
+    // The new location, where the spares moved with the folder, never the old one.
+    expect(pathArgument).toBe(NEW_PATH);
+    // The task rows, not null: null is the delete's "no task names anything",
+    // and would discard a spare a task already claimed.
+    expect(tasksArgument).not.toBeNull();
+    expect((tasksArgument as { list: () => unknown }).list()).toBe(dbState.tasks);
+    // After the repair, which is after the path update.
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopSpares', 'updatePath', 'repair', 'discardProjectSpares']);
+  });
+
+  it('still discards the spare worktrees when git worktree repair fails', async () => {
+    isGitRepoMock.mockReturnValue(true);
+    runGitWithTimeoutMock.mockRejectedValueOnce(new Error('repair exploded'));
+    const context = makeContext();
+    recordSpareSteps(context);
+
+    await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    expect(discardProjectSparesMock).toHaveBeenCalledTimes(1);
+    expect(discardProjectSparesMock).toHaveBeenCalledWith(context, NEW_PATH, expect.anything());
+  });
+
+  it('discards no spare worktrees for a folder that is not a git repository', async () => {
+    isGitRepoMock.mockReturnValue(false);
+    const context = makeContext();
+
+    const result = await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    expect(result.project.path).toBe(NEW_PATH);
+    expect(isGitRepoMock).toHaveBeenCalledWith(NEW_PATH);
+    expect(discardProjectSparesMock).not.toHaveBeenCalled();
+  });
+
+  it('relocates when the context carries no spare worktree pool', async () => {
+    isGitRepoMock.mockReturnValue(true);
+    const context = makeContext({ withoutSparePool: true });
+
+    const result = await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
+
+    expect(result.project.path).toBe(NEW_PATH);
+    // The discard owns the "no pool" check, so it is still asked.
+    expect(discardProjectSparesMock).toHaveBeenCalledWith(context, NEW_PATH, expect.anything());
+  });
+
   it('invokes each adapter onProjectRelocated hook once with (oldPath, newPath)', async () => {
     const context = makeContext();
     await relocateProject(asIpcContext(context), 'project-1', NEW_PATH);
@@ -587,6 +701,53 @@ describe('relocateProject (move mode)', () => {
     expect(moveDirectoryMock).toHaveBeenCalledWith(OLD_PATH, MOVE_DEST, expect.anything());
     // releaseUnder -> deleter stopped -> move -> updatePath
     expect(context.callOrder).toEqual(['releaseUnder', 'stopRemovedWorktreeDeletion', 'move', 'updatePath']);
+  });
+
+  it('waits for the spare worktree pool to stop for the old path before it moves the folder', async () => {
+    const context = makeContext();
+    const stopGate = createDeferred();
+    const stopReached = createDeferred();
+    recordSpareSteps(context, async () => {
+      stopReached.resolve();
+      await stopGate.promise;
+    });
+
+    const relocatePromise = relocateProject(asIpcContext(context), 'project-1', MOVE_DEST, { mode: 'move' });
+    // Raced against the relocation itself so that a removed call fails the
+    // assertions below instead of hanging here until the test timeout.
+    await Promise.race([stopReached.promise, relocatePromise]);
+    // Every collaborator resolves in microtasks, so one macrotask turn drains
+    // all of them: with the await in place the relocation is parked on the
+    // shut gate, and without it the move has already started.
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    // The pool is stopping for the stored project path and the gate is still
+    // shut: nothing may have moved the folder or rewritten the project.
+    expect(context.spareWorktrees?.stop).toHaveBeenCalledTimes(1);
+    expect(context.spareWorktrees?.stop).toHaveBeenCalledWith(OLD_PATH);
+    expect(moveDirectoryMock).not.toHaveBeenCalled();
+    expect(context.projectRepo.updatePath).not.toHaveBeenCalled();
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopSpares']);
+
+    stopGate.resolve();
+    await relocatePromise;
+
+    // releaseUnder -> spare pool stopped -> move -> updatePath
+    expect(context.callOrder).toEqual(['releaseUnder', 'stopSpares', 'move', 'updatePath']);
+  });
+
+  it('discards the spare worktrees at the moved-to path, after the move and the git worktree repair', async () => {
+    isGitRepoMock.mockReturnValue(true);
+    const context = makeContext();
+    recordSpareSteps(context);
+
+    await relocateProject(asIpcContext(context), 'project-1', MOVE_DEST, { mode: 'move' });
+
+    expect(discardProjectSparesMock).toHaveBeenCalledTimes(1);
+    expect(discardProjectSparesMock).toHaveBeenCalledWith(context, MOVE_DEST, expect.anything());
+    expect(context.callOrder).toEqual([
+      'releaseUnder', 'stopSpares', 'move', 'updatePath', 'repair', 'discardProjectSpares',
+    ]);
   });
 
   it('does not delete the source for a same-volume rename', async () => {

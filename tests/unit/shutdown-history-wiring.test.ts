@@ -20,7 +20,7 @@
  * it to captureWorkflowAgentUsage and never to markRecordSuspended.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach, type MockInstance } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import * as ts from 'typescript';
@@ -103,6 +103,7 @@ vi.mock('../../src/main/browser/browser-lane-manager', () => ({
 
 import { syncShutdownCleanup } from '../../src/main/shutdown';
 import { destroyAllLanes } from '../../src/main/browser/browser-lane-manager';
+import { spareWorktreePool } from '../../src/main/git/spare-worktree';
 import { closeAll } from '../../src/main/db/database';
 import { markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
 
@@ -623,5 +624,79 @@ describe('syncShutdownCleanup lane cleanup wiring (red-green)', () => {
     syncShutdownCleanup(dependencies);
 
     expect(destroyAllLanes).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('syncShutdownCleanup spare worktree build abort wiring (red-green)', () => {
+  // A spare worktree's init script runs outside any session, so the PTY kill
+  // never reaches it. Only the pool's own abort kills the script's tree, and
+  // nothing else in the suite proves syncShutdownCleanup asks for it: the
+  // pool's tests call abortAllBuilds directly. Deleting the call from
+  // src/main/shutdown.ts would leave a build's script running past the quit
+  // while every other test here stayed green.
+  //
+  // The real pool is spied on rather than replaced, so the module graph the
+  // other tests in this file load is unchanged. With no project registered the
+  // real abortAllBuilds has nothing to abort, so letting the spy call through
+  // is harmless.
+  let abortAllBuildsSpy: MockInstance<typeof spareWorktreePool.abortAllBuilds>;
+  let consoleErrorSpy: MockInstance<typeof console.error>;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    abortAllBuildsSpy = vi.spyOn(spareWorktreePool, 'abortAllBuilds');
+    consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    abortAllBuildsSpy.mockRestore();
+    consoleErrorSpy.mockRestore();
+  });
+
+  it('aborts every spare worktree build exactly once during shutdown', () => {
+    syncShutdownCleanup(buildMockDependencies([]));
+
+    expect(abortAllBuildsSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('aborts the builds before the PTYs are killed, so no build outlives the quit', () => {
+    const dependencies = buildMockDependencies([], { pids: [4242], killedCount: 1 });
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+
+    syncShutdownCleanup(dependencies);
+
+    expect(abortAllBuildsSpy).toHaveBeenCalledTimes(1);
+    expect(sessionManager.killAll).toHaveBeenCalledTimes(1);
+    expect(abortAllBuildsSpy.mock.invocationCallOrder[0])
+      .toBeLessThan(sessionManager.killAll.mock.invocationCallOrder[0]);
+  });
+
+  it('still kills the PTYs, and runs the steps after it, when the abort throws', () => {
+    abortAllBuildsSpy.mockImplementation(() => {
+      throw new Error('build already torn down');
+    });
+    const dependencies = buildMockDependencies([], { pids: [4242], killedCount: 1 });
+    const sessionManager = dependencies.getSessionManager();
+    dependencies.getSessionManager.mockReturnValue(sessionManager);
+    const boardConfigManager = dependencies.getBoardConfigManager();
+    dependencies.getBoardConfigManager.mockReturnValue(boardConfigManager);
+
+    let report: PtyKillReport | undefined;
+    expect(() => {
+      report = syncShutdownCleanup(dependencies);
+    }).not.toThrow();
+
+    // The step after the abort and the kill itself both still ran.
+    expect(boardConfigManager.detach).toHaveBeenCalledTimes(1);
+    expect(dependencies.getDiffWatcher().closeAll).toHaveBeenCalledTimes(1);
+    expect(sessionManager.killAll).toHaveBeenCalledTimes(1);
+    expect(report).toEqual({ pids: [4242], killedCount: 1 });
+    expect(closeAll).toHaveBeenCalledTimes(1);
+    // The failure is logged under the step's name, so a shutdown that lost it says which.
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      '[SHUTDOWN] cleanup:step-failed spareWorktreePool.abortAllBuilds',
+      expect.any(Error),
+    );
   });
 });
