@@ -727,7 +727,7 @@ test.describe('Column automations', () => {
     const headerCells = await dialog().locator('thead tr').first().locator('th').count();
     const bodyCells = await overviewRow('Executing').locator('td').count();
     expect(headerCells).toBeGreaterThan(0);
-    expect(bodyCells).toBe(11);
+    expect(bodyCells).toBe(12);
 
     // A column nobody touched prints the value its select sits on, unemphasised.
     const testing = overviewRow('Testing');

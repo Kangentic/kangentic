@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import { ChevronRight, Clock } from 'lucide-react';
 import { Plural, Trans, useLingui } from '@lingui/react/macro';
-import { useBoardStore } from '../../../stores/board-store';
+import { useTaskDetailHost } from './task-detail-host';
 import { useConfigStore } from '../../../stores/config-store';
 import { useSessionStore } from '../../../stores/session-store';
 import { useQueuePlace } from '../../../hooks/useQueuePlace';
@@ -47,8 +47,9 @@ function HolderMark({ sessionId }: { sessionId: string | null }) {
 function QueueRow({ lead, task, self, showProject }: { lead: ReactNode; task: QueueTask; self: boolean; showProject: boolean }) {
   const { t } = useLingui();
   // A rename does not change the line, so main sends no new snapshot for it. The
-  // board has the live title for this project's tasks.
-  const liveTitle = useBoardStore((state) => state.tasks.find((candidate) => candidate.id === task.taskId)?.title);
+  // host has the live title for tasks on its board.
+  const host = useTaskDetailHost();
+  const liveTitle = host.useLiveTaskTitle(task.taskId);
   const name = (
     <>
       {lead}

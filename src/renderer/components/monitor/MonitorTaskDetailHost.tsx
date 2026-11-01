@@ -33,6 +33,11 @@ import type { TaskDetailHostValue } from '../dialogs/task-detail';
 import type { Task, TaskDetailBundle } from '../../../shared/types';
 import { resyncBoardAfterMonitorWrite } from './resync-board-after-monitor-write';
 
+/** A hook in name and call order only: the monitor keeps no board to read a title from. */
+function useNoLiveTaskTitle(): string | undefined {
+  return undefined;
+}
+
 interface MonitorTaskDetailHostProps {
   projectId: string;
   taskId: string;
@@ -212,6 +217,8 @@ function MonitorTaskDetailHostValue({
       shortcutsSuppressed,
       // The conversation viewer opens on the board layer, under this overlay.
       canOpenConversation: false,
+      // The bundle holds this one task, so no row has a live title to prefer.
+      useLiveTaskTitle: useNoLiveTaskTitle,
     };
   }, [bundle, refresh, shortcutsSuppressed]);
 

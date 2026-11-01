@@ -51,7 +51,7 @@ const hoisted = vi.hoisted(() => ({
   getLatestForTask: vi.fn<(taskId: string) => unknown>(),
 }));
 
-const capturedSessionEventHandlers = new Map<string, (...args: unknown[]) => unknown>();
+const capturedSessionEventHandlers = new Map<string, Array<(...args: unknown[]) => unknown>>();
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -239,7 +239,11 @@ function buildMockContext(sessionId: string) {
       suspend: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
-        capturedSessionEventHandlers.set(event, handler);
+        // Several listeners share 'session-changed' (the held-message flush, the
+        // forwarder under test, the queue push). Keep every one, in order.
+        const handlers = capturedSessionEventHandlers.get(event) ?? [];
+        handlers.push(handler);
+        capturedSessionEventHandlers.set(event, handlers);
       }),
       off: vi.fn(),
     },
@@ -263,9 +267,19 @@ function buildMockContext(sessionId: string) {
 function fireRunning(sessionId: string): void {
   const context = buildMockContext(sessionId);
   registerSessionHandlers(context as never);
-  const sessionChangedHandler = capturedSessionEventHandlers.get('session-changed');
-  if (!sessionChangedHandler) throw new Error('session-changed handler was not registered');
-  sessionChangedHandler(sessionId, makeRunningSession(sessionId));
+  const sessionChangedHandlers = capturedSessionEventHandlers.get('session-changed');
+  if (!sessionChangedHandlers || sessionChangedHandlers.length === 0) {
+    throw new Error('session-changed handler was not registered');
+  }
+  // Fire them all, as the manager's emit does. A listener this file does not model
+  // may throw on the thin mock context, which must not stop the forwarder under test.
+  for (const handler of sessionChangedHandlers) {
+    try {
+      handler(sessionId, makeRunningSession(sessionId));
+    } catch {
+      // Not the listener under test.
+    }
+  }
 }
 
 describe('session-changed forwarder promotes the session\'s own record, not the task\'s newest', () => {
