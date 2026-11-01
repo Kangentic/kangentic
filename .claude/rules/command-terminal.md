@@ -126,7 +126,11 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   so `remove()` keeps them, and a still-exiting agent's SessionEnd hook has somewhere to write).
   It refuses a task's session. A PTY that exits on its own removes its row in the spawn flow's
   `onPtyExited`. A Command Terminal must never be left as a bare shell a paired phone can type
-  into.
+  into. A conversation `/bg` moved into the agent CLI's own background session outlives the PTY,
+  so the CLI stops it at every end, before the leftover reap, and before an Earlier resume, which
+  then names the id `resolveResumableSessionId` returns. Both run on the agent's own files alone
+  (`isInBackgroundSession`, `command-terminal-background-session.ts`), so an ordinary end or resume
+  runs no CLI.
 - **An ended conversation is recorded, and Earlier resumes it.** `CommandTerminalHistory`
   (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
   the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the
@@ -355,8 +359,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   gate and its ceiling, the SessionEnd fast path, the WSL and watcher-off end settle, `/clear`
   survives), `session-telemetry-wiring.test.ts` (`hasAgentAbsenceSweep`, which picks the end
   settle), `session-spawn-flow.test.ts` (the PTY-exit removal),
-  `transient-session-kill-by-slot.test.ts` (scrub before kill), and
-  `command-terminal-namer.test.ts`.
+  `transient-session-kill-by-slot.test.ts` (scrub before kill),
+  `command-terminal-namer.test.ts`, and `command-terminal-background-session.test.ts` with
+  `command-terminal-leftovers.test.ts` and `transient-session-resume.test.ts` (a background session
+  stopped before the reap and before a resume, and no CLI for an ordinary end or resume).
 - **Test (no pause):** `tests/unit/session-telemetry-activity-decisions.test.ts` (the sweep times
   out neither callback for an exempt session, and still does for a task beside it),
   `session-manager-idle-suspend-wiring.test.ts` (a Command Terminal is exempt and never

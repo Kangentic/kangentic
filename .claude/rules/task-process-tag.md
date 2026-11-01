@@ -205,7 +205,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   exact `sessionId` and `kind: background` in the CLI's own listing, never by cwd or name. It runs
   only when the record's own events file shows the conversation in one
   (`backgroundSessionHoldingConversation`), and it is not gated on `stopLeftoverProcesses`: it ends the
-  task's own agent, which every terminal transition ends. Do not route it through the reap or
+  task's own agent, which every terminal transition ends. A Command Terminal has no record, so
+  `CommandTerminalLeftoverReaper` starts the same stop at the removal on the agent's own files
+  (`isInBackgroundSession`, no CLI), and its reap waits for it. Do not route it through the reap or
   widen its match.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
@@ -238,7 +240,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `reapTaskLeftovers` stops a background session holding the conversation before the reap, with
   "Stop leftover processes" off too, and runs no CLI without the record's hook evidence;
   `tests/unit/claude-background-sessions.test.ts` pins Claude's exact match (full `sessionId`,
-  `kind: background`, a live `pid`, a plain short id) and its failures reading as nothing stopped.
+  `kind: background`, a live `pid`, a plain short id) and its failures reading as nothing stopped,
+  and that `isInBackgroundSession` runs no CLI. `tests/unit/command-terminal-leftovers.test.ts` pins
+  that a Command Terminal's reap waits for the stop, and
+  `tests/unit/command-terminal-background-session.test.ts` that an ordinary end runs no CLI, not
+  even `detect`.
 - **Test (wiring):** `tests/unit/session-leftover-reap-wiring.test.ts` pins the Done and
   `cleanupTaskSession` orderings (exit, then reap, then worktree removal), a Done move whose
   session ended earlier, the `auto_spawn=false` and Pause/Stop negatives, and `PROJECT_DELETE`'s

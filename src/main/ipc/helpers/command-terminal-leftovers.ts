@@ -24,11 +24,20 @@
  * It covers Claude's longest measured exit after a close. Before the wait it was
  * 12 s, past the orphan grace. Nothing is reaped once the app is quitting: a
  * quit never reaps, as for tasks.
+ *
+ * A conversation `/bg` moved into the agent CLI's own background session is
+ * still the terminal's agent, and it runs outside the PTY, tagged and in the
+ * terminal's folder, so the reap would kill it with no exit of its own. The
+ * stop (`stopEndedCommandTerminalBackgroundSession`) starts at the removal,
+ * while the registry row still names the terminal's agent and place, and the
+ * reap waits for it. A quit stops nothing here either; an Earlier resume of the
+ * conversation stops its background session first.
  */
-import type { Session } from '../../../shared/types';
+import type { Session, StoredCliTarget } from '../../../shared/types';
 import { commandTerminalDisplayName } from '../../../shared/command-terminal-name';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { parseWslShellSpec } from '../../pty/process-tag/task-process-tag';
+import type { EndedCommandTerminal } from './command-terminal-background-session';
 
 export const COMMAND_TERMINAL_REAP_DELAY_MS = 5_000;
 
@@ -44,6 +53,9 @@ export interface CommandTerminalLeftoverDeps {
   sessionManager: {
     on(event: 'session-removed', listener: RemovedListener): unknown;
     off(event: 'session-removed', listener: RemovedListener): unknown;
+    /** Read during the removal, while the registry row is still there. */
+    getSessionAgentName?(sessionId: string): string | undefined;
+    getSessionCliTarget?(sessionId: string): StoredCliTarget | null;
   };
   /**
    * `reapTaskLeftovers` for one terminal: its folder, its tag, its name for the
@@ -51,6 +63,12 @@ export interface CommandTerminalLeftoverDeps {
    * distro gives the terminal a WSL shell whatever shell is configured).
    */
   reap(projectPath: string, task: CommandTerminalLeftoverTask, wslDistros: string[]): Promise<void>;
+  /**
+   * Stop the agent CLI's own background session still holding the terminal's
+   * conversation (`stopEndedCommandTerminalBackgroundSession`). Started at the
+   * removal; the reap waits for it.
+   */
+  stopBackgroundSession?(ended: EndedCommandTerminal): Promise<void>;
   isShuttingDown(): boolean;
   /** Injectable for tests. */
   delayMs?: number;
@@ -78,7 +96,7 @@ export class CommandTerminalLeftoverReaper {
     this.timers.clear();
   }
 
-  private readonly onRemoved: RemovedListener = (_sessionId, session) => {
+  private readonly onRemoved: RemovedListener = (sessionId, session) => {
     // A workflow's own agent is transient too, but runs no shell tool, and its
     // end already waits for its process to exit (`endWorkflowAgent`).
     if (!session || !isCommandTerminalSession(session) || !session.cwd || this.disposed) return;
@@ -93,14 +111,39 @@ export class CommandTerminalLeftoverReaper {
     };
     const wslDistro = parseWslShellSpec(session.shell)?.distro;
     const wslDistros = wslDistro ? [wslDistro] : [];
-    const timer = setTimeout(() => {
-      this.timers.delete(timer);
+    const backgroundStop = this.startBackgroundStop(sessionId, session);
+    const runReap = (): void => {
       if (this.disposed || this.deps.isShuttingDown()) return;
       void this.deps.reap(projectPath, task, wslDistros).catch((error: unknown) => {
         console.warn('[COMMAND_TERMINAL] leftover reap failed (non-fatal):', error instanceof Error ? error.message : String(error));
       });
+    };
+    const timer = setTimeout(() => {
+      this.timers.delete(timer);
+      if (backgroundStop) void backgroundStop.then(runReap);
+      else runReap();
     }, this.deps.delayMs ?? COMMAND_TERMINAL_REAP_DELAY_MS);
     timer.unref?.();
     this.timers.add(timer);
   };
+
+  /**
+   * The background-session stop for an ended terminal, started now: the
+   * registry row that names its agent and place is deleted once the removal's
+   * listeners return. Null when there is nothing to ask about. Never rejects.
+   */
+  private startBackgroundStop(sessionId: string, session: Session): Promise<void> | null {
+    const { stopBackgroundSession } = this.deps;
+    if (!stopBackgroundSession || !session.agentSessionId || this.deps.isShuttingDown()) return null;
+    const ended: EndedCommandTerminal = {
+      agentName: this.deps.sessionManager.getSessionAgentName?.(sessionId),
+      agentSessionId: session.agentSessionId,
+      cwd: session.cwd,
+      cliTarget: this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null,
+    };
+    // Called on a later tick, so a dep that throws never throws into the emit.
+    return Promise.resolve().then(() => stopBackgroundSession(ended)).catch((error: unknown) => {
+      console.warn('[COMMAND_TERMINAL] background session stop failed (non-fatal):', error instanceof Error ? error.message : String(error));
+    });
+  }
 }

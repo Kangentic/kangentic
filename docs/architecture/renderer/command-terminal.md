@@ -12,6 +12,7 @@ sources:
   - resource: src/main/pty/session-manager.ts
     title: renameCommandTerminal, setCommandTerminalLabel, endCommandTerminal
   - resource: src/main/ipc/helpers/command-terminal-leftovers.ts
+  - resource: src/main/ipc/helpers/command-terminal-background-session.ts
   - resource: src/shared/command-terminal-name.ts
   - resource: src/shared/command-terminal-rail.ts
   - resource: src/renderer/utils/folding-edge-drag.ts
@@ -417,7 +418,12 @@ A resume is a start with `resumeAgentSessionId`. Main claims the conversation be
 transcript; the second is refused with `conversation-open`. A row that cannot be resumed is
 refused with `conversation-gone`. The resumed terminal is seeded with the conversation's label,
 so the namer skips it, and its first status write sets a new activity baseline rather than
-reading as 30 seconds of work.
+reading as 30 seconds of work. A conversation `/bg` moved into Claude Code's own background
+session can still be running there, since a quit stops none, so the resume stops it first and
+names the id a `--resume` reaches (`settleCommandTerminalResume`,
+`src/main/ipc/helpers/command-terminal-background-session.ts`). That runs only on the agent's own
+transcripts, so an ordinary resume runs no CLI. See
+[Claude Code background sessions](../../integrations/agents/session-history.md#claude-code-background-sessions-bg).
 
 In the rail, a row resumes IN PLACE of the focused terminal (or the only one) only while nothing
 has reached that terminal: a fresh terminal the user opened and then decided against is replaced
@@ -782,6 +788,12 @@ Nothing is reaped during a quit. The orphan cleanup, which asks the agent a dead
 running to exit and terminates it after the grace (`dead-root-orphans.ts`), runs on Windows
 only. On macOS and Linux the kernel hangs up a dead shell's terminal, and this reap is the only
 cleanup after it.
+
+A conversation `/bg` moved into Claude Code's own background session is the terminal's agent too,
+running outside its PTY, tagged and in its folder, so the reap would kill it with no exit of its
+own. The reaper starts the CLI's own stop at the removal, while the registry row still names the
+agent and its place, and the reap waits for it. It runs only when the agent's transcripts show the
+move (`isInBackgroundSession`), so an ordinary end runs no CLI.
 
 ## A reattach never touches HEAD
 

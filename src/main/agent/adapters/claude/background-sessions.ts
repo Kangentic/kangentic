@@ -170,6 +170,31 @@ async function findContinuedFrom(
 }
 
 /**
+ * Is the conversation `agentSessionId` one `/bg` moved into a background
+ * session (`isInBackgroundSession`)? True when a transcript in its own folder
+ * ends by continuing in it (`continued-in`), the record `/bg` writes and
+ * `/fork` does not. File reads only, and no CLI: a folder of 156 transcripts
+ * took 6 to 11 ms to list and search. The record outlives the session, so true
+ * means the conversation may still be running there, and the stop finds out.
+ * Never throws; any doubt is false.
+ */
+export async function claudeIsInBackgroundSession(options: {
+  agentSessionId: string;
+  cwd: string;
+  place?: CliPlace | null;
+}): Promise<boolean> {
+  try {
+    const transcriptPath = await findClaudeTranscriptFile({ agentSessionId: options.agentSessionId, cwd: options.cwd, place: options.place ?? null });
+    if (!transcriptPath) return false;
+    return await findContinuedFrom(transcriptPath, options.agentSessionId, transcriptListingCache()) !== null;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`[claude] could not check whether ${options.agentSessionId.slice(0, 8)} is in a background session: ${reason}`);
+    return false;
+  }
+}
+
+/**
  * Did the terminal's conversation `fromAgentSessionId` move into the background
  * session `toAgentSessionId` (`statusFile.confirmsBackgroundMove`)? `/bg` moves
  * it and ends the old transcript with a `continued-in` record naming the new

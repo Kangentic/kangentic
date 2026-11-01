@@ -73,6 +73,7 @@ import { DesktopNotifier } from '../notifications/desktop-notifier';
 import { ActivityIntervalRecorder } from '../activity-engine/activity-interval-recorder';
 import { CommandTerminalNamer } from '../agent/shared/command-terminal-namer';
 import { CommandTerminalLeftoverReaper } from './helpers/command-terminal-leftovers';
+import { stopEndedCommandTerminalBackgroundSession } from './helpers/command-terminal-background-session';
 import { CommandTerminalHistory } from './helpers/command-terminal-history';
 import { CommandTerminalHistoryRepository } from '../db/repositories/command-terminal-history-repository';
 import { agentRegistry } from '../agent/agent-registry';
@@ -321,10 +322,12 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   commandTerminalNamer.start();
 
   // What a Command Terminal's agent detached is reaped (and reported) once the
-  // terminal ends and any agent still exiting has finished.
+  // terminal ends and any agent still exiting has finished. A conversation it
+  // moved into the agent CLI's own background session is stopped first.
   const commandTerminalLeftovers = new CommandTerminalLeftoverReaper({
     sessionManager,
     reap: (projectPath, task, wslDistros) => reapTaskLeftovers(requireContext(), projectPath, [task], { wslDistros }),
+    stopBackgroundSession: (ended) => stopEndedCommandTerminalBackgroundSession(requireContext(), ended),
     isShuttingDown,
   });
   commandTerminalLeftovers.start();

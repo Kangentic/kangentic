@@ -20,6 +20,7 @@ import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
+import { settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -227,6 +228,9 @@ export async function startCommandTerminal(
   // The conversation this start claimed for a resume, and the terminal that
   // took it; settled in the `finally`, whichever way the start ends.
   let claimedConversation: string | null = null;
+  // The conversation the claimed one continued, when that is the id that
+  // resumes it (settleCommandTerminalResume): claimed too, and settled with it.
+  let claimedPredecessor: string | null = null;
   let resumedSessionId: string | null = null;
   try {
     const projectRoot = resolveProjectRoot(project.path);
@@ -257,6 +261,28 @@ export async function startCommandTerminal(
     // a `--resume` it cannot find.
     if (resume && !isSameCliPlace(resume.cliTarget, cliTarget)) {
       throw new CommandTerminalStartError('conversation-gone', 'That conversation ran where the agent\'s CLI path no longer points.');
+    }
+    // A conversation moved into the agent CLI's own background session (Claude
+    // Code's `/bg`) can still be running there: a quit stops none, and a resume
+    // beside it would put a second process on it. It is stopped first, and the
+    // resume names the id a `--resume` reaches. Both run only when the agent's
+    // own files show the move, so an ordinary resume runs no CLI here.
+    let resumeAgentSessionId: string | null = null;
+    if (resume) {
+      const cliPath = detection.path;
+      resumeAgentSessionId = await settleCommandTerminalResume({
+        adapter,
+        agentSessionId: resume.agentSessionId,
+        cwd: resume.cwd,
+        place: cliTarget,
+        resolveCliPath: async () => cliPath,
+      });
+      if (resumeAgentSessionId !== resume.agentSessionId) {
+        if (!context.commandTerminalHistory?.claimResume(input.projectId, resumeAgentSessionId)) {
+          throw new CommandTerminalStartError('conversation-open', 'That conversation is already open in another terminal.');
+        }
+        claimedPredecessor = resumeAgentSessionId;
+      }
     }
     // The shell the PTY types the command into: it decides the quoting style
     // and which shim variant a `.cmd` head is swapped for (shim-launch.ts). A
@@ -331,7 +357,7 @@ export async function startCommandTerminal(
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
       // The conversation to pick up, through the CLI's own resume.
-      ...(resume ? { sessionId: resume.agentSessionId, resume: true } : {}),
+      ...(resumeAgentSessionId ? { sessionId: resumeAgentSessionId, resume: true } : {}),
       cliTarget,
     };
     const command = adapter.buildCommand(commandOptions);
@@ -367,7 +393,7 @@ export async function startCommandTerminal(
       rows: input.rows,
       // A resumed terminal holds a conversation from its first frame, so it is
       // used already: another Earlier click never replaces it.
-      ...(resume ? { agentSessionId: resume.agentSessionId, resuming: true, hasUserInput: true } : {}),
+      ...(resumeAgentSessionId ? { agentSessionId: resumeAgentSessionId, resuming: true, hasUserInput: true } : {}),
       // The shell the command was built for, and where its CLI runs.
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
@@ -401,6 +427,7 @@ export async function startCommandTerminal(
     // failed start must free it.
     reservation.release();
     if (claimedConversation) context.commandTerminalHistory?.settleResume(input.projectId, claimedConversation, resumedSessionId);
+    if (claimedPredecessor) context.commandTerminalHistory?.settleResume(input.projectId, claimedPredecessor, resumedSessionId);
   }
 }
 
@@ -412,7 +439,7 @@ async function resolveResumedConversation(
   context: IpcContext,
   projectId: string,
   agentSessionId: string,
-): Promise<{ agentSessionId: string; agentName: string; label: string | null; cliTarget: string | null }> {
+): Promise<{ agentSessionId: string; agentName: string; label: string | null; cliTarget: string | null; cwd: string }> {
   const history = context.commandTerminalHistory;
   const row = history?.find(projectId, agentSessionId) ?? null;
   const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
@@ -424,7 +451,7 @@ async function resolveResumedConversation(
   if (!row || !resumable) {
     throw new CommandTerminalStartError('conversation-gone', 'That conversation can no longer be resumed.');
   }
-  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label, cliTarget: row.cli_target ?? null };
+  return { agentSessionId: row.agent_session_id, agentName: row.agent_name, label: row.label, cliTarget: row.cli_target ?? null, cwd: row.cwd };
 }
 
 /** The branch the checkout is on, or "unknown" when git cannot say. */

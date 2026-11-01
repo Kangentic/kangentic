@@ -18,7 +18,7 @@ type SessionStartsReader = () => Promise<readonly SessionStartReport[]>;
  * corrupted file, or a hook payload the event bridge cut short, can carry
  * anything in its id field.
  */
-const PLAUSIBLE_AGENT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
+export const PLAUSIBLE_AGENT_SESSION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
 
 /**
  * Every SessionStart report in an events file, in order. Streamed line by line,

@@ -10,7 +10,8 @@ sources:
   - resource: src/main/activity-engine/conversation-switch-gate.ts
   - resource: src/main/agent/shared/session-start-hook.ts
   - resource: src/main/agent/adapters/claude/background-sessions.ts
-    title: stopClaudeBackgroundSession, resolveClaudeResumableSessionId
+    title: stopClaudeBackgroundSession, resolveClaudeResumableSessionId, claudeIsInBackgroundSession
+  - resource: src/main/ipc/helpers/command-terminal-background-session.ts
   - resource: src/main/agent/adapters/codex/session-history-parser.ts
   - resource: src/main/agent/adapters/gemini/session-history-parser.ts
   - resource: src/main/agent/adapters/claude/session-history-parser.ts
@@ -632,7 +633,7 @@ the next Resume. The resume-time reconcile applies the same check before it foll
 from a background session. Measured in a `/preview`: after `/fork`, Kangentic followed the copy
 before this check, and stays on the terminal's conversation with it.
 
-Kangentic handles a `/bg` move with two more optional adapter members, both implemented by Claude
+Kangentic handles a `/bg` move with three more optional adapter members, all implemented by Claude
 (`adapters/claude/background-sessions.ts`):
 
 1. **Before a resume** (`reconcileResumeAgentSessionId`, at both resume chokepoints),
@@ -646,9 +647,23 @@ Kangentic handles a `/bg` move with two more optional adapter members, both impl
    otherwise kill it with no exit of its own. It is not gated on "Stop leftover processes",
    because it ends the task's own agent rather than something the agent left running. Measured
    with a Done move after `/bg`: the background session's SessionEnd ran and its process was gone.
+3. **For a Command Terminal** (`ipc/helpers/command-terminal-background-session.ts`), which has
+   no session record, and whose events file is deleted with its session directory.
+   `isInBackgroundSession` reads the agent's own transcripts instead, with no CLI. Claude's is
+   true when a transcript in the conversation's folder ends by continuing in it. Listing and
+   searching a folder of 156 transcripts took 6 to 11 ms. On that evidence the terminal's end
+   runs `stopBackgroundSession` through the project's configured Claude: the leftover reaper
+   starts the stop at the removal, while the registry row still names the agent and its place,
+   and the reap waits for it. An Earlier resume runs it through the spawn's own Claude before the
+   command is built, then `resolveResumableSessionId`. A resume that lands on the conversation
+   the background session continued claims that one too, and refuses with `conversation-open`
+   when another terminal holds it. A quit stops nothing, so the next Earlier resume of the
+   conversation is what stops a background session a terminal open at the quit left running. A
+   terminal stopped in the seconds between `/bg` and the live switch still holds the id the move
+   left, which no transcript continues in, so that one background session is not stopped.
 
-Both run only when the session record's own events file shows the conversation in a background
-session (`backgroundSessionHoldingConversation`). Either a SessionStart with `inBackgroundSession`
+The first two run only when the session record's own events file shows the conversation in a
+background session (`backgroundSessionHoldingConversation`). Either a SessionStart with `inBackgroundSession`
 (Claude's `source: fork`) names the stored id, or one names another id that
 `confirmsBackgroundMove` proves the stored conversation moved to. The second case is a pause or a
 Done move between the background session's hook and its first status write, before the live
@@ -697,9 +712,6 @@ Gaps that remain in how Kangentic handles a Claude background session
 - `claude stop` and `/fork` were measured on Windows only. A Claude in a WSL distro is listed and
   stopped through the distro (`runClaudeCli`), and its move check reads the transcript in the
   distro's home, both unmeasured. macOS and Linux are unmeasured.
-- A Command Terminal has no session record, so neither its end nor an Earlier resume stops a
-  background session holding its conversation. Its leftover reap ends that session with no exit
-  of its own, or an Earlier resume runs beside it.
 - A terminal transition stops a background session through the project's configured Claude.
   A record whose Claude ran somewhere that path no longer reaches (the CLI path changed since) is
   not found in the listing, and the reap ends that session with no exit of its own.

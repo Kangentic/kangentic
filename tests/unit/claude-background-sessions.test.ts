@@ -12,6 +12,9 @@
  * `--resume <fork>` answered "No conversation found" while the conversation
  * it continued (named by its `continued-in` record) resumed.
  *
+ * `claudeIsInBackgroundSession` is the CLI-free gate a Command Terminal's end
+ * and an Earlier resume read: some transcript in the folder continues in the id.
+ *
  * Test tier: Unit. The CLI runner and the transcript locator are mocked; the
  * transcripts are real files under os.tmpdir().
  */
@@ -27,7 +30,12 @@ vi.mock('../../src/main/agent/adapters/claude/cli-run', () => ({ runClaudeCli })
 const findClaudeTranscriptFile = vi.fn<(query: { agentSessionId: string }) => Promise<string | null>>();
 vi.mock('../../src/main/agent/adapters/claude/transcript-locator', () => ({ findClaudeTranscriptFile }));
 
-const { stopClaudeBackgroundSession, resolveClaudeResumableSessionId, claudeConfirmsBackgroundMove } = await import('../../src/main/agent/adapters/claude/background-sessions');
+const {
+  stopClaudeBackgroundSession,
+  resolveClaudeResumableSessionId,
+  claudeConfirmsBackgroundMove,
+  claudeIsInBackgroundSession,
+} = await import('../../src/main/agent/adapters/claude/background-sessions');
 
 const CLI_PATH = 'C:\\Users\\dev\\.local\\bin\\claude.exe';
 const MOVED = '8c4cb30b-352c-4d33-ba24-3c53324bfd49';
@@ -498,6 +506,41 @@ describe('resolveClaudeResumableSessionId', () => {
     await expect(resolveClaudeResumableSessionId({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
   });
 
+  // The gate a Command Terminal's end and an Earlier resume put in front of the
+  // CLI: file reads only, so it must never run one.
+  describe('claudeIsInBackgroundSession', () => {
+    beforeEach(() => runClaudeCli.mockClear());
+
+    it('is true for the session a transcript in its folder continued in, with no CLI run', async () => {
+      writeTranscript(MOVED, [...metadataOnly(MOVED), ...withTurn(MOVED)]);
+      writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      writeTranscript(OTHER, withTurn(OTHER));
+
+      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(true);
+      expect(runClaudeCli).not.toHaveBeenCalled();
+    });
+
+    it('is false for the conversation the move left, a /fork copy, an ordinary conversation, and a missing transcript', async () => {
+      writeTranscript(MOVED, metadataOnly(MOVED));
+      writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      writeTranscript(OTHER, withTurn(OTHER));
+      const forkCopy = 'c0f9e5a1-1111-4d5c-9b1e-2a6f0d3c4b5e';
+      writeTranscript(forkCopy, metadataOnly(forkCopy));
+
+      await expect(claudeIsInBackgroundSession({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(false);
+      await expect(claudeIsInBackgroundSession({ agentSessionId: forkCopy, cwd: 'C:\\work' })).resolves.toBe(false);
+      await expect(claudeIsInBackgroundSession({ agentSessionId: OTHER, cwd: 'C:\\work' })).resolves.toBe(false);
+      await expect(claudeIsInBackgroundSession({ agentSessionId: 'no-such-conversation', cwd: 'C:\\work' })).resolves.toBe(false);
+      expect(runClaudeCli).not.toHaveBeenCalled();
+    });
+
+    it('reads a locator that throws as false', async () => {
+      findClaudeTranscriptFile.mockRejectedValueOnce(new Error('EACCES'));
+      vi.spyOn(console, 'warn').mockImplementation(() => {});
+      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(false);
+    });
+  });
+
   // `/bg` and `/fork` fire identical SessionStart hooks (`source: fork`); only
   // the move ends the old transcript with `continued-in` (measured on 2.1.316:
   // after `/fork` the terminal's transcript kept going with no such record).
@@ -562,6 +605,11 @@ describe('resolveClaudeResumableSessionId', () => {
 
     it('resumes the background session that took no turn by the conversation it moved out of', async () => {
       await expect(resolveClaudeResumableSessionId({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_MOVED);
+    });
+
+    it('reads the background session as one, and the conversation it moved out of as none', async () => {
+      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(true);
+      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_MOVED, cwd: 'C:\\work' })).resolves.toBe(false);
     });
   });
 });
