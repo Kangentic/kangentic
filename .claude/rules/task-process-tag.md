@@ -178,11 +178,18 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`,
   `connection_list`), and the
   reap maps the type to that code. The pass a reap failed in (`failurePass`: `first`, `second`,
-  `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
-  the user asks for from the list returns the same code and pass (`StopProcessResult`), and main
-  reports it as stage `stop`. A refusal or a survivor is an answer, and main never reports it. The
-  removal-failure reap's holder Stop (`SessionManager.stopProcessByCreationTime`) only logs its
-  failure.
+  `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A step
+  that runs a tool also names how the tool failed (`failureCause`, a `ToolFailureCause`:
+  `spawn_error`, `exit_code`, `signal`, `timeout`), sent as a `cause` tag beside `pass` and kept out
+  of the message and the key the same way. It is a fixed value and never tool output, a pid or a
+  path. `runToolThrough` classifies it for the utility host and `runTool` for the in-process core.
+  The window list is retried once through the reader's `runLsappinfo`, so the retry starts on the
+  spawn worker too, on a shorter timeout that keeps a batch's worst case inside
+  `TASK_REAP_TIMEOUT_MS`. A failed retry fails the scan with the last attempt's cause, never with
+  an empty list. A Stop the user asks for from the list returns the same code, pass and cause
+  (`StopProcessResult`), and main reports it as stage `stop`. A refusal or a survivor is an answer,
+  and main never reports it. The removal-failure reap's holder Stop
+  (`SessionManager.stopProcessByCreationTime`) only logs its failure.
 - **The dead-shell orphan cleanup is a second kill path with its own identity, not a reap.** When a
   session's shell exits on its own on Windows, `host/dead-root-orphans.ts` finds the shell's
   children created between the shell's own creation and exit, read off the handle the pty host
@@ -344,10 +351,15 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the real Toolhelp listing.
 - **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load`,
   `empty_scan`, `connection_list` in either pass, the failing pass, and, over the macOS reader
-  with a fake kernel, `window_list`, `process_list` and `connection_list`, and a Stop's code and
-  pass (none for a refusal or a survivor);
+  with a fake kernel, `window_list`, `process_list` and `connection_list`, the window list's retry
+  and last cause, the retry's worst case against the budget, and a Stop's code, pass and cause
+  (none for a refusal or a survivor);
+  `tests/unit/darwin-run-tool-seam.test.ts` pins each cause through `runToolThrough`, a retry
+  through the injected tool, and Node's real `execFile` fields on POSIX, and
+  `task-process-readers.test.ts` and `darwin-reader-run-tool-env.test.ts` pin each cause of
+  `runTool`;
   `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
-  fixed message, that no other failure's text reaches the event, and SessionManager's reports,
+  fixed message, the `cause` tag, that no other failure's text reaches the event, and SessionManager's reports,
   the WSL one included and the three host codes by error type.
   `tests/unit/utility-pty-host-transport.test.ts` pins the rejection types, that a request
   queued behind a batch inside its budget does not time out, and that a late answer reaches its

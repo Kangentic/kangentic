@@ -1,11 +1,11 @@
 import { DarwinTaggedProcessReader } from './darwin-reader';
 import { LinuxTaggedProcessReader } from './linux-reader';
-import type { TaggedProcessReader } from './process-scan';
+import type { TaggedProcessReader, ToolRunner } from './process-scan';
 import { Win32TaggedProcessReader } from './win32-reader';
 
 export interface TaggedProcessReaderOptions {
   /** macOS: how the reader runs `lsappinfo` (`DarwinReaderOptions.runTool`). */
-  runTool?: (command: string, args: string[], timeoutMs: number) => Promise<string | null>;
+  runTool?: ToolRunner;
 }
 
 /** The reader for this platform, or null where none exists (the reap no-ops). */

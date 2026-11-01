@@ -29,9 +29,10 @@
  *   SIP check), and the role (`process-scan.ts`): a tmux server by its
  *   executable, a visible app by LaunchServices (`lsappinfo list`, Foreground
  *   or UIElement, the one tool still spawned, once per scan and only when such
- *   a process exists) or by being the main executable of an app in an
- *   Applications folder (`lsappinfo` can miss an app still starting). Not "any
- *   app bundle": `/usr/bin/python3` runs from inside `Python.app`.
+ *   a process exists, with one retry when a run fails) or by being the main
+ *   executable of an app in an Applications folder (`lsappinfo` can miss an app
+ *   still starting). Not "any app bundle": `/usr/bin/python3` runs from inside
+ *   `Python.app`.
  * - `connections`: each process's TCP sockets from `proc_pidinfo` with
  *   `PROC_PIDLISTFDS` and `proc_pidfdinfo` with `PROC_PIDFDSOCKETINFO`, the
  *   calls `lsof -i` makes, for a same-user process. macOS has no table of
@@ -65,9 +66,20 @@ import {
   type ProcessScan,
   type ScannedProcess,
   type TaggedProcessReader,
+  type ToolRun,
+  type ToolRunner,
 } from './process-scan';
 
 const TOOL_TIMEOUT_MS = 5000;
+/**
+ * The `lsappinfo` retry's timeout, shorter than the first attempt's because it
+ * has to fit in one batch's budget (`TASK_REAP_TIMEOUT_MS`) however the scans
+ * go. A scan whose retry only just answered does not end the batch, so all
+ * three scans of a reap or a Stop can pay both timeouts. The sum and the
+ * measurement behind it are in `docs/architecture/worktrees/process-reaping.md`,
+ * and `task-tagged-reap.test.ts` pins the sum.
+ */
+const LSAPPINFO_RETRY_TIMEOUT_MS = 2000;
 const LAUNCHD_PID = 1;
 const LSAPPINFO_PATH = '/usr/bin/lsappinfo';
 const CTL_KERN = 1;
@@ -303,20 +315,20 @@ export function isTopLevelAppExecutable(executablePath: string): boolean {
 }
 
 /**
- * Run a tool and resolve its stdout, or null when it cannot start, exits with
- * an error or a signal, or runs past the timeout. Only a clean exit's output
- * is an answer: an empty listing from a failed run would read as "no windows".
- * Exported for tests, which pass a short `timeoutMs`.
+ * Run a tool and resolve its stdout, or how it failed: it could not start,
+ * exited with an error or a signal, or ran past the timeout. Only a clean
+ * exit's output is an answer: an empty listing from a failed run would read as
+ * "no windows". Exported for tests, which pass a short `timeoutMs`.
  */
-export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOUT_MS): Promise<string | null> {
+export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOUT_MS): Promise<ToolRun> {
   return new Promise((resolve) => {
     let output = '';
     let settled = false;
-    const finish = (value: string | null) => {
+    const finish = (run: ToolRun) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve(value);
+      resolve(run);
     };
     const child = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'ignore'],
@@ -324,12 +336,16 @@ export function runTool(command: string, args: string[], timeoutMs = TOOL_TIMEOU
     });
     const timer = setTimeout(() => {
       try { child.kill('SIGKILL'); } catch { /* already gone */ }
-      finish(null);
+      finish({ ok: false, cause: 'timeout' });
     }, timeoutMs);
     timer.unref();
     child.stdout.on('data', (chunk: Buffer) => { output += chunk.toString('utf8'); });
-    child.on('error', () => finish(null));
-    child.on('close', (code, signal) => finish(code === 0 && signal === null ? output : null));
+    child.on('error', () => finish({ ok: false, cause: 'spawn_error' }));
+    child.on('close', (code, signal) => {
+      if (signal !== null) finish({ ok: false, cause: 'signal' });
+      else if (code !== 0) finish({ ok: false, cause: 'exit_code' });
+      else finish({ ok: true, output });
+    });
   });
 }
 
@@ -410,11 +426,11 @@ function yieldToEventLoop(): Promise<void> {
 
 export interface DarwinReaderOptions {
   loadKernel?: () => Promise<DarwinKernel>;
-  /** `lsappinfo`'s output, or null when it could not run or failed. */
-  runLsappinfo?: (args: string[]) => Promise<string | null>;
+  /** Runs `lsappinfo` once and says what it answered or how it failed. */
+  runLsappinfo?: (args: string[], timeoutMs: number) => Promise<ToolRun>;
   /** Runs a tool as `runTool` does. The utility host passes one that starts it
    *  on its spawn worker, off the thread that carries terminal I/O. */
-  runTool?: (command: string, args: string[], timeoutMs: number) => Promise<string | null>;
+  runTool?: ToolRunner;
   signal?: (pid: number, signalName: NodeJS.Signals) => void;
   /** The caller's uid. Defaults to `process.getuid()`. */
   uid?: number;
@@ -422,7 +438,7 @@ export interface DarwinReaderOptions {
 
 export class DarwinTaggedProcessReader implements TaggedProcessReader {
   private readonly loadKernel: () => Promise<DarwinKernel>;
-  private readonly runLsappinfo: (args: string[]) => Promise<string | null>;
+  private readonly runLsappinfo: (args: string[], timeoutMs: number) => Promise<ToolRun>;
   private readonly sendSignal: (pid: number, signalName: NodeJS.Signals) => void;
   private readonly ownUid: number | null;
 
@@ -432,7 +448,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
       return kernelPromise;
     });
     const run = options.runTool ?? runTool;
-    this.runLsappinfo = options.runLsappinfo ?? ((args) => run(LSAPPINFO_PATH, args, TOOL_TIMEOUT_MS));
+    this.runLsappinfo = options.runLsappinfo ?? ((args, timeoutMs) => run(LSAPPINFO_PATH, args, timeoutMs));
     this.sendSignal = options.signal ?? ((pid, signalName) => process.kill(pid, signalName));
     this.ownUid = options.uid ?? (typeof process.getuid === 'function' ? process.getuid() : null);
   }
@@ -586,6 +602,23 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
   }
 
   /**
+   * The `lsappinfo` listing, tried a second time when a run fails (Sentry
+   * DESKTOP-27, DESKTOP-1R). Both attempts go through `runLsappinfo`, so in the
+   * utility host neither starts on the thread that carries terminal I/O.
+   *
+   * The window list is the only protection a dev-built app outside an
+   * Applications folder has, so a failed retry fails the scan, with the last
+   * attempt's cause, and the reap stops before its next kill. It never falls
+   * back to an empty list, which would treat every process as windowless.
+   */
+  private async readWindowList(): Promise<string> {
+    let run = await this.runLsappinfo(['list'], TOOL_TIMEOUT_MS);
+    if (!run.ok) run = await this.runLsappinfo(['list'], LSAPPINFO_RETRY_TIMEOUT_MS);
+    if (!run.ok) throw new ScanStepError('window_list', `lsappinfo list did not run: ${run.cause}`, run.cause);
+    return run.output;
+  }
+
+  /**
    * Working directory and role for the processes a reap could touch: tagged
    * ones, withheld orphans, and everything below them.
    */
@@ -596,12 +629,7 @@ export class DarwinTaggedProcessReader implements TaggedProcessReader {
     ));
     // Nothing a reap could touch, so no `lsappinfo` run, which costs time and can fail the scan.
     if (relevant.size === 0) return;
-    // The window list is the only protection a dev-built app outside an
-    // Applications folder has. Without it the scan fails, so the reap stops
-    // before its next kill, rather than treating every process as windowless.
-    const listing = await this.runLsappinfo(['list']);
-    if (listing === null) throw new ScanStepError('window_list', 'lsappinfo list did not run');
-    const uiPids = parseLsappinfoUiPids(listing);
+    const uiPids = parseLsappinfoUiPids(await this.readWindowList());
     for (const scanned of relevant) {
       scanned.workingDirectory = kernel.workingDirectory(scanned.pid);
       const executablePath = executablePaths.get(scanned.pid) ?? '';

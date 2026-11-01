@@ -355,7 +355,11 @@ in one Sentry org, one triage surface.
   a scan pass also carries a `pass` tag. `first`: nothing was signalled yet. `second`: the
   graceful kills went out. `last`: the force pass ran as well, possibly with no target.
   `reader_load`, the three host codes, `wsl_error`, and a `reap_error` from the home-directory
-  lookup (which runs before any scan), carry no `pass` tag. A Stop
+  lookup (which runs before any scan), carry no `pass` tag. A `window_list` failure also carries a
+  `cause` tag saying how `lsappinfo`'s last attempt failed. `spawn_error`: it never started, or the
+  spawn worker lost the run. `exit_code`: it exited non-zero. `signal`: something other than the
+  timeout killed it. `timeout`: it ran past its timeout. `pass` and `cause` stay out of the message
+  and the once-per-launch key, so neither splits the issue. A Stop
   that refused a process, such as Kangentic's own tree or a held PTY, is not reported. Neither is
   one that found the process still running after the force kill), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per

@@ -11,7 +11,7 @@ import { describe, it, expect, vi } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
 import type { PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import { ScanStepError, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const MAIN_PID = 1000;
@@ -162,9 +162,50 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       coalesceMs: 0,
       createTaggedProcessReader: () => null,
     });
-    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] });
+    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] });
     await expect(core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID })).resolves.toEqual({
-      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
+    });
+  });
+
+  it('hands main the cause a reader step failed with, for a reap and for a Stop', async () => {
+    // A non-null cause is what a field-by-field rebuild of the result in the host would drop,
+    // and every other assertion here sees null.
+    const failingReader: TaggedProcessReader = {
+      async scan(): Promise<ProcessScan> {
+        throw new ScanStepError('window_list', 'lsappinfo list did not run: timeout', 'timeout');
+      },
+      async kill(): Promise<boolean> {
+        throw new Error('a failed scan kills nothing');
+      },
+      async describe(): Promise<Map<number, string>> {
+        return new Map();
+      },
+    };
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => failingReader,
+    });
+
+    const reapResult = await core.reapTaggedProcesses(REQUEST);
+    expect(reapResult).toMatchObject({
+      killedPids: [],
+      failureCode: 'window_list',
+      failurePass: 'first',
+      failureCause: 'timeout',
+      failureReason: 'lsappinfo list did not run: timeout',
+    });
+
+    const stopResult = await core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID });
+    expect(stopResult).toMatchObject({
+      outcome: 'failed',
+      failureCode: 'window_list',
+      failurePass: 'first',
+      failureCause: 'timeout',
+      failureReason: 'lsappinfo list did not run: timeout',
     });
   });
 
@@ -185,7 +226,7 @@ describe('PtyHostCore reapTaggedProcesses', () => {
     core.spawn(spawnParams());
     // A refusal, not a failure: no code goes back to main.
     await expect(core.stopReportedProcess({ pid: PTY_ROOT_PID, startKey: `start-${PTY_ROOT_PID}`, mainPid: MAIN_PID })).resolves.toEqual({
-      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
     });
     expect(reader.kills).toEqual([]);
   });

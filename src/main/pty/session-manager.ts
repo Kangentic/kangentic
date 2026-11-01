@@ -149,7 +149,7 @@ function noteHostReapResult(result: TaggedReapResult): void {
   if (result.failureReason) {
     console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
     const code = result.failureCode ?? 'reap_error';
-    reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass);
+    reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass, result.failureCause);
   }
   // Processes whose environment could not be read (elevated on Windows,
   // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
@@ -170,7 +170,7 @@ function noteHostStopResult(result: StopProcessResult): void {
   if (!result.failureCode) return;
   console.warn(`[TASK-REAP] stop failed (non-fatal): ${result.failureReason}`);
   // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
-  reportTaskReapFailure('stop', result.failureCode, null, result.failurePass);
+  reportTaskReapFailure('stop', result.failureCode, null, result.failurePass, result.failureCause);
 }
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */

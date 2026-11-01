@@ -11,8 +11,10 @@
  * text is a koffi or dlopen error about this install, and it goes into a
  * context block with paths stripped, so the issue still groups by code. A
  * reap that failed in a scan pass also carries that pass as a `pass` tag,
- * which says whether anything had been signalled. It stays out of the
- * message and the once-per-launch key, so the issue never splits by pass.
+ * which says whether anything had been signalled. A step whose tool failed
+ * also carries how, as a fixed `cause` tag (`ToolFailureCause`). Both stay out
+ * of the message and the once-per-launch key, so the issue never splits by
+ * either.
  *
  * Main-only: the pty host never imports analytics or Sentry
  * (`pty-host-out-of-process.md`), so the host carries the code back in the
@@ -23,6 +25,7 @@ import { reportHandledError, type ErrorReportContexts } from '../analytics/error
 import { sanitizeErrorMessage } from '../analytics/analytics';
 import { redactPaths } from '../../shared/sentry-breadcrumbs';
 import { PtyHostExitedError, PtyHostTimeoutError } from './host/pty-host-request-errors';
+import type { ToolFailureCause } from './process-tag/process-scan';
 import type { ReapFailureCode, ReapPass } from './process-tag/tagged-reap';
 
 /** Why the request to the pty host failed, when it got no result back. */
@@ -54,6 +57,7 @@ export function reportTaskReapFailure(
   code: TaskReapFailure,
   loadError: string | null = null,
   pass: ReapPass | null = null,
+  cause: ToolFailureCause | null = null,
 ): void {
   const key = `${stage}:${code}`;
   if (reported.has(key)) return;
@@ -65,6 +69,7 @@ export function reportTaskReapFailure(
     : {};
   const tags: Record<string, string> = { source: 'task_reap', stage, code };
   if (pass) tags.pass = pass;
+  if (cause) tags.cause = cause;
   reportHandledError(new Error(`Task leftover ${stage} failed: ${code}`), tags, contexts);
 }
 

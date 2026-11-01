@@ -62,6 +62,7 @@ import {
   type ScannedProcess,
   type ScanStepFailureCode,
   type TaggedProcessReader,
+  type ToolFailureCause,
 } from './process-scan';
 
 /** How long the first pass's targets get to exit before the second scan. */
@@ -187,6 +188,8 @@ export interface TaggedReapResult {
   failureCode: ReapFailureCode | null;
   /** The pass the reap failed in, or null when it failed before its first scan or did not fail. */
   failurePass: ReapPass | null;
+  /** How the failed scan step's tool failed, or null when the step runs none or the reap did not fail. */
+  failureCause: ToolFailureCause | null;
   /** What the user is told: stopped, not stopped, and left running. */
   entries: LeftoverProcessEntry[];
 }
@@ -214,7 +217,7 @@ export interface TaggedReaperDeps {
 
 /** A fresh result each time, so no caller can share another's arrays. */
 export function emptyReapResult(): TaggedReapResult {
-  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 }
 
 function messageOf(error: unknown): string {
@@ -249,6 +252,11 @@ function failureCodeOf(error: unknown): ReapFailureCode {
   if (error instanceof EmptyScanError) return 'empty_scan';
   if (error instanceof ScanStepError) return error.code;
   return 'reap_error';
+}
+
+/** How the tool behind what a pass threw failed, or null when nothing named one. */
+function failureCauseOf(error: unknown): ToolFailureCause | null {
+  return error instanceof ScanStepError ? error.failureCause : null;
 }
 
 function defaultWait(ms: number): Promise<void> {
@@ -440,11 +448,8 @@ export async function reapTaggedOnce(
 
     if (!request.stop || firstPlan.targets.length === 0) {
       return {
-        killedPids: [],
+        ...emptyReapResult(),
         unreadableCount: firstScan.unreadableCount,
-        failureReason: null,
-        failureCode: null,
-        failurePass: null,
         entries: [...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, 'kept', null)), ...keptEntries],
       };
     }
@@ -524,11 +529,9 @@ export async function reapTaggedOnce(
     }));
 
     return {
+      ...emptyReapResult(),
       killedPids: [...killed].sort((left, right) => left - right),
       unreadableCount,
-      failureReason: null,
-      failureCode: null,
-      failurePass: null,
       entries: [
         ...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, failedRootPids.has(root.process.pid) ? 'failed' : 'stopped', null)),
         ...orphanEntries,
@@ -542,6 +545,7 @@ export async function reapTaggedOnce(
       failureReason: messageOf(error),
       failureCode: failureCodeOf(error),
       failurePass: pass,
+      failureCause: failureCauseOf(error),
       entries: signalledEntries ? signalledEntries() : [],
     };
   }
@@ -587,12 +591,13 @@ export interface StopProcessResult {
   outcome: StopProcessOutcome;
   failureCode: ReapFailureCode | null;
   failurePass: ReapPass | null;
+  failureCause: ToolFailureCause | null;
   failureReason: string | null;
 }
 
 /** A stop's answer with no failure to report. */
 export function stopAnswer(outcome: StopProcessOutcome): StopProcessResult {
-  return { outcome, failureCode: null, failurePass: null, failureReason: null };
+  return { outcome, failureCode: null, failurePass: null, failureCause: null, failureReason: null };
 }
 
 /**
@@ -642,7 +647,7 @@ export async function stopProcessTree(
     const aliveAtLast = runningIdentitiesOf(lastScan);
     return stopAnswer(survivors.some((survivor) => aliveAtLast.has(processIdentity(survivor))) ? 'failed' : 'stopped');
   } catch (error) {
-    return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureReason: messageOf(error) };
+    return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureCause: failureCauseOf(error), failureReason: messageOf(error) };
   }
 }
 
