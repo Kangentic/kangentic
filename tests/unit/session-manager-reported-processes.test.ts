@@ -30,7 +30,7 @@ import type { HostProcessInfo } from '../../src/main/pty/host/protocol';
 import type { LeftoverProcessEntry, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 
 type Identity = { pid: number; startKey: string };
 
