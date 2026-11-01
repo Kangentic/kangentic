@@ -281,6 +281,19 @@ hook, and every shutdown route exits before that request can complete, so any ev
 is lost. That is why run duration is reported by the next launch (above) rather than by a close
 event.
 
+A dropped analytics response never reaches `uncaughtException`. The SDK listens on the request and
+attaches nothing to the response, so a request that fails after its headers threw from
+`IncomingMessage.destroy` and read as a fatal (DESKTOP-26). `guardAptabaseResponses` in
+`src/main/analytics/analytics.ts` wraps `net.request` before the SDK starts and gives a response
+from the Aptabase host an `error` listener. The host follows the app key, so the sink below is
+covered. Every other request passes through untouched, so a real failure elsewhere stays loud. The
+failure still reaches the request's own `error`, which the SDK logs. Sentry wraps `net.request` too,
+on the outside. Run on Electron with both real SDKs against a server that drops the connection,
+nothing went uncaught and an `electron.net` breadcrumb arrived in the delivered Sentry envelope.
+`tests/unit/aptabase-response-guard.test.ts`
+reads the installed SDK and fails once it adds its own listener, which is the signal to delete the
+guard.
+
 ### Local verification
 
 Aptabase publishes an ingestion API only, so what production received can only be read off the

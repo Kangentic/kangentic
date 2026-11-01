@@ -73,7 +73,9 @@ process. The browser logged `Failed to send GetTerminationStatus message to zygo
 `gpu-health.json` empty. All three DESKTOP-W installs sent Sentry nothing but the fatal, 25 s,
 3 min and 4 min into their runs. Why the zygote or its fork failed on those hosts is still unknown.
 A dead zygote and a fork refused at the process limit produce the same stack, so each recorded
-fallback on Linux now carries the answer (below).
+fallback on Linux now carries the answer (below). Until the DESKTOP-29 fix no report held that
+answer, because Sentry's depth limit turned each entry into `[Object]`. A report now has it as a
+line in `modeChanges` ([Error reporting](../telemetry/error-reporting.md)).
 
 The same steps on Electron 44.5.1, same machine (2026-10-04): six launch failures and the fatal
 again, but the first five reached JS as `child-process-gone` with `launch-failed` (exit code 1002),
@@ -143,7 +145,8 @@ What ships now, on every platform:
 - On Linux, `src/main/diagnostics/linux-gpu-zygote.ts` finds the unsandboxed zygote on the first
   `gpu-info-update`, while the GPU is healthy, and each recorded fallback carries a `linux` reading:
   whether that zygote is `alive`, `dead` (gone, a zombie, or its pid reused), or `unknown`, plus the
-  system-wide thread count from `/proc/loadavg` and the soft `Max processes` limit. A dead zygote is
+  system-wide thread count from `/proc/loadavg` and the soft `Max processes` limit. On a Sentry
+  report these read `zygote=<state> schedulingEntities=<n> maxUserProcesses=<limit>`. A dead zygote is
   never a normal state, so it also lifts the rule above that a machine that never had GPU compositing writes nothing: a blocklisted Linux box whose
   zygote dies is recorded too. Verified with the real modules bundled into the WSLg reproduction: on
   both a GPU-composited start and a blocklisted one, killing the zygote and then the GPU process

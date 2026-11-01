@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, net } from 'electron';
 import { initialize as aptabaseInit, trackEvent as aptabaseTrack } from '@aptabase/electron/main';
 
 /**
@@ -92,6 +92,66 @@ function shouldEnable(): boolean {
 }
 
 /**
+ * The host the SDK posts to, by the middle segment of the app key. A key with
+ * another segment sends nothing to any of these. Self-hosted (`SH`) is absent
+ * because the SDK needs a host option for it and this app passes none. The
+ * unit test holds this table to the SDK's own.
+ */
+const APTABASE_HOST_BY_REGION: Readonly<Record<string, string>> = {
+  US: 'us.aptabase.com',
+  EU: 'eu.aptabase.com',
+  DEV: 'localhost:3000',
+};
+
+/** The `host:port` of a string or `{ url }` request, or null for any other
+ *  shape. Sentry's transport and electron-updater name a request by `hostname`,
+ *  and neither is ever Aptabase. Never throws: every `net.request` in main
+ *  comes through here. */
+function requestHost(options: Parameters<typeof net.request>[0]): string | null {
+  const url = typeof options === 'string' ? options : options.url;
+  if (!url) return null;
+  try {
+    return new URL(url).host;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Give every response from the Aptabase host an `error` listener (DESKTOP-26).
+ *
+ * @aptabase/electron 0.3.1 listens for `error` and `abort` on the request and
+ * attaches nothing to the response. When a request fails after its headers,
+ * Electron runs `this._response.destroy(error)` and then `this._die(error)`.
+ * IncomingMessage is a Readable, so that destroy throws with no listener, and
+ * a dropped analytics POST reaches `uncaughtException` and reads as a fatal.
+ *
+ * The listener is empty because the failure is already handled. `_die` goes on
+ * to fire the request's `error`, which the SDK logs and resolves on.
+ *
+ * Scoped to one host on purpose. Every other caller of `net.request` gets its
+ * request back untouched, so a real response failure elsewhere stays loud.
+ * tests/unit/aptabase-response-guard.test.ts fails once the SDK adds its own
+ * listener, which is the signal to delete this.
+ *
+ * @internal Exported for testing.
+ */
+export function guardAptabaseResponses(netModule: Pick<typeof net, 'request'>, host: string): void {
+  const originalRequest = netModule.request;
+  netModule.request = function requestWithResponseGuard(this: unknown, ...requestArguments) {
+    const request = originalRequest.apply(this, requestArguments);
+    if (requestHost(requestArguments[0]) === host) {
+      request.once('response', (response) => {
+        response.on('error', () => {});
+      });
+    }
+    return request;
+  };
+}
+
+let responseGuardInstalled = false;
+
+/**
  * Initialize anonymous analytics. Must be called BEFORE app.whenReady().
  * The SDK registers protocol schemes synchronously during this call.
  */
@@ -99,9 +159,19 @@ export function initAnalytics(): void {
   if (!shouldEnable()) return;
   enabled = true;
 
+  // Before the SDK can send anything, and before initErrorReporting, so Sentry's
+  // own net.request wrapper goes on the outside and sees the same request. The
+  // SDK reads net.request at each call, so this assignment reaches it.
+  const appKey = resolveAppKey();
+  const aptabaseHost = APTABASE_HOST_BY_REGION[appKey.split('-')[1]];
+  if (aptabaseHost && !responseGuardInstalled) {
+    guardAptabaseResponses(net, aptabaseHost);
+    responseGuardInstalled = true;
+  }
+
   // Fire-and-forget: the SDK internally queues any trackEvent calls
   // made before initialization completes, then flushes them once ready.
-  aptabaseInit(resolveAppKey()).catch((error) => {
+  aptabaseInit(appKey).catch((error) => {
     console.error('[ANALYTICS] Failed to initialize analytics:', error);
     enabled = false;
   });

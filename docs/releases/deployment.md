@@ -66,7 +66,7 @@ Two Linux-specific behaviors follow from that:
 
 If a Linux desktop has no polkit agent and no usable `sudo` TTY, the install fails and surfaces through the updater's existing `error` handler rather than failing silently. The user can always fall back to `npx kangentic@latest`.
 
-That handler always logs the failure and always counts it as `app_error`. It does not always file a Sentry issue. `isElevationDeniedError` suppresses exit 126 and 127 from an elevation front-end, the two codes `pkexec` uses when the user dismissed the authentication dialog or was not authorized, because neither is a defect we can ship a fix for. A failure carrying any other code still reports, including a package manager's own. See the "counted, not reported" entries in [Error reporting (Sentry)](../telemetry/error-reporting.md#counted-not-reported).
+That handler always logs the failure. It counts it as `app_error` unless `isTransientUpdaterError` matches it first (a network blip, or a download failing with a 5xx, 408, 429 or 618 status), and it does not always file a Sentry issue. `isElevationDeniedError` suppresses exit 126 and 127 from an elevation front-end, the two codes `pkexec` uses when the user dismissed the authentication dialog or was not authorized, because neither is a defect we can ship a fix for. A failure carrying any other code still reports, including a package manager's own. See the "counted, not reported" entries in [Error reporting (Sentry)](../telemetry/error-reporting.md#counted-not-reported).
 
 #### What verifies a Linux update
 

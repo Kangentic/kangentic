@@ -781,6 +781,106 @@ export function shouldReportEscalation(
   return gpuEndedPreviousRun(record, context);
 }
 
+/** A PCI id in the hex form every lookup table uses, so 0x10de reads as NVIDIA. */
+function formatPciId(value: unknown): string {
+  return typeof value === 'number' ? `0x${value.toString(16).padStart(4, '0')}` : 'unknown';
+}
+
+/** One adapter from `app.getGPUInfo`, on one line. */
+function describeGpuDevice(entry: unknown): string {
+  const device = (entry ?? {}) as Record<string, unknown>;
+  const parts = [`vendor=${formatPciId(device.vendorId)}`, `device=${formatPciId(device.deviceId)}`];
+  if (typeof device.driverVersion === 'string') parts.push(`driver=${device.driverVersion}`);
+  if (typeof device.driverVendor === 'string') parts.push(`driverVendor=${device.driverVendor}`);
+  if (device.active === true) parts.push('active');
+  return parts.join(' ');
+}
+
+/** One death on one line. See buildGpuProcessContext for why it is a string. */
+function describeGpuDeath(death: GpuDeathRecord): string {
+  return `${death.reason} code=${death.exitCode ?? 'none'} at=${death.at}`
+    + ` compositing=${death.compositing} webgl=${death.webgl}`;
+}
+
+/** One step down the ladder on one line, with the Linux reading when there is
+ *  one. That reading is what separates a dead zygote from a fork refused at the
+ *  process limit, and a null field stays visible as `unknown`. */
+function describeGpuModeChange(modeChange: GpuModeChangeRecord): string {
+  const parts = [`at=${modeChange.at}`, `compositing=${modeChange.compositing}`, `webgl=${modeChange.webgl}`];
+  const { linux } = modeChange;
+  if (linux) {
+    parts.push(
+      `zygote=${linux.zygote}`,
+      `schedulingEntities=${linux.schedulingEntities ?? 'unknown'}`,
+      `maxUserProcesses=${linux.maxUserProcesses ?? 'unknown'}`,
+    );
+  }
+  return parts.join(' ');
+}
+
+/** What a report knows that the record does not, read on the boot that files it. */
+export interface GpuReportFacts {
+  /** `app.getGPUFeatureStatus()`, passed through, so this module stays Electron-free. */
+  featureStatusOnReport: object;
+  previousRunExit: unknown;
+  /** The raw `app.getGPUInfo('complete')` result, or null when it failed. */
+  gpuInfoOnReport: unknown;
+  killedTheLastRun: boolean;
+  softwareRenderingEngaged: boolean;
+}
+
+/**
+ * The `gpu_process` Sentry context (DESKTOP-29).
+ *
+ * Sentry normalizes contexts to depth 3, and `normalizeDepth` is deliberately
+ * left at that default: raising it is global, grows every event, and widens what
+ * redact-event-paths.ts walks. So an object inside a list here arrives as
+ * "[Object]", and DESKTOP-29 lost its `deaths`, its `modeChanges` and the Linux
+ * reading that way. `deaths` and `modeChanges` are one line per entry, the same
+ * shape `utility_process.crashes` has always had. Fixed fields only, no paths.
+ *
+ * `previousRunExit` separates the two shapes seen so far: 'abrupt' means the
+ * escalating run ended in a browser-process kill (DESKTOP-W's shape); 'clean' or
+ * 'failsafe' means Chromium recovered on its own (DESKTOP-15's).
+ *
+ * TWO feature-status reads, deliberately not one: `featureStatusAtEscalation` is
+ * what Chromium's GPU mode was at the record's latest write, a death or a
+ * fallback (captured back then); `featureStatusOnReport` is what it is on THIS
+ * boot, which may already differ (a machine that recovers on its own, or one
+ * still stuck). Reporting only the live read would claim to describe the failure
+ * while actually describing whatever came up afterwards.
+ */
+export function buildGpuProcessContext(record: GpuEscalationRecord, facts: GpuReportFacts): Record<string, unknown> {
+  return {
+    reason: record.reason,
+    exitCode: record.exitCode,
+    count: record.count,
+    // The deaths that counted as GPU faults. `count` includes kills and
+    // session-teardown exits, which the recovery ignores, so the gap between
+    // the two says how much of the record was noise.
+    faultDeathCount: summarizeGpuFaults(record).faultCount,
+    firstAt: record.firstAt,
+    lastAt: record.lastAt,
+    escalatedInVersion: record.appVersion,
+    featureStatusAtEscalation: record.featureStatus,
+    featureStatusOnReport: facts.featureStatusOnReport,
+    previousRunExit: facts.previousRunExit,
+    // The SEQUENCE, which is the thing a single end-state snapshot could never
+    // say: how Chromium walked its fallback ladder. Each entry names the rung
+    // its death left behind, so the death that triggered a fallback already
+    // reads the lower one. This is what the next occurrence needs for anyone to
+    // name a cause.
+    deaths: record.deaths.map(describeGpuDeath),
+    // Each step down the ladder that Chromium announced, which on a
+    // launch-failure ladder is the only trace of the incident. On Linux each
+    // step carries whether the GPU's zygote was alive.
+    modeChanges: record.modeChanges.map(describeGpuModeChange),
+    gpuInfoOnReport: summarizeGpuInfo(facts.gpuInfoOnReport),
+    killedTheLastRun: facts.killedTheLastRun,
+    softwareRenderingEngaged: facts.softwareRenderingEngaged,
+  };
+}
+
 /**
  * Cut `app.getGPUInfo('complete')` down to the fields a triage would actually
  * read.
@@ -806,17 +906,10 @@ export function summarizeGpuInfo(info: unknown): Record<string, unknown> | null 
   const auxAttributes = (source.auxAttributes ?? {}) as Record<string, unknown>;
   const devices = Array.isArray(source.gpuDevice) ? source.gpuDevice : [];
   return {
-    // The adapters themselves: which one was active, and on what driver.
-    gpuDevice: devices.slice(0, 4).map((entry) => {
-      const device = (entry ?? {}) as Record<string, unknown>;
-      return {
-        vendorId: device.vendorId,
-        deviceId: device.deviceId,
-        driverVersion: device.driverVersion,
-        driverVendor: device.driverVendor,
-        active: device.active,
-      };
-    }),
+    // The adapters themselves: which one was active, and on what driver. One
+    // string, not a list: this sits a level below `deaths`, where depth 3 turns
+    // an array of any kind into "[Array]" (see buildGpuProcessContext).
+    gpuDevice: devices.slice(0, 4).map(describeGpuDevice).join('; '),
     machineModelName: source.machineModelName,
     machineModelVersion: source.machineModelVersion,
     glRenderer: auxAttributes.glRenderer,
