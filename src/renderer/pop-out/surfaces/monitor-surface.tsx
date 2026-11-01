@@ -60,6 +60,14 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     });
     signal.addEventListener('abort', unsubscribeFirstOutput);
 
+    // A queued card's place in line and a hosted detail's line of tasks: this
+    // window runs no App.tsx, so it reads the line and follows it itself.
+    void useSessionStore.getState().syncQueueSnapshot();
+    const unsubscribeQueue = window.electronAPI.sessions.onQueueChanged((snapshot) => {
+      useSessionStore.getState().setQueueSnapshot(snapshot);
+    });
+    signal.addEventListener('abort', unsubscribeQueue);
+
     // Snapshot pushes for the DB-resident half (session spawned/exited, task
     // retitled or moved).
     const unsubscribeChanged = window.electronAPI.monitor.onChanged((snapshot) => {
@@ -112,6 +120,7 @@ export const monitorSurface: SurfaceDescriptor<'monitor'> = {
     // main announces once per session, so a Fast Refresh re-reads it from
     // main's cache rather than wait for the next snapshot push.
     void useSessionStore.getState().syncSessions();
+    void useSessionStore.getState().syncQueueSnapshot();
     // Pattern B for this window: main is the only authority for the offscreen
     // set, and a surface can sit unchanged across the whole session, so the
     // push alone leaves a hosted pill dark after a Fast Refresh.

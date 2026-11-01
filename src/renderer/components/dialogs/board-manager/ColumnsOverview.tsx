@@ -76,6 +76,7 @@ export interface OverviewRow {
   permission: OverviewValue;
   handoff: OverviewFlag;
   session: OverviewValue;
+  oneAtATime: OverviewFlag;
   onEnter: OverviewValue;
   onTurnEnd: OverviewValue;
   onExit: OverviewValue;
@@ -209,7 +210,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
   const columnGroups: DataTableColumnGroup[] = [
     { label: '', span: 1 },
     { label: t({ message: 'Agent', context: 'board overview group' }), span: 5, icon: <Bot size={12} strokeWidth={1.75} /> },
-    { label: t`Conversation`, span: 2, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
+    { label: t`Sessions`, span: 3, icon: <MessageSquare size={12} strokeWidth={1.75} /> },
     { label: t`Automations`, span: 3, icon: <Columns3Cog size={12} strokeWidth={1.75} /> },
   ];
 
@@ -218,8 +219,8 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
   // realistic per-column setup reads whole at the site's 1600px frame: an agent
   // as long as "GitHub Copilot CLI", a label as long as "Plan (Read-Only)",
   // with room left for a font wider than Segoe UI (the posters are shot on
-  // Linux). Session is 10% so "Isolated" reads whole beside the Split icon that
-  // leads it. Anything longer ellipsizes in OverviewCell.
+  // Linux). Conversation is 10% so "Isolated" reads whole beside the Split icon
+  // that leads it. Anything longer ellipsizes in OverviewCell.
   const columns: DataTableColumn<OverviewRow>[] = [
     {
       key: 'name',
@@ -240,13 +241,14 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
         </span>
       ),
     },
-    { key: 'autoSpawn', label: t({ message: 'Start', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
-    { key: 'agent', label: t({ message: 'Agent', context: 'board overview column header' }), width: 'w-[13%]', render: (row) => <OverviewCell value={row.agent} /> },
-    { key: 'model', label: t({ message: 'Model', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.model} /> },
-    { key: 'effort', label: t({ message: 'Effort', context: 'board overview column header' }), width: 'w-[7%]', render: (row) => <OverviewCell value={row.effort} /> },
-    { key: 'permission', label: t({ message: 'Permissions', context: 'board overview column header' }), width: 'w-[12%]', render: (row) => <OverviewCell value={row.permission} /> },
-    { key: 'handoff', label: t({ message: 'Handoff', context: 'board overview column header' }), width: 'w-[7%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
-    { key: 'session', label: t({ message: 'Session', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
+    { key: 'autoSpawn', label: t({ message: 'Start', context: 'board overview column header' }), width: 'w-[5%]', render: (row) => <OverviewToggle flag={row.autoSpawn} /> },
+    { key: 'agent', label: t({ message: 'Agent', context: 'board overview column header' }), width: 'w-[11%]', render: (row) => <OverviewCell value={row.agent} /> },
+    { key: 'model', label: t({ message: 'Model', context: 'board overview column header' }), width: 'w-[9%]', render: (row) => <OverviewCell value={row.model} /> },
+    { key: 'effort', label: t({ message: 'Effort', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewCell value={row.effort} /> },
+    { key: 'permission', label: t({ message: 'Permissions', context: 'board overview column header' }), width: 'w-[11%]', render: (row) => <OverviewCell value={row.permission} /> },
+    { key: 'handoff', label: t({ message: 'Handoff', context: 'board overview column header' }), width: 'w-[6%]', render: (row) => <OverviewToggle flag={row.handoff} /> },
+    { key: 'session', label: t({ message: 'Conversation', context: 'board overview column header' }), width: 'w-[10%]', render: (row) => <OverviewCell value={row.session} /> },
+    { key: 'oneAtATime', label: t({ message: 'One at a time', context: 'board overview column header' }), width: 'w-[9%]', render: (row) => <OverviewToggle flag={row.oneAtATime} /> },
     {
       key: 'onEnter',
       label: t`On enter`,
@@ -262,7 +264,7 @@ export function ColumnsOverview({ rows, onSelect }: ColumnsOverviewProps) {
     {
       key: 'onExit',
       label: t`On exit`,
-      width: 'w-[7%]',
+      width: 'w-[6%]',
       render: (row) => <span data-exit={row.onExit.label}><OverviewCell value={row.onExit} /></span>,
     },
   ];

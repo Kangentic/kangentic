@@ -108,6 +108,10 @@ function makeContext() {
     currentProjectId: PROJECT_ID,
     currentProjectPath: PROJECT_PATH,
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       suspend: vi.fn(async () => {}),
       getSession: vi.fn(() => null),
       markIdleAuthoritative: vi.fn(),

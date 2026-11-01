@@ -38,6 +38,7 @@ sources:
 | session_spawn_strategy | TEXT | NOT NULL | 'create_or_resume' |
 | created_at | TEXT | NOT NULL | |
 | description | TEXT | | NULL |
+| max_agents | INTEGER | | NULL |
 
 Valid role values: `todo`, `done`, or NULL (custom column). The column has no CHECK constraint, and
 roles that have since left the union (`planning`, `running`, `backlog`) genuinely shipped, so the
@@ -61,6 +62,12 @@ terminal) or `automatic` (Kangentic, through the agent's plan approval hook). It
 the column's `permission_mode` is `plan`, and `mapRow` reads any other stored value as `manual`. A
 workflow task follows its own `plan_approval` instead, else the plan columns on its route (see the
 `tasks` table above), and a task with `automations_disabled` set is always `manual`.
+
+`max_agents` is how many agents run in the column at once: NULL for no limit, or a number of at
+least 1, and `mapRow` reads anything else as NULL. The UI offers only 1. Other tasks wait in the
+column and start in the order they entered it (see the
+[queue](../architecture/sessions/spawn-flow.md#queue)). It is the column's own, so every Board
+Profile shares it.
 
 Per-column session model (two orthogonal axes; see `src/shared/types.ts` and [Isolated Sessions](../architecture/sessions/spawn-flow.md#isolated-sessions-per-column-session-model)):
 - `session_target` (renamed from the original `session_strategy`): `main` (default, the task's main session) or `isolated` (a separate, context-isolated session keyed by the swimlane id). See `SessionTarget`.

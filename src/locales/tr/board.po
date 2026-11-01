@@ -366,6 +366,10 @@ msgid "Paused"
 msgstr "Duraklatıldı"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Queued {position}/{total}..."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgid "Queued..."
 msgstr "Sırada..."
@@ -547,6 +551,14 @@ msgstr "Tümünü görüntüle"
 #, fuzzy
 msgid "View conversation"
 msgstr "Konuşmayı görüntüle"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a free agent slot."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a slot in {columnName}."
+msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

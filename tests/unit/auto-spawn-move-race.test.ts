@@ -68,6 +68,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
 // The pass's own reads of the shared row.
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
+    listCappedColumnTasks() { return []; }
     list = (swimlaneId: string) => (hoisted.taskRow && hoisted.taskRow.swimlane_id === swimlaneId ? [{ ...hoisted.taskRow }] : []);
     getById = (id: string) => (hoisted.taskRow && hoisted.taskRow.id === id ? { ...hoisted.taskRow } : undefined);
     update = (patch: Record<string, unknown>) => {
@@ -219,6 +220,10 @@ function createContext(registry: RegistryRow[]) {
     boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       listSessions: vi.fn(() => registry),
       hasSessionForTask: vi.fn((taskId: string) => registry.some((row) => row.taskId === taskId)),
       getSession: vi.fn(() => null),

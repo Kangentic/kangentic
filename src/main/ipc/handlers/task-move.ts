@@ -35,7 +35,7 @@ import { trackMilestone } from '../../analytics/usage';
 import { getDevPortForTask } from '../../dev-ports/dev-port-allocator';
 import { parseModelId } from '../../../shared/model-id';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
-import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
+import { markRecordSuspended, settleQueuedRecord } from '../../transition-engine/session-lifecycle';
 import type { IpcContext } from '../ipc-context';
 import { isAbortError } from '../../../shared/abort-utils';
 import { abortBacklogPromotion } from './backlog';
@@ -173,7 +173,7 @@ async function suspendLiveSessionForRespawn(args: {
       captureGitChurn(task, sessionRepo, usageHistoryRepo, currentRecord.id, projectPath, defaultBaseBranch);
       markRecordSuspended(sessionRepo, currentRecord.id, 'system');
     } else if (currentRecord && currentRecord.status === 'queued') {
-      markRecordExited(sessionRepo, currentRecord.id);
+      settleQueuedRecord(sessionRepo, currentRecord, context.sessionManager.isResuming(liveSessionId), 'system');
     }
     await context.sessionManager.suspend(liveSessionId);
     tasks.update({ id: taskId, session_id: null, ...additionalTaskUpdates });
@@ -979,8 +979,8 @@ export async function handleTaskMove(
             markRecordSuspended(sessionRepo, record.id, 'system');
             console.log(`[TASK_MOVE] Suspended session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
           } else if (record && record.status === 'queued') {
-            markRecordExited(sessionRepo, record.id);
-            console.log(`[TASK_MOVE] Exited queued session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
+            settleQueuedRecord(sessionRepo, record, context.sessionManager.isResuming(task.session_id), 'system');
+            console.log(`[TASK_MOVE] Settled queued session record ${record.id.slice(0, 8)} for task ${task.id.slice(0, 8)}`);
           }
           await context.sessionManager.suspend(task.session_id);
           tasks.update({ id: task.id, session_id: null });
@@ -1077,7 +1077,7 @@ export async function handleTaskMove(
             captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, resolvedProjectPath, effectiveDefaultBranch);
             markRecordSuspended(sessionRepo, record.id, 'system');
           } else if (record && record.status === 'queued') {
-            markRecordExited(sessionRepo, record.id);
+            settleQueuedRecord(sessionRepo, record, context.sessionManager.isResuming(task.session_id), 'system');
           }
           await context.sessionManager.suspend(task.session_id);
           tasks.update({ id: task.id, session_id: null });
@@ -1324,7 +1324,17 @@ export async function handleTaskMove(
           // injection so a settings change is never typed into the PTY. Phase 3
           // re-applies the flags and delivers the auto_command / continuation
           // via spawnAgent.
-          if (plan?.restartReason) {
+          //
+          // The same path for an agent arriving in a full column: it pauses here
+          // and Phase 3's spawn queues the resume, so it carries on in the same
+          // conversation on its turn, with the column's message as its prompt.
+          // Asked after `tasks.move`, so the gate reads the destination. A queued
+          // row holds no slot and stays queued, re-gated by its new column.
+          const yieldsToColumn = !plan?.restartReason
+            && context.sessionManager.getSession(task.session_id)?.status === 'running'
+            && context.sessionManager.columnBlocks({ taskId: task.id, projectId: resolvedProjectId });
+          const restartReason = plan?.restartReason ?? null;
+          if (restartReason || yieldsToColumn) {
             await suspendLiveSessionForRespawn({
               context,
               tasks,
@@ -1336,13 +1346,15 @@ export async function handleTaskMove(
               task,
               projectPath: resolvedProjectPath,
               defaultBaseBranch: effectiveDefaultBranch,
-              phase: restartPhaseFor(plan.restartReason),
+              phase: restartReason ? restartPhaseFor(restartReason) : 'queuing-for-column',
               ownAgentSessionId,
               signal,
             });
             console.log(
               `[TASK_MOVE] Suspending session for task ${task.id.slice(0, 8)}`
-              + ` (${plan.restartReason} change requires respawn). Will respawn with destination column flags.`,
+              + (restartReason
+                ? ` (${restartReason} change requires respawn). Will respawn with destination column flags.`
+                : ' (its column is full). Will resume in the same conversation on its turn.'),
             );
             return {
               task,
@@ -1511,6 +1523,9 @@ export async function handleTaskMove(
     }).finally(() => {
       releaseOwnMoveMark?.();
       releaseOwnMoveMark = null;
+      // A task that kept its agent through the move freed its old column's slot
+      // without any process ending, so nothing else would start the next in line.
+      context.sessionManager.drainQueue();
     });
 
     if (!plan) {
@@ -1814,6 +1829,7 @@ export async function handleTaskMove(
           console.error('[TASK_MOVE] Rollback after move failure failed:', rollbackError);
         }
       });
+      context.sessionManager.drainQueue();
 
       if (abort) {
         console.log(`[TASK_MOVE] Aborted stale move for task ${task.id.slice(0, 8)}`);

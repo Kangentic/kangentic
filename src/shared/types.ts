@@ -923,6 +923,12 @@ export interface Swimlane {
   session_target: SessionTarget;
   /** What to do with that track on entry (see SessionSpawnStrategy). Defaults to 'create_or_resume'. */
   session_spawn_strategy: SessionSpawnStrategy;
+  /**
+   * How many agents run in this column at once. Other tasks wait in the column
+   * and start in the order they entered it. Null means no limit. The UI offers
+   * only 1 today. Not a Board Profile field: a limit is shared across profiles.
+   */
+  max_agents: number | null;
   created_at: string;
 }
 
@@ -6368,6 +6374,7 @@ export interface SwimlaneCreateInput {
   handoff_context?: boolean;
   session_target?: SessionTarget;
   session_spawn_strategy?: SessionSpawnStrategy;
+  max_agents?: number | null;
 }
 
 export interface SwimlaneUpdateInput {
@@ -6391,6 +6398,7 @@ export interface SwimlaneUpdateInput {
   handoff_context?: boolean;
   session_target?: SessionTarget;
   session_spawn_strategy?: SessionSpawnStrategy;
+  max_agents?: number | null;
 }
 
 export interface ActionCreateInput {
@@ -7195,6 +7203,37 @@ export type ExitSequenceStep = string | { delayMs: number };
 /** Who resumed a session (`SpawnSessionInput.resumedBy`): a person, or Kangentic itself. */
 export type SessionResumer = 'user' | 'recovery' | 'memory';
 
+/** A task in the line for an agent slot, across projects. */
+export interface QueueTask {
+  /** Null for a slot a restart is keeping, which has no session for a moment. */
+  sessionId: string | null;
+  taskId: string;
+  projectId: string;
+  projectName: string;
+  /** Null for a session with no task of its own, a Command Terminal. */
+  title: string | null;
+  displayId: number | null;
+}
+
+/** A column with an agent limit and tasks waiting in it. */
+export interface QueueColumnLine {
+  projectId: string;
+  swimlaneId: string;
+  columnName: string;
+  maxAgents: number;
+  /** Agents holding the column's slot. More than its limit after the limit is turned on. */
+  holders: QueueTask[];
+  /** Tasks waiting, first in line first: the order they entered the column. */
+  waiting: QueueTask[];
+}
+
+/** Who is waiting for an agent slot, and why. Only main can see all of it. */
+export interface QueueSnapshot {
+  columns: QueueColumnLine[];
+  /** Every queued session in queue order, whatever it waits for. */
+  global: QueueTask[];
+}
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7413,6 +7452,8 @@ export interface BoardColumnConfig {
   planExitTarget?: string; // name of target column
   /** Who approves a plan in this column (see PlanApproval). Omitted = 'manual'. */
   planApproval?: PlanApproval;
+  /** How many agents run in this column at once (see `Swimlane.max_agents`). Omitted = no limit. */
+  maxAgents?: number | null;
   archived?: boolean;
   /**
    * LEGACY. The column's message to its agent, before automations existed.
@@ -8163,6 +8204,8 @@ export interface ElectronAPI {
      * `taskId`.
      */
     onRemoved: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
+    getQueueSnapshot: () => Promise<QueueSnapshot>;
+    onQueueChanged: (callback: (snapshot: QueueSnapshot) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;

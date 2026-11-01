@@ -85,6 +85,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
+    listCappedColumnTasks() { return []; }
     list = () => taskRepoList();
     getById = (taskId: string) => taskRepoList().find((task) => task.id === taskId) ?? null;
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);

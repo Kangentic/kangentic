@@ -366,6 +366,10 @@ msgid "Paused"
 msgstr "一時停止中"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Queued {position}/{total}..."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
 #, fuzzy
 msgid "Queued..."
 msgstr "キュー待機中..."
@@ -547,6 +551,14 @@ msgstr "すべて表示"
 #, fuzzy
 msgid "View conversation"
 msgstr "会話を表示"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a free agent slot."
+msgstr ""
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a slot in {columnName}."
+msgstr ""
 
 #: src/renderer/components/board/activity-reason-text.ts
 #, fuzzy

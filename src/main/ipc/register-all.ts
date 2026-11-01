@@ -89,6 +89,8 @@ import { automationAgentDeps } from './helpers/automation-agent-deps';
 import { backgroundCallSink } from './helpers/background-call-sink';
 import { ActivityIntervalStore } from '../activity-engine/activity-interval-store';
 import { getOpenProjectDb, getProjectDb } from '../db/database';
+import { TaskMoveRepository } from '../db/repositories/task-move-repository';
+import { createColumnCapacityGate } from '../transition-engine/column-capacity';
 import { TranscriptRepository } from '../db/repositories/transcript-repository';
 import { SessionRepository } from '../db/repositories/session-repository';
 import { fillEarlierRunResultTokens } from './handlers/session-metrics';
@@ -180,6 +182,16 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
       return fillEarlierRunResultTokens(sessionManager, new SessionRepository(db), session.id, { queued: true });
     },
   });
+  // A column's agent limit, read fresh from the task's own project on every
+  // pass. `getOpenProjectDb` so a deleted project is never opened again; the
+  // gate admits a project it cannot read, so nothing strands.
+  sessionManager.setQueueGate(createColumnCapacityGate({
+    listCappedTasks: (projectId) => {
+      const db = getOpenProjectDb(projectId);
+      return db ? new TaskMoveRepository(db).listCappedColumnTasks() : null;
+    },
+    listHolders: () => sessionManager.listColumnHolders(),
+  }));
   const pasteEngine = createPasteEngine(sessionManager);
   const terminalSubmit = new TerminalSubmit(sessionManager, pasteEngine);
   const terminalSubmitScheduler = new TerminalSubmitScheduler(sessionManager, terminalSubmit);
@@ -187,6 +199,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const boardConfigManager = new BoardConfigManager({
     ephemeral: process.argv.includes('--ephemeral'),
   });
+  boardConfigManager.setOnConfigApplied(() => sessionManager.drainQueue());
   const diffWatcher = new DiffWatcher();
   // Placeholder config -- reconciled to the real effective config right
   // after `context` (and its configManager getter) is constructed below,

@@ -14,7 +14,7 @@ import { normalizeCommandTerminalName } from '../../shared/command-terminal-name
 export const SHARED_RENDERER_ID = -1;
 import { resolveDebugDumpDir } from '../diagnostics/debug-dump-resolver';
 import { ShellResolver } from './spawn/shell-resolver';
-import { SessionQueue } from './session-queue';
+import { SessionQueue, isColumnExempt, type ColumnHolder, type GatedInput, type QueueGate, type QueuedInput } from './session-queue';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
@@ -176,6 +176,9 @@ function noteHostStopResult(result: StopProcessResult): void {
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
 interface InFlightSpawn {
   taskId: string;
+  projectId: string;
+  /** A Command Terminal or a workflow's own agent, which holds no column's slot. */
+  columnExempt: boolean;
   cancelled: boolean;
   /** The exit of the PTY a cancelled spawn's host had already started. */
   abandonedPtyExit: Promise<void> | null;
@@ -2003,6 +2006,9 @@ export class SessionManager extends EventEmitter {
    */
   private readonly spawnsInFlight = new Map<string, InFlightSpawn>();
 
+  /** Restarts in place keeping their column slot: see `holdColumnSlot`. */
+  private readonly columnSlotHolds = new Set<ColumnHolder>();
+
   /**
    * Wait for spawns to settle, at most as long as awaitExit waits for a PTY.
    * A teardown that removes a working directory waits here for a spawn it
@@ -2054,10 +2060,100 @@ export class SessionManager extends EventEmitter {
   /**
    * Agent slots free right now: the app-wide cap less every running, starting
    * and queued session. The workflow engine starts no more tasks than this, so
-   * To Do stays its durable queue and nothing piles into the in-memory one.
+   * To Do stays its durable queue and nothing piles into the in-memory one. An
+   * entry waiting on its column claims no slot: it could not take one if it
+   * were free, and counting it would read the whole app as full.
    */
   getFreeAgentSlots(): number {
-    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - this.sessionQueue.length);
+    const claimedByQueue = this.sessionQueue.length - this.sessionQueue.blockedCount;
+    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - claimedByQueue);
+  }
+
+  /** Whether this session was started as a resume of an earlier conversation. */
+  isResuming(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.resuming === true;
+  }
+
+  /** Install what the queue asks about a column's agent limit. */
+  setQueueGate(gate: QueueGate): void {
+    this.sessionQueue.setGate(gate);
+  }
+
+  /**
+   * Whether this task's column holds it back, global slots aside. A running
+   * agent arriving in a full column asks this: it already holds a global slot,
+   * so a full app is no reason to pause it.
+   */
+  columnBlocks(input: GatedInput): boolean {
+    return this.sessionQueue.gateBlocks(input);
+  }
+
+  /**
+   * Re-check the queue after something that frees a place without freeing a
+   * process: a task leaving a limited column, or a column's limit changing.
+   * Nothing to do on an empty queue, so a caller on the move path pays nothing.
+   */
+  drainQueue(): void {
+    if (this.sessionQueue.length === 0) return;
+    this.sessionQueue.notifySlotFreed();
+    this.emit('queue-changed');
+  }
+
+  /** Queued sessions in queue order, for anything that reports the line. */
+  listQueuedInputs(): readonly QueuedInput[] {
+    return this.sessionQueue.entries;
+  }
+
+  /**
+   * Keep a task's column slot across an in-place restart, whose suspend would
+   * otherwise hand it to the next task in line. The caller releases it once the
+   * task's new spawn has been made. A task with no slot has nothing to keep: a
+   * hold would let a queued task's restart past the tasks ahead of it.
+   */
+  holdColumnSlot(projectId: string, taskId: string): () => void {
+    const holdsSlot = this.listColumnHolders().some((holder) => holder.projectId === projectId && holder.taskId === taskId);
+    if (!holdsSlot) return () => undefined;
+    const hold: ColumnHolder = { projectId, taskId, sessionId: null };
+    this.columnSlotHolds.add(hold);
+    return () => {
+      this.columnSlotHolds.delete(hold);
+      this.drainQueue();
+    };
+  }
+
+  /** A project's tasks holding a column slot or queued for one. */
+  listColumnClaims(projectId: string): Set<string> {
+    const claims = new Set<string>();
+    for (const holder of this.listColumnHolders()) {
+      if (holder.projectId === projectId) claims.add(holder.taskId);
+    }
+    for (const input of this.sessionQueue.entries) {
+      if (input.projectId === projectId && !isColumnExempt(input)) claims.add(input.taskId);
+    }
+    return claims;
+  }
+
+  /**
+   * Who holds a slot in whichever column they are in: running agents, spawns on
+   * their way (a promotion's row still reads queued until the host answers), and
+   * restarts keeping theirs. A waiting or idle agent holds it. A paused one has
+   * no running row. Read from the registry, because the database's status is not
+   * reliable: both startup paths record every session as running.
+   */
+  listColumnHolders(): ColumnHolder[] {
+    const holders = new Map<string, ColumnHolder>();
+    const add = (holder: ColumnHolder): void => {
+      holders.set(`${holder.projectId}:${holder.taskId}`, holder);
+    };
+    for (const session of this.registry.values()) {
+      if (session.status !== 'running' || isColumnExempt(session)) continue;
+      add({ projectId: session.projectId, taskId: session.taskId, sessionId: session.id });
+    }
+    for (const [sessionId, inFlight] of this.spawnsInFlight) {
+      if (!inFlight.cancelled && !inFlight.columnExempt) add({ projectId: inFlight.projectId, taskId: inFlight.taskId, sessionId });
+    }
+    for (const hold of this.columnSlotHolds) add(hold);
+    return [...holders.values()];
   }
 
   /** Lightweight session counts without allocating mapped Session objects. */
@@ -2085,7 +2181,7 @@ export class SessionManager extends EventEmitter {
     // find its live PTY and kill it with no grace (pty-teardown-grace).
     if (this.hiddenUntilAdopted.size > 0 && input.taskId) await this.discardHiddenForTask(input.taskId);
 
-    if (this.sessionQueue.shouldQueue()) {
+    if (this.sessionQueue.shouldQueue(input)) {
       // Return a queued placeholder immediately (don't block the caller).
       // SessionQueue will promote it to a running PTY when a slot opens.
       const id = input.id ?? uuidv4();
@@ -2139,7 +2235,7 @@ export class SessionManager extends EventEmitter {
    */
   private async spawnHidden(input: SpawnSessionInput): Promise<Session> {
     const id = input.id ?? uuidv4();
-    if (this.sessionQueue.shouldQueue()) {
+    if (this.sessionQueue.shouldQueue(input)) {
       releaseCommandHold(input.agentParser, input.cwd, id);
       // `spawn()` marked it before handing over; nothing else would clear it.
       this.inputInAlternateScreen.delete(id);
@@ -2202,6 +2298,8 @@ export class SessionManager extends EventEmitter {
     let markSettled: () => void = () => undefined;
     const inFlight: InFlightSpawn = {
       taskId: input.taskId,
+      projectId: input.projectId,
+      columnExempt: isColumnExempt(input),
       cancelled: false,
       abandonedPtyExit: null,
       settled: new Promise<void>((resolve) => { markSettled = resolve; }),

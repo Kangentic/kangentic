@@ -33,7 +33,8 @@ automations on the right.
 | **Plan approval** | For plan-mode columns: whether you approve each plan (**Manual**, the default) or Kangentic does (**Automatic**). Automatic answers the plan prompt and, for Claude, a planning prompt for an MCP tool your project allows; a question the agent asks still waits. A workflow task can override it for itself, and a task with automations disabled is always Manual. Automatic is disabled for an agent Kangentic cannot approve plans for ("Kangentic can't approve Codex CLI's plans, so they wait for you."), and both options are disabled while a Board Profile is selected, since every profile shares the column's value |
 | **After Plan Mode** | For plan-mode columns: where the task goes when the plan is approved. Pick a column, shown with its icon in its color; picking the column itself keeps the task where it is |
 | **Hand off context when the agent changes** | The new agent picks up the previous agent's conversation instead of starting from the task description |
-| **Session** | Main continues the task's conversation, and Isolated starts clean on every entry. An isolated session suits a code review or any pass that should not inherit the work before it. A split icon marks an isolated column in the column list, in **All columns**, and on this control's Isolated option |
+| **Which conversation this column uses** | Main continues the task's conversation, and Isolated starts a new one on every entry. An isolated column suits a code review or any pass that should not inherit the work before it. A split icon marks an isolated column in the column list, in **All columns**, and on this control's Isolated option |
+| **Run one agent in this column at a time** | Other tasks wait in this column and start in the order they arrived, for a column whose work must not overlap, such as merging. See [Running one agent at a time](#running-one-agent-at-a-time) |
 
 The column's message to its agent is no longer a field here. It is an automation, and it lives in
 the list on the right: see [Automations](#automations) below.
@@ -42,6 +43,20 @@ the list on the right: see [Automations](#automations) below.
 keeps the column. A column that still has tasks cannot be removed.
 
 When a column's agent override differs from the current session's agent, moving a task into that column triggers a cross-agent handoff. The outgoing agent's context (transcript, git changes, metrics) is automatically packaged and delivered to the incoming agent.
+
+## Running one agent at a time
+
+Turn on **Run one agent in this column at a time**, at the bottom of a column's Sessions section,
+and one task's agent runs there while the rest wait their turn.
+
+- An agent holds the column while it is working or waiting on you. A paused or queued task does not.
+- The order is when each task entered the column. Dragging cards within the column does not change it, and a task that leaves joins the end if it comes back.
+- A task that arrives with its agent still running has that agent paused, and on its turn it resumes the same conversation.
+- Every start and resume waits its turn, and **Max concurrent sessions** in Settings still applies on top.
+- Turning it on stops nothing: agents already running in the column carry on, and the limit applies from the next start.
+
+A waiting card reads "Queued 2/3...", counting the running task first, so the numbers match the
+column's own count. Its task window shows the whole line, and each row opens its task.
 
 ## Automations
 
@@ -165,7 +180,7 @@ An agent can do the same for its own task with `kangentic_update_task`'s `automa
 **Where they live.** Saving writes them to `kangentic.json` under the column that owns them, so
 they are shared with your team through git. The column header shows the automations mark (a
 column with a cog) and the count of automations that will run there, and **All columns** in the Column Manager shows
-every column's counts side by side.
+every column's counts side by side, and whether each column runs one agent at a time.
 
 ## Reorder Columns
 

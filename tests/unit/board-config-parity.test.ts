@@ -126,6 +126,7 @@ const SWIMLANE_FIELD_SHARING: Record<keyof Swimlane, FieldSharing> = {
   session_target: 'team',
   session_spawn_strategy: 'team',
   plan_approval: 'team',
+  max_agents: 'team',
   // DB-only: identity / ordering / runtime state / timestamp - never team config.
   id: 'db-only',
   position: 'db-only',
@@ -153,6 +154,7 @@ const ROUNDTRIP_CASES: Array<{ field: keyof Swimlane; configKey: keyof BoardColu
   { field: 'session_target', configKey: 'sessionTarget', dbValue: 'isolated', configValue: 'isolated' },
   { field: 'session_spawn_strategy', configKey: 'sessionSpawnStrategy', dbValue: 'always_spawn_new', configValue: 'always_spawn_new' },
   { field: 'plan_approval', configKey: 'planApproval', dbValue: 'automatic', configValue: 'automatic' },
+  { field: 'max_agents', configKey: 'maxAgents', dbValue: 1, configValue: 1 },
 ];
 
 /**
@@ -186,6 +188,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
     plan_approval: 'manual',
+    max_agents: null,
     created_at: '2025-01-01T00:00:00.000Z',
     ...overrides,
   };
@@ -261,6 +264,46 @@ describe('board-config parity: build (DB -> kangentic.json)', () => {
         `build-config.ts does not serialize '${entry.field}' to column.${String(entry.configKey)}`,
       ).toBe(entry.configValue);
     }
+  });
+
+  describe('maxAgents serialization', () => {
+    const columnOf = (config: BoardConfig, laneId: string): BoardColumnConfig | undefined => (
+      config.columns.find((candidate) => candidate.id === laneId)
+    );
+
+    // No limit is the default, and build omits a default so an unlimited board
+    // stays byte-identical. Apply reads the absent key as no limit.
+    //
+    // Red trigger: write `column.maxAgents = lane.max_agents` unconditionally and
+    // the key appears as null.
+    it('omits maxAgents for a column with no limit', () => {
+      hoisted.lanes = [makeSwimlane({ id: 'lane-review', name: 'Review', max_agents: null })];
+
+      const config = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig: null, fingerprint: 'fp' });
+
+      expect(columnOf(config, 'lane-review')).not.toHaveProperty('maxAgents');
+    });
+
+    it('writes the limit of a column that has one', () => {
+      hoisted.lanes = [makeSwimlane({ id: 'lane-review', name: 'Review', max_agents: 2 })];
+
+      const config = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig: null, fingerprint: 'fp' });
+
+      expect(columnOf(config, 'lane-review')?.maxAgents).toBe(2);
+    });
+
+    // To Do and Done run no agent, so a limit on one has nothing to share.
+    //
+    // Red trigger: drop the `lane.role !== 'todo' && lane.role !== 'done'` clause
+    // in build-config.ts and both keys appear.
+    it.each(['todo', 'done'] as const)('omits maxAgents for the %s column even when the row holds one', (role) => {
+      hoisted.lanes = [makeSwimlane({ id: `lane-${role}`, name: role, role, max_agents: 1 })];
+
+      const config = buildBoardConfigFromDb({ projectId: 'p', existingTeamConfig: null, fingerprint: 'fp' });
+
+      expect(columnOf(config, `lane-${role}`)).toBeDefined();
+      expect(columnOf(config, `lane-${role}`)).not.toHaveProperty('maxAgents');
+    });
   });
 
   // ---------------------------------------------------------------------------
@@ -448,5 +491,131 @@ describe('board-config parity: apply (kangentic.json -> DB)', () => {
 
     const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
     expect((updated as Record<string, unknown>).plan_approval).toBe('manual');
+  });
+
+  it('applies an absent maxAgents as no limit, so a teammate turning it off reaches this machine', () => {
+    // No limit is what build-config omits. Red trigger: fall back to `existing.max_agents`.
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review', max_agents: 1 }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review' }));
+
+    const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
+    expect((updated as Record<string, unknown>).max_agents).toBeNull();
+  });
+
+  it.each([0, -1, 'one'])('reads a hand-edited maxAgents of %s as no limit, which cannot hold a column forever', (value) => {
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review', maxAgents: value as number }));
+
+    const updated = hoisted.updateCalls.find((call) => call.id === 'lane-review');
+    expect((updated as Record<string, unknown>).max_agents).toBeNull();
+  });
+
+  // The existing lanes the apply cases below reconcile against.
+  function seedLanes(): void {
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+  }
+
+  const appliedLimit = (laneId: string): unknown => (
+    (hoisted.updateCalls.find((call) => call.id === laneId) as Record<string, unknown> | undefined)?.max_agents
+  );
+
+  // A fractional limit is a whole number of agents in practice. Flooring keeps
+  // the intent of "about one" rather than discarding the limit.
+  //
+  // Red trigger: drop the Math.floor in apply-config.ts and 1.5 reaches the DB.
+  it('floors a fractional maxAgents, in both the update and the create path', () => {
+    seedLanes();
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review', maxAgents: 1.5 }));
+    expect(appliedLimit('lane-review')).toBe(1);
+
+    // A column with no id is new: the lanes hold only To Do and Done.
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+    applyBoardConfigToDb('p', makeConfig({ name: 'Brand New', maxAgents: 2.9 }));
+    const created = hoisted.createCalls.find((call) => call.name === 'Brand New');
+    expect((created as Record<string, unknown>).max_agents).toBe(2);
+  });
+
+  // `true` is a number-looking limit to a loose reader. Reading it as 1 would
+  // quietly cap a column the file never limited.
+  //
+  // Red trigger: replace the `typeof ... === 'number'` check with a truthiness
+  // check and `true` reads as a limit of 1.
+  it('reads a boolean maxAgents as no limit', () => {
+    seedLanes();
+    applyBoardConfigToDb('p', makeConfig({ id: 'lane-review', name: 'Review', maxAgents: true as unknown as number }));
+
+    expect(appliedLimit('lane-review')).toBeNull();
+  });
+
+  // Red trigger: drop the `!isTodo && !isDone` clause in apply-config.ts and
+  // both columns take the limit.
+  it('ignores a maxAgents on the To Do and Done columns', () => {
+    seedLanes();
+    applyBoardConfigToDb('p', {
+      version: 1,
+      columns: [
+        { id: 'lane-todo', name: 'To Do', role: 'todo', maxAgents: 1 },
+        { id: 'lane-review', name: 'Review' },
+        { id: 'lane-done', name: 'Done', role: 'done', maxAgents: 1 },
+      ],
+      actions: [],
+      transitions: [],
+    });
+
+    expect(appliedLimit('lane-todo')).toBeNull();
+    expect(appliedLimit('lane-done')).toBeNull();
+  });
+
+  // The file arrives as text. Every case above hands apply a typed object, which
+  // a JSON.parse of a hand-edited file can differ from: a number, a float, a
+  // boolean and a string are all spelled out here the way a teammate would.
+  it('reads the limits of a file-shaped JSON string the way the typed cases do', () => {
+    hoisted.lanes = [
+      makeSwimlane({ id: 'lane-todo', name: 'To Do', role: 'todo' }),
+      makeSwimlane({ id: 'lane-review', name: 'Review' }),
+      makeSwimlane({ id: 'lane-gate', name: 'Gate' }),
+      makeSwimlane({ id: 'lane-flag', name: 'Flag' }),
+      makeSwimlane({ id: 'lane-text', name: 'Text' }),
+      makeSwimlane({ id: 'lane-done', name: 'Done', role: 'done', is_archived: true }),
+    ];
+    const fileText = `{
+      "version": 1,
+      "columns": [
+        { "id": "lane-todo", "name": "To Do", "role": "todo", "maxAgents": 1 },
+        { "id": "lane-review", "name": "Review", "maxAgents": 2 },
+        { "id": "lane-gate", "name": "Gate", "maxAgents": 1.5 },
+        { "id": "lane-flag", "name": "Flag", "maxAgents": true },
+        { "id": "lane-text", "name": "Text", "maxAgents": "3" },
+        { "id": "lane-done", "name": "Done", "role": "done", "maxAgents": 1 }
+      ],
+      "actions": [],
+      "transitions": []
+    }`;
+
+    applyBoardConfigToDb('p', JSON.parse(fileText) as BoardConfig);
+
+    expect(appliedLimit('lane-review')).toBe(2);
+    expect(appliedLimit('lane-gate')).toBe(1);
+    expect(appliedLimit('lane-flag')).toBeNull();
+    expect(appliedLimit('lane-text')).toBeNull();
+    expect(appliedLimit('lane-todo')).toBeNull();
+    expect(appliedLimit('lane-done')).toBeNull();
   });
 });

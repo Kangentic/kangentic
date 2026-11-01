@@ -115,6 +115,7 @@ export class BoardConfigManager {
    *  them. The open-time push can land before the renderer has made that project
    *  current (a launch restore, an open by folder path), and is dropped then. */
   private readonly lastWarningsByProject = new Map<string, string[]>();
+  private onConfigApplied: (() => void) | null = null;
 
   constructor(options?: { ephemeral?: boolean }) {
     this.isEphemeral = options?.ephemeral ?? false;
@@ -386,7 +387,13 @@ export class BoardConfigManager {
     }
     const config = this.getEffectiveConfigForPath(projectPath);
     const result = applyBoardConfigToDb(projectId, config);
+    this.onConfigApplied?.();
     return { warnings: [...warnings, ...result.warnings] };
+  }
+
+  /** Called after a config reaches a database: a column's agent limit may have changed. */
+  setOnConfigApplied(listener: () => void): void {
+    this.onConfigApplied = listener;
   }
 
   // --- Default Base Branch ---

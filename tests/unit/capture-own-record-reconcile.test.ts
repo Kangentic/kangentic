@@ -60,6 +60,7 @@ vi.mock('../../src/main/db/repositories/usage-history-repository', () => ({
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
+  settleQueuedRecord: vi.fn(),
   promoteRecord: vi.fn(),
   recoverStaleSessionId: vi.fn(),
 }));
@@ -85,7 +86,7 @@ vi.mock('../../src/main/ipc/helpers', () => ({
 
 // Import under test AFTER all mocks are registered.
 import { applySuspendDbWrites } from '../../src/main/ipc/handlers/session-reconcile';
-import { markRecordExited, markRecordSuspended } from '../../src/main/transition-engine/session-lifecycle';
+import { markRecordExited, markRecordSuspended, settleQueuedRecord } from '../../src/main/transition-engine/session-lifecycle';
 import {
   captureSessionMetrics,
   refineTranscriptTokens,
@@ -160,6 +161,7 @@ function makeContext(taskRepo: { getById: ReturnType<typeof vi.fn>; update: Retu
     currentProjectId: PROJECT_ID,
     currentProjectPath: PROJECT_PATH,
     sessionManager: {
+      isResuming: vi.fn(() => false),
       getUsageCache: vi.fn(() => ({})),
       getEventsForSession: vi.fn(() => []),
     },
@@ -248,8 +250,8 @@ describe('applySuspendDbWrites writes the session\'s own record, not the task\'s
 
     applySuspendDbWrites(context as never, PROJECT_ID, TASK_ID, 'user');
 
-    expect(vi.mocked(markRecordExited)).toHaveBeenCalledTimes(1);
-    expect(vi.mocked(markRecordExited)).toHaveBeenCalledWith(expect.anything(), 'rec-own-queued');
+    expect(vi.mocked(settleQueuedRecord)).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(settleQueuedRecord)).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'rec-own-queued' }), false, 'user');
     // The other track's running record is never captured or suspended.
     expect(vi.mocked(captureSessionMetrics)).not.toHaveBeenCalled();
     expect(hoisted.captureGitChurn).not.toHaveBeenCalled();

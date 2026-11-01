@@ -871,6 +871,7 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        maxAgents: z.number().int().min(1).nullable().optional().describe('How many agents run in this column at once. Other tasks wait and start in the order they entered the column. 1 runs one at a time. Null for no limit.'),
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
@@ -879,7 +880,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, maxAgents, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -893,6 +894,7 @@ export function registerTaskTools(
       effortOverride: effortOverride === undefined ? undefined : effortOverride,
       permissionMode: permissionMode === undefined ? undefined : permissionMode,
       handoffContext: handoffContext ?? undefined,
+      maxAgents,
       sessionTarget: sessionTarget ?? undefined,
       sessionSpawnStrategy: sessionSpawnStrategy ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
@@ -918,6 +920,7 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        maxAgents: z.number().int().min(1).nullable().optional().describe('How many agents run in this column at once. Other tasks wait and start in the order they entered the column. 1 runs one at a time. Null for no limit.'),
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
@@ -927,7 +930,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, maxAgents, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
@@ -940,6 +943,7 @@ export function registerTaskTools(
       effortOverride,
       permissionMode,
       handoffContext,
+      maxAgents,
       sessionTarget,
       sessionSpawnStrategy,
       planExitTargetColumn,

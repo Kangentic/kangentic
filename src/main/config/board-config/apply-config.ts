@@ -146,6 +146,12 @@ export function applyBoardConfigToDb(
       // value would leave plans approving on every other machine. An absent
       // key is Manual.
       const planApproval: PlanApproval = !isTodo && !isDone && columnConfig.planApproval === 'automatic' ? 'automatic' : 'manual';
+      // An absent key is no limit, not "keep what is here": no limit is what
+      // build-config omits, so a teammate turning the limit off must reach this
+      // machine. A bad value in a hand-edited file reads as no limit too.
+      const maxAgents = !isTodo && !isDone && typeof columnConfig.maxAgents === 'number' && columnConfig.maxAgents >= 1
+        ? Math.floor(columnConfig.maxAgents)
+        : null;
 
       if (existing) {
         swimlaneRepo.update({
@@ -177,6 +183,7 @@ export function applyBoardConfigToDb(
           session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? existing.session_target),
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? existing.session_spawn_strategy),
           plan_approval: planApproval,
+          max_agents: maxAgents,
         });
       } else {
         swimlaneRepo.create({
@@ -199,6 +206,7 @@ export function applyBoardConfigToDb(
           session_target: (isTodo || isDone) ? 'main' : (columnConfig.sessionTarget ?? 'main'),
           session_spawn_strategy: (isTodo || isDone) ? 'create_or_resume' : (columnConfig.sessionSpawnStrategy ?? 'create_or_resume'),
           plan_approval: planApproval,
+          max_agents: maxAgents,
           position: index,
         });
       }

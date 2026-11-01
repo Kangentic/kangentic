@@ -706,13 +706,13 @@
   // Mirrors the production seed in src/main/db/migrations/default-data.ts;
   // tests/unit/default-swimlanes-seed-parity.test.ts binds the two lists.
   var DEFAULT_SWIMLANES = [
-    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
   ];
 
   var MOCK_PROJECT_ENTRIES = [
@@ -2250,6 +2250,7 @@
           handoff_context: input.handoff_context !== undefined ? input.handoff_context : false,
           session_target: input.session_target ?? 'main',
           session_spawn_strategy: input.session_spawn_strategy ?? 'create_or_resume',
+          max_agents: input.max_agents ?? null,
           position: swimlanes.length,
           created_at: now(),
         };
@@ -2733,6 +2734,19 @@
           var idx = listeners.indexOf(callback);
           if (idx >= 0) listeners.splice(idx, 1);
         };
+      },
+      // Seeded by a spec through window.__mockQueueSnapshot, or pushed with
+      // window.__mockFireQueueChanged(snapshot). Main builds the real one from
+      // its queue and each project's database, which this mock does not model.
+      getQueueSnapshot: async function () {
+        return window.__mockQueueSnapshot || { columns: [], global: [] };
+      },
+      onQueueChanged: function (callback) {
+        window.__mockFireQueueChanged = function (snapshot) {
+          window.__mockQueueSnapshot = snapshot;
+          callback(snapshot);
+        };
+        return function () { window.__mockFireQueueChanged = undefined; };
       },
       onRemoved: function (callback) {
         // Tests can fire this via window.__mockFireRemoved(sessionId, session, projectId).

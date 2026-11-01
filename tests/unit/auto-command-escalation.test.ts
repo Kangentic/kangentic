@@ -110,6 +110,10 @@ function makeHarness(): { context: IpcContext; suspend: ReturnType<typeof vi.fn>
   const suspend = vi.fn(async () => { sessionId = null; });
   const context = {
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       suspend,
       markIdleAuthoritative: vi.fn(),
       getSession: vi.fn(() => ({ status: 'running' })),

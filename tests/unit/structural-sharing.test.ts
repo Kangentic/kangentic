@@ -340,6 +340,7 @@ function makeSwimlane(overrides: Partial<Swimlane> = {}): Swimlane {
     handoff_context: false,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
+    max_agents: null,
     created_at: '2026-04-17T00:00:00.000Z',
     ...overrides,
   };

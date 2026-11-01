@@ -116,17 +116,16 @@ type SectionId = 'general' | 'agent' | 'auto';
  * present one boolean. It now sits at the end of Automation, which is what it
  * is: something that happens on its own when a task enters the column.
  *
- * The third card is CONVERSATION, not Automation: "automation" is the word for
- * the per-column list on the right, so a settings card cannot also hold it. Both
- * of this card's controls are about the agent's conversation, one handing the
- * previous agent's over and one choosing which the column continues, so the name
- * is reinforced by its own contents. `Columns3Cog` stays free for the
- * automations card.
+ * The third card is SESSIONS, not Automation: "automation" is the word for the
+ * per-column list on the right, so a settings card cannot also hold it. Its
+ * controls say how sessions behave in this column: what the agent arrives with,
+ * which conversation it continues, and how many run at once. `Columns3Cog` stays
+ * free for the automations card.
  */
 const SECTIONS: { id: SectionId; label: LocalizedText; icon: typeof Sliders }[] = [
   { id: 'general', label: msg`General`, icon: Sliders },
   { id: 'agent', label: msg`Agent`, icon: Bot },
-  { id: 'auto', label: msg`Conversation`, icon: MessageSquare },
+  { id: 'auto', label: msg`Sessions`, icon: MessageSquare },
 ];
 
 /** To Do and Done by role, as the overview, the disabled-section reasons and the Icon field name them. */
@@ -162,7 +161,7 @@ const sessionTargetOptions = cachePerCatalog((): readonly SegmentedControlOption
     value: 'isolated',
     label: translateText(SESSION_TARGET_LABELS.isolated),
     icon: <IsolatedIcon size={12} />,
-    tip: translateText(msg`Start a clean conversation on every entry.`),
+    tip: translateText(msg`Start a new conversation on every entry.`),
     testId: 'column-session-target-isolated',
   },
 ]);
@@ -493,6 +492,7 @@ export function buildUpdateInput(draft: Swimlane, original: Swimlane): SwimlaneU
     handoff_context: isTodoOrDone ? undefined : draft.handoff_context,
     session_target: isTodoOrDone ? undefined : draft.session_target,
     session_spawn_strategy: isTodoOrDone ? undefined : draft.session_spawn_strategy,
+    max_agents: isTodoOrDone ? undefined : draft.max_agents,
   };
 }
 
@@ -515,6 +515,7 @@ export function buildCreateInput(draft: Swimlane): SwimlaneCreateInput {
     handoff_context: draft.handoff_context,
     session_target: draft.session_target,
     session_spawn_strategy: draft.session_spawn_strategy,
+    max_agents: draft.max_agents,
   };
 }
 
@@ -544,6 +545,7 @@ function makeNewDraft(): Swimlane {
     handoff_context: false,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
+    max_agents: null,
     created_at: new Date().toISOString(),
   };
 }
@@ -1126,6 +1128,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
       const defaultLabel = t({ message: 'Default', context: 'board overview value' });
       const startAgentLabel = t`Start an agent here`;
       const handoffLabel = t`Hand off context when the agent changes`;
+      const oneAtATimeLabel = t`Run one agent in this column at a time`;
       const agentReason = isTerminal
         ? t`Sessions don't run in ${terminalName} columns.`
         : t`Start an agent here is off.`;
@@ -1205,6 +1208,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
         session: laneDraft.session_target === 'isolated'
           ? { ...value(translateText(SESSION_TARGET_LABELS.isolated), true), icon: <IsolatedIcon size={14} /> }
           : value(translateText(SESSION_TARGET_LABELS.main), false),
+        oneAtATime: agentApplies
+          ? { on: laneDraft.max_agents !== null, applicable: true, ariaLabel: oneAtATimeLabel }
+          : { on: false, applicable: false, reason: agentReason, ariaLabel: oneAtATimeLabel },
         // The counts are what will RUN: a switched-off or blocked row is not
         // counted and not named. This view answers "what happens when a task
         // moves", and an off row is visible and fixable one click away.
@@ -1894,14 +1900,14 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // The tallest page is a PLAN-permission column with Start an agent on: its
   // Agent card carries the Plan approval and After Plan Mode row. Measured on
   // Planning at the 2000px width, where the px cap is the only one that can
-  // bind (after that row moved its descriptions into info tips and
-  // Session became one line): General 250 + Agent 317 + Conversation 179, plus
-  // the two 24px gaps, is 794px of settings content, which with the body's own
-  // 28px top and bottom needs an 850px scroll area. At 1120 the scroll area was
-  // 917px, 67px of it empty, so 1053 fits exactly, and 1080 keeps headroom for
-  // a theme with taller type or wider fonts (Linux CI's are wider than Segoe UI
-  // at the same width). Leftover slack lands BELOW the cards, so any excess
-  // shows up as a bottom gap wider than the top one.
+  // bind (after that row moved its descriptions into info tips and the
+  // conversation row became one line): General 250 + Agent 317 + Sessions 243,
+  // plus the two 24px gaps, is 858px of settings content, which with the body's
+  // own 28px top and bottom needs a 914px scroll area. At 1120 the scroll area
+  // was 917px, so 1117 fits exactly, and 1160 keeps headroom for a theme with
+  // taller type or wider fonts (Linux CI's are wider than Segoe UI at the same
+  // width). Leftover slack lands BELOW the cards, so any excess shows up as a
+  // bottom gap wider than the top one.
   //
   // Re-measure this when a settings card gains a field, and measure a
   // plan-permission column, not the first one to hand. A description can
@@ -1915,7 +1921,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
   // FIXED rather than `h-auto` + `max-h`, which is the original decision and
   // still holds: a height that tracks content makes the modal resize and
   // re-centre every time the rail moves between columns of different length.
-  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1080px,88vh)]';
+  const windowedClass = 'w-[min(2000px,92vw)] max-w-[95vw] h-[min(1160px,88vh)]';
   const { dialogClassName, backdropPositionClass, backdropClassName, contentRadiusClass } =
     maximizedDialogLayout(isMaximized, windowedClass);
 
@@ -1927,6 +1933,13 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
     if (!isTodoOrDone) return t`Turn on "Start an agent here" in the Agent section to enable ${label}.`;
     const roleName = translateText(COLUMN_ROLE_NAMES[draftRole === 'todo' ? 'todo' : 'done']);
     return t`Sessions don't run in ${roleName} columns, so ${label} doesn't apply.`;
+  };
+  // The Sessions card's own notice. On To Do and Done the section name would
+  // only repeat the sentence's first word.
+  const sessionsNotice = (): string => {
+    if (!isTodoOrDone) return disabledReasonFor(t`Sessions`);
+    const terminalName = translateText(COLUMN_ROLE_NAMES[draftRole === 'todo' ? 'todo' : 'done']);
+    return t`Sessions don't run in ${terminalName} columns.`;
   };
   // Named once, for the footer's Remove column button.
   const removeTargetName = draft?.name.trim() || t`Untitled`;
@@ -2470,9 +2483,9 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                         tip, which names the default. */}
                     <div className={SECTION_FULL_SPAN}>
                       <ChoiceCard
-                        label={t({ message: 'Session', context: 'board manager field' })}
-                        description={t`Main continues the task's conversation, and Isolated starts clean on every entry.`}
-                        info={t`Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it.`}
+                        label={t`Which conversation this column uses`}
+                        description={t`Main continues the task's conversation, and Isolated starts a new one on every entry.`}
+                        info={t`Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it.`}
                         options={sessionTargetOptions()}
                         value={draft.session_target ?? 'main'}
                         onChange={(next) => updateDraft((current) => ({
@@ -2500,6 +2513,23 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                       />
                     </div>
 
+                    {/* On or off, not a number: a column either works one task at
+                        a time or it does not. `max_agents` stays a number so a
+                        later choice of limit needs no migration. Off is null.
+                        Every profile shares it, as they share Plan approval, so
+                        it cannot change while one is selected. */}
+                    <div className={SECTION_FULL_SPAN}>
+                      <ToggleCard
+                        label={t`Run one agent in this column at a time`}
+                        description={t`Other tasks wait in this column and start in the order they arrived.`}
+                        info={t`Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies.`}
+                        disabled={activeProfileId !== null}
+                        checked={draft.max_agents !== null}
+                        onChange={(next) => updateDraft((current) => ({ ...current, max_agents: next ? 1 : null }))}
+                        testId="column-one-at-a-time"
+                      />
+                    </div>
+
                 {/* Two controls are gone from this card, each for its own reason.
                     The message field is a `send_message` automation now, and the
                     migration moved every existing one across, so nobody arrives
@@ -2514,7 +2544,7 @@ export function BoardManagerDialog({ initialColumnId, seedNewDraft, addDraftRequ
                     note in its place: standing copy explaining a one-time change
                     is paid on every open and learned once. */}
                 </div>
-              ) : <DisabledSectionNotice reason={disabledReasonFor(t`Conversation`)} />}
+              ) : <DisabledSectionNotice reason={sessionsNotice()} />}
               </SettingsSection>
             </div>
             </div>

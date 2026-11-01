@@ -162,6 +162,8 @@ export const IPC = {
   SESSION_GET_MESSAGE_TRAILS: 'session:getMessageTrails',
   SESSION_STATUS: 'session:status',
   SESSION_REMOVED: 'session:removed',
+  SESSION_QUEUE_SNAPSHOT: 'session:queueSnapshot',
+  SESSION_QUEUE_CHANGED: 'session:queueChanged',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
   SESSION_RECONCILE: 'session:reconcile',

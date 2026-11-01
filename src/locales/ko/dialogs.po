@@ -217,9 +217,8 @@ msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>(예: {sample})</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr "{maxConcurrent, plural, other {에이전트 슬롯 {runningCount} / #개 사용 중}}"
+msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -816,9 +815,12 @@ msgid "Columns"
 msgstr "열"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "이 열에 별도 세션을 지정하지 않으면 열들은 작업의 기본 대화를 공유합니다. 격리된 세션은 진입할 때마다 새로 시작되므로 코드 리뷰처럼 이전 작업을 이어받지 않아야 하는 단계에 적합합니다."
+msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Command Terminal"
+msgstr "명령 터미널"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -894,8 +896,8 @@ msgid "Confirm"
 msgstr "확인"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
+msgctxt "board overview column header"
 msgid "Conversation"
 msgstr "대화"
 
@@ -1073,6 +1075,10 @@ msgstr "백로그로 보낼 수 없음"
 #, fuzzy
 msgid "Couldn't switch branch"
 msgstr "분기를 전환할 수 없음"
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1680,9 +1686,8 @@ msgid "Main"
 msgstr "메인"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr "메인은 작업의 대화를 이어 가고, 격리는 진입할 때마다 새로 시작합니다."
+msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1780,6 +1785,10 @@ msgstr "이름, 설명, 색, 아이콘은 모든 프로필에서 공유됩니다
 #, fuzzy
 msgid "Needs both images"
 msgstr "두 이미지가 모두 필요함"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Needs you"
+msgstr "확인 필요"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -2060,6 +2069,11 @@ msgstr "{exitBudgetSeconds, plural, other {나갈 때 이 열의 자동화는 �
 msgid "On turn end"
 msgstr "턴 종료 시"
 
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "One at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
@@ -2159,6 +2173,10 @@ msgstr "작업 트리 폴더 열기"
 msgid "Opens this part of the conversation"
 msgstr "대화의 이 부분 열기"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Other tasks wait in this column and start in the order they arrived."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -2250,11 +2268,6 @@ msgstr "계획 승인은 모든 프로필에서 공유됩니다. 변경하려면
 msgid "Pop out of tiling"
 msgstr "타일 배치에서 분리"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Position {queuePosition} of {queueTotal}"
-msgstr "{queueTotal}개 중 {queuePosition}번째"
-
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "PR #{prNumber}"
@@ -2333,10 +2346,18 @@ msgstr "끌어오기 요청"
 msgid "Pull Request"
 msgstr "끌어오기 요청"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "대기 중(클릭하여 일시 중지)"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued {position}/{total}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2527,6 +2548,10 @@ msgstr "새 작업 트리에서 실행"
 msgid "Run in the project folder"
 msgstr "프로젝트 폴더에서 실행"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Run one agent in this column at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
 msgctxt "task status"
@@ -2631,18 +2656,6 @@ msgstr "대신 원본을 보냅니다."
 msgid "Sent to backlog"
 msgstr "백로그로 보냄"
 
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgctxt "board manager field"
-msgid "Session"
-msgstr "세션"
-
-#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
-msgctxt "board overview column header"
-msgid "Session"
-msgstr "세션"
-
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -2663,6 +2676,11 @@ msgstr "세션이 만료되었을 수 있음"
 #, fuzzy
 msgid "Session may need to be re-created"
 msgstr "세션을 다시 만들어야 할 수 있음"
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Sessions"
+msgstr "세션"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2819,9 +2837,8 @@ msgid "Start"
 msgstr "시작"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Start a clean conversation on every entry."
-msgstr "진입할 때마다 새 대화를 시작합니다."
+msgid "Start a new conversation on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2854,11 +2871,6 @@ msgstr "시작"
 #, fuzzy
 msgid "Starting agent..."
 msgstr "에이전트 시작 중..."
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Starts automatically when a slot opens up"
-msgstr "슬롯이 비면 자동으로 시작됩니다"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
@@ -3283,11 +3295,6 @@ msgstr "보기 옵션"
 msgid "View PR #{prNumber}"
 msgstr "PR #{prNumber} 보기"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Waiting in queue"
-msgstr "대기열에서 대기 중"
-
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
@@ -3333,6 +3340,10 @@ msgstr "에이전트가 Plan 모드를 종료할 때 작업이 이동할 위치�
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
 msgstr "각 계획을 직접 승인할지 Kangentic이 승인할지 선택합니다. 워크플로 작업에서 개별적으로 재정의할 수 있습니다."
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Which conversation this column uses"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "Wildcard examples"
@@ -3352,6 +3363,11 @@ msgstr "창 개수 제한에 도달함"
 #, fuzzy
 msgid "Workflow step"
 msgstr "워크플로 단계"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgctxt "Agent status"
+msgid "Working"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

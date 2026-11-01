@@ -232,6 +232,10 @@ function makeContext() {
       webContents: { send: vi.fn() },
     },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       removeByTaskId: vi.fn(),
       killByTaskId: vi.fn(),
       listSessions: vi.fn(() => []),
