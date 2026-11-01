@@ -299,7 +299,10 @@ function makeDeps(args: {
   const context = {
     terminalSubmitScheduler: { scheduleKeystrokes, hasPending: vi.fn(() => false) },
     // Read only by a pasted message: the session check and the paste itself.
-    sessionManager: { getSession: vi.fn((id: string) => ({ id, status: 'running' })) },
+    sessionManager: {
+      getSession: vi.fn((id: string) => ({ id, status: 'running' })),
+      awaitInputReady: vi.fn(async () => true),
+    },
     terminalSubmit: { submitContent },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     projectRepo: { getById: vi.fn(() => null) },

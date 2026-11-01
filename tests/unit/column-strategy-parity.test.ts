@@ -93,7 +93,7 @@ const ALLOWLIST: Record<string, string> = {
     'Pure delta planner. Its `toLane` argument is supplied already folded by task-move.ts, which '
     + 'is the only caller that can know the task.',
   'src/main/transition-engine/spawn-preamble.ts':
-    'The first-spawn lock returns early for profile tasks (`if (task.profile_id) return;`), so its '
+    'The first-spawn lock plans nothing for profile tasks (`if (task.profile_id) return null;`), so its '
     + 'raw settingsLane reads only ever run for direct-override tasks. Its `destinationLane` is '
     + 'supplied already folded by both chokepoints.',
 };
@@ -228,6 +228,8 @@ describe('column-strategy parity: the resolver stays the single source of truth'
     // first column's values for its whole life - exactly the per-column
     // variation the feature exists to provide.
     const source = fs.readFileSync(path.join(REPO_ROOT, 'src/main/transition-engine/spawn-preamble.ts'), 'utf-8');
-    expect(source).toContain('if (task.profile_id) return;');
+    // The lock's plan (`advancedOverridesToLock`) returns null, which both the real lock and the
+    // side-effect-free `previewSpawnPreamble` read as "nothing to lock".
+    expect(source).toContain('if (task.profile_id) return null;');
   });
 });
