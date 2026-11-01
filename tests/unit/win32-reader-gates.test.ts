@@ -1290,7 +1290,8 @@ describe('Win32TaggedProcessReader.connections: the TCP table', () => {
   it('fails as connection_list, never as a clean read, when the call fails or the table keeps outgrowing its buffer', async () => {
     const failing = new FakeWin32([]);
     failing.tcpTableFailure = 87;
-    await expect(readerFor(failing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list' });
+    // No tool ran, so the failure names no cause (only macOS's lsappinfo step does).
+    await expect(readerFor(failing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list', failureCause: null });
     const growing = new FakeWin32([]);
     growing.tcpTableGrowths = 100;
     await expect(readerFor(growing).connections([listener(2001)], [])).rejects.toMatchObject({ code: 'connection_list' });
