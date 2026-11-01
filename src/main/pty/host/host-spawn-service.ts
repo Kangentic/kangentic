@@ -18,7 +18,8 @@ import { createProcessTreeProbe, type ProcessTreeProbe } from '../../activity-en
 import { childProcessEnv } from '../../shared/child-env';
 import { HostCliProcesses } from './host-cli-processes';
 import { runHostExec } from './host-exec';
-import type { HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from './protocol';
+import type { ToolFailureCause, ToolRunner } from '../process-tag/process-scan';
+import type { HostExecFailure, HostExecRequest, HostExecResult, PtyHostCliSpawnParams, PtyHostEvent } from './protocol';
 
 /** The part of a process-tree probe the process table reads (`host-process-table.ts`). */
 export type ProcessTableProbe = Pick<ProcessTreeProbe, 'listAllProcesses' | 'dispose'>;
@@ -41,12 +42,28 @@ export interface HostSpawnService {
 }
 
 /**
- * A tool's stdout through `service`, or null when it could not start, failed,
- * or ran past `timeoutMs` (then killed with SIGKILL), as `darwin-reader.ts`'s
- * `runTool` answers. The utility host's macOS reap runs `lsappinfo` this way,
- * so its start lands on the spawn worker.
+ * How a failed run ended, as a fixed value. The order matters: a run past its
+ * timeout has a signal too, and only execFile's own timer sets `killed`. The
+ * last branch is a child that never started, a run the spawn worker took with
+ * it when it died, and the host's refusal to start its own executable: none of
+ * those has an exit code, a signal or a kill. The errno and the signal name
+ * stop here.
  */
-export function runToolThrough(service: HostSpawnService): (command: string, args: string[], timeoutMs: number) => Promise<string | null> {
+function toolFailureCauseOf(failure: HostExecFailure): ToolFailureCause {
+  if (failure.killed) return 'timeout';
+  if (failure.signal !== null) return 'signal';
+  if (failure.exitCode !== null) return 'exit_code';
+  return 'spawn_error';
+}
+
+/**
+ * A tool's stdout through `service`, or how it failed: it could not start,
+ * exited with an error or a signal, or ran past `timeoutMs` (then killed with
+ * SIGKILL), as `darwin-reader.ts`'s `runTool` answers. The utility host's macOS
+ * reap runs `lsappinfo` this way, so every start, a retry's included, lands on
+ * the spawn worker.
+ */
+export function runToolThrough(service: HostSpawnService): ToolRunner {
   return async (command, args, timeoutMs) => {
     const result = await service.exec({
       kind: 'execFile',
@@ -56,7 +73,7 @@ export function runToolThrough(service: HostSpawnService): (command: string, arg
       // long `lsappinfo` listing and read as the tool being unavailable.
       options: { env: childProcessEnv({ LC_ALL: 'C' }), timeout: timeoutMs, killSignal: 'SIGKILL', windowsHide: true, maxBuffer: 64 * 1024 * 1024 },
     });
-    return result.ok ? result.stdout : null;
+    return result.ok ? { ok: true, output: result.stdout } : { ok: false, cause: toolFailureCauseOf(result.error) };
   };
 }
 

@@ -94,6 +94,23 @@ export interface ProcessScan {
 export type ScanStepFailureCode = 'process_list' | 'window_list' | 'connection_list';
 
 /**
+ * How a tool a scan step runs failed, as a fixed value: `spawn_error`, it never
+ * started; `exit_code`, it exited non-zero; `signal`, something other than the
+ * timeout killed it; `timeout`, it ran past its timeout and was killed. Never
+ * tool output, an errno, a signal name, a pid or a path: main sends it to Sentry.
+ */
+export type ToolFailureCause = 'spawn_error' | 'exit_code' | 'signal' | 'timeout';
+
+/**
+ * What one run of a tool answered. Only a clean exit has output: an empty
+ * listing from a failed run would read as "no windows".
+ */
+export type ToolRun = { ok: true; output: string } | { ok: false; cause: ToolFailureCause };
+
+/** Runs a tool once. `darwin-reader.ts`'s `runTool` is one, `runToolThrough` makes the utility host's. */
+export type ToolRunner = (command: string, args: string[], timeoutMs: number) => Promise<ToolRun>;
+
+/**
  * One loopback TCP connection between two local processes: `clientPid` holds a
  * connection to a port `listenerPid` listens on (or accepted it on). Pids
  * only: a reader never returns an address or a port.
@@ -118,10 +135,16 @@ export interface LocalConnectionRead {
 /**
  * A scan that failed at a step the reader names, so the reap reports the step
  * as a fixed code without reading the message. The message is the reader's
- * own text for the local log, never anything a scan read.
+ * own text for the local log, never anything a scan read. `failureCause` says
+ * how the step's tool failed, for a step that runs one. It is not named `cause`
+ * because that would shadow `Error.cause`, which Node prints and Sentry walks.
  */
 export class ScanStepError extends Error {
-  constructor(readonly code: ScanStepFailureCode, message: string) {
+  constructor(
+    readonly code: ScanStepFailureCode,
+    message: string,
+    readonly failureCause: ToolFailureCause | null = null,
+  ) {
     super(message);
   }
 }

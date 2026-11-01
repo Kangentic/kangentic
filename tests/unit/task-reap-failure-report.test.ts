@@ -35,7 +35,7 @@ import { PtyHostExitedError, PtyHostTimeoutError } from '../../src/main/pty/host
 import type { HostExecRequest } from '../../src/main/pty/host/protocol';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 const realPlatform = process.platform;
 
 beforeEach(() => {
@@ -98,6 +98,21 @@ describe('reportTaskReapFailure', () => {
     expect(reportHandledError.mock.calls[1][1]).toEqual({ source: 'task_reap', stage: 'reap', code: 'process_list', pass: 'first' });
   });
 
+  it('carries how the step\'s tool failed as a cause tag, under the fixed message, without splitting by cause', () => {
+    reportTaskReapFailure('reap', 'window_list', null, 'first', 'timeout');
+    reportTaskReapFailure('reap', 'window_list', null, 'first', 'exit_code');
+    expect(reportHandledError).toHaveBeenCalledTimes(1);
+    const [error, tags, contexts] = reportHandledError.mock.calls[0];
+    expect((error as Error).message).toBe('Task leftover reap failed: window_list');
+    expect(tags).toEqual({ source: 'task_reap', stage: 'reap', code: 'window_list', pass: 'first', cause: 'timeout' });
+    expect(contexts).toEqual({});
+  });
+
+  it('sends no cause tag for a failure that names none', () => {
+    reportTaskReapFailure('reap', 'process_list', null, 'first', null);
+    expect(reportHandledError.mock.calls[0][1]).toEqual({ source: 'task_reap', stage: 'reap', code: 'process_list', pass: 'first' });
+  });
+
   it('drops the text of any other failure: it can come from a process scan', () => {
     reportTaskReapFailure('reap', 'reap_error', 'API_TOKEN=secret in a parse error');
     const call = JSON.stringify(reportHandledError.mock.calls[0]);
@@ -110,8 +125,9 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     failureCode: TaggedReapResult['failureCode'],
     failureReason: string,
     failurePass: TaggedReapResult['failurePass'] = null,
+    failureCause: TaggedReapResult['failureCause'] = null,
   ): TaggedReapResult => ({
-    killedPids: [], unreadableCount: 0, failureReason, failureCode, failurePass, entries: [],
+    killedPids: [], unreadableCount: 0, failureReason, failureCode, failurePass, failureCause, entries: [],
   });
 
   it('reports the reap\'s code, and the load error only for a reader that would not load', async () => {
@@ -132,17 +148,17 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
 
   it('reports a macOS window list that failed, with the pass it failed in and never the failure\'s text', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    const manager = managerWithHost({ reapTaggedProcesses: async () => failed('window_list', 'lsappinfo list did not run', 'second') });
+    const manager = managerWithHost({ reapTaggedProcesses: async () => failed('window_list', 'lsappinfo list did not run: timeout', 'second', 'timeout') });
     await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false });
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     expect(reportHandledError).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Task leftover reap failed: window_list' }),
-      { source: 'task_reap', stage: 'reap', code: 'window_list', pass: 'second' },
+      { source: 'task_reap', stage: 'reap', code: 'window_list', pass: 'second', cause: 'timeout' },
       {},
     );
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('lsappinfo');
     // The text stays in the local log.
-    expect(warn).toHaveBeenCalledWith('[TASK-REAP] reap failed (non-fatal): lsappinfo list did not run');
+    expect(warn).toHaveBeenCalledWith('[TASK-REAP] reap failed (non-fatal): lsappinfo list did not run: timeout');
     warn.mockRestore();
   });
 
@@ -162,17 +178,17 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
   it('reports a Stop the host ran but could not finish, with its code and pass and never its text', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const manager = managerWithHost({
-      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureReason: 'lsappinfo list did not run' }),
+      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureCause: 'signal', failureReason: 'lsappinfo list did not run: signal' }),
     });
     expect(await manager.stopReportedProcess(4242, 'start-4242')).toBe('failed');
     expect(reportHandledError).toHaveBeenCalledTimes(1);
     expect(reportHandledError).toHaveBeenCalledWith(
       expect.objectContaining({ message: 'Task leftover stop failed: window_list' }),
-      { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second' },
+      { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second', cause: 'signal' },
       {},
     );
     expect(JSON.stringify(reportHandledError.mock.calls[0])).not.toContain('lsappinfo');
-    expect(warn).toHaveBeenCalledWith('[TASK-REAP] stop failed (non-fatal): lsappinfo list did not run');
+    expect(warn).toHaveBeenCalledWith('[TASK-REAP] stop failed (non-fatal): lsappinfo list did not run: signal');
     warn.mockRestore();
   });
 
@@ -187,7 +203,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       },
       stopReportedProcess: async (_request, timeoutMs) => {
         stopBudgets.push(timeoutMs);
-        return { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
+        return { outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null };
       },
     });
     await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false });
@@ -204,7 +220,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
       stopReportedProcess: async (request, timeoutMs) => {
         requests.push(request);
         budgets.push(timeoutMs);
-        return { outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null };
+        return { outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null };
       },
     });
     expect(await manager.stopProcessByCreationTime(4242, 1_792_057_142_367)).toBe('stopped');
@@ -215,7 +231,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
   it('keeps a worktree holder stop that failed in the local log, since it is not a Stop the user asked for', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const unfinished = managerWithHost({
-      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: 'process_list', failurePass: 'first', failureReason: 'the snapshot failed' }),
+      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: 'process_list', failurePass: 'first', failureCause: null, failureReason: 'the snapshot failed' }),
     });
     expect(await unfinished.stopProcessByCreationTime(4242, 1)).toBe('failed');
     const timedOut = managerWithHost({ stopReportedProcess: async () => { throw new PtyHostTimeoutError('stopReportedProcess'); } });
@@ -227,11 +243,11 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
 
   it('reports nothing for a Stop that answered, a refusal or a survivor included', async () => {
     const manager = managerWithHost({
-      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: null, failurePass: null, failureReason: null }),
+      stopReportedProcess: async () => ({ outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null }),
     });
     expect(await manager.stopReportedProcess(4242, 'start-4242')).toBe('failed');
     const stopped = managerWithHost({
-      stopReportedProcess: async () => ({ outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null }),
+      stopReportedProcess: async () => ({ outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null }),
     });
     expect(await stopped.stopReportedProcess(4242, 'start-4242')).toBe('stopped');
     expect(reportHandledError).not.toHaveBeenCalled();
@@ -327,13 +343,13 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     expect(await manager.stopReportedProcess(4242, 'start-4242', (outcome) => { lateOutcomes.push(outcome); })).toBe('failed');
     expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([{ source: 'task_reap', stage: 'stop', code: 'host_timeout' }]);
 
-    deliverLate!({ outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null });
-    deliverLate!({ outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureReason: 'lsappinfo list did not run' });
+    deliverLate!({ outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null });
+    deliverLate!({ outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureCause: 'timeout', failureReason: 'lsappinfo list did not run: timeout' });
 
     expect(lateOutcomes).toEqual(['stopped', 'failed']);
     expect(reportHandledError.mock.calls.map((call) => call[1])).toEqual([
       { source: 'task_reap', stage: 'stop', code: 'host_timeout' },
-      { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second' },
+      { source: 'task_reap', stage: 'stop', code: 'window_list', pass: 'second', cause: 'timeout' },
     ]);
     expect(JSON.stringify(reportHandledError.mock.calls)).not.toContain('lsappinfo');
     warn.mockRestore();
@@ -353,7 +369,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
 
     it('reports a WSL reap that failed, which used to be swallowed without a log line', async () => {
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-      const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] }) });
+      const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] }) });
       Object.assign(manager, { getShell: async () => 'wsl -d Ubuntu' });
       setOffMainExecutor(async () => { throw new Error('the pty host is not reachable'); });
       await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: true });
@@ -363,7 +379,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
     });
 
     it('hands wsl.exe its bound as the child timeout, 5 s for the running-distro listing and 10 s for the script, with WSL_UTF8 set', async () => {
-      const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] }) });
+      const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] }) });
       Object.assign(manager, { getShell: async () => 'wsl -d Ubuntu' });
       const requests: HostExecRequest[] = [];
       setOffMainExecutor(async (request) => {
@@ -389,7 +405,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
   });
 
   it('asks the host nothing for a task with no usable directory: no scan can find anything to kill', async () => {
-    const reapTaggedProcesses = vi.fn(async (): Promise<TaggedReapResult> => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] }));
+    const reapTaggedProcesses = vi.fn(async (): Promise<TaggedReapResult> => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] }));
     const manager = managerWithHost({ reapTaggedProcesses });
     expect(await manager.reapTaskProcesses(null, [{ id: TASK, worktreePath: null }], { stop: true })).toEqual([]);
     expect(await manager.reapTaskProcesses(os.homedir(), [{ id: TASK, worktreePath: null }], { stop: true })).toEqual([]);
@@ -397,7 +413,7 @@ describe('SessionManager reports a failed reap and a failed Stop', () => {
   });
 
   it('reports nothing for a reap that worked', async () => {
-    const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] }) });
+    const manager = managerWithHost({ reapTaggedProcesses: async () => ({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] }) });
     await manager.reapTaskProcesses(os.tmpdir(), [{ id: TASK, worktreePath: null }], { stop: false });
     expect(reportHandledError).not.toHaveBeenCalled();
   });

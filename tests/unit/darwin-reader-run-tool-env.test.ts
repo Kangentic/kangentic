@@ -72,7 +72,7 @@ describe('runTool environment', () => {
 
     // Positive control: the call ran to its answer on the fake, so the options
     // read below are the ones this run's spawn received.
-    await expect(pending).resolves.toBe('listing');
+    await expect(pending).resolves.toEqual({ ok: true, output: 'listing' });
     expect(spawnMock).toHaveBeenCalledTimes(1);
     const spawnCall = spawnMock.mock.calls[0] as unknown as [string, string[], SpawnOptionsSeen];
     expect(spawnCall[0]).toBe('/usr/bin/lsappinfo');
@@ -83,5 +83,15 @@ describe('runTool environment', () => {
     expect(env![PROBE_KEY]).toBe('present');
     expect(env![LOCALE_KEY]).toBe('C');
     expect(PIPE_KEY in env!).toBe(false);
+  });
+
+  // On a fake child because Windows reports no signal for a process killed by
+  // pid: a real one would read as `exit_code` there.
+  it('names a child something other than its timeout killed as a signal, not an exit code', async () => {
+    const pending = runTool('/usr/bin/lsappinfo', ['list'], 5_000);
+    child.stdout.emit('data', Buffer.from('partial listing'));
+    child.emit('close', null, 'SIGKILL');
+
+    await expect(pending).resolves.toEqual({ ok: false, cause: 'signal' });
   });
 });
