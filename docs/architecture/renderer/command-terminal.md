@@ -9,6 +9,8 @@ sources:
   - resource: src/main/ipc/handlers/transient-sessions.ts
   - resource: src/main/ipc/helpers/command-terminal-history.ts
   - resource: src/main/agent/shared/command-terminal-namer.ts
+  - resource: src/main/pty/session-manager.ts
+    title: renameCommandTerminal, setCommandTerminalLabel, endCommandTerminal
   - resource: src/main/ipc/helpers/command-terminal-leftovers.ts
   - resource: src/shared/command-terminal-name.ts
   - resource: src/shared/command-terminal-rail.ts

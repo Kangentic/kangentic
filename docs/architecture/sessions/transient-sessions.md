@@ -7,6 +7,8 @@ sources:
   - resource: src/main/ipc/handlers/transient-sessions.ts
   - resource: src/renderer/stores/session-store/transient-recovery.ts
   - resource: src/shared/command-terminal-name.ts
+  - resource: src/main/pty/session-registry.ts
+    title: ManagedSession.commandTerminalNamedByUser and its mapping in toSession
 ---
 # Transient sessions
 

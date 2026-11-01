@@ -11,6 +11,8 @@ sources:
   - resource: src/main/activity-engine/activity-interval-recorder.ts
   - resource: src/main/activity-engine/activity-interval-store.ts
   - resource: src/main/activity-engine/trace-recorder.ts
+  - resource: src/main/activity-engine/usage-accumulator.ts
+  - resource: src/main/activity-engine/rate-limit-ledger.ts
   - resource: src/main/agent/event-bridge.js
   - resource: src/shared/activity-state.ts
   - resource: src/renderer/components/board/ActivityReasonTooltip.tsx

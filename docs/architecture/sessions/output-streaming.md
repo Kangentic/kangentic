@@ -426,7 +426,7 @@ spawn 56 to 67 ms with the build inside) to 3 (spawn 51 to 54 ms, React only).
   one-resize, held-output, cap and recovery cases beside them.
 - **A window drag holds every window terminal's refit, and closes itself (the manager-resize
   gate).** The window manager's resizers (a window edge, a tile seam, a tiled group's outer edge,
-  the Command Terminal panel's edges) move frames imperatively per pointer frame, so each opens a
+  the Command Terminal panel's edges and its rail's edge) move frames imperatively per pointer frame, so each opens a
   gesture on `manager-resize-gate.ts` for the drag. While one is open, `TerminalTab` skips its
   per-frame ResizeObserver refit and `scheduleWindowTerminalResize` holds its ask, and the last
   gesture to close sends one, so a drag ends in one SIGWINCH. Because every window terminal waits
