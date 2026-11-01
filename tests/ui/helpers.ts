@@ -857,7 +857,9 @@ export async function recordLayoutChange(
     (window as unknown as { __layoutChangeTimes: typeof times }).__layoutChangeTimes = times;
     new MutationObserver(() => {
       const heldNow = scope.querySelectorAll(holdSelector).length;
-      marker.style.background = heldNow > 0 ? '#fff' : '#000';
+      // Three states: black before any hold, white during one, dark gray once the terminals
+      // drew (a frame showing gray was painted after the draw).
+      marker.style.background = heldNow > 0 ? '#fff' : (times.held !== null ? '#4d4d4d' : '#000');
       if (heldNow > 0 && times.held === null) times.held = Date.now() / 1000;
       if (heldNow === 0 && times.held !== null) times.drawn = Date.now() / 1000;
       else if (heldNow > 0) times.drawn = null;
@@ -887,6 +889,42 @@ export async function recordLayoutChange(
   await action();
   await expect.poll(async () => (await readTimes()).held, { timeout: 5000 }).not.toBeNull();
   await expect.poll(async () => (await readTimes()).drawn, { timeout: 5000 }).not.toBeNull();
+  // The page drawing is not the screencast delivering it: a starved compositor delivered its
+  // frames 280 ms apart on CI and stopped short of the one that shows the change, so the
+  // recording held only the picture from before (8 frames, none changed). Keep recording until
+  // a delivered frame was painted after the draw, which the marker's gray shows. The 400 ms
+  // after it keeps the quiet beat that catches any later frame.
+  const markerBoxNow = await page.evaluate(() => {
+    const rect = document.querySelector('[data-testid="layout-change-hold-marker"]')?.getBoundingClientRect();
+    return rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : null;
+  });
+  let probedFrames = 0;
+  let drawnFrameDelivered = false;
+  await expect.poll(async () => {
+    if (drawnFrameDelivered) return true;
+    const fresh = captured.slice(probedFrames);
+    probedFrames += fresh.length;
+    if (fresh.length === 0 || !markerBoxNow) return false;
+    const brightnesses = await page.evaluate(async ({ images, marker }) => {
+      const found: number[] = [];
+      for (const image of images) {
+        const bitmap = await createImageBitmap(await (await fetch(`data:image/jpeg;base64,${image}`)).blob());
+        const scale = bitmap.width / window.innerWidth;
+        const canvas = new OffscreenCanvas(4, 2);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('no 2d context');
+        context.drawImage(bitmap, marker.x * scale, marker.y * scale, marker.width * scale, marker.height * scale, 0, 0, 4, 2);
+        const pixels = context.getImageData(0, 0, 4, 2).data;
+        let total = 0;
+        for (let index = 0; index < pixels.length; index += 4) total += pixels[index];
+        found.push(total / (pixels.length / 4));
+      }
+      return found;
+    }, { images: fresh.map((frame) => frame.data), marker: markerBoxNow });
+    // Black reads near 0, the hold's white near 255, the drawn gray near 77.
+    drawnFrameDelivered = brightnesses.some((brightness) => brightness > 35 && brightness < 120);
+    return drawnFrameDelivered;
+  }, { timeout: 10000, intervals: [100, 250] }).toBe(true);
   await page.waitForTimeout(400);
   await cdp.send('Page.stopScreencast');
   await cdp.detach();
