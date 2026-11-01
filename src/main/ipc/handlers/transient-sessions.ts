@@ -20,7 +20,7 @@ import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
-import { settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
+import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
   SpawnTransientSessionInput,
@@ -264,9 +264,10 @@ export async function startCommandTerminal(
     }
     // A conversation moved into the agent CLI's own background session (Claude
     // Code's `/bg`) can still be running there: a quit stops none, and a resume
-    // beside it would put a second process on it. It is stopped first, and the
-    // resume names the id a `--resume` reaches. Both run only when the agent's
-    // own files show the move, so an ordinary resume runs no CLI here.
+    // beside it would put a second process on it. It is stopped first, unless a
+    // live terminal still holds it, and the resume names the id a `--resume`
+    // reaches. Both run only when the agent's own files show the move, so an
+    // ordinary resume runs no CLI here.
     let resumeAgentSessionId: string | null = null;
     if (resume) {
       const cliPath = detection.path;
@@ -276,6 +277,7 @@ export async function startCommandTerminal(
         cwd: resume.cwd,
         place: cliTarget,
         resolveCliPath: async () => cliPath,
+        isHeldLive: (backgroundId) => heldByLiveSession(context, backgroundId),
       });
       if (resumeAgentSessionId !== resume.agentSessionId) {
         if (!context.commandTerminalHistory?.claimResume(input.projectId, resumeAgentSessionId)) {

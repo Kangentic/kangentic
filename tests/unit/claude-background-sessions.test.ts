@@ -12,8 +12,9 @@
  * `--resume <fork>` answered "No conversation found" while the conversation
  * it continued (named by its `continued-in` record) resumed.
  *
- * `claudeIsInBackgroundSession` is the CLI-free gate a Command Terminal's end
- * and an Earlier resume read: some transcript in the folder continues in the id.
+ * `claudeBackgroundSessionOf` is the CLI-free gate a Command Terminal's end and
+ * an Earlier resume read: the session the conversation's own transcript ends by
+ * continuing in, or the id itself when another transcript continues in it.
  *
  * Test tier: Unit. The CLI runner and the transcript locator are mocked; the
  * transcripts are real files under os.tmpdir().
@@ -39,7 +40,7 @@ const {
   stopClaudeBackgroundSession,
   resolveClaudeResumableSessionId,
   claudeConfirmsBackgroundMove,
-  claudeIsInBackgroundSession,
+  claudeBackgroundSessionOf,
 } = await import('../../src/main/agent/adapters/claude/background-sessions');
 
 const CLI_PATH = 'C:\\Users\\dev\\.local\\bin\\claude.exe';
@@ -520,47 +521,78 @@ describe('resolveClaudeResumableSessionId', () => {
 
   // The gate a Command Terminal's end and an Earlier resume put in front of the
   // CLI: file reads only, so it must never run one.
-  describe('claudeIsInBackgroundSession', () => {
+  describe('claudeBackgroundSessionOf', () => {
     beforeEach(() => runClaudeCli.mockClear());
 
-    it('is true for the session a transcript in its folder continued in, with no CLI run', async () => {
+    it('names the session itself when a transcript in its folder continued in it, with no CLI run', async () => {
       writeTranscript(MOVED, [...metadataOnly(MOVED), ...withTurn(MOVED)]);
       writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
       writeTranscript(OTHER, withTurn(OTHER));
 
-      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(true);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
       expect(runClaudeCli).not.toHaveBeenCalled();
     });
 
-    it('is false for the conversation the move left, a /fork copy, an ordinary conversation, and a missing transcript', async () => {
-      writeTranscript(MOVED, metadataOnly(MOVED));
+    // A terminal stopped between /bg and the live switch still holds the id the
+    // move left, and so does the only Earlier row of a move whose background
+    // session wrote no transcript. Red-green: reading only the backward record
+    // misses both, and the background session keeps running.
+    it('names the session the conversation moved on to, from its own transcript', async () => {
       writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(MOVED);
+      expect(runClaudeCli).not.toHaveBeenCalled();
+    });
+
+    it('follows a conversation moved twice to the session that holds it now, and stops on a cycle', async () => {
+      const secondMove = 'a46702f2-f4fa-4fb4-9a74-2f6226497882';
+      writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      writeTranscript(MOVED, [...metadataOnly(MOVED), ...withTurn(MOVED), { type: 'continued-in', continuedInSessionId: secondMove }]);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(secondMove);
+
+      writeTranscript(secondMove, [...metadataOnly(secondMove), { type: 'continued-in', continuedInSessionId: MOVED }]);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(secondMove);
+    });
+
+    it('names nothing for a conversation resumed after the move, a /fork copy, an ordinary conversation, or a missing transcript', async () => {
+      writeTranscript(MOVED, metadataOnly(MOVED));
+      // `--resume` of the conversation the move left appends to it: it holds the conversation again.
+      writeTranscript(ORIGINAL, [
+        ...withTurn(ORIGINAL),
+        { type: 'continued-in', continuedInSessionId: MOVED },
+        { type: 'permission-mode', permissionMode: 'default', sessionId: ORIGINAL },
+      ]);
       writeTranscript(OTHER, withTurn(OTHER));
       const forkCopy = 'c0f9e5a1-1111-4d5c-9b1e-2a6f0d3c4b5e';
       writeTranscript(forkCopy, metadataOnly(forkCopy));
 
-      await expect(claudeIsInBackgroundSession({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBe(false);
-      await expect(claudeIsInBackgroundSession({ agentSessionId: forkCopy, cwd: 'C:\\work' })).resolves.toBe(false);
-      await expect(claudeIsInBackgroundSession({ agentSessionId: OTHER, cwd: 'C:\\work' })).resolves.toBe(false);
-      await expect(claudeIsInBackgroundSession({ agentSessionId: 'no-such-conversation', cwd: 'C:\\work' })).resolves.toBe(false);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBeNull();
+      await expect(claudeBackgroundSessionOf({ agentSessionId: forkCopy, cwd: 'C:\\work' })).resolves.toBeNull();
+      await expect(claudeBackgroundSessionOf({ agentSessionId: OTHER, cwd: 'C:\\work' })).resolves.toBeNull();
+      await expect(claudeBackgroundSessionOf({ agentSessionId: 'no-such-conversation', cwd: 'C:\\work' })).resolves.toBeNull();
       expect(runClaudeCli).not.toHaveBeenCalled();
+    });
+
+    it('never names an id that is not shaped like one', async () => {
+      writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: '--dangerously-skip-permissions' }]);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: ORIGINAL, cwd: 'C:\\work' })).resolves.toBeNull();
     });
 
     // Measured in a /preview on 2.1.316: the background session's transcript
     // appeared 1.7 s after the continued-in record, and a terminal stopped 2 s
     // after /bg had none while the session still ran. Red-green: reading only a
     // transcript the locator finds misses this session, and the reap killed it.
-    it('is true for a background session that has not written its own transcript yet', async () => {
+    it('names a background session that has not written its own transcript yet', async () => {
       writeTranscript(ORIGINAL, [...withTurn(ORIGINAL), { type: 'continued-in', continuedInSessionId: MOVED }]);
 
-      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(true);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(MOVED);
       expect(runClaudeCli).not.toHaveBeenCalled();
     });
 
-    it('reads a locator that throws as false', async () => {
+    it('reads a locator that throws as nothing', async () => {
       findClaudeTranscriptFile.mockRejectedValueOnce(new Error('EACCES'));
       vi.spyOn(console, 'warn').mockImplementation(() => {});
-      await expect(claudeIsInBackgroundSession({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBe(false);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: MOVED, cwd: 'C:\\work' })).resolves.toBeNull();
     });
   });
 
@@ -630,15 +662,15 @@ describe('resolveClaudeResumableSessionId', () => {
       await expect(resolveClaudeResumableSessionId({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_MOVED);
     });
 
-    it('reads the background session as one, and the conversation it moved out of as none', async () => {
-      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(true);
-      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_MOVED, cwd: 'C:\\work' })).resolves.toBe(false);
+    it('names the background session from either side of the move', async () => {
+      await expect(claudeBackgroundSessionOf({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_FORK);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: CAPTURED_MOVED, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_FORK);
     });
 
-    it('reads the background session as one, and resumes by the moved conversation, before its own transcript is written', async () => {
+    it('names the background session, and resumes by the moved conversation, before its own transcript is written', async () => {
       fs.rmSync(path.join(projectsFolder, `${CAPTURED_FORK}.jsonl`), { force: true });
 
-      await expect(claudeIsInBackgroundSession({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(true);
+      await expect(claudeBackgroundSessionOf({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_FORK);
       await expect(resolveClaudeResumableSessionId({ agentSessionId: CAPTURED_FORK, cwd: 'C:\\work' })).resolves.toBe(CAPTURED_MOVED);
     });
   });

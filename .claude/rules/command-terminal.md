@@ -129,8 +129,8 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   into. A conversation `/bg` moved into the agent CLI's own background session outlives the PTY,
   so the CLI stops it at every end, before the leftover reap, and before an Earlier resume, which
   then names the id `resolveResumableSessionId` returns. Both run on the agent's own files alone
-  (`isInBackgroundSession`, `command-terminal-background-session.ts`), so an ordinary end or resume
-  runs no CLI.
+  (`backgroundSessionOf`, `command-terminal-background-session.ts`), so an ordinary end or resume
+  runs no CLI, and never on a background session a live terminal still holds.
 - **An ended conversation is recorded, and Earlier resumes it.** `CommandTerminalHistory`
   (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
   the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the

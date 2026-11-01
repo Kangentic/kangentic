@@ -169,32 +169,71 @@ async function findContinuedFrom(
   return null;
 }
 
+/** An id shaped like a session id, before it is handed on. */
+const SESSION_ID_SHAPE = /^[A-Za-z0-9][A-Za-z0-9._-]{7,127}$/;
+
 /**
- * Is the conversation `agentSessionId` one `/bg` moved into a background
- * session (`isInBackgroundSession`)? True when a transcript in its own folder
- * ends by continuing in it (`continued-in`), the record `/bg` writes and
- * `/fork` does not. File reads only, and no CLI: a folder of 156 transcripts
- * took 6 to 11 ms to list and search. The record outlives the session, so true
- * means the conversation may still be running there, and the stop finds out.
+ * The session this transcript says the conversation moved on to: the id its
+ * LAST record, `continued-in`, names, or null. Only the last record counts: a
+ * `--resume` of the conversation the move left appends to it, and from then on
+ * that transcript holds the conversation again.
+ */
+async function continuedInOf(transcriptPath: string): Promise<string | null> {
+  const lastRecord = parseJsonlRecords(await readTailBytes(transcriptPath, CONTINUED_IN_TAIL_BYTES), false).at(-1);
+  if (lastRecord?.type !== 'continued-in') return null;
+  const nextId = lastRecord.continuedInSessionId;
+  return typeof nextId === 'string' && SESSION_ID_SHAPE.test(nextId) ? nextId : null;
+}
+
+/**
+ * The background session `/bg` moved the conversation `agentSessionId` into,
+ * by Claude's own files alone (`backgroundSessionOf`), or null. Two cases:
+ *
+ * - The conversation's own transcript ends by continuing in another session:
+ *   the conversation moved there, and the session that holds it now is the
+ *   last one the chain of such records names. A terminal stopped between
+ *   `/bg` and the live switch still holds this id, and so does a row Earlier
+ *   offers for a move whose background session wrote no transcript.
+ * - A transcript in its folder ends by continuing in it: the conversation IS
+ *   the background session. `/fork` writes no such record.
+ *
+ * File reads only, and no CLI: a folder of 156 transcripts took 6 to 11 ms to
+ * list and search. The records outlive the session, so an id means the
+ * conversation may still be running there, and the stop finds out.
  *
  * The background session's own transcript need not exist. Measured on
- * 2.1.316: it appeared 1.7 s after the `continued-in` record, and a terminal
- * stopped 2 s after `/bg` had none, while its session was still running. Its
- * folder is then the one the cwd maps to, where `/bg` started it.
- * Never throws; any doubt is false.
+ * 2.1.316: one appeared 1.7 s after the `continued-in` record, one left idle
+ * for 30 s wrote none, and two stopped within seconds had none. Its folder is
+ * then the one the cwd maps to, where `/bg` started it, and a missing file
+ * reads as one with no records. Never throws; any doubt is null.
  */
-export async function claudeIsInBackgroundSession(options: {
+export async function claudeBackgroundSessionOf(options: {
   agentSessionId: string;
   cwd: string;
   place?: CliPlace | null;
-}): Promise<boolean> {
+}): Promise<string | null> {
+  const locate = (agentSessionId: string) =>
+    resolveClaudeTranscriptFile({ agentSessionId, cwd: options.cwd, place: options.place ?? null });
   try {
-    const transcriptPath = await resolveClaudeTranscriptFile({ agentSessionId: options.agentSessionId, cwd: options.cwd, place: options.place ?? null });
-    return await findContinuedFrom(transcriptPath, options.agentSessionId, transcriptListingCache()) !== null;
+    const ownTranscript = await locate(options.agentSessionId);
+    let holder: string | null = null;
+    const followed = new Set([options.agentSessionId]);
+    let transcriptPath = ownTranscript;
+    for (let hop = 0; hop < MAX_PREDECESSOR_HOPS; hop++) {
+      const nextId = await continuedInOf(transcriptPath);
+      if (!nextId || followed.has(nextId)) break;
+      followed.add(nextId);
+      holder = nextId;
+      transcriptPath = await locate(nextId);
+    }
+    if (holder) return holder;
+    return await findContinuedFrom(ownTranscript, options.agentSessionId, transcriptListingCache()) !== null
+      ? options.agentSessionId
+      : null;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(`[claude] could not check whether ${options.agentSessionId.slice(0, 8)} is in a background session: ${reason}`);
-    return false;
+    return null;
   }
 }
 
@@ -239,7 +278,7 @@ export async function claudeConfirmsBackgroundMove(options: {
  * last record, `continued-in`, names the new id, which is how it is found.
  *
  * A fork whose own transcript is not written yet holds no turn either (a
- * terminal stopped 2 s after `/bg` left none: `claudeIsInBackgroundSession`),
+ * terminal stopped 2 s after `/bg` left none: `claudeBackgroundSessionOf`),
  * and is searched for in the folder the cwd maps to. Anything unproven returns
  * `agentSessionId`: a transcript with a turn, or a fork whose predecessor is
  * not in its folder (the resume check decides a conversation that is gone).

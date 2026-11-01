@@ -868,7 +868,7 @@ export interface AgentAdapter {
    * `inBackgroundSession`, `backgroundSessionHoldingConversation`), so an
    * ordinary resume runs no CLI. A Command Terminal has no session record and
    * its events file goes with it, so its end (before its leftover reap) and an
-   * Earlier resume call it on `isInBackgroundSession` instead
+   * Earlier resume call it on `backgroundSessionOf` instead
    * (`command-terminal-background-session.ts`). `cliPath` is the agent's CLI
    * as the caller resolved it, which also names its place (a WSL distro): the
    * spawn's own on a resume, the project's configured one on a terminal
@@ -879,17 +879,17 @@ export interface AgentAdapter {
   stopBackgroundSession?(options: { agentSessionId: string; cliPath: string }): Promise<boolean>;
 
   /**
-   * Optional: is the conversation `agentSessionId` one the agent CLI moved into
-   * a background session of its own (Claude Code's `/bg`), by the CLI's own
-   * files alone? Runs no CLI, so it is the gate in front of
+   * Optional: the id of the agent CLI's own background session (Claude Code's
+   * `/bg`) the conversation `agentSessionId` moved into, by the CLI's own files
+   * alone, or null. Either the conversation is that session, or its own record
+   * says it moved on to it. Runs no CLI, so it is the gate in front of
    * `stopBackgroundSession` where no session record holds SessionStart hooks
-   * to read: a Command Terminal's end and an Earlier resume. Claude: a
-   * transcript in the conversation's folder ends by continuing in it (its
-   * `continued-in` record). That record outlives the session, so true means the
-   * conversation may still be running there; the stop finds out whether it is.
-   * Never throws; any doubt is false.
+   * to read: a Command Terminal's end and an Earlier resume. Claude: the
+   * `continued-in` record `/bg` ends the old transcript with. That record
+   * outlives the session, so an id means the conversation may still be running
+   * there; the stop finds out whether it is. Never throws; any doubt is null.
    */
-  isInBackgroundSession?(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<boolean>;
+  backgroundSessionOf?(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<string | null>;
 
   /**
    * Optional: the id a `--resume` should name to reach the conversation

@@ -45,7 +45,7 @@ import { discoverClaudeStaticCapabilities, rescanClaudeModels } from './capabili
 import { createSlashCommandVerifier } from './slash-command-verifier';
 import { describeClaudeStartupFailure } from './startup-failure';
 import { proveClaudeConversationGone } from './conversation-gone';
-import { claudeConfirmsBackgroundMove, claudeIsInBackgroundSession, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
+import { claudeBackgroundSessionOf, claudeConfirmsBackgroundMove, resolveClaudeResumableSessionId, stopClaudeBackgroundSession } from './background-sessions';
 import { configuredModelFromClaudeCommand, buildModelCapabilityFields, humanizeClaudeModelId, toClaudeModelArgument } from './model-display-name';
 import { ClaudeSessionHistoryParser } from './session-history-parser';
 import type {
@@ -643,8 +643,8 @@ export class ClaudeAdapter implements AgentAdapter {
   }
 
   /** `/bg` ends the transcript it moved out of by naming the session it moved into: background-sessions.ts. */
-  isInBackgroundSession(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<boolean> {
-    return claudeIsInBackgroundSession(options);
+  backgroundSessionOf(options: { agentSessionId: string; cwd: string; place?: CliPlace | null }): Promise<string | null> {
+    return claudeBackgroundSessionOf(options);
   }
 
   async parseTranscript(

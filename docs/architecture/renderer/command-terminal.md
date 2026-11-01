@@ -793,7 +793,8 @@ A conversation `/bg` moved into Claude Code's own background session is the term
 running outside its PTY, tagged and in its folder, so the reap would kill it with no exit of its
 own. The reaper starts the CLI's own stop at the removal, while the registry row still names the
 agent and its place, and the reap waits for it. It runs only when the agent's transcripts show the
-move (`isInBackgroundSession`), so an ordinary end runs no CLI.
+move (`backgroundSessionOf`), so an ordinary end runs no CLI. A background session another live
+terminal holds is left running.
 
 ## A reattach never touches HEAD
 

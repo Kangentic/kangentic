@@ -242,7 +242,11 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     function withBackgroundSupport(options: { inBackground: boolean; resolvesTo?: string }, order: string[] = []) {
       const claude = makeAdapter('claude', { resumable: true });
       Object.assign(claude, {
-        isInBackgroundSession: vi.fn(async () => { order.push('check'); return options.inBackground; }),
+        // The row is the background session itself when the files show one.
+        backgroundSessionOf: vi.fn(async ({ agentSessionId }: { agentSessionId: string }) => {
+          order.push('check');
+          return options.inBackground ? agentSessionId : null;
+        }),
         stopBackgroundSession: vi.fn(async () => { order.push('stop'); return true; }),
         resolveResumableSessionId: vi.fn(async ({ agentSessionId }: { agentSessionId: string }) => {
           order.push('resolve');
@@ -252,7 +256,7 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
       claude.ensureTrust.mockImplementation(async () => { order.push('trust'); });
       adapters.set('claude', claude);
       return claude as typeof claude & {
-        isInBackgroundSession: ReturnType<typeof vi.fn>;
+        backgroundSessionOf: ReturnType<typeof vi.fn>;
         stopBackgroundSession: ReturnType<typeof vi.fn>;
         resolveResumableSessionId: ReturnType<typeof vi.fn>;
       };
@@ -265,7 +269,7 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
 
       await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
 
-      expect(claude.isInBackgroundSession).toHaveBeenCalledWith({ agentSessionId: 'conversation-a', cwd: PROJECT_ROOT, place: null });
+      expect(claude.backgroundSessionOf).toHaveBeenCalledWith({ agentSessionId: 'conversation-a', cwd: PROJECT_ROOT, place: null });
       expect(claude.stopBackgroundSession).toHaveBeenCalledWith({ agentSessionId: 'conversation-a', cliPath: '/mock/claude' });
       // Settled before anything is built for the spawn.
       expect(order).toEqual(['check', 'stop', 'resolve', 'trust']);
@@ -283,11 +287,26 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
 
       await spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' });
 
-      expect(claude.isInBackgroundSession).toHaveBeenCalled();
+      expect(claude.backgroundSessionOf).toHaveBeenCalled();
       expect(claude.stopBackgroundSession).not.toHaveBeenCalled();
       expect(claude.resolveResumableSessionId).not.toHaveBeenCalled();
       expect(claude.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true }));
       expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledTimes(1);
+    });
+
+    it('leaves the background session the row moved into running while a live terminal holds it, and resumes the row', async () => {
+      const claude = withBackgroundSupport({ inBackground: false });
+      claude.backgroundSessionOf.mockImplementation(async () => 'background-held-live');
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      context.sessionManager.listSessions.mockReturnValue([{ id: 'terminal-1', agentSessionId: 'background-held-live', status: 'running' }] as never);
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
+
+      await spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' });
+
+      expect(claude.stopBackgroundSession).not.toHaveBeenCalled();
+      expect(claude.resolveResumableSessionId).not.toHaveBeenCalled();
+      expect(claude.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ sessionId: 'conversation-a', resume: true }));
+      logSpy.mockRestore();
     });
 
     it('refuses with conversation-open when another terminal holds the conversation it continued, and hands both claims back', async () => {

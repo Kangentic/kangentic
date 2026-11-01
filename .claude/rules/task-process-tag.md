@@ -207,7 +207,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   (`backgroundSessionHoldingConversation`), and it is not gated on `stopLeftoverProcesses`: it ends the
   task's own agent, which every terminal transition ends. A Command Terminal has no record, so
   `CommandTerminalLeftoverReaper` starts the same stop at the removal on the agent's own files
-  (`isInBackgroundSession`, no CLI), and its reap waits for it. Do not route it through the reap or
+  (`backgroundSessionOf`, no CLI), and its reap waits for it. Do not route it through the reap or
   widen its match.
 - **The Windows reader opens `PROCESS_VM_READ` only on a process in the caller's Windows session
   owned by the caller's user,** and a kill re-checks the creation time on the handle it
@@ -241,7 +241,7 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   "Stop leftover processes" off too, and runs no CLI without the record's hook evidence;
   `tests/unit/claude-background-sessions.test.ts` pins Claude's exact match (full `sessionId`,
   `kind: background`, a live `pid`, a plain short id) and its failures reading as nothing stopped,
-  and that `isInBackgroundSession` runs no CLI. `tests/unit/command-terminal-leftovers.test.ts` pins
+  and that `backgroundSessionOf` runs no CLI. `tests/unit/command-terminal-leftovers.test.ts` pins
   that a Command Terminal's reap waits for the stop, and
   `tests/unit/command-terminal-background-session.test.ts` that an ordinary end runs no CLI, not
   even `detect`.

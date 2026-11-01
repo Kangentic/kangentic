@@ -12,9 +12,9 @@
  * hooks (`backgroundSessionHoldingConversation`). A Command Terminal has no
  * record, and its events file is deleted with its session directory, so the
  * evidence here is the agent's own transcripts
- * (`AgentAdapter.isInBackgroundSession`), read with no CLI. Only on that
- * evidence does the CLI run: its stop, then for a resume the id a `--resume`
- * reaches. So an ordinary end or resume runs no CLI.
+ * (`AgentAdapter.backgroundSessionOf`), read with no CLI. Only on that evidence
+ * does the CLI run: its stop, then for a resume the id a `--resume` reaches. So
+ * an ordinary end or resume runs no CLI.
  */
 import type { StoredCliTarget } from '../../../shared/types';
 import type { AgentAdapter } from '../../agent/agent-adapter';
@@ -32,46 +32,71 @@ export interface CommandTerminalConversation {
   place: CliPlace | null;
   /** The agent's CLI, resolved only once the files show a background session. */
   resolveCliPath(): Promise<string | null>;
+  /**
+   * Does a live terminal hold this conversation? The one `/bg` ran in keeps
+   * the background session on screen, and its row the move left is offered in
+   * Earlier while it runs, so a resume of that row must not stop it.
+   */
+  isHeldLive(agentSessionId: string): boolean;
+}
+
+/** Whether a live session of the context's session manager holds the conversation. */
+export function heldByLiveSession(context: Pick<IpcContext, 'sessionManager'>, agentSessionId: string): boolean {
+  return context.sessionManager.listSessions()
+    .some((session) => session.agentSessionId === agentSessionId && session.status !== 'exited');
 }
 
 /**
- * Stop the background session holding the conversation, when the agent's own
- * files show it moved into one. Resolves true on that evidence, whether or not
- * a session was still running to stop, and false without it. Never throws.
+ * Stop the background session the conversation moved into, when the agent's
+ * own files show one and no live terminal holds it. Resolves the background
+ * session's id on that evidence, whether or not it was still running to stop,
+ * and null without it. Never throws.
  */
-export async function stopCommandTerminalBackgroundSession(conversation: CommandTerminalConversation): Promise<boolean> {
+export async function stopCommandTerminalBackgroundSession(conversation: CommandTerminalConversation): Promise<string | null> {
   const { adapter, agentSessionId, cwd, place } = conversation;
-  if (!adapter.isInBackgroundSession || !adapter.stopBackgroundSession) return false;
-  let inBackgroundSession: boolean;
+  if (!adapter.backgroundSessionOf || !adapter.stopBackgroundSession) return null;
+  let backgroundId: string | null;
   try {
-    inBackgroundSession = await adapter.isInBackgroundSession({ agentSessionId, cwd, place });
+    backgroundId = await adapter.backgroundSessionOf({ agentSessionId, cwd, place });
   } catch (error) {
     warn(`could not check whether ${agentSessionId.slice(0, 8)} is in a background session`, error);
-    return false;
+    return null;
   }
-  if (!inBackgroundSession) return false;
+  if (!backgroundId) return null;
+  if (conversation.isHeldLive(backgroundId)) {
+    console.log(`[COMMAND_TERMINAL] the background session ${backgroundId.slice(0, 8)} is held by a live terminal; not stopped`);
+    return backgroundId;
+  }
   try {
     const cliPath = await conversation.resolveCliPath();
-    if (!cliPath) return true;
-    const stopRan = await adapter.stopBackgroundSession({ agentSessionId, cliPath });
-    if (stopRan) console.log(`[COMMAND_TERMINAL] stopped the background session holding ${agentSessionId.slice(0, 8)}`);
+    if (!cliPath) return backgroundId;
+    const stopRan = await adapter.stopBackgroundSession({ agentSessionId: backgroundId, cliPath });
+    if (stopRan) console.log(`[COMMAND_TERMINAL] stopped the background session ${backgroundId.slice(0, 8)} holding ${agentSessionId.slice(0, 8)}`);
   } catch (error) {
-    warn(`could not stop the background session holding ${agentSessionId.slice(0, 8)}`, error);
+    warn(`could not stop the background session ${backgroundId.slice(0, 8)}`, error);
   }
-  return true;
+  return backgroundId;
 }
 
 /**
  * The id an Earlier resume of the conversation hands `--resume`, after the
- * background session holding it, if any, is stopped. A conversation moved
- * into a background session before its first turn there resumes by the
- * conversation it continued (`resolveResumableSessionId`). Anything unproven,
- * and an id that is not shaped like one, keeps `agentSessionId`. Never throws.
+ * background session it moved into, if any, is stopped.
+ *
+ * A row that is the background session itself, moved into before its first
+ * turn there, resumes by the conversation it continued
+ * (`resolveResumableSessionId`). A row the move left keeps its own id, by
+ * decision: its transcript holds the conversation up to the move, and a
+ * background session that took turns has a row of its own beside it. The
+ * alternative was to resume the background session instead, which would make
+ * an Earlier row open a conversation other than the one it shows.
+ *
+ * Anything unproven, and an id that is not shaped like one, keeps
+ * `agentSessionId`. Never throws.
  */
 export async function settleCommandTerminalResume(conversation: CommandTerminalConversation): Promise<string> {
   const { adapter, agentSessionId, cwd, place } = conversation;
-  const inBackgroundSession = await stopCommandTerminalBackgroundSession(conversation);
-  if (!inBackgroundSession || !adapter.resolveResumableSessionId) return agentSessionId;
+  const backgroundId = await stopCommandTerminalBackgroundSession(conversation);
+  if (backgroundId !== agentSessionId || !adapter.resolveResumableSessionId) return agentSessionId;
   try {
     const resolved = await adapter.resolveResumableSessionId({ agentSessionId, cwd, place });
     if (resolved === agentSessionId || !PLAUSIBLE_AGENT_SESSION_ID.test(resolved)) return agentSessionId;
@@ -99,7 +124,7 @@ export interface EndedCommandTerminal {
  * the project's configured CLI for its agent. Never throws.
  */
 export async function stopEndedCommandTerminalBackgroundSession(
-  context: Pick<IpcContext, 'configManager'>,
+  context: Pick<IpcContext, 'configManager' | 'sessionManager'>,
   ended: EndedCommandTerminal,
 ): Promise<void> {
   const { agentName, agentSessionId, cwd } = ended;
@@ -116,6 +141,8 @@ export async function stopEndedCommandTerminalBackgroundSession(
       const detection = await adapter.detect(cliPathOverride);
       return detection.found && detection.path ? detection.path : null;
     },
+    // The ended terminal's row is gone by now, so only another terminal counts.
+    isHeldLive: (backgroundId) => heldByLiveSession(context, backgroundId),
   });
 }
 
