@@ -2,7 +2,7 @@
 
 <!-- releases -->
 
-## [Unreleased]
+## [protocol-v0.27.0] - 2026-11-01
 
 Names a paused task's session on its board row, so a phone can send chat to
 any paused task. Additive on the wire; `PROTOCOL_VERSION` stays '3'.
@@ -20,7 +20,7 @@ means an older desktop. `parseBoardTaskWire` populates the key from every wire
 response. The `SendUserMessageRequestPayload.sessionId` doc names the field.
 
 ### Features
-- Name a paused task's session on its board row for held chat
+- Name a paused task's session on its board row for held chat (477ac869)
 
 ## [protocol-v0.26.0] - 2026-10-30
 
