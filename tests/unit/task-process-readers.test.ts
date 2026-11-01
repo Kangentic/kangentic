@@ -315,7 +315,8 @@ describe('Linux reader: TCP connections from net/tcp and the fd links', () => {
     const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-net-'));
     temporaryRoots.push(procRoot);
     const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
-    await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list' });
+    // No tool ran, so the failure names no cause (only macOS's lsappinfo step does).
+    await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list', failureCause: null });
   });
 
   describe('clients\' fd links are read only until every peer has an owner', () => {
