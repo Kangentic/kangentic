@@ -85,9 +85,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   killed. A tree spared only because a descendant with this task's own tag works elsewhere (a .NET
   Aspire stack's dashboard) is kept as `outside`, not `shared`, and its processes are no client of a
   listener, or one open dashboard page spares the AppHost and the reap stops nothing. Stronger
-  evidence under the same root, or a real client of the tree, makes it `shared` again, and the
+  evidence under the same root, or a real client of the tree, makes it `shared`, and the
   second pass reads the difference from `keptOutsideIdentities`. Killing the AppHost is what makes
-  DCP stop the rest, so the DCP root stays kept. Do not add a kill path that skips any of these, and do not exempt processes by name: each
+  DCP stop the rest, so the DCP root stays kept. That DCP stop follows recorded parent pids with
+  no creation-time check and can end a stranger's tree under a pid collision (`process-reaping.md`,
+  "Parent pids Windows reuses" and "A .NET Aspire stack"). Do not add a kill path that skips any of these, and do not exempt processes by name: each
   protection rests on a measured mechanism (`docs/architecture/worktrees/process-reaping.md`, "What the reap kills").
   An untagged client outside Kangentic (the user's browser, Android Studio) is no evidence, by
   decision: a dev server open in a browser tab must still stop at Done.
@@ -162,8 +164,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   task's worktree removal, as a Stop does.
 - **The reap logs what it left running, by what the report already carries.** One
   `[TASK-REAP] kept` (or `could not stop`) line per entry (`leftoverLogLine`): the label, pid,
-  short task id, place, reason, and the plan's basis for it (`KeptExplanation`: the role, or the
-  pid and label of the descendant or client that made it shared, or children all kept). Nothing
+  short task id, place, reason, and the plan's basis for it (`KeptExplanation`: the role; the pid
+  and label of the descendant or client that made it `shared`; the descendant that made it
+  `outside`, which carries the task's tag and works outside its folders; or children all kept). Nothing
   more of a command line, and `because` never reaches the renderer.
 - **A Windows process still listed while it terminates is `exited`, not running.** Its exit code
   is set before it leaves the Toolhelp listing (a `/preview`'s `dev.js` was still listed at least
