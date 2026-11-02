@@ -7,9 +7,9 @@
  * `npm run eval`, and a pull request quietly costs ten agent calls per push. By
  * the time anyone notices, it has been billing for weeks.
  *
- * It covers the four harnesses that spend quota this way: `eval-ask`, the model-replay harness
- * `eval-answer-models` (which imports the first for its grader), the Condition-check replay
- * `eval-condition-check`, and the docs-reads measurement `eval-docs-reads`.
+ * It covers the three harnesses that spend quota this way: `eval-ask`, the model-replay harness
+ * `eval-answer-models` (which imports the first for its grader), and the Condition-check replay
+ * `eval-condition-check`.
  *
  * So the rule is enforced from three directions rather than trusted:
  *   1. this scan, which fails if anything automated references the runner,
@@ -46,11 +46,6 @@ const SIBLING = 'eval-answer-models';
  * wording, model and effort. Every judged reply is an agent call, so it is held to the same rule.
  */
 const CONDITION_HARNESS = 'eval-condition-check';
-/**
- * The docs-reads measurement (`scripts/eval-docs-reads.mjs`), which asks a real agent questions about
- * docs/ and counts the bytes it read. Every question is an agent call, so it is held to the same rule.
- */
-const DOCS_READS_HARNESS = 'eval-docs-reads';
 /** Where a test, a helper or a fixture can live, whatever its folder depth. */
 const TEST_EXTENSIONS = ['.ts', '.js', '.mjs'] as const;
 const SCRIPT_EXTENSIONS = ['.js', '.mjs'] as const;
@@ -72,14 +67,11 @@ const IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-ask-rollu
 const SIBLING_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-answer-models.test.ts']);
 /** The same for the Condition-check replay. */
 const CONDITION_HARNESS_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-condition-check.test.ts']);
-/** The same for the docs-reads measurement. */
-const DOCS_READS_IMPORTING_TESTS: ReadonlySet<string> = new Set(['tests/unit/eval-docs-reads.test.ts']);
 
 /** The importing tests that may name `name`, and nothing else. */
 function importingTestsFor(name: string): ReadonlySet<string> {
   if (name === SIBLING) return SIBLING_IMPORTING_TESTS;
   if (name === CONDITION_HARNESS) return CONDITION_HARNESS_IMPORTING_TESTS;
-  if (name === DOCS_READS_HARNESS) return DOCS_READS_IMPORTING_TESTS;
   return IMPORTING_TESTS;
 }
 
@@ -180,7 +172,7 @@ function testScan(name: string = RUNNER): Scan {
   return scanFiles(tests, 'tests', files, (text) => mentionsRunner(text, name));
 }
 
-describe.each([RUNNER, SIBLING, CONDITION_HARNESS, DOCS_READS_HARNESS])('the %s harness runs on demand only', (harness) => {
+describe.each([RUNNER, SIBLING, CONDITION_HARNESS])('the %s harness runs on demand only', (harness) => {
   it('is referenced by no npm script, workflow, or test runner config, nor by a script that is not the harness', () => {
     const scans = automatedScans(harness);
     const offenders = scans.flatMap((scan) => scan.offenders);
@@ -266,117 +258,6 @@ describe('the Condition-check replay', () => {
     const before = process.exitCode;
     await import('../../scripts/eval-condition-check.mjs');
     expect(process.exitCode).toBe(before);
-  });
-});
-
-describe('the docs-reads measurement', () => {
-  it('refuses to run when a CI environment variable is set, before it checks out or spawns anything', () => {
-    const result = spawnSync(process.execPath, [
-      path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'),
-      'run', '--ref', 'no-such-ref', '--label', 'no-such-label', '--out', 'no-such-output',
-    ], { env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000 });
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/Refusing to run/);
-  });
-
-  it('does not run when it is only imported', async () => {
-    const before = process.exitCode;
-    await import('../../scripts/eval-docs-reads.mjs');
-    expect(process.exitCode).toBe(before);
-  });
-
-  // `summary` and `compare` read records on disk and spend nothing. They are pinned here because this
-  // file is the one place a test may name the harness's path and spawn it.
-  it('compare exits 1 on a failing gate and 0 on a passing one, summary writes summary.json, an unknown mode exits 2', () => {
-    const recordOf = (questionId: string, group: string, gateBytes: number): Record<string, unknown> => ({
-      questionId, group, attempt: 1, passed: true, isError: false, exitCode: 0, gateBytes, docsBytes: gateBytes, reminderBytes: 0, toolCalls: 2, costUsd: 0.01,
-    });
-    const writeRecords = (directory: string, records: ReadonlyArray<Record<string, unknown>>): void => {
-      fs.mkdirSync(directory, { recursive: true });
-      fs.writeFileSync(path.join(directory, 'records.jsonl'), `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
-    };
-    // CI=true as well: a mode typed as `run` by mistake refuses before it checks anything out.
-    const runMode = (modeArguments: string[]) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'), ...modeArguments], {
-      env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000,
-    });
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-reads-cli-'));
-    try {
-      const baseline = path.join(scratch, 'baseline');
-      writeRecords(baseline, [recordOf('p1', 'pilot', 10_000), recordOf('c1', 'control', 5_000)]);
-      writeRecords(path.join(scratch, 'equal'), [recordOf('p1', 'pilot', 10_000), recordOf('c1', 'control', 5_000)]);
-      writeRecords(path.join(scratch, 'smaller'), [recordOf('p1', 'pilot', 2_000), recordOf('c1', 'control', 5_000)]);
-
-      const failing = runMode(['compare', '--baseline', baseline, '--candidate', path.join(scratch, 'equal')]);
-      expect(failing.status, failing.stderr).toBe(1);
-      expect(failing.stdout).toMatch(/gate: FAIL \(pilot drop 0 is not above the control noise 0\)/);
-
-      const passing = runMode(['compare', '--baseline', baseline, '--candidate', path.join(scratch, 'smaller')]);
-      expect(passing.status, passing.stderr).toBe(0);
-      expect(passing.stdout).toMatch(/gate: PASS/);
-      expect(passing.stdout).toMatch(/pilot gate bytes 10000 -> 2000 \(drop 8000\); largest control change 0/);
-
-      const summarized = runMode(['summary', '--out', baseline]);
-      expect(summarized.status, summarized.stderr).toBe(0);
-      const rows = JSON.parse(fs.readFileSync(path.join(baseline, 'summary.json'), 'utf-8')) as Array<{ questionId: string; group: string; runs: number; medianGateBytes: number }>;
-      expect(rows.map((row) => [row.questionId, row.group, row.runs, row.medianGateBytes])).toEqual([['p1', 'pilot', 1, 10_000], ['c1', 'control', 1, 5_000]]);
-
-      expect(runMode(['unknown-mode']).status).toBe(2);
-    } finally {
-      fs.rmSync(scratch, { recursive: true, force: true });
-    }
-  });
-
-  // Which comparison `compare` prints depends on the baseline's groups. Spawned here for the same
-  // reason as above: eval-docs-reads.test.ts may not name the harness's path.
-  it('compare prints the paired comparison for a baseline with no pilot or control group, and the gate for one with', () => {
-    const recordOf = (questionId: string, group: string, overrides: Record<string, unknown> = {}): Record<string, unknown> => ({
-      questionId, group, attempt: 1, passed: true, isError: false, exitCode: 0, gateBytes: 1000, docsBytes: 1000, reminderBytes: 0, toolCalls: 2, contextTokens: 50_000, costUsd: 0.01, ...overrides,
-    });
-    const writeRecords = (directory: string, records: ReadonlyArray<Record<string, unknown>>): void => {
-      fs.mkdirSync(directory, { recursive: true });
-      fs.writeFileSync(path.join(directory, 'records.jsonl'), `${records.map((entry) => JSON.stringify(entry)).join('\n')}\n`);
-    };
-    const runCompare = (baseline: string, candidate: string) => spawnSync(process.execPath, [path.join(ROOT, 'scripts', 'eval-docs-reads.mjs'), 'compare', '--baseline', baseline, '--candidate', candidate], {
-      env: { ...process.env, CI: 'true' }, encoding: 'utf-8', timeout: 30_000,
-    });
-    const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'docs-reads-paired-cli-'));
-    try {
-      // Second-round groups. Baseline q1 has two runs, one without a token count; every other run
-      // carries all four measures. q1's baseline mean is 4000 bytes, q2's 6000; the candidate reads
-      // 2000 and 3000, so bytes come out at 5000 / 10000.
-      writeRecords(path.join(scratch, 'paired-baseline'), [
-        recordOf('q1', 'paraphrase', { gateBytes: 4000 }),
-        recordOf('q1', 'paraphrase', { gateBytes: 4000, contextTokens: null }),
-        recordOf('q2', 'broad', { gateBytes: 6000 }),
-      ]);
-      writeRecords(path.join(scratch, 'paired-candidate'), [
-        recordOf('q1', 'paraphrase', { gateBytes: 2000 }),
-        recordOf('q2', 'broad', { gateBytes: 3000 }),
-      ]);
-
-      const paired = runCompare(path.join(scratch, 'paired-baseline'), path.join(scratch, 'paired-candidate'));
-
-      expect(paired.status, paired.stderr).toBe(0);
-      expect(paired.stdout).toMatch(/gateBytes: candidate\/baseline 0\.500 \(95% interval /);
-      expect(paired.stdout).toMatch(/runs missing a measure \(left out of that measure's mean only\) 1 -> 0/);
-      expect(paired.stdout).toMatch(/pass rate 1\.000 -> 1\.000/);
-      // No verdict: the paired comparison's reading is fixed in docs/log.md, not decided here.
-      expect(paired.stdout).not.toMatch(/gate: (?:PASS|FAIL)/);
-
-      // The same records filed under the first round's groups go to the gate instead.
-      writeRecords(path.join(scratch, 'gate-baseline'), [recordOf('p1', 'pilot', { gateBytes: 10_000 }), recordOf('c1', 'control', { gateBytes: 5_000 })]);
-      writeRecords(path.join(scratch, 'gate-candidate'), [recordOf('p1', 'pilot', { gateBytes: 2_000 }), recordOf('c1', 'control', { gateBytes: 5_000 })]);
-
-      const gated = runCompare(path.join(scratch, 'gate-baseline'), path.join(scratch, 'gate-candidate'));
-
-      expect(gated.status, gated.stderr).toBe(0);
-      expect(gated.stdout).toMatch(/gate: PASS/);
-      expect(gated.stdout).not.toMatch(/candidate\/baseline/);
-      expect(gated.stdout).not.toMatch(/runs missing a measure/);
-    } finally {
-      fs.rmSync(scratch, { recursive: true, force: true });
-    }
   });
 });
 

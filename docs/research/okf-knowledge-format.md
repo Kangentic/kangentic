@@ -4,8 +4,6 @@ title: Open Knowledge Format for agent-read docs
 description: What the Open Knowledge Format is, why its pattern should help an agent find and trust documentation, what Kangentic's own measurements showed, and the design rules the docs follow as a result.
 tags: [docs, okf, agents, retrieval, research]
 sources:
-  - resource: scripts/eval-docs-reads.mjs
-  - resource: scripts/measure-docs-structure.mjs
   - resource: scripts/docs-bundle.mjs
 ---
 # Open Knowledge Format for agent-read docs
@@ -111,9 +109,8 @@ results says the structure hurts, and each one names something the first layout 
 5. **Narrow `sources:`.** List the files a concept enumerates or describes. Do not list a whole
    folder or a shared file such as `src/shared/types.ts` unless the concept really tracks all of it,
    or every change to it flags the concept.
-6. **Measure again as the docs grow.** `scripts/measure-docs-structure.mjs` reruns the drift and
-   retrieval checks at no cost. `scripts/eval-docs-reads.mjs` reruns the agent comparison when a
-   person decides it is worth the quota.
+6. **Measure again if the docs grow many times over.** The drift, retrieval and agent comparisons
+   above were one-off harnesses, removed in the 2026-11-02 test suite audit. Git history holds them.
 
 ## See Also
 
