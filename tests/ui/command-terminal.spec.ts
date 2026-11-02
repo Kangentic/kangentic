@@ -11,9 +11,8 @@
  * ~1-2 s overhead of chromium.launch() per test while still providing full
  * state isolation between tests.
  *
- * Tests with unique per-test spawnTransient overrides (ContextBar group) and
- * tests with different base pre-configs (TitleBar Button group) keep their
- * own per-test browser launches.
+ * Tests with a unique pre-config, which is most of this file, take their own
+ * context in launchWithState, from one browser per worker.
  *
  * Phase 2 change (Multiple terminals): the pulsing `transient-session-indicator`
  * dot was removed. Activity is now surfaced as the COLOR of the title-bar
@@ -207,18 +206,24 @@ async function launchSharedBrowser(preConfigScript: string): Promise<{
   return { browser, context, page };
 }
 
+/** The one browser launchWithState uses in this worker. Playwright closes it as the worker exits. */
+let workerBrowser: Browser | null = null;
+
 /**
- * Launch a one-off browser for a single test with a unique preconfig.
- * Used when the preconfig is test-specific (e.g. custom spawnTransient overrides)
- * or when sharing is not safe.
+ * Open a one-off context for a single test with a unique preconfig. Used when the
+ * preconfig is test-specific (e.g. custom spawnTransient overrides) or when sharing a
+ * page is not safe. The context is the test's own, so cookies and storage stay isolated
+ * as they did with a browser per test. What comes back as `browser` closes only that
+ * context, which leaves every call site's `browser.close()` right. No file-level hook
+ * closes workerBrowser: a hook would change how this parallel file splits into groups.
  */
 async function launchWithState(
   preConfigScript: string,
   viewport: { width: number; height: number } = GRID_VIEWPORT,
-): Promise<{ browser: Browser; page: Page }> {
+): Promise<{ browser: Pick<Browser, 'close'>; page: Page }> {
   await waitForViteReady();
-  const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({ viewport });
+  if (!workerBrowser?.isConnected()) workerBrowser = await chromium.launch({ headless: true });
+  const context = await workerBrowser.newContext({ viewport });
   const page = await context.newPage();
 
   await page.addInitScript({ path: MOCK_SCRIPT });
@@ -228,7 +233,7 @@ async function launchWithState(
   await page.waitForLoadState('load');
   await page.waitForSelector('text=Kangentic', { timeout: 15000 });
 
-  return { browser, page };
+  return { browser: { close: () => context.close() }, page };
 }
 
 /**
