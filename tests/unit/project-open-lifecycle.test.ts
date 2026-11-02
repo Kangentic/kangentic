@@ -52,6 +52,10 @@ import path from 'node:path';
 const state = vi.hoisted(() => ({
   existingPaths: new Set<string>(),
   callOrder: [] as string[],
+  // The Command Terminal restore's own timeline: its claim and start, the task
+  // resume between them, and the host-loss restore. Kept apart from `callOrder`,
+  // which older cases pin to an exact list.
+  restoreTimeline: [] as string[],
   pruneResult: 0 as number | Error,
   cleanupError: null as Error | null,
   cleanupGate: null as { promise: Promise<void>; resolve: () => void } | null,
@@ -108,11 +112,24 @@ vi.mock('../../src/main/ipc/handlers/project-relocate', () => ({
 vi.mock('../../src/main/transition-engine/session-startup', () => ({
   resumeSuspendedSessions: vi.fn(async () => {
     state.callOrder.push('resumeSuspendedSessions');
+    state.restoreTimeline.push('resumeSuspendedSessions');
     if (state.resumeError) throw state.resumeError;
   }),
   autoSpawnTasks: vi.fn(async () => {
     state.callOrder.push('autoSpawnTasks');
     if (state.autoSpawnError) throw state.autoSpawnError;
+  }),
+}));
+
+// What the restore does with a project's terminals is covered against a real
+// database in command-terminal-restore.test.ts. Here only when each open path
+// and the host-loss recovery call it.
+vi.mock('../../src/main/ipc/handlers/command-terminal-restore', () => ({
+  claimCommandTerminalRestore: vi.fn(() => { state.restoreTimeline.push('claimCommandTerminalRestore'); }),
+  startCommandTerminalRestore: vi.fn(async () => { state.restoreTimeline.push('startCommandTerminalRestore'); }),
+  forgetCommandTerminalRestore: vi.fn(),
+  restoreLostCommandTerminals: vi.fn(async (_context: unknown, projectId: string) => {
+    state.restoreTimeline.push(`restoreLostCommandTerminals:${projectId}`);
   }),
 }));
 
@@ -290,7 +307,15 @@ import {
   recoverSessionsAfterPtyHostLoss,
 } from '../../src/main/ipc/handlers/projects';
 import { resumeSuspendedSessions, autoSpawnTasks } from '../../src/main/transition-engine/session-startup';
+import { cleanupStaleResourcesAsync } from '../../src/main/transition-engine/resource-cleanup';
 import { autoSpawnForTask, ensureGitignore } from '../../src/main/ipc/helpers';
+import {
+  claimCommandTerminalRestore,
+  forgetCommandTerminalRestore,
+  restoreLostCommandTerminals,
+  startCommandTerminalRestore,
+  type LostCommandTerminal,
+} from '../../src/main/ipc/handlers/command-terminal-restore';
 import { TaskRepository } from '../../src/main/db/repositories/task-repository';
 import { detachProjectFromWorkflows } from '../../src/main/workflows/workflow-project-delete';
 import { endWorkflowAgentsOfProject } from '../../src/main/workflows/workflow-agent';
@@ -404,6 +429,7 @@ beforeEach(() => {
   capturedHandlers.clear();
   state.existingPaths.clear();
   state.callOrder = [];
+  state.restoreTimeline = [];
   state.pruneResult = 0;
   state.cleanupError = null;
   state.cleanupGate = null;
@@ -1551,6 +1577,238 @@ describe('recoverSessionsAfterPtyHostLoss', () => {
     ]));
 
     expect(vi.mocked(resumeSuspendedSessions).mock.calls.map((call) => call[0])).toEqual(['project-A']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// 5a. The Command Terminal restore around each recovery pass. The running
+//     terminals a restart brings back are claimed before anything can list
+//     Earlier, started after the tasks have resumed (so tasks keep first claim
+//     on the session cap), and started even when the chain around them throws,
+//     so a claim is never left held.
+// ---------------------------------------------------------------------------
+
+describe('the Command Terminal restore around project recovery', () => {
+  const CLAIM_RESUME_START = ['claimCommandTerminalRestore', 'resumeSuspendedSessions', 'startCommandTerminalRestore'];
+
+  async function waitForAutoSpawn(): Promise<void> {
+    await vi.waitFor(() => {
+      expect(state.callOrder).toContain('autoSpawnTasks');
+    }, { timeout: 2000 });
+  }
+
+  async function openThroughHandler(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.getById.mockReturnValue(project);
+    state.existingPaths.add(project.path);
+    registerProjectHandlers(asIpcContext(context));
+    const handler = capturedHandlers.get(IPC.PROJECT_OPEN);
+    if (!handler) throw new Error('PROJECT_OPEN handler was not registered');
+    await handler(null, project.id);
+  }
+
+  async function openByPath(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+    await openProjectByPath(asIpcContext(context), project.path);
+  }
+
+  async function activateAll(context: MockContext, project: Project): Promise<void> {
+    context.projectRepo.list.mockReturnValue([project]);
+    state.existingPaths.add(project.path);
+    await activateAllProjects(asIpcContext(context));
+  }
+
+  const openPaths: Array<[string, (context: MockContext, project: Project) => Promise<void>]> = [
+    ['openProjectByPath', openByPath],
+    ['activateAllProjects', activateAll],
+    ['the deferred PROJECT_OPEN body', openThroughHandler],
+  ];
+
+  describe.each(openPaths)('%s', (_name, open) => {
+    it('claims, then resumes the tasks, then starts the terminals, each for the opened project', async () => {
+      const context = createMockContext();
+      const project = makeProject();
+
+      await open(context, project);
+      await waitForAutoSpawn();
+
+      expect(state.restoreTimeline).toEqual(CLAIM_RESUME_START);
+      expect(vi.mocked(claimCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(claimCommandTerminalRestore)).toHaveBeenCalledWith(asIpcContext(context), project.id);
+      expect(vi.mocked(startCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(startCommandTerminalRestore)).toHaveBeenCalledWith(asIpcContext(context), project.id);
+    });
+
+    it('still starts the terminals when the task resume rejects, so no claim stays held', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const context = createMockContext();
+        const project = makeProject();
+        state.resumeError = new Error('resume exploded');
+
+        await open(context, project);
+        await vi.waitFor(() => {
+          expect(vi.mocked(startCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+        }, { timeout: 2000 });
+
+        expect(state.restoreTimeline).toEqual(CLAIM_RESUME_START);
+        // Let the rest of the chain settle before the spy is restored.
+        await flushSetImmediate();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+
+    it('still starts the terminals when the orphan prune rejects', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const context = createMockContext();
+        const project = makeProject();
+        state.pruneResult = new Error('prune exploded');
+
+        await open(context, project);
+        await waitForAutoSpawn();
+
+        expect(state.restoreTimeline).toEqual(CLAIM_RESUME_START);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  // The deferred PROJECT_OPEN body has no outer catch, so a synchronous throw
+  // there would be an unhandled rejection; the two paths below are the ones that
+  // settle it.
+  describe.each(openPaths.slice(0, 2))('%s, when a step before the resume throws', (_name, open) => {
+    it('still starts the terminals, so the claim is settled', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const context = createMockContext();
+        const project = makeProject();
+        vi.mocked(cleanupStaleResourcesAsync).mockImplementationOnce(() => {
+          throw new Error('cleanup could not start');
+        });
+
+        await open(context, project);
+        await vi.waitFor(() => {
+          expect(vi.mocked(startCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+        }, { timeout: 2000 });
+
+        expect(state.restoreTimeline).toEqual(['claimCommandTerminalRestore', 'startCommandTerminalRestore']);
+        await flushSetImmediate();
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+
+  describe('forgetting a deleted project', () => {
+    it('forgets its restore pass when the project folder is gone', async () => {
+      const context = createMockContext();
+      const project = makeProject();
+      Object.assign(context.boardConfigManager, { detach: vi.fn() });
+      // Not in state.existingPaths: the early return for a moved or deleted folder.
+
+      await cleanupProject(asIpcContext(context), project.id, project.path);
+
+      expect(vi.mocked(forgetCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(forgetCommandTerminalRestore)).toHaveBeenCalledWith(asIpcContext(context), project.id);
+    });
+
+    it('forgets its restore pass when the project is cleaned up in full', async () => {
+      const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+      try {
+        const context = createMockContext();
+        const project = makeProject();
+        Object.assign(context.boardConfigManager, { detach: vi.fn() });
+        state.existingPaths.add(project.path);
+
+        await cleanupProject(asIpcContext(context), project.id, project.path);
+
+        expect(vi.mocked(forgetCommandTerminalRestore)).toHaveBeenCalledTimes(1);
+        expect(vi.mocked(forgetCommandTerminalRestore)).toHaveBeenCalledWith(asIpcContext(context), project.id);
+      } finally {
+        errorSpy.mockRestore();
+      }
+    });
+  });
+});
+
+describe('recoverSessionsAfterPtyHostLoss and the Command Terminals the host took down', () => {
+  function lostTerminal(agentSessionId: string): LostCommandTerminal {
+    return {
+      agentSessionId,
+      claimed: true,
+      ended: { agentName: 'claude', agentSessionId, cwd: path.join(PROJECT_PATH, 'a'), cliTarget: null },
+      task: { id: `tag-${agentSessionId}`, worktree_path: null, title: 'Command Terminal 1' },
+      wslDistros: [],
+    };
+  }
+
+  function registerProjects(context: MockContext, projects: Project[]): void {
+    const byId = new Map(projects.map((project) => [project.id, project]));
+    context.projectRepo.getById.mockImplementation((projectId: string) => byId.get(projectId));
+    for (const project of projects) state.existingPaths.add(project.path);
+  }
+
+  it('restores the terminals only after the tasks have been recovered', async () => {
+    const context = createMockContext();
+    const project = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    registerProjects(context, [project]);
+    const lostTerminals = [lostTerminal('conversation-a')];
+
+    await recoverSessionsAfterPtyHostLoss(
+      asIpcContext(context),
+      new Map([['project-A', new Set(['session-a1'])]]),
+      new Map([['project-A', lostTerminals]]),
+    );
+
+    expect(state.restoreTimeline).toEqual(['resumeSuspendedSessions', 'restoreLostCommandTerminals:project-A']);
+    expect(vi.mocked(restoreLostCommandTerminals)).toHaveBeenCalledWith(asIpcContext(context), 'project-A', lostTerminals);
+  });
+
+  it('restores the terminals of a project that lost no task session', async () => {
+    const context = createMockContext();
+    const project = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    registerProjects(context, [project]);
+
+    await recoverSessionsAfterPtyHostLoss(
+      asIpcContext(context),
+      new Map(),
+      new Map([['project-A', [lostTerminal('conversation-a')]]]),
+    );
+
+    expect(state.restoreTimeline).toEqual(['restoreLostCommandTerminals:project-A']);
+  });
+
+  it('restores nothing when the host took down no terminal', async () => {
+    const context = createMockContext();
+    const project = makeProject({ id: 'project-A', name: 'Project A', path: path.join(PROJECT_PATH, 'a') });
+    registerProjects(context, [project]);
+
+    await recoverSessionsAfterPtyHostLoss(asIpcContext(context), new Map([['project-A', new Set(['session-a1'])]]));
+
+    expect(vi.mocked(restoreLostCommandTerminals)).not.toHaveBeenCalled();
+  });
+
+  it('still restores the terminals of every project when the task recovery throws, then rejects with its error', async () => {
+    const context = createMockContext();
+    // Outside the per-project try: the read throws out of the whole task pass.
+    context.projectRepo.getById.mockImplementation(() => { throw new Error('index database unreadable'); });
+    const terminalsInA = [lostTerminal('conversation-a1'), lostTerminal('conversation-a2')];
+    const terminalsInB = [lostTerminal('conversation-b1')];
+
+    await expect(recoverSessionsAfterPtyHostLoss(
+      asIpcContext(context),
+      new Map([['project-A', new Set(['session-a1'])]]),
+      new Map([['project-A', terminalsInA], ['project-B', terminalsInB]]),
+    )).rejects.toThrow('index database unreadable');
+
+    expect(vi.mocked(restoreLostCommandTerminals).mock.calls.map((call) => [call[1], call[2]])).toEqual([
+      ['project-A', terminalsInA],
+      ['project-B', terminalsInB],
+    ]);
+    expect(vi.mocked(resumeSuspendedSessions)).not.toHaveBeenCalled();
   });
 });
 
