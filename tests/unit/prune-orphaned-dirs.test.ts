@@ -335,6 +335,31 @@ describe('pruneStaleResources -- async background cleanup', () => {
     expect(mockRm).not.toHaveBeenCalled();
   });
 
+  it('preserves a spare worktree, which no task records, and still removes a real orphan', async () => {
+    // A spare worktree (`spare_<8 hex>`) is no task's until one adopts it, and
+    // its own startup pass decides whether it stays. Without the spare-name
+    // check this sweep deletes the one pre-installed worktree a project keeps
+    // (the mtime defaults to a day old, so the grace period does not save it).
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+
+    setupReaddir({
+      [WORKTREES_DIR]: [dirEntry('spare_0a1b2c3d'), dirEntry('stale-abcd1234')],
+    });
+
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    expect(mockRm).not.toHaveBeenCalledWith(path.join(WORKTREES_DIR, 'spare_0a1b2c3d'), expect.anything());
+    expect(mockRm).toHaveBeenCalledWith(
+      path.join(WORKTREES_DIR, 'stale-abcd1234'),
+      expect.objectContaining({ recursive: true, force: true }),
+    );
+    logSpy.mockRestore();
+  });
+
   it('preserves a session directory whose id is live in the session manager (regression)', async () => {
     // task-cleanup's live-session guard may delete a live session's DB record
     // while sparing its on-disk dir. The orphan prune must keep that dir alive

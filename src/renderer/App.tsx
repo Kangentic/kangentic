@@ -33,6 +33,7 @@ import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { endsOwnCallTurn, resolveIdleToast } from './utils/idle-toast';
 import { openTaskFromNotification } from './utils/open-task-from-notification';
 import { asSentence, describeIpcError } from './lib/ipc-error';
+import { stopScriptFailureBody } from './lib/stop-script-toast';
 import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
@@ -400,6 +401,12 @@ export function App() {
         });
       }));
     }
+
+    // The line for an agent slot, which only main can see across projects.
+    cleanups.push(sessions.onQueueChanged((snapshot) => {
+      useSessionStore.getState().setQueueSnapshot(snapshot);
+    }));
+    void useSessionStore.getState().syncQueueSnapshot();
 
     // Desktop-notification helpers, now used only by the spawn-stall and
     // auto-move handlers: the idle and exit desktop notifications moved to main
@@ -994,6 +1001,21 @@ export function App() {
       }));
     }
 
+    // A project's Stop script failed for a task. Current project only, as
+    // onSpawnBlocked: the toast names a task from that project's board.
+    if (tasks?.onStopScriptFailed) {
+      cleanups.push(tasks.onStopScriptFailed((failed) => {
+        if (failed.projectId !== useProjectStore.getState().currentProject?.id) return;
+        useToastStore.getState().addToast({
+          title: i18n._(msg`Stop script failed`),
+          message: stopScriptFailureBody(failed),
+          variant: 'warning',
+          durationMs: 12000,
+          onOpen: () => { openTaskFromNotification(failed.projectId, failed.taskId); },
+        });
+      }));
+    }
+
     // A resume found the agent had deleted the conversation, so the task
     // started a new one from a recap of the task. The push is a signal: main
     // queued the notice first, and this takes the queue rather than toasting
@@ -1526,6 +1548,7 @@ if (import.meta.hot) {
     // reconciliation, which a history-opened dialog is exempt from.
     void useAnnouncementsStore.getState().loadActive();
     void useAnnouncementsStore.getState().loadHistory();
+    void useSessionStore.getState().syncQueueSnapshot();
     useSessionStore.getState().syncSessions().then((applied) => {
       if (!applied) return;
 

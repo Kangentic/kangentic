@@ -693,6 +693,111 @@ describe('CONFIG_SYNC_DEFAULT_TO_PROJECTS IPC handler - applyRuntimeConfig wirin
   });
 });
 
+describe('CONFIG_GET IPC handler - the board config overlay (default base branch and Stop script)', () => {
+  // The Stop script has no other store, so the settings row's only read of it is
+  // this overlay. It must follow the project the renderer NAMED, and a script alone
+  // (no team default branch) must still reach `git.stopScript`.
+  const MAIN_PATH = '/repo/main';
+  const OTHER_PATH = '/repo/other';
+  const EFFECTIVE = { agent: { maxConcurrentSessions: 5 }, git: { defaultBaseBranch: 'main', worktreesEnabled: true } };
+
+  beforeEach(() => {
+    capturedHandlers.clear();
+    capturedOnHandlers.clear();
+  });
+
+  function makeOverlayContext(options: {
+    scripts?: Record<string, string | null>;
+    boardBranches?: Record<string, string | undefined>;
+    currentProjectPath?: string | null;
+  } = {}) {
+    const scripts = options.scripts ?? {};
+    const boardBranches = options.boardBranches ?? {};
+    const context = makeContext({
+      currentProjectPath: options.currentProjectPath === undefined ? MAIN_PATH : options.currentProjectPath,
+      currentProjectId: 'project-main',
+    });
+    context.configManager.getEffectiveConfig.mockReturnValue(EFFECTIVE as never);
+    const boardConfigManager = {
+      getDefaultBaseBranch: vi.fn(() => boardBranches[MAIN_PATH]),
+      getDefaultBaseBranchForPath: vi.fn((projectPath: string) => boardBranches[projectPath]),
+      getStopScriptForPath: vi.fn((projectPath: string) => scripts[projectPath] ?? null),
+    };
+    const projectRepo = {
+      list: context.projectRepo.list,
+      getById: vi.fn((projectId: string) => (projectId === 'project-other' ? { id: projectId, path: OTHER_PATH } : undefined)),
+    };
+    const overlaid = { ...context, boardConfigManager, projectRepo };
+    registerSystemHandlers(overlaid as unknown as Parameters<typeof registerSystemHandlers>[0]);
+    return { context: overlaid, boardConfigManager };
+  }
+
+  it('returns the script with no team default branch, and keeps the effective config\'s branch', () => {
+    makeOverlayContext({ scripts: { [MAIN_PATH]: 'npm run stop' } });
+
+    expect(invokeHandler(IPC.CONFIG_GET)).toEqual({
+      ...EFFECTIVE,
+      git: { ...EFFECTIVE.git, defaultBaseBranch: 'main', stopScript: 'npm run stop' },
+    });
+  });
+
+  it('puts the team default branch over the effective one, beside the script', () => {
+    makeOverlayContext({ scripts: { [MAIN_PATH]: 'npm run stop' }, boardBranches: { [MAIN_PATH]: 'develop' } });
+
+    expect(invokeHandler(IPC.CONFIG_GET)).toMatchObject({ git: { defaultBaseBranch: 'develop', stopScript: 'npm run stop' } });
+  });
+
+  it('hands back the effective config itself when the board sets neither', () => {
+    const { boardConfigManager } = makeOverlayContext();
+
+    const result = invokeHandler(IPC.CONFIG_GET) as typeof EFFECTIVE & { git: { stopScript?: string | null } };
+
+    expect(result).toBe(EFFECTIVE);
+    expect(result.git).not.toHaveProperty('stopScript');
+    expect(boardConfigManager.getStopScriptForPath).toHaveBeenCalledWith(MAIN_PATH);
+  });
+
+  it('reads the script of the project it was asked for, not the open one\'s', () => {
+    const { context, boardConfigManager } = makeOverlayContext({
+      scripts: { [MAIN_PATH]: 'npm run stop', [OTHER_PATH]: 'make stop' },
+      boardBranches: { [OTHER_PATH]: 'trunk' },
+    });
+
+    const result = invokeHandler(IPC.CONFIG_GET, 'project-other') as typeof EFFECTIVE & { git: { stopScript?: string | null } };
+
+    expect(context.configManager.getEffectiveConfig).toHaveBeenCalledWith(OTHER_PATH);
+    expect(boardConfigManager.getStopScriptForPath).toHaveBeenCalledWith(OTHER_PATH);
+    expect(boardConfigManager.getStopScriptForPath).not.toHaveBeenCalledWith(MAIN_PATH);
+    expect(result.git).toMatchObject({ stopScript: 'make stop', defaultBaseBranch: 'trunk' });
+  });
+
+  it('gives another project no script of the open project\'s when it has none', () => {
+    makeOverlayContext({ scripts: { [MAIN_PATH]: 'npm run stop' } });
+
+    expect(invokeHandler(IPC.CONFIG_GET, 'project-other')).toBe(EFFECTIVE);
+  });
+
+  it('reads the open project when it is named by its own id', () => {
+    const { boardConfigManager } = makeOverlayContext({ scripts: { [MAIN_PATH]: 'npm run stop' } });
+
+    expect(invokeHandler(IPC.CONFIG_GET, 'project-main')).toMatchObject({ git: { stopScript: 'npm run stop' } });
+    expect(boardConfigManager.getStopScriptForPath).toHaveBeenCalledWith(MAIN_PATH);
+  });
+
+  it('reads no script when no project is open', () => {
+    const { boardConfigManager } = makeOverlayContext({ currentProjectPath: null });
+
+    expect(invokeHandler(IPC.CONFIG_GET)).toBe(EFFECTIVE);
+    expect(boardConfigManager.getStopScriptForPath).not.toHaveBeenCalled();
+  });
+
+  it('refuses an id that names no registered project', () => {
+    makeOverlayContext();
+
+    expect(() => invokeHandler(IPC.CONFIG_GET, 'project-gone')).toThrow('Unknown project');
+  });
+});
+
 describe('CONFIG_SET_SYNC IPC handler - synchronous quit-flush wiring', () => {
   // Regression guard for the intentionally-minimal design of the sync flush handler:
   // it must persist the layout to disk AND set event.returnValue (so sendSync unblocks

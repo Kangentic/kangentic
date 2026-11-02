@@ -165,6 +165,10 @@ function makeContext(sessionSuspend: ReturnType<typeof vi.fn> = vi.fn(async () =
     currentProjectId: PROJECT_ID,
     currentProjectPath: PROJECT_PATH,
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       suspend: sessionSuspend,
       getSession: vi.fn(() => null),
       // The post-respawn idle-authoritative pin (session-reconcile.ts:155).
@@ -208,6 +212,50 @@ describe('restartSessionForSettingsChange', () => {
 
     engine = makeEngine();
     mockCreateTransitionEngine.mockReturnValue(engine);
+  });
+
+  // =========================================================================
+  // A column's agent limit
+  // =========================================================================
+
+  it('keeps the task\'s column slot across the restart, so the next in line cannot take it', async () => {
+    const task = makeTask('live-session');
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => task), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => makeLane()) },
+      automations: {},
+      automationRuns: {},
+      attachments: {},
+    });
+    const order: string[] = [];
+    const context = makeContext(vi.fn(async () => { order.push('suspend'); }));
+    context.sessionManager.holdColumnSlot.mockImplementation(() => {
+      order.push('hold');
+      return () => { order.push('release'); };
+    });
+    engine.resumeSuspendedSession.mockImplementation(async () => { order.push('resume'); return undefined; });
+
+    await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
+
+    expect(order).toEqual(['hold', 'suspend', 'resume', 'release']);
+  });
+
+  it('releases the slot when the suspend fails', async () => {
+    const task = makeTask('live-session');
+    mockGetProjectRepos.mockReturnValue({
+      tasks: { getById: vi.fn(() => task), update: vi.fn() },
+      swimlanes: { getById: vi.fn(() => makeLane()) },
+      automations: {},
+      automationRuns: {},
+      attachments: {},
+    });
+    const release = vi.fn();
+    const context = makeContext(vi.fn(async () => { throw new Error('host gone'); }));
+    context.sessionManager.holdColumnSlot.mockReturnValue(release);
+
+    await restartSessionForSettingsChange(context as never, PROJECT_ID, PROJECT_PATH, TASK_ID, { phase: 'switching-model' });
+
+    expect(release).toHaveBeenCalledTimes(1);
   });
 
   // =========================================================================

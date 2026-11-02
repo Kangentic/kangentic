@@ -28,6 +28,8 @@ const mockTaskList = vi.fn();
 /** The task row as the database holds it now; unset, the row discovery listed. */
 const mockTaskGetById = vi.fn((_id: string): unknown => undefined);
 const mockSwimlaneList = vi.fn();
+/** The tasks in limited columns, with when each entered; none unless a test says so. */
+const mockCappedColumnTasks = vi.fn((): unknown[] => []);
 /** The spawn pass's writes: the task's new session, and the session row. */
 const mockTaskUpdate = vi.fn();
 const mockSessionInsert = vi.fn();
@@ -37,6 +39,7 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {
+    listCappedColumnTasks() { return mockCappedColumnTasks(); }
     // The spawn pass re-reads its task under the task lock: answer with what the
     // discovery pass was handed.
     listed = new Map<string, unknown>();
@@ -638,6 +641,69 @@ describe('autoSpawnTasks: a skipped spawn releases its command\'s hold', () => {
     }
 
     expect(removeHooks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Startup fires a project's spawns together, and whichever spawned first would
+ * take a limited column's slot. The pass hands its batch to the spawns in the
+ * order the tasks entered their column, not the order discovery found them.
+ *
+ * Red-green: drop the `orderByColumnEntry` wrapper at the spawn pass in
+ * auto-spawn.ts and the first test spawns in discovery order.
+ */
+describe('autoSpawnTasks: a limited column\'s tasks spawn in the order they entered it', () => {
+  const lostRegistry = (): RegistryRow[] => [
+    { id: 'session-lost-late', taskId: 'task-late', status: 'exited' },
+    { id: 'session-lost-early', taskId: 'task-early', status: 'exited' },
+  ];
+  const capped = (taskId: string, enteredAt: string) => ({ taskId, swimlaneId: ACTIVE_LANE, swimlaneName: ACTIVE_LANE, maxAgents: 1, enteredAt });
+  const spawnedTaskIds = (sessionManager: Awaited<ReturnType<typeof runScopedAutoSpawn>>): string[] => (
+    sessionManager.spawn.mock.calls.map((call) => (call[0] as unknown as { taskId: string }).taskId)
+  );
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockTaskGetById.mockReset();
+    mockTaskGetById.mockImplementation(() => undefined);
+    mockCappedColumnTasks.mockReset();
+    mockCappedColumnTasks.mockReturnValue([]);
+    mockSwimlaneList.mockReturnValue([activeLane()]);
+    // Discovery lists the later entrant first, so entry order is not list order.
+    mockTaskList.mockReturnValue([task('task-late'), task('task-early')]);
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-late') as never);
+    mockPrepareAgentSpawn.mockImplementationOnce(async () => preparedSpawn('task-early') as never);
+  });
+
+  afterEach(() => {
+    mockCappedColumnTasks.mockReturnValue([]);
+  });
+
+  it('spawns the task that entered the column first before the one that entered later', async () => {
+    mockCappedColumnTasks.mockReturnValue([
+      capped('task-late', '2026-01-02T00:00:00.000Z'),
+      capped('task-early', '2026-01-01T00:00:00.000Z'),
+    ]);
+
+    const sessionManager = await runScopedAutoSpawn(
+      lostRegistry(),
+      new Set(['task-late', 'task-early']),
+      new Set(['session-lost-late', 'session-lost-early']),
+    );
+
+    expect(spawnedTaskIds(sessionManager)).toEqual(['task-early', 'task-late']);
+  });
+
+  // The control for the test above: with no limited column the batch keeps the
+  // order discovery gave it, so the reorder there is the entry order's doing.
+  it('control: tasks in no limited column keep the order discovery found them in', async () => {
+    const sessionManager = await runScopedAutoSpawn(
+      lostRegistry(),
+      new Set(['task-late', 'task-early']),
+      new Set(['session-lost-late', 'session-lost-early']),
+    );
+
+    expect(spawnedTaskIds(sessionManager)).toEqual(['task-late', 'task-early']);
   });
 });
 

@@ -13,7 +13,9 @@ import {
   normalizeDirectory,
   planReap,
   planReapDetailed,
+  processIdentity,
   subtreeOf,
+  type ReapPlanInput,
   type ReapTaskScope,
 } from '../../src/main/pty/process-tag/reap-plan';
 import type { LocalConnectionRead, ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
@@ -210,6 +212,15 @@ describe('planReap: a shared process is spared with everything under it', () => 
       scanned(3563, 3562, { tag: TASK }),
     ];
     expect(plannedPids(processes)).toEqual([3560, 3562, 3563]);
+  });
+
+  it('keeps a macOS withheld root shared: with no tag to compare, nothing says the descendant is the task\'s own', () => {
+    const plan = withConnections([
+      main,
+      scanned(2001, 1, { environmentWithheld: true }),
+      scanned(2002, 2001, { tag: TASK, workingDirectory: '/srv' }),
+    ], connected([], []));
+    expect(plan.kept.map((kept) => [kept.process.pid, kept.reason])).toEqual([[2001, 'shared']]);
   });
 });
 
@@ -631,7 +642,8 @@ describe('planReapDetailed: what each kept process rests on, for the log', () =>
     const exitedDevServer = scanned(2002, 2001, { tag: null, environmentUnreadable: true, workingDirectory: null, startedAtMs: 200 });
     const trashDeleter = scanned(2003, 2002, { tag: TASK, workingDirectory: '/tmp', startedAtMs: 300 });
 
-    expect(becauseOf(detailed([main, tabShell, exitedDevServer, trashDeleter]))).toEqual([[2001, 'shared', 'descendant', 2003]]);
+    // The deleter is the task's own process in the temp folder: nothing here shows other work.
+    expect(becauseOf(detailed([main, tabShell, exitedDevServer, trashDeleter]))).toEqual([[2001, 'outside', 'descendant', 2003]]);
     // Without the deleter (a stop that says the worktree is being removed), the
     // exited dev.js is no evidence and the shell is the task's to stop.
     const withoutDeleter = detailed([main, tabShell, exitedDevServer]);
@@ -669,7 +681,13 @@ function connected(pairs: Array<[listenerPid: number, clientPid: number]>, liste
 function withConnections(
   processes: ScannedProcess[],
   connections: LocalConnectionRead | undefined,
-  options: { liveRootPids?: number[]; reaped?: Map<string, ReapTaskScope>; keepIdentities?: Set<string>; signalledIdentities?: Set<string> } = {},
+  options: {
+    liveRootPids?: number[];
+    reaped?: Map<string, ReapTaskScope>;
+    keepIdentities?: ReadonlySet<string>;
+    keptOutsideIdentities?: ReadonlySet<string>;
+    signalledIdentities?: Set<string>;
+  } = {},
 ) {
   return planReapDetailed({
     processes,
@@ -679,6 +697,7 @@ function withConnections(
     caseInsensitivePaths: false,
     connections,
     keepIdentities: options.keepIdentities,
+    keptOutsideIdentities: options.keptOutsideIdentities,
     signalledIdentities: options.signalledIdentities,
   });
 }
@@ -1046,5 +1065,335 @@ describe('connectionQueryOf', () => {
     expect(pidsOf(query.listeners)).toEqual([2001]);
     // The held PTY's tree is another session's work, so it is evidence, and the windows (the task's own) are not.
     expect(pidsOf(query.clients)).toEqual([2001, 3000, 3001]);
+  });
+});
+
+describe('planReapDetailed: a .NET Aspire stack only this task uses', () => {
+  // A real stack, measured with the real reader and planner. Its paths are
+  // placeholders. That run recorded no parents, so the links follow what a
+  // runner measured on a smaller stack (tests/unit/aspire-host-death.test.ts):
+  // the CLI above the AppHost; the DCP root, whose parent is the launcher that
+  // exited after `--detach`; the controller under the root; and under it each
+  // resource and its `dcp monitor-process`, with `docker events` watchers.
+  const STACK_PROJECT = 'C:\\Users\\dev\\project';
+  const STACK_WORKTREE = `${STACK_PROJECT}\\.kangentic\\worktrees\\1`;
+  const app = (name: string) => `${STACK_WORKTREE}\\apps\\${name}\\`;
+  const APP_HOST = app('apphost');
+  const WINDOWS = 'C:\\Windows\\';
+  const DASHBOARD_FOLDER = 'C:\\Users\\dev\\.nuget\\packages\\aspire.cli.win-x64\\13.6.1\\tools\\net10.0\\win-x64\\dashboard\\';
+  const GONE_CLI_PARENT = 61001;
+  const GONE_DCP_LAUNCHER = 61002;
+
+  const CLI = 38780;
+  const CONSOLE_OF_CLI = 50000;
+  const APP_HOST_PID = 69916;
+  const CONSOLE_OF_APP_HOST = 15684;
+  const DCP_ROOT = 43952;
+  const DCP_CONTROLLER = 82004;
+  const DASHBOARD = 71340;
+  const API = 54224;
+  const WORKER = 85344;
+
+  const ROWS: Array<[pid: number, ppid: number, directory: string]> = [
+    [CLI, GONE_CLI_PARENT, `${STACK_WORKTREE}\\`],
+    [CONSOLE_OF_CLI, CLI, WINDOWS],
+    [APP_HOST_PID, CLI, APP_HOST],
+    [CONSOLE_OF_APP_HOST, APP_HOST_PID, WINDOWS],
+    [DCP_ROOT, GONE_DCP_LAUNCHER, APP_HOST],
+    [78128, DCP_ROOT, WINDOWS],
+    [DCP_CONTROLLER, DCP_ROOT, APP_HOST],
+    [82592, DCP_CONTROLLER, WINDOWS],
+    [73184, DCP_CONTROLLER, APP_HOST],
+    [40664, DCP_CONTROLLER, APP_HOST],
+    [42488, DCP_CONTROLLER, APP_HOST],
+    [78048, DCP_CONTROLLER, app('marketing')],
+    [60084, DCP_CONTROLLER, APP_HOST],
+    [DASHBOARD, DCP_CONTROLLER, DASHBOARD_FOLDER],
+    [68024, DASHBOARD, WINDOWS],
+    [69892, DCP_CONTROLLER, APP_HOST],
+    [63648, DCP_CONTROLLER, APP_HOST],
+    [49704, 78048, WINDOWS],
+    [972, 78048, app('marketing')],
+    [81456, 972, app('marketing')],
+    [72160, 81456, app('marketing')],
+    [80364, DCP_CONTROLLER, APP_HOST],
+    [58512, DCP_CONTROLLER, APP_HOST],
+    [50852, DCP_CONTROLLER, APP_HOST],
+    [71564, DCP_CONTROLLER, APP_HOST],
+    [86296, DCP_CONTROLLER, app('api')],
+    [72244, 86296, WINDOWS],
+    [37492, DCP_CONTROLLER, APP_HOST],
+    [API, 86296, app('api')],
+    [14256, DCP_CONTROLLER, app('dashboard')],
+    [29672, DCP_CONTROLLER, app('careers')],
+    [72376, DCP_CONTROLLER, app('worker')],
+    [49996, 14256, WINDOWS],
+    [32120, 29672, WINDOWS],
+    [36372, 72376, WINDOWS],
+    [83864, DCP_CONTROLLER, APP_HOST],
+    [51024, DCP_CONTROLLER, APP_HOST],
+    [46616, DCP_CONTROLLER, APP_HOST],
+    [76236, 14256, app('dashboard')],
+    [81280, 29672, app('careers')],
+    [78344, 76236, app('dashboard')],
+    [40796, 81280, app('careers')],
+    [40016, 78344, app('dashboard')],
+    [66012, 40796, app('careers')],
+    [WORKER, 72376, app('worker')],
+  ];
+
+  const stack: ScannedProcess[] = ROWS.map(([pid, ppid, directory], order) => scanned(pid, ppid, {
+    tag: TASK,
+    workingDirectory: directory,
+    startedAtMs: 1000 + order * 10,
+    ...(directory === WINDOWS ? { role: 'console-host' as const } : {}),
+  }));
+
+  /** Every connection the real stack held, all among its own processes, and its listeners. */
+  const IDLE_PAIRS: Array<[listenerPid: number, clientPid: number]> = [
+    [DCP_ROOT, DCP_CONTROLLER],
+    [DCP_ROOT, APP_HOST_PID],
+    [DCP_CONTROLLER, API],
+    [DASHBOARD, DCP_CONTROLLER],
+    [API, DCP_CONTROLLER],
+    [DCP_CONTROLLER, APP_HOST_PID],
+    [DCP_CONTROLLER, WORKER],
+  ];
+  const LISTENERS = [DASHBOARD, API, APP_HOST_PID, DCP_ROOT, DCP_CONTROLLER, 40016, 72160, 66012];
+  /** Measured on a runner: an open dashboard page makes the dashboard a client of the AppHost. */
+  const DASHBOARD_OPEN_PAIR: [number, number] = [APP_HOST_PID, DASHBOARD];
+  /** What the reap can reach: the two processes above the detached DCP root. */
+  const STOPPED = [CLI, APP_HOST_PID].sort((left, right) => left - right);
+
+  function planStack(
+    pairs: Array<[number, number]>,
+    extra: ScannedProcess[] = [],
+    earlier: Pick<ReapPlanInput, 'keepIdentities' | 'keptOutsideIdentities' | 'signalledIdentities'> = {},
+  ) {
+    return planReapDetailed({
+      processes: [main, ...stack, ...extra],
+      tasks: tasks([[TASK, { directories: [STACK_PROJECT], worktreePath: STACK_WORKTREE }]]),
+      mainPid: MAIN_PID,
+      liveRootPids: [],
+      caseInsensitivePaths: true,
+      connections: connected(pairs, LISTENERS),
+      ...earlier,
+    });
+  }
+  const keptRows = (plan: ReturnType<typeof planStack>) => plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.because.basis, kept.because.evidencePid]);
+
+  it('has the measured shape: 45 processes, 34 inside the project', () => {
+    expect(stack).toHaveLength(45);
+    expect(stack.filter((stackProcess) => stackProcess.workingDirectory?.startsWith(STACK_PROJECT))).toHaveLength(34);
+  });
+
+  it('stops the CLI and the AppHost, and reports the DCP root as running outside the task, never as shared', () => {
+    const plan = planStack(IDLE_PAIRS);
+    expect(targetPidsOf(plan)).toEqual(STOPPED);
+    expect(plan.roots.map((root) => root.process.pid)).toEqual([CLI]);
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'outside', 'descendant', DASHBOARD]]);
+    expect(plan.keptIdentities.size).toBe(41);
+    expect(plan.keptOutsideIdentities).toEqual(plan.keptIdentities);
+  });
+
+  it('leaves the rest of the stack to DCP: nothing it spares is a target, the dashboard included', () => {
+    const targets = targetPidsOf(planStack(IDLE_PAIRS));
+    for (const pid of [DCP_ROOT, DCP_CONTROLLER, DASHBOARD, API, WORKER]) expect(targets).not.toContain(pid);
+  });
+
+  it('still stops the AppHost with the dashboard open: a process of the task\'s own spared tree is no client', () => {
+    const plan = planStack([DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS]);
+    expect(targetPidsOf(plan)).toEqual(STOPPED);
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'outside', 'descendant', DASHBOARD]]);
+  });
+
+  it('keeps the whole stack when another task is connected to the dashboard, whichever pair is read first', () => {
+    const otherTaskClient = scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_PROJECT });
+    for (const pairs of [
+      [DASHBOARD_OPEN_PAIR, [DASHBOARD, 3001] as [number, number], ...IDLE_PAIRS],
+      [[DASHBOARD, 3001] as [number, number], DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS],
+    ]) {
+      const plan = planStack(pairs, [otherTaskClient]);
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(plan.keptOutsideIdentities.size).toBe(0);
+      // The root rests on the client, and the CLI and AppHost go with their kept tree.
+      expect(keptRows(plan)).toContainEqual([DCP_ROOT, 'shared', 'connection', 3001]);
+      expect(keptRows(plan)).toContainEqual([CLI, 'shared', 'children', null]);
+    }
+  });
+
+  it.each([
+    ['an untagged process', { tag: null }],
+    ['another task\'s process', { tag: OTHER_TASK }],
+    ['a cleared-tag process', { tag: '' }],
+    ['an untagged process elsewhere', { tag: null, workingDirectory: 'C:\\elsewhere\\' }],
+    ['an unreadable process elsewhere', { tag: null, environmentUnreadable: true, workingDirectory: 'C:\\elsewhere\\' }],
+    // Unreadable means the tag cannot be trusted, so it is no proof the process is the task's own.
+    ['an unreadable process elsewhere that carries the task tag', { tag: TASK, environmentUnreadable: true, workingDirectory: 'C:\\elsewhere\\' }],
+  ])('reads as shared with %s under DCP, though the walk reaches the dashboard first', (_name, options) => {
+    const visitor = scanned(90001, DCP_CONTROLLER, { workingDirectory: APP_HOST, startedAtMs: 9000, ...options });
+    const plan = planStack(IDLE_PAIRS, [visitor]);
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'shared', 'descendant', 90001]]);
+    expect(plan.keptOutsideIdentities.size).toBe(0);
+    expect(targetPidsOf(plan)).toEqual(STOPPED);
+  });
+
+  it('never lets a dashboard kept by the first pass save an AppHost that outlived its signal from the force pass', () => {
+    const pairs = [DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS];
+    const first = planStack(pairs);
+    const signalledIdentities = new Set(first.targets.map(processIdentity));
+    const second = planStack(pairs, [], { keepIdentities: first.keptIdentities, keptOutsideIdentities: first.keptOutsideIdentities, signalledIdentities });
+    expect(targetPidsOf(second)).toEqual(STOPPED);
+    // Read as plain kept identities, the same scan would spare it: what the field is for.
+    expect(targetPidsOf(planStack(pairs, [], { keepIdentities: first.keptIdentities, signalledIdentities }))).not.toContain(APP_HOST_PID);
+  });
+});
+
+describe('planReapDetailed: a tree kept as outside, across passes and under other roots', () => {
+  const ELSEWHERE = '/home/dev/elsewhere';
+  const identitiesOf = (...members: ScannedProcess[]) => new Set(members.map(processIdentity));
+  const otherTaskClient = scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_WORKTREE });
+  const reasonRows = (plan: ReturnType<typeof withConnections>) => plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.because.basis, kept.because.evidencePid]);
+
+  it('returns no kept identities of either kind when the reap has no tasks', () => {
+    const plan = planReapDetailed({ processes: [main, scanned(2001, 1, { tag: TASK })], tasks: new Map(), mainPid: MAIN_PID, liveRootPids: [] });
+    expect(plan.keptIdentities.size).toBe(0);
+    expect(plan.keptOutsideIdentities.size).toBe(0);
+    expect(plan.targets).toEqual([]);
+  });
+
+  describe('the force pass', () => {
+    // R, with a client Y of its own and a listener D that works elsewhere, is
+    // spared as outside. X is a separate listener that Y is a client of.
+    const treeRoot = scanned(2001, 1, { tag: TASK });
+    const treeClient = scanned(2002, 2001, { tag: TASK });
+    const treeListener = scanned(2003, 2001, { tag: TASK, workingDirectory: ELSEWHERE });
+    const separateTarget = scanned(2010, 1, { tag: TASK });
+    const processes = [main, treeRoot, treeClient, treeListener, separateTarget];
+    const clientOfTarget: [number, number] = [2010, 2002];
+    const listeningPids = [2010, 2003];
+
+    it('promotes the whole tree when real evidence reaches one listener in it, so another process of the tree becomes a client', () => {
+      const first = withConnections(processes, connected([clientOfTarget], listeningPids));
+      expect(targetPidsOf(first)).toEqual([2010]);
+      expect(first.keptOutsideIdentities).toEqual(identitiesOf(treeRoot, treeClient, treeListener));
+      const earlier = { keepIdentities: first.keptIdentities, keptOutsideIdentities: first.keptOutsideIdentities };
+
+      // Control: nothing real reaches the tree, so it stays no evidence and the target still goes.
+      const withoutClient = withConnections(processes, connected([clientOfTarget], listeningPids), earlier);
+      expect(targetPidsOf(withoutClient)).toEqual([2010]);
+      expect(withoutClient.keptOutsideIdentities).toEqual(first.keptOutsideIdentities);
+
+      // Another task connects to the listener D: the tree is shared, so its client Y spares X.
+      const second = withConnections(
+        [...processes, otherTaskClient],
+        connected([clientOfTarget, [2003, 3001]], listeningPids),
+        earlier,
+      );
+      expect(targetPidsOf(second)).toEqual([]);
+      expect(second.keptOutsideIdentities.size).toBe(0);
+    });
+  });
+
+  describe('a shared root over the same processes', () => {
+    it('stops reporting an earlier outside process as outside once a root that is shared covers it', () => {
+      const sharedRoot = scanned(2001, 1, { tag: TASK });
+      const keptChild = scanned(2002, 2001, { tag: TASK });
+      const otherTaskDescendant = scanned(2003, 2001, { tag: OTHER_TASK });
+      const plan = withConnections([main, sharedRoot, keptChild, otherTaskDescendant], connected([], []), {
+        keepIdentities: identitiesOf(keptChild),
+        keptOutsideIdentities: identitiesOf(keptChild),
+      });
+      expect(plan.keptIdentities.has(processIdentity(keptChild))).toBe(true);
+      expect(plan.keptOutsideIdentities.size).toBe(0);
+      expect(keptOf(plan)).toEqual([[2001, 'shared', TASK]]);
+    });
+
+    // S is shared through another task's descendant. O is under it, and on its
+    // own would be outside: all that spares it is a child of its own working elsewhere.
+    const sharedTop = scanned(2001, 1, { tag: TASK });
+    const nestedOutside = scanned(2002, 2001, { tag: TASK });
+    const nestedOwnElsewhere = scanned(2003, 2002, { tag: TASK, workingDirectory: ELSEWHERE });
+    const otherTaskUnderTop = scanned(2004, 2001, { tag: OTHER_TASK });
+    const nestedProcesses = [main, sharedTop, nestedOutside, nestedOwnElsewhere, otherTaskUnderTop];
+
+    it('reads an outside root nested under a shared one as shared: nothing of it is kept as outside', () => {
+      const plan = withConnections(nestedProcesses, connected([], [2003]));
+      expect(plan.keptOutsideIdentities.size).toBe(0);
+      expect(reasonRows(plan)).toEqual([[2001, 'shared', 'descendant', 2004]]);
+      expect(targetPidsOf(plan)).toEqual([]);
+    });
+
+    it('counts a process of that nested tree as evidence for a listener, as a shared one is', () => {
+      const listener = scanned(2010, 1, { tag: TASK });
+      const plan = withConnections([...nestedProcesses, listener], connected([[2010, 2002]], [2010]));
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(keptOf(plan)).toContainEqual([2010, 'shared', TASK]);
+    });
+  });
+
+  describe('a kept launcher', () => {
+    // The launcher listens on nothing and has not been signalled, so it is kept for its children.
+    const launcher = scanned(2001, 1, { tag: TASK });
+    const outsideChild = scanned(2002, 2001, { tag: TASK });
+    const sharedChild = scanned(2003, 2001, { tag: TASK });
+
+    it('takes the outside reason of its only kept child', () => {
+      const plan = withConnections([main, launcher, outsideChild], connected([], []), {
+        keepIdentities: identitiesOf(outsideChild),
+        keptOutsideIdentities: identitiesOf(outsideChild),
+      });
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(reasonRows(plan)).toEqual([[2001, 'outside', 'children', null]]);
+    });
+
+    it('reads shared when one kept child is shared and another outside: shared outranks outside', () => {
+      const plan = withConnections([main, launcher, outsideChild, sharedChild], connected([], []), {
+        keepIdentities: identitiesOf(outsideChild, sharedChild),
+        keptOutsideIdentities: identitiesOf(outsideChild),
+      });
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(reasonRows(plan)).toEqual([[2001, 'shared', 'children', null]]);
+    });
+  });
+
+  describe('evidence from processes kept by an earlier pass', () => {
+    it('counts a process kept as shared as a client, and one kept only as outside as none', () => {
+      const keptShared = scanned(2001, 1, { tag: TASK });
+      const keptOutside = scanned(2002, 1, { tag: TASK });
+      const listenerForShared = scanned(2201, 1, { tag: TASK });
+      const listenerForOutside = scanned(2202, 1, { tag: TASK });
+      const plan = withConnections(
+        [main, keptShared, keptOutside, listenerForShared, listenerForOutside],
+        connected([[2201, 2001], [2202, 2002]], [2201, 2202]),
+        { keepIdentities: identitiesOf(keptShared, keptOutside), keptOutsideIdentities: identitiesOf(keptOutside) },
+      );
+      expect(targetPidsOf(plan)).toEqual([2202]);
+      expect(keptOf(plan)).toEqual([[2201, 'shared', TASK]]);
+    });
+  });
+
+  describe('promotion across two outside trees', () => {
+    // Tree A and tree B are each a root with a listener in the task's directories
+    // and a child of its own working elsewhere. Another task connects to A's
+    // listener, and a process of A is a client of B's listener.
+    const treeA = [scanned(2001, 1, { tag: TASK }), scanned(2002, 2001, { tag: TASK }), scanned(2003, 2001, { tag: TASK, workingDirectory: ELSEWHERE })];
+    const treeB = [scanned(2101, 1, { tag: TASK }), scanned(2102, 2101, { tag: TASK }), scanned(2103, 2101, { tag: TASK, workingDirectory: ELSEWHERE })];
+    const processes = [main, ...treeA, ...treeB, otherTaskClient];
+    const otherTaskReachesA: [number, number] = [2002, 3001];
+    const aProcessUsesB: [number, number] = [2102, 2003];
+
+    it.each([
+      ['evidence first', [otherTaskReachesA, aProcessUsesB]],
+      ['A\'s client of B first', [aProcessUsesB, otherTaskReachesA]],
+    ])('turns both trees shared with the pairs read %s', (_name, pairs) => {
+      const plan = withConnections(processes, connected(pairs, [2002, 2102]));
+      expect(plan.keptOutsideIdentities.size).toBe(0);
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(reasonRows(plan)).toEqual([
+        [2001, 'shared', 'connection', 3001],
+        [2101, 'shared', 'connection', 2003],
+      ]);
+    });
   });
 });

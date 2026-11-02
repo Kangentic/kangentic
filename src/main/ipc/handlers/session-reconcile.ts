@@ -7,7 +7,7 @@ import { resolveInjectionVerifier } from '../helpers/agent-spawn';
 import { deliverAgentMessageInBackground } from '../../automations/turn-end/agent-message-delivery';
 import { captureSessionMetrics, refineTranscriptTokens, refineTranscriptToolCounts } from './session-metrics';
 import { captureGitChurn, resolveDefaultBaseBranch } from './git-stats-capture';
-import { markRecordExited, markRecordSuspended } from '../../transition-engine/session-lifecycle';
+import { markRecordSuspended, settleQueuedRecord } from '../../transition-engine/session-lifecycle';
 import { applyProfileToLane } from '../../transition-engine/column-strategy';
 import { clearSpawnProgress, emitSpawnProgress, type SpawnPhase } from '../../transition-engine/spawn-progress';
 import { loadTaskProfile } from '../helpers/task-profile';
@@ -65,7 +65,7 @@ export function applySuspendDbWrites(
     captureGitChurn(task, sessionRepo, usageHistoryRepo, record.id, projectPath, resolveDefaultBaseBranch(context, projectPath));
     markRecordSuspended(sessionRepo, record.id, source);
   } else if (record && action === 'exit-queued') {
-    markRecordExited(sessionRepo, record.id);
+    settleQueuedRecord(sessionRepo, record, context.sessionManager.isResuming(task.session_id), source);
   }
   tasks.update({ id: taskId, session_id: null });
 }
@@ -133,6 +133,9 @@ export async function restartSessionForSettingsChange(
     const sessionId = task.session_id;
 
     emitSpawnProgress(context.mainWindow, taskId, options.phase);
+    // The suspend frees the column's slot for an instant. This task keeps it, or
+    // the next in line would take the column from an agent only changing flags.
+    const releaseColumnSlot = context.sessionManager.holdColumnSlot(projectId, taskId);
     try {
       try {
         applySuspendDbWrites(context, projectId, taskId, 'system');
@@ -220,6 +223,7 @@ export async function restartSessionForSettingsChange(
         return { ok: false, reason: `respawn failed: ${message}` };
       }
     } finally {
+      releaseColumnSlot();
       clearSpawnProgress(context.mainWindow, taskId);
     }
   } catch (unexpectedError) {

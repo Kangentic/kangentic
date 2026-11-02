@@ -48,6 +48,7 @@ describe('resumeMemoryPausedWorkflowTasks', () => {
   let workingLane: Swimlane;
   let context: IpcContext;
   let freeSlots: number;
+  let columnFull: boolean;
 
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
@@ -70,9 +71,10 @@ describe('resumeMemoryPausedWorkflowTasks', () => {
     hoisted.database = database;
     workingLane = new SwimlaneRepository(database).list().find((lane) => lane.role === null)!;
     freeSlots = 4;
+    columnFull = false;
     context = {
       projectRepo: { list: () => [{ id: PROJECT_ID }] },
-      sessionManager: { getFreeAgentSlots: () => freeSlots },
+      sessionManager: { getFreeAgentSlots: () => freeSlots, columnBlocks: () => columnFull },
     } as unknown as IpcContext;
   });
 
@@ -123,6 +125,32 @@ describe('resumeMemoryPausedWorkflowTasks', () => {
 
     expect(hoisted.resumeTaskSession).toHaveBeenCalledTimes(1);
     expect(hoisted.resumeTaskSession).toHaveBeenCalledWith(context, 'task-early', expect.objectContaining({ projectId: PROJECT_ID, resumedBy: 'memory' }));
+  });
+
+  it('leaves a task in a column that has its one agent, and takes it once the column has room', async () => {
+    memoryPausedTask('task-held', '2026-10-31T01:00:00.000Z');
+    columnFull = true;
+
+    await resumeMemoryPausedWorkflowTasks(context);
+    expect(hoisted.resumeTaskSession).not.toHaveBeenCalled();
+
+    columnFull = false;
+    await resumeMemoryPausedWorkflowTasks(context);
+    expect(hoisted.resumeTaskSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds no gate and spends no resume on one that lost a slot race and queued', async () => {
+    memoryPausedTask('task-queued', '2026-10-31T01:00:00.000Z');
+    memoryPausedTask('task-next', '2026-10-31T01:05:00.000Z');
+    hoisted.resumeTaskSession.mockImplementationOnce(async (_context: unknown, taskId: string) => {
+      database.prepare("UPDATE sessions SET status = 'queued', suspended_by = NULL WHERE task_id = ?").run(taskId);
+      return { id: `resumed-${taskId}`, status: 'queued' };
+    });
+
+    await resumeMemoryPausedWorkflowTasks(context);
+    await resumeMemoryPausedWorkflowTasks(context);
+
+    expect(hoisted.resumeTaskSession).toHaveBeenLastCalledWith(context, 'task-next', expect.anything());
   });
 
   it('brings them back one at a time: the next waits for the gate', async () => {

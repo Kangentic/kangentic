@@ -66,9 +66,15 @@ function agentDisplayName(sessionType: string): string {
 }
 
 /** Locate the first query token inside a snippet to place the <mark>. Returns
- *  0/0 (no highlight) when nothing matches, e.g. a semantic-only snippet. */
-function markRange(snippet: string, query: string): { start: number; end: number } {
-  const token = query.trim().split(/\s+/)[0]?.toLowerCase() ?? '';
+ *  0/0 (no highlight) when nothing matches, e.g. a semantic-only snippet.
+ *  Tokens lose their double quotes, as `escapeFtsMatchQuery` matches them. */
+export function markRange(snippet: string, query: string): { start: number; end: number } {
+  const token = query
+    .trim()
+    .split(/\s+/)
+    .map((word) => word.replace(/"/g, ''))
+    .find((word) => word.length > 0)
+    ?.toLowerCase() ?? '';
   if (!token) return { start: 0, end: 0 };
   const start = snippet.toLowerCase().indexOf(token);
   if (start < 0) return { start: 0, end: 0 };

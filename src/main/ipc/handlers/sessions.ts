@@ -31,6 +31,7 @@ import { forgetTranscriptPath, persistTranscriptPath } from './session-transcrip
 import { abortInFlightResume } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
+import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
 import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -38,6 +39,10 @@ import { parseStoredCliTarget } from '../../agent/shared/cli-target';
 import { MessageTrailTracker } from '../../agent/message-trail-tracker';
 import type { IpcContext } from '../ipc-context';
 import { broadcast } from '../../pop-out/window-broadcast';
+import { EMPTY_QUEUE_SNAPSHOT, readQueueSnapshot } from '../helpers/queue-snapshot';
+
+/** How long a change to the line for an agent slot waits for the rest of its burst. */
+const QUEUE_PUSH_COALESCE_MS = 100;
 
 // Track session start times for duration calculation on exit
 const sessionStartTimes = new Map<string, number>();
@@ -597,6 +602,32 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
     }
   });
 
+  // Who is waiting for a slot and why. Coalesced, because a promotion changes
+  // several rows at once, and sent only when the line changed, so a board with
+  // nothing queued pushes nothing.
+  ipcMain.handle(IPC.SESSION_QUEUE_SNAPSHOT, () => readQueueSnapshot(context));
+  let lastQueuePush = JSON.stringify(EMPTY_QUEUE_SNAPSHOT);
+  let queuePushTimer: NodeJS.Timeout | null = null;
+  const scheduleQueuePush = (): void => {
+    if (queuePushTimer) return;
+    queuePushTimer = setTimeout(() => {
+      queuePushTimer = null;
+      if (isShuttingDown() || context.mainWindow.isDestroyed()) return;
+      try {
+        const snapshot = readQueueSnapshot(context);
+        const serialized = JSON.stringify(snapshot);
+        if (serialized === lastQueuePush) return;
+        lastQueuePush = serialized;
+        broadcast(context.mainWindow, IPC.SESSION_QUEUE_CHANGED, snapshot);
+      } catch (error) {
+        console.warn('[SESSION] Could not read the agent queue:', error);
+      }
+    }, QUEUE_PUSH_COALESCE_MS);
+  };
+  context.sessionManager.on('session-changed', scheduleQueuePush);
+  context.sessionManager.on('session-removed', scheduleQueuePush);
+  context.sessionManager.on('queue-changed', scheduleQueuePush);
+
   // The sweep fires every minute while the agent stays idle and its row stays
   // running, and a task's row stays running until its pause reaches the PTY.
   // A pause still waiting on the task lock is not queued a second time.
@@ -658,7 +689,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       },
     }).then(
       (outcome) => {
-        if (outcome === 'paused') announce();
+        if (outcome !== 'paused') return;
+        announce();
+        // Outside the task lock, started and not awaited: a Stop script never
+        // holds a pause up, and it reads the record this pause just wrote.
+        startParkedStop(context, projectId, taskId);
       },
       (error: unknown) => {
         console.error('[idle-timeout] pause failed:', error);
@@ -794,8 +829,9 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
         // runs. Recording an abnormal 'exited' here would force startup recovery
         // to reinterpret it via the interrupted-exited gather; marking
         // 'suspended' keeps it on the clean resume path. Only RUNNING records
-        // are redirected - queued never started a CLI (mark exited, matching
-        // syncShutdownCleanup), and suspended/exited rows CAS-no-op either way.
+        // are redirected - a queued row has no CLI to resume here, since
+        // settleQueuedRecord decides what it becomes before any kill, and
+        // suspended/exited rows CAS-no-op either way.
         // (Power loss / SIGKILL leaves isShuttingDown() false; startup recovery
         // is the real fix there.)
         const shuttingDown = isShuttingDown();

@@ -42,6 +42,8 @@ const storedRecordDefault = (recordId: string): SessionRecord | null => (
 );
 const sessionRepoFindByAnyId = vi.fn(storedRecordDefault);
 const swimlaneRepoList = vi.fn(() => [] as Swimlane[]);
+// The tasks in limited columns, with when each entered; none unless a test says so.
+const cappedColumnTasks = vi.fn((): unknown[] => []);
 // The record a resume would continue. None by default, so a record that reaches
 // the preparation pass has no conversation to resume there.
 const latestForTaskByTypeAndIsolation = vi.fn((): SessionRecord | null => null);
@@ -79,6 +81,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
+    listCappedColumnTasks() { return cappedColumnTasks(); }
     list = () => taskRepoList();
     getById = (taskId: string) => taskRepoGetById(taskId);
     update = (...args: unknown[]) => taskRepoUpdateMock(...args);
@@ -804,6 +807,87 @@ describe('resumeSuspendedSessions: a skipped resume releases its command\'s hold
 
     expect(sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ id: 'prepared-session' }));
     expect(removeHooks).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Startup fires a project's resumes together, and whichever spawned first would
+ * take a limited column's slot. The pass hands its batch to the spawns in the
+ * order the tasks entered their column, not the order the records were gathered.
+ *
+ * Red-green: drop the `orderByColumnEntry` wrapper at the spawn pass in
+ * resume-suspended.ts and the first test spawns in gathered order.
+ */
+describe('resumeSuspendedSessions: a limited column\'s tasks resume in the order they entered it', () => {
+  const capped = (taskId: string, enteredAt: string) => ({ taskId, swimlaneId: 'lane-1', swimlaneName: 'Planning', maxAgents: 1, enteredAt });
+  const consoleSpies: Array<{ mockRestore: () => void }> = [];
+
+  function preparedResumeFor(taskId: string) {
+    return {
+      ok: true,
+      data: {
+        adapter: { name: 'claude', sessionType: 'claude_agent', removeHooks: vi.fn(), getExitSequence: () => ['\x03'] },
+        agent: 'claude',
+        command: 'claude --resume',
+        cwd: '/project/cwd',
+        sessionRecordId: `prepared-${taskId}`,
+        agentSessionId: 'agent-session-1',
+        permissionMode: 'default',
+        statusOutputPath: `/project/.kangentic/sessions/prepared-${taskId}/status.json`,
+        eventsOutputPath: `/project/.kangentic/sessions/prepared-${taskId}/events.jsonl`,
+        extraEnv: null,
+        appliedModel: null,
+        appliedEffort: null,
+      },
+    };
+  }
+
+  async function runResumeOfBothTasks(): Promise<string[]> {
+    const sessionManager = makeSessionManager();
+    sessionManager.spawn.mockImplementation(async (input: { id: string }) => ({ id: input.id, status: 'running' }));
+    await runResume(sessionManager);
+    return sessionManager.spawn.mock.calls.map((call) => (call[0] as unknown as { taskId: string }).taskId);
+  }
+
+  beforeEach(() => {
+    swimlaneRepoList.mockReturnValue([makeLane({ auto_spawn: true })]);
+    latestForTaskByTypeAndIsolation.mockReturnValue(makeRecord());
+    // The later entrant is gathered first, so entry order is not gathered order.
+    taskRepoList.mockReturnValue([makeTask({ id: 'task-late' }), makeTask({ id: 'task-early' })]);
+    sessionRepoGetOrphaned.mockReturnValue([
+      makeRecord({ id: 'record-late', task_id: 'task-late', status: 'orphaned', suspended_by: null }),
+      makeRecord({ id: 'record-early', task_id: 'task-early', status: 'orphaned', suspended_by: null }),
+    ]);
+    prepareAgentSpawnMock.mockImplementationOnce(async () => preparedResumeFor('task-late'));
+    prepareAgentSpawnMock.mockImplementationOnce(async () => preparedResumeFor('task-early'));
+    consoleSpies.push(vi.spyOn(console, 'log').mockImplementation(() => undefined));
+  });
+
+  afterEach(() => {
+    prepareAgentSpawnMock.mockReset();
+    cappedColumnTasks.mockReset();
+    cappedColumnTasks.mockReturnValue([]);
+    latestForTaskByTypeAndIsolation.mockReturnValue(null);
+    for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+  });
+
+  it('resumes the task that entered the column first before the one that entered later', async () => {
+    cappedColumnTasks.mockReturnValue([
+      capped('task-late', '2026-01-02T00:00:00.000Z'),
+      capped('task-early', '2026-01-01T00:00:00.000Z'),
+    ]);
+
+    const spawnedTaskIds = await runResumeOfBothTasks();
+
+    expect(spawnedTaskIds).toEqual(['task-early', 'task-late']);
+  });
+
+  // The control for the test above: with no limited column the batch keeps the
+  // order the records were gathered in, so the reorder there is the entry order's doing.
+  it('control: tasks in no limited column keep the order their records were gathered in', async () => {
+    const spawnedTaskIds = await runResumeOfBothTasks();
+
+    expect(spawnedTaskIds).toEqual(['task-late', 'task-early']);
   });
 });
 

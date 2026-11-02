@@ -268,4 +268,10 @@ export function registerBoardHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH, (_, branch: string) => {
     context.boardConfigManager.setDefaultBaseBranch(branch);
   });
+
+  ipcMain.handle(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, (_, projectId: string, script: string | null) => {
+    const project = context.projectRepo.getById(projectId);
+    if (!project) throw new Error('Unknown project');
+    context.boardConfigManager.setStopScript(project.path, script);
+  });
 }

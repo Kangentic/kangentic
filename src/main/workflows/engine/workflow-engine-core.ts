@@ -125,9 +125,13 @@ export function planPass(
   workflows: readonly CoreWorkflow[],
   freeSlots: number,
   inFlight: ReadonlySet<string>,
+  /** How many more starts a column can take. Absent means no column limits. */
+  columnRoom?: (projectId: string, swimlaneId: string) => number,
 ): CoreIntent[] {
   const intents: CoreIntent[] = [];
   let slots = Math.max(0, freeSlots);
+  // Spent as the pass plans, so one pass fills a column only up to its limit.
+  const spentRoom = new Map<string, number>();
   const ordered = workflows
     .slice()
     .sort((left, right) => (left.startedAt ?? '').localeCompare(right.startedAt ?? ''));
@@ -147,6 +151,10 @@ export function planPass(
       if (inFlight.has(inFlightKey(task.projectId, task.taskId))) continue;
       if (task.startTakesSlot) {
         if (slots === 0) continue;
+        const columnKey = `${task.projectId}:${task.startColumnId}`;
+        const spent = spentRoom.get(columnKey) ?? 0;
+        if (columnRoom && spent >= columnRoom(task.projectId, task.startColumnId!)) continue;
+        spentRoom.set(columnKey, spent + 1);
         slots -= 1;
       }
       intents.push({

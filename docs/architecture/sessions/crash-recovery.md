@@ -133,7 +133,7 @@ it through `PtyHostClient`: ordered commands, id-matched requests, ordered event
   `ptyHost`), `devArmRoundTripProbe` and `devReadRoundTripProbe` (the scroll-latency probe, see
   [Output streaming](output-streaming.md)), and `devCpuProfile` (a CPU profile of its thread).
 - **Task leftover reap.** The host also scans for and stops what a task's agents left running
-  (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan).
+  (`reapTaggedProcesses`), stops one reported process when the user asks (`stopReportedProcess`), stops a worktree holder the removal-failure reap found by the pid and creation time its scan read (`SessionManager.stopProcessByCreationTime`, 5 s budget), and answers which reported processes have ended (`checkReportedProcesses`, by pid and start key, never a scan). For a project's Stop script it answers what a task has running and whether anything outside its tree is connected, signalling nothing (`probeTaskProcesses`).
   It also answers `awaitAgentExit`, bounded, once the agent a task's killed or exited shell left running has exited (`src/main/pty/host/exited-root-wait.ts`); a task reap waits on it before it scans.
   It reads the `KANGENTIC_TASK_ID` tag through koffi on Windows and macOS and `/proc` on Linux. See
   [Process reaping](../worktrees/process-reaping.md).

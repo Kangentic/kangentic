@@ -320,6 +320,99 @@ describe("autoUpdater.on('error') listener", () => {
     expect(mocks.reportHandledError).toHaveBeenCalledWith(structuralError, { source: 'updater' });
   });
 
+  describe('a download failure, which arrives with a signed URL and no code (DESKTOP-24)', () => {
+    const signedUrl = 'https://assets.example.test/app.zip?sig=fake&jwt=fake';
+    const bareUrl = 'https://assets.example.test/app.zip';
+    const downloadFailure = (status: number): Error => makeError(
+      `Cannot download "${signedUrl}", status ${status}: Status text`,
+    );
+
+    beforeEach(() => {
+      // mockReset, because an earlier test's mockReturnValue outranks a plain
+      // mockImplementation and would hide the text under test.
+      mocks.sanitizeErrorMessage.mockReset();
+      mocks.sanitizeErrorMessage.mockImplementation((message: string) => message);
+    });
+
+    it('reports a 403 with no query in its title, its stack or its count', () => {
+      const failure = downloadFailure(403);
+      const frames = (failure.stack as string).split('\n').slice(1);
+      expect(frames.length).toBeGreaterThan(0);
+
+      getRegisteredListener('error')(failure);
+
+      expect(mocks.reportHandledError).toHaveBeenCalledTimes(1);
+      const [reported, tags] = mocks.reportHandledError.mock.calls[0] as unknown as [Error, Record<string, string>];
+      expect(tags).toEqual({ source: 'updater' });
+      expect(reported.message).toBe(`Cannot download "${bareUrl}", status 403: Status text`);
+      expect(reported.stack).not.toContain('sig=');
+      expect(reported.stack).not.toContain('jwt=');
+      // The issue groups on these, so a fresh Error's stack would split it.
+      expect((reported.stack as string).split('\n').slice(1)).toEqual(frames);
+
+      expect(mocks.trackEvent).toHaveBeenCalledWith('app_error', {
+        source: 'updater',
+        message: `Cannot download "${bareUrl}", status 403: Status text`,
+      });
+    });
+
+    it('leaves the thrown error as upstream built it', () => {
+      const failure = downloadFailure(404);
+      getRegisteredListener('error')(failure);
+      expect(failure.message).toContain('sig=');
+    });
+
+    it('strips a URL that only the stack holds, so the claim that nothing leaves with a query is not message-only', () => {
+      const failure = makeError('Update failed');
+      failure.stack = `Error: Update failed\n    at fetch (${signedUrl}:1:1)`;
+
+      getRegisteredListener('error')(failure);
+
+      const reported = mocks.reportHandledError.mock.calls[0][0] as unknown as Error;
+      expect(reported.message).toBe('Update failed');
+      expect(reported.stack).toContain(bareUrl);
+      expect(reported.stack).not.toContain('sig=');
+    });
+
+    it('carries a code onto the copy, so a coded failure keeps it', () => {
+      const failure = makeError(`Cannot fetch ${signedUrl}`, 'ERR_SOMETHING');
+      getRegisteredListener('error')(failure);
+      const reported = mocks.reportHandledError.mock.calls[0][0] as unknown as NodeJS.ErrnoException;
+      expect(reported.code).toBe('ERR_SOMETHING');
+      expect(reported.message).toBe(`Cannot fetch ${bareUrl}`);
+    });
+
+    it.each([618, 503])('reports and counts nothing at status %s', (status) => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      getRegisteredListener('error')(downloadFailure(status));
+
+      expect(mocks.trackEvent).not.toHaveBeenCalled();
+      expect(mocks.reportHandledError).not.toHaveBeenCalled();
+      consoleLogSpy.mockRestore();
+    });
+
+    it.each([618, 503])('logs the bare URL, never the signed query, when suppressing status %s', (status) => {
+      const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
+
+      getRegisteredListener('error')(downloadFailure(status));
+
+      // A suppressed download failure has no code, so the logged preview is the
+      // message itself. It is the one place the query could still leak, because
+      // nothing reaches telemetry on this path.
+      const suppressionCall = consoleLogSpy.mock.calls.find(
+        (callArguments) => callArguments[0] === '[UPDATER] Suppressing transient error telemetry:',
+      );
+      consoleLogSpy.mockRestore();
+
+      expect(suppressionCall, 'the suppression branch must log its preview').toBeDefined();
+      const loggedPreview = String(suppressionCall?.[1]);
+      expect(loggedPreview).toContain(bareUrl);
+      expect(loggedPreview).not.toContain('sig=');
+      expect(loggedPreview).not.toContain('jwt=');
+    });
+  });
+
   it('does NOT call trackEvent for a transient error when not retrying', () => {
     const consoleLogSpy = vi.spyOn(console, 'log').mockImplementation(() => {});
 

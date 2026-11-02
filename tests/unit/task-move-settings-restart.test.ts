@@ -58,6 +58,24 @@ vi.mock('../../src/main/db/repositories/session-repository', () => ({
     getLatestForTaskByTypeAndIsolation = vi.fn(() => hoisted.activeRecord);
     updateGitStats = vi.fn();
     updateAppliedSettings = hoisted.updateAppliedSettings;
+    // Mirrors the real compare-and-set on the one seeded record: it moves only
+    // when the record's status is in the expected-from list, and nulls the
+    // agent session id when asked to.
+    compareAndUpdateStatus = vi.fn((
+      recordId: string,
+      expectedFrom: string | string[],
+      to: string,
+      extra?: { suspended_by?: string | null; agent_session_id?: null },
+    ) => {
+      const record = hoisted.activeRecord;
+      if (!record || record.id !== recordId) return false;
+      const fromList = Array.isArray(expectedFrom) ? expectedFrom : [expectedFrom];
+      if (!fromList.includes(record.status as string)) return false;
+      record.status = to;
+      if (extra?.agent_session_id === null) record.agent_session_id = null;
+      if (extra?.suspended_by !== undefined) record.suspended_by = extra.suspended_by;
+      return true;
+    });
   },
 }));
 vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({ SwimlaneRepository: class {} }));
@@ -72,9 +90,19 @@ vi.mock('../../src/main/git/worktree-manager', () => ({
 
 vi.mock('../../src/main/analytics/analytics', () => ({ trackEvent: vi.fn() }));
 
-vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
+// settleQueuedRecord stays REAL so the queued-record cases below observe the
+// record's end state. It calls the module's own markRecordExited, which reaches
+// the browser lane and viewport code, so those two are stubbed.
+vi.mock('../../src/main/transition-engine/session-lifecycle', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/session-lifecycle')>()),
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
+}));
+vi.mock('../../src/main/browser/browser-lane-manager', () => ({
+  destroyLanesForSession: vi.fn(),
+}));
+vi.mock('../../src/main/browser/viewport-override', () => ({
+  releaseViewportOverridesForSession: vi.fn(async () => {}),
 }));
 
 vi.mock('../../src/main/transition-engine/spawn-progress', () => ({
@@ -203,6 +231,10 @@ function makeSwimlane(id: string, overrides: Partial<Swimlane> = {}): Swimlane {
 
 function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const sessionManager = {
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
+    holdColumnSlot: vi.fn(() => () => undefined),
     removeByTaskId: vi.fn(),
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
@@ -448,6 +480,134 @@ describe('handleTaskMove model/effort restart and live-injection', () => {
     expect(spawnArg.toLane.id).toBe(EXECUTING_LANE_ID);
     // Live slash injection must NOT fire alongside a restart.
     expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+  });
+
+  // =========================================================================
+  // A running agent arriving in a column with no room
+  // =========================================================================
+
+  describe('arriving in a full column', () => {
+    const moveIn = (context: ReturnType<typeof makeContext>) => handleTaskMove(context as never, {
+      taskId: 'task-aaa00001',
+      targetSwimlaneId: EXECUTING_LANE_ID,
+      targetPosition: 0,
+    }, 'renderer');
+
+    it('pauses the running agent and resumes through Phase 3, which queues it', async () => {
+      const { swimlaneRepo } = makeLanes();
+      setActiveRecord('plan');
+      const taskRepo = makeTaskRepo();
+      const context = makeContext(taskRepo, swimlaneRepo);
+      context.sessionManager.columnBlocks.mockReturnValue(true);
+
+      await moveIn(context);
+
+      expect(context.sessionManager.columnBlocks).toHaveBeenCalledWith({ taskId: 'task-aaa00001', projectId: expect.any(String) });
+      // 'system', so nothing reads it as a hold a person put on the task.
+      expect(markRecordSuspended).toHaveBeenCalledWith(expect.anything(), 'rec-main', 'system');
+      expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+      expect(emitSpawnProgress).toHaveBeenCalledWith(context.mainWindow, 'task-aaa00001', 'queuing-for-column');
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+      expect(context.terminalSubmitScheduler.scheduleKeystrokes).not.toHaveBeenCalled();
+    });
+
+    it('keeps the agent running when the column has room', async () => {
+      const { swimlaneRepo } = makeLanes();
+      setActiveRecord('plan');
+      const taskRepo = makeTaskRepo();
+      const context = makeContext(taskRepo, swimlaneRepo);
+
+      await moveIn(context);
+
+      expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+      expect(mockSpawnAgent).not.toHaveBeenCalled();
+    });
+
+    it('leaves a queued session queued: it holds no slot, and its new column gates it', async () => {
+      const { swimlaneRepo } = makeLanes();
+      setActiveRecord('plan');
+      const taskRepo = makeTaskRepo();
+      const context = makeContext(taskRepo, swimlaneRepo);
+      context.sessionManager.columnBlocks.mockReturnValue(true);
+      context.sessionManager.getSession.mockReturnValue({ id: 'active-session-1', status: 'queued' });
+
+      await moveIn(context);
+
+      expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+    });
+
+    it('re-checks the line after every move, since a task that kept its agent frees its old column', async () => {
+      const { swimlaneRepo } = makeLanes();
+      setActiveRecord('plan');
+      const taskRepo = makeTaskRepo();
+      const context = makeContext(taskRepo, swimlaneRepo);
+
+      await moveIn(context);
+
+      expect(context.sessionManager.suspend).not.toHaveBeenCalled();
+      expect(context.sessionManager.drainQueue).toHaveBeenCalled();
+    });
+  });
+
+  // =========================================================================
+  // A queued session whose move needs a settings restart
+  //
+  // A task queued for its column's slot has a record in 'queued' that never ran.
+  // The restart parks it through suspendLiveSessionForRespawn, which settles the
+  // record by what the session was: a queued RESUME keeps its conversation
+  // (suspended, agent_session_id intact); a queued FRESH start never ran, so it
+  // exits and gives up the id minted for it. Both records carry a non-null
+  // agent_session_id, so isResuming is the only thing separating the outcomes.
+  // =========================================================================
+
+  describe('restart of a queued session', () => {
+    async function moveQueuedTaskWithRestart(resuming: boolean) {
+      const { swimlaneRepo } = makeLanes();
+      setActiveRecord('plan');
+      hoisted.activeRecord = { ...hoisted.activeRecord, status: 'queued', suspended_by: null };
+      const taskRepo = makeTaskRepo();
+      const context = makeContext(taskRepo, swimlaneRepo);
+      context.sessionManager.getSession.mockImplementation((id: string) => ({ id, status: 'queued' }));
+      // Keyed on the PTY session id so a call with any other id reads as fresh.
+      context.sessionManager.isResuming.mockImplementation(
+        (id: string) => resuming && id === 'active-session-1',
+      );
+      vi.mocked(prepareInjectionPlan).mockReturnValue({
+        sequence: [],
+        verifier: null,
+        restartReason: 'model',
+      });
+
+      await handleTaskMove(context as never, {
+        taskId: 'task-aaa00001',
+        targetSwimlaneId: EXECUTING_LANE_ID,
+        targetPosition: 0,
+      }, 'renderer');
+
+      return context;
+    }
+
+    it('keeps the conversation of a queued resume: suspended, agent_session_id intact', async () => {
+      const context = await moveQueuedTaskWithRestart(true);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith('active-session-1');
+      expect(hoisted.activeRecord?.status).toBe('suspended');
+      expect(hoisted.activeRecord?.agent_session_id).toBe('agent-A');
+      expect(hoisted.activeRecord?.suspended_by).toBe('system');
+      // The restart still parked the session and respawned through Phase 3.
+      expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    });
+
+    it('exits a queued fresh start and gives up its minted agent_session_id', async () => {
+      const context = await moveQueuedTaskWithRestart(false);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith('active-session-1');
+      expect(hoisted.activeRecord?.status).toBe('exited');
+      expect(hoisted.activeRecord?.agent_session_id).toBeNull();
+      expect(context.sessionManager.suspend).toHaveBeenCalledWith('active-session-1');
+      expect(mockSpawnAgent).toHaveBeenCalledTimes(1);
+    });
   });
 
   // =========================================================================

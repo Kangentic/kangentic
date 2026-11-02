@@ -217,9 +217,8 @@ msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>, например {sample}</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr "{maxConcurrent, plural, one {Занято: {runningCount} / # слот агента} few {Занято: {runningCount} / # слота агентов} many {Занято: {runningCount} / # слотов агентов} other {Занято: {runningCount} / # слота агентов}}"
+msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -816,9 +815,12 @@ msgid "Columns"
 msgstr "Столбцы"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "Колонки используют общую основную беседу задачи, если не задать этой колонке собственную. Изолированный сеанс начинается с чистого листа при каждом входе — это подходит для код-ревью или любого прохода, который не должен наследовать предыдущую работу."
+msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Command Terminal"
+msgstr "Командный терминал"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
@@ -894,8 +896,8 @@ msgid "Confirm"
 msgstr "Подтвердить"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
+msgctxt "board overview column header"
 msgid "Conversation"
 msgstr "Беседа"
 
@@ -1073,6 +1075,10 @@ msgstr "Не удалось отправить в бэклог"
 #, fuzzy
 msgid "Couldn't switch branch"
 msgstr "Не удалось переключить ветвь"
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1680,9 +1686,8 @@ msgid "Main"
 msgstr "Основной"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr "Основной продолжает беседу задачи, а изолированный начинается с чистого листа при каждом входе."
+msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -1780,6 +1785,10 @@ msgstr "Имя, описание, цвет и значок общие для в�
 #, fuzzy
 msgid "Needs both images"
 msgstr "Нужны оба изображения"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Needs you"
+msgstr "Требует внимания"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 #, fuzzy
@@ -2060,6 +2069,11 @@ msgstr "{exitBudgetSeconds, plural, one {При выходе автоматиз�
 msgid "On turn end"
 msgstr "По завершении хода"
 
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "One at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
 msgid "Only one agent CLI detected - install another to choose"
@@ -2159,6 +2173,10 @@ msgstr "Открыть папку рабочего дерева"
 msgid "Opens this part of the conversation"
 msgstr "Открывает эту часть диалога"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Other tasks wait in this column and start in the order they arrived."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -2250,11 +2268,6 @@ msgstr "Одобрение плана общее для всех профиле�
 msgid "Pop out of tiling"
 msgstr "Открепить из мозаики"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Position {queuePosition} of {queueTotal}"
-msgstr "Позиция {queuePosition} из {queueTotal}"
-
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 #, fuzzy
 msgid "PR #{prNumber}"
@@ -2333,10 +2346,18 @@ msgstr "Pull request"
 msgid "Pull Request"
 msgstr "Pull request"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Queued (click to pause)"
 msgstr "В очереди (нажмите для паузы)"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued {position}/{total}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
@@ -2527,6 +2548,10 @@ msgstr "Запуск в новом рабочем дереве"
 msgid "Run in the project folder"
 msgstr "Запуск в папке проекта"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Run one agent in this column at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
 msgctxt "task status"
@@ -2631,18 +2656,6 @@ msgstr "Вместо него отправляется оригинал."
 msgid "Sent to backlog"
 msgstr "Отправлено в бэклог"
 
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgctxt "board manager field"
-msgid "Session"
-msgstr "Сеанс"
-
-#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#, fuzzy
-msgctxt "board overview column header"
-msgid "Session"
-msgstr "Сеанс"
-
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 #, fuzzy
 msgctxt "column header"
@@ -2663,6 +2676,11 @@ msgstr "Возможно, сеанс истёк"
 #, fuzzy
 msgid "Session may need to be re-created"
 msgstr "Возможно, сеанс нужно создать заново"
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Sessions"
+msgstr "Сеансы"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2819,9 +2837,8 @@ msgid "Start"
 msgstr "Запуск"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-#, fuzzy
-msgid "Start a clean conversation on every entry."
-msgstr "Начинать новый диалог при каждом входе."
+msgid "Start a new conversation on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2854,11 +2871,6 @@ msgstr "Начало"
 #, fuzzy
 msgid "Starting agent..."
 msgstr "Запуск агента..."
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Starts automatically when a slot opens up"
-msgstr "Запустится автоматически, когда освободится слот"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
@@ -3283,11 +3295,6 @@ msgstr "Параметры просмотра"
 msgid "View PR #{prNumber}"
 msgstr "Открыть PR #{prNumber}"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-#, fuzzy
-msgid "Waiting in queue"
-msgstr "Ожидание в очереди"
-
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
@@ -3333,6 +3340,10 @@ msgstr "Куда перемещается задача, когда агент в
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
 msgstr "Кто утверждает каждый план: вы или Kangentic. Задача в рабочем процессе может переопределить это для себя."
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Which conversation this column uses"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 #, fuzzy
 msgid "Wildcard examples"
@@ -3352,6 +3363,11 @@ msgstr "Достигнут лимит окон"
 #, fuzzy
 msgid "Workflow step"
 msgstr "Шаг процесса"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgctxt "Agent status"
+msgid "Working"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 #, fuzzy

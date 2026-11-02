@@ -877,6 +877,10 @@ msgstr "Temel dal kaydedilemedi"
 msgid "Couldn't save shortcuts"
 msgstr "Kısayollar kaydedilemedi"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Count merge bypass as ready"
@@ -1438,6 +1442,10 @@ msgstr "Değişiklikler panelinin dosya farkını nasıl gösterdiği."
 msgid "How the relay works"
 msgstr "Röle nasıl çalışır"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "How to install and pair"
@@ -1608,6 +1616,12 @@ msgstr "Düzen"
 #, fuzzy
 msgid "Leave blank if the server does not require credentials"
 msgstr "Sunucu kimlik bilgisi gerektirmiyorsa boş bırakın"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "Kalan işlemler"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2634,9 +2648,18 @@ msgid "Stop leftover processes"
 msgstr "Artakalan işlemleri durdur"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Görevi tamamlandığında, Yapılacaklar'a döndüğünde veya silindiğinde ya da Komut Terminali sona erdiğinde ajanın klasöründe çalışır bıraktığı şeyleri durdur."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

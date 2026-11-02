@@ -24,6 +24,7 @@ import {
   type ProcessScan,
   type ScannedProcess,
   type TaggedProcessReader,
+  type ToolRun,
 } from '../../src/main/pty/process-tag/process-scan';
 import { DarwinTaggedProcessReader, type DarwinKernel, type DarwinProcessRow } from '../../src/main/pty/process-tag/darwin-reader';
 
@@ -158,7 +159,7 @@ describe('reapTaggedOnce', () => {
     const homedirSpy = vi.spyOn(os, 'homedir').mockImplementation(() => { throw new Error('no home'); });
     try {
       await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
-        killedPids: [], unreadableCount: 0, failureReason: 'no home', failureCode: 'reap_error', failurePass: null, entries: [],
+        killedPids: [], unreadableCount: 0, failureReason: 'no home', failureCode: 'reap_error', failurePass: null, failureCause: null, entries: [],
       });
     } finally {
       homedirSpy.mockRestore();
@@ -192,7 +193,7 @@ describe('reapTaggedOnce', () => {
     const reader = new FakeReader([[]]);
     reader.failScan = true;
     await expect(reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader))).resolves.toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', failureCode: 'reap_error', failurePass: 'first', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'probe failed', failureCode: 'reap_error', failurePass: 'first', failureCause: null, entries: [],
     });
   });
 
@@ -518,20 +519,103 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     return { reader, liveRootPids: () => [], wait: async () => undefined, caseInsensitivePaths: false };
   }
 
+  /** A clean `lsappinfo` run that listed no window. */
+  const LISTED: ToolRun = { ok: true, output: '' };
+
+  it('finishes the reap as planned when one window list fails and its retry answers', async () => {
+    const runs: ToolRun[] = [{ ok: false, cause: 'timeout' }, LISTED];
+    const runLsappinfo = vi.fn(async (): Promise<ToolRun> => runs.shift() ?? LISTED);
+    const signals: Array<{ pid: number; signalName: NodeJS.Signals }> = [];
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel(),
+      runLsappinfo,
+      signal: (pid, signalName) => { signals.push({ pid, signalName }); },
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    expect(result).toMatchObject({ failureCode: null, failurePass: null, failureCause: null, failureReason: null, killedPids: [2001] });
+    expect(signals[0]).toEqual({ pid: 2001, signalName: 'SIGTERM' });
+    // The failed attempt, its retry, then one attempt for each of the two later scans.
+    expect(runs).toEqual([]);
+    expect(runLsappinfo.mock.calls.length).toBe(4);
+  });
+
+  it('fails the scan with window_list, the pass and the last attempt\'s cause when the retry fails too, and kills nothing', async () => {
+    const runs: ToolRun[] = [{ ok: false, cause: 'timeout' }, { ok: false, cause: 'exit_code' }];
+    const signals: number[] = [];
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel(),
+      runLsappinfo: async () => runs.shift() ?? LISTED,
+      signal: (pid) => { signals.push(pid); },
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    expect(result).toEqual({
+      killedPids: [],
+      unreadableCount: 0,
+      failureReason: 'lsappinfo list did not run: exit_code',
+      failureCode: 'window_list',
+      failurePass: 'first',
+      failureCause: 'exit_code',
+      entries: [],
+    });
+    expect(runs).toEqual([]);
+    expect(signals).toEqual([]);
+  });
+
+  it('carries the cause of a window list that failed for a Stop', async () => {
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel(),
+      runLsappinfo: async () => ({ ok: false, cause: 'signal' }),
+      signal: () => { throw new Error('a failed scan signals nothing'); },
+    });
+    expect(await stopProcessTree({ pid: 2001, startKey: '1790000001.000000', mainPid: MAIN_PID }, darwinDeps(reader))).toEqual({
+      outcome: 'failed', failureCode: 'window_list', failurePass: 'first', failureCause: 'signal', failureReason: 'lsappinfo list did not run: signal',
+    });
+  });
+
+  it('stays inside one batch\'s 30 s budget when all three scans of a reap run out their window list timeouts', async () => {
+    // Every scan's first window list attempt times out and its retry answers, so a full reap pays
+    // both timeouts three times. The fake kernel still lists pid 2001 after the signal (the injected
+    // signal ends nothing), so the survivor check and its third scan run.
+    const timeouts: number[] = [];
+    const runLsappinfo = vi.fn(async (_args: string[], timeoutMs: number): Promise<ToolRun> => {
+      timeouts.push(timeoutMs);
+      // A scan makes its first attempt and then its retry, so the even calls are first attempts.
+      return timeouts.length % 2 === 1 ? { ok: false, cause: 'timeout' } : LISTED;
+    });
+    const reader = new DarwinTaggedProcessReader({
+      uid: OWN_UID,
+      loadKernel: async () => fakeKernel(),
+      runLsappinfo,
+      signal: () => undefined,
+    });
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
+    // All three scans ran (the third is the survivor check) and none of them failed.
+    expect(result).toMatchObject({ failureCode: null, failurePass: null, failureCause: null });
+    expect(runLsappinfo).toHaveBeenCalledTimes(6);
+    // The literals are the point, as for the budget in task-reap-failure-report.test.ts. A scan
+    // that needs its retry and then answers costs both timeouts, and a reap has three scans.
+    const allScansMs = timeouts.reduce((total, timeoutMs) => total + timeoutMs, 0);
+    const scansAndKillsMs = 7_000;
+    expect(allScansMs + REAP_GRACE_MS + SURVIVOR_CHECK_MS + scansAndKillsMs).toBeLessThanOrEqual(30_000);
+  });
+
   it('reports window_list in the second pass when lsappinfo fails after the graceful kills went out', async () => {
-    // The first scan's window list ran; the second scan's did not.
-    const lsappinfoAnswers: Array<string | null> = ['', null];
+    // The first scan's window list ran; the second scan's did not, nor did its retry.
+    const lsappinfoAnswers: ToolRun[] = [LISTED, { ok: false, cause: 'spawn_error' }, { ok: false, cause: 'spawn_error' }];
     // Injected, so no real pid is ever signalled.
     const signals: Array<{ pid: number; signalName: NodeJS.Signals }> = [];
     const reader = new DarwinTaggedProcessReader({
       uid: OWN_UID,
       loadKernel: async () => fakeKernel(),
-      runLsappinfo: async () => lsappinfoAnswers.shift() ?? null,
+      runLsappinfo: async () => lsappinfoAnswers.shift() ?? { ok: false, cause: 'spawn_error' },
       signal: (pid, signalName) => { signals.push({ pid, signalName }); },
     });
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
-    expect(result).toMatchObject({ failureCode: 'window_list', failurePass: 'second', killedPids: [2001] });
-    // Both window lists were asked for: the failure is the second scan's, not the first's.
+    expect(result).toMatchObject({ failureCode: 'window_list', failurePass: 'second', failureCause: 'spawn_error', killedPids: [2001] });
+    // Every window list was asked for: the failure is the second scan's, not the first's.
     expect(lsappinfoAnswers).toEqual([]);
     // The graceful kill went out and no force kill followed it.
     expect(signals).toEqual([{ pid: 2001, signalName: 'SIGTERM' }]);
@@ -539,7 +623,7 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
   });
 
   it('reports process_list in the first pass when the kernel refuses the pid list, and kills nothing', async () => {
-    const runLsappinfo = vi.fn(async (): Promise<string | null> => '');
+    const runLsappinfo = vi.fn(async (): Promise<ToolRun> => LISTED);
     const signals: number[] = [];
     const reader = new DarwinTaggedProcessReader({
       uid: OWN_UID,
@@ -549,7 +633,7 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     });
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
     expect(result).toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'proc_listallpids failed', failureCode: 'process_list', failurePass: 'first', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'proc_listallpids failed', failureCode: 'process_list', failurePass: 'first', failureCause: null, entries: [],
     });
     expect(runLsappinfo).not.toHaveBeenCalled();
     expect(signals).toEqual([]);
@@ -560,12 +644,12 @@ describe('reapTaggedOnce over the macOS reader names the scan step and the pass 
     const reader = new DarwinTaggedProcessReader({
       uid: OWN_UID,
       loadKernel: async () => fakeKernel({ tcpSockets: () => { throw new Error('proc_pidfdinfo is not a function'); } }),
-      runLsappinfo: async () => '',
+      runLsappinfo: async () => LISTED,
       signal: (pid) => { signals.push(pid); },
     });
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, darwinDeps(reader));
     expect(result).toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'proc_pidfdinfo is not a function', failureCode: 'connection_list', failurePass: 'first', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'proc_pidfdinfo is not a function', failureCode: 'connection_list', failurePass: 'first', failureCause: null, entries: [],
     });
     expect(signals).toEqual([]);
   });
@@ -613,7 +697,7 @@ describe('a process still listed while it terminates', () => {
     const reader = new FakeReader([[exitedCopy(target)]]);
 
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
-      outcome: 'ended', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'ended', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
     });
     expect(reader.kills).toEqual([]);
   });
@@ -633,7 +717,7 @@ describe('a process still listed while it terminates', () => {
     const waits: number[] = [];
 
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toEqual({
-      outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
     });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
@@ -750,6 +834,19 @@ describe('reapTaggedOnce with the connections another task holds', () => {
     expect(result.entries.find((entry) => entry.pid === 2001)).toMatchObject({ outcome: 'kept', reason: 'shared' });
   });
 
+  it('gives the force pass what the first plan kept as outside: a dashboard it spared does not save a host that ignored its signal', async () => {
+    // 2101 is a host listening on a port, 2102 the tagged root of a stack beside
+    // it, and 2103 that stack's dashboard, working elsewhere, a client of the host.
+    const host = tagged(2101, TASK);
+    const stackRoot = tagged(2102, TASK);
+    const dashboard = tagged(2103, TASK, 'start-2103', OTHER_PROJECT, 2102);
+    const read: LocalConnectionRead = { pairs: [{ listenerPid: 2101, clientPid: 2103 }], listeningPids: [2101, 2103] };
+    const reader = new ConnectionReader([[host, stackRoot, dashboard], [host, stackRoot, dashboard], [stackRoot, dashboard]], [read]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2101:graceful', '2101:force']);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}:${entry.reason}`)).toEqual(['2101:stopped:null', '2102:kept:outside']);
+  });
+
   it('reports connection_list in the second pass when the read throws there, lists what it signalled as not stopped, and runs no force pass', async () => {
     const reader = new ConnectionReader([
       [server, otherTaskClient, devServer],
@@ -765,7 +862,7 @@ describe('reapTaggedOnce with the connections another task holds', () => {
     const reader = new ConnectionReader([[server, otherTaskClient, devServer]], [new ScanStepError('connection_list', 'net/tcp unreadable')]);
     const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
     expect(result).toEqual({
-      killedPids: [], unreadableCount: 0, failureReason: 'net/tcp unreadable', failureCode: 'connection_list', failurePass: 'first', entries: [],
+      killedPids: [], unreadableCount: 0, failureReason: 'net/tcp unreadable', failureCode: 'connection_list', failurePass: 'first', failureCause: null, entries: [],
     });
     expect(reader.kills).toEqual([]);
   });
@@ -1042,7 +1139,7 @@ describe('stopProcessTree', () => {
       [],
     ]);
     const result = await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader));
-    expect(result).toEqual({ outcome: 'stopped', failureCode: null, failurePass: null, failureReason: null });
+    expect(result).toEqual({ outcome: 'stopped', failureCode: null, failurePass: null, failureCause: null, failureReason: null });
     expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`).sort()).toEqual(['2001:graceful', '2002:graceful']);
   });
 
@@ -1107,7 +1204,7 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([]);
     reader.scans = [{ processes: [], unreadableCount: 0 }];
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
-      outcome: 'failed', failureCode: 'empty_scan', failurePass: 'first', failureReason: 'the process scan listed nothing',
+      outcome: 'failed', failureCode: 'empty_scan', failurePass: 'first', failureCause: null, failureReason: 'the process scan listed nothing',
     });
     expect(reader.kills).toEqual([]);
   });
@@ -1133,7 +1230,7 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[tagged(2001, TASK)]]);
     reader.failScan = true;
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader))).toEqual({
-      outcome: 'failed', failureCode: 'reap_error', failurePass: 'first', failureReason: 'probe failed',
+      outcome: 'failed', failureCode: 'reap_error', failurePass: 'first', failureCause: null, failureReason: 'probe failed',
     });
     expect(reader.kills).toEqual([]);
   });
@@ -1142,10 +1239,10 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[tagged(2001, TASK)], [tagged(2001, TASK)]]);
     const failingAfterKill = {
       ...deps(reader),
-      wait: async () => { reader.scan = async () => { throw new ScanStepError('window_list', 'lsappinfo list did not run'); }; },
+      wait: async () => { reader.scan = async () => { throw new ScanStepError('window_list', 'lsappinfo list did not run: timeout', 'timeout'); }; },
     };
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, failingAfterKill)).toEqual({
-      outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureReason: 'lsappinfo list did not run',
+      outcome: 'failed', failureCode: 'window_list', failurePass: 'second', failureCause: 'timeout', failureReason: 'lsappinfo list did not run: timeout',
     });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful']);
   });
@@ -1155,7 +1252,7 @@ describe('stopProcessTree', () => {
     const reader = new FakeReader([[survivor], [survivor], [survivor]]);
     const waits: number[] = [];
     expect(await stopProcessTree({ pid: 2001, startKey: 'start-2001', mainPid: MAIN_PID }, deps(reader, waits))).toEqual({
-      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
     });
     expect(reader.kills.map((kill) => kill.strength)).toEqual(['graceful', 'force']);
     expect(waits).toEqual([REAP_GRACE_MS, SURVIVOR_CHECK_MS]);
@@ -1191,7 +1288,7 @@ describe('stopProcessTree', () => {
     for (const target of [underMain, ptyRoot, underPty]) {
       // A refusal is an answer, not a failure: nothing to report.
       expect(await stopProcessTree({ pid: target.pid, startKey: target.startKey, mainPid: MAIN_PID }, deps(reader, [], [3000])))
-        .toEqual({ outcome: 'failed', failureCode: null, failurePass: null, failureReason: null });
+        .toEqual({ outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null });
     }
     expect(reader.kills).toEqual([]);
   });
@@ -1216,9 +1313,15 @@ describe('leftoverLogLine: the local log names what the reap left running, and w
     ...overrides,
   });
 
-  it('names a shared process with the descendant that made it shared, as the stopping /preview\'s shell was', () => {
+  it('names a shared process with the descendant that made it shared', () => {
     expect(leftoverLogLine(entry({}))).toBe(
       "kept cmd (pid 63776) of task 7a1f2c3d in the project: shared, by descendant node (preview-trash-delete.js) (pid 118916), which works outside the task's directories or does not carry its tag",
+    );
+  });
+
+  it('says a process kept for its own descendant elsewhere is not shared, as the stopping /preview\'s shell was', () => {
+    expect(leftoverLogLine(entry({ reason: 'outside' }))).toBe(
+      "kept cmd (pid 63776) of task 7a1f2c3d in the project: its descendant node (preview-trash-delete.js) (pid 118916) carries the task's tag and works outside the task's directories",
     );
   });
 
@@ -1246,7 +1349,7 @@ describe('leftoverLogLine: the local log names what the reap left running, and w
     expect(result.entries).toEqual([expect.objectContaining({
       pid: 2001,
       outcome: 'kept',
-      reason: 'shared',
+      reason: 'outside',
       because: { basis: 'descendant', evidencePid: 2003, evidenceLabel: 'node (preview-trash-delete.js)' },
     })]);
     // Labeled, never reported: the report names only the kept shell.

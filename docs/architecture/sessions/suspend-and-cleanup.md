@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Suspend and cleanup
-description: What each destination column does to a session (To Do cleanup, Done and auto_spawn=false suspend), the KANGENTIC_TASK_ID reap of leftover processes, kill() with its young-session grace, the suspend() steps and double session-changed emit, and the timing constants table.
+description: What each destination column does to a session (To Do cleanup, Done and auto_spawn=false suspend), the KANGENTIC_TASK_ID reap of leftover processes, a project's Stop script, kill() with its young-session grace, the suspend() steps and double session-changed emit, and the timing constants table.
 tags: [sessions, suspend, cleanup, kill-grace, constants]
 sources:
   - resource: src/main/pty/session-manager.ts
@@ -11,6 +11,7 @@ sources:
   - resource: src/main/transition-engine/resource-cleanup.ts
   - resource: src/main/ipc/helpers/task-cleanup.ts
   - resource: src/main/ipc/handlers/own-call-turn-wait.ts
+  - resource: src/main/stop-script/
 ---
 # Suspend and cleanup
 
@@ -47,7 +48,38 @@ Every task session's PTY is spawned with `KANGENTIC_TASK_ID=<taskId>` (`src/main
 
 The tag is the same across every session the task ran, so a dev server started by an agent that a Code Review entry suspended long before is still reaped at Done, and it lives in the processes themselves, so a task parked across an app restart is reaped at its later terminal transition too. A startup sweep, once per project per launch, reaps archived and To Do tasks whose transition's reap was cut short by a crash. To keep one process past Done, start it with the tag cleared (`KANGENTIC_TASK_ID= npm run dev`). See [Process reaping](../worktrees/process-reaping.md#what-the-reap-kills) for what the reap kills and spares (measured on Linux, macOS and Windows), the per-platform readers, what the tag cannot see, and the removal-time backstop.
 
-`auto_spawn=false` columns (including a Code Review entry), a user-pressed Pause or Stop, an idle-timeout suspend, and quitting the app are deliberately NOT terminal: the task is parked rather than finished, so its dev server stays up for manual testing until the task's own terminal transition. Its pop-out windows and offscreen lane stay open for the same reason.
+`auto_spawn=false` columns (including a Code Review entry), a user-pressed Pause or Stop, an idle-timeout suspend, a low-memory pause, and quitting the app are deliberately NOT terminal: the task is parked rather than finished, so Kangentic kills nothing and its dev server stays up for manual testing until the task's own terminal transition. Its pop-out windows stay open for the same reason, and so does its offscreen lane, unless a Stop script's pause closes it (below).
+
+## A project's Stop script
+
+A paused task keeps everything its agent started, and a stack can hold far more than its agent. Measured on a parked .NET Aspire stack: 45 processes and 7.8 GB of commit with no client connected for about 21 hours, where the low-memory pause frees about 1.15 GB per agent. Kangentic cannot stop such a stack well: only the project knows how, the reap force-kills and cannot see containers, and asking the agent at pause time is a paid turn. So a project can declare a Stop script, `stopScript` in `kangentic.json` (see [Board config](../../settings/board-config.md)). A project that sets none behaves as if the feature did not exist, with no host call on any event.
+
+| Event | Runs the Stop script |
+|---|---|
+| Idle-timeout pause (`suspended_by = 'auto'`) | Yes, unless a client is connected |
+| Low-memory pause (`'low_memory'`) | Yes, unless a client is connected |
+| A user's Pause or Stop, an `auto_spawn=false` entry | No. This is the testing case the parked rule protects |
+| Settings or model respawn, handoff (`'system'`) | No. The agent comes straight back |
+| Quit | No |
+| Every terminal transition | Yes, before `reapTaskLeftovers`, bounded |
+
+It runs in the task's worktree, or the project folder for a task with none or whose worktree is gone from disk, through the platform shell, with no `KANGENTIC_TASK_ID`. With "Stop leftover processes" off it does not run at all.
+
+**After a pause** (`src/main/stop-script/parked-stop.ts`). `startParkedStop` runs outside the task lock and nothing waits for it, up to 2 minutes (`STOP_SCRIPT_PAUSE_TIMEOUT_MS`). One attempt runs per task at a time. It re-reads the pause, since the user may have resumed by then, and again right before the script. A Resume after that does not cancel the script, since a stack stopped halfway is worse than one stopped: it runs to its end, and its held message reaches the resumed agent. It asks the pty host what the task has running (`probeTaskProcesses`, `process-tag/task-tree-probe.ts`): a task that left nothing runs no script, and a probe that fails runs none. The probe also waits for an agent still exiting, as the reap does, or the agent would read as something left running.
+
+**A connected client holds it off.** Connected means a process outside the task's tree holds a TCP connection to a port the tree listens on. The tree is every process carrying the tag, wherever it works, with everything under it. Read by folder, a stack's own dashboard, which carries the tag and works in a package cache, would be an outside client of its own stack and hold the stop off for good. An untagged client counts here, unlike at Done, because a browser tab on a dev server is someone using the stack. So does a Browser pane, through Kangentic's network service, which cannot tell a pane from an offscreen lane. A lane is no person, and its open connection would hold the stop off forever, so a connected pause closes the task's lanes, waits a second and probes again. Measured on two live stacks of 45 and 44 tagged processes: no outside client on either, so Docker's proxies do not read as one, a scan of 41 to 46 ms over about 500 processes, and a connection read of 1.3 to 3.2 ms.
+
+**A stop held off is tried again** (`held-off-stops.ts`). The set is in memory and normally empty, and then a tick does nothing. It rides the host memory sampler's 60 s tick and checks every fifth one, so nothing polls a task with nothing running. Each check drops a task that stopped, resumed, moved or has nothing left. A restart forgets the set, which only misses: a low-memory pass reads paused tasks from the database, and the task's terminal reap still comes.
+
+**Low memory** (`relieveParkedTasks`). Before pausing another idle agent, a tick stops what a task paused by the idle timeout or by low memory left running, in an open project with a script, since a parked stack costs more and loses less. A user's Pause and an `auto_spawn=false` entry stay out. Starting a stop is that tick's one action, and the tick does not wait for the script. A spell that finds nothing stops scanning until the next spell. A task whose script ran or that had nothing running is left alone for 30 minutes, or a broken script would spend every tick and no agent would ever be paused. A task a client holds off is left to its recheck.
+
+**The next agent is told.** Kangentic never restarts anything: it has no start command, and a resume may not need the stack. After the script exits, a second probe finds what really ended, and a held message names it, so the next agent can restart on demand. A script that stopped nothing leaves no message. A plain Resume has no message of its own, so that message is the opening message and starts a turn. Held messages are refused or cleared at Done and To Do, so a terminal transition holds none.
+
+**Before a reap** (`terminal-stop.ts`). `reapTaskLeftovers` calls it after any background session stop, so every terminal transition is covered. One probe for all the call's tasks, no connected check, one run per folder, two at a time, 30 s at most for the whole call (`STOP_SCRIPT_TERMINAL_TIMEOUT_MS`). This runs inside the task lock wherever the reap does: Done, To Do, a delete, a demote and an unarchive. Moving it out would split six teardown paths around an unlocked gap where a move could wipe a new session's records, so it stays, short, and a second move of the task aborts it through the move's signal. The lock is already held through the agent's exit, the reap and the worktree removal. A run already in flight from a pause is waited for, not started again, and ended if it outlasts the same bound or the move's signal fires: it carries no tag, so the reap would not stop it, and it works in the folder the removal comes for. A Command Terminal and the startup sweep run none.
+
+**A failure changes nothing else.** A non-zero exit or a timeout is logged as `[STOP-SCRIPT]`, and the pause stands or the reap goes on. A broken script otherwise leaves a stack running with no sign of it, and only the user can fix it, so it raises one warning toast a minute per project, with the task, the exit code and the script's last line. A cancelled run raises none.
+
+**What it does not cover.** A WSL task's processes run inside its distro, out of the host's sight, so a WSL task reads as nothing running and runs no script. A Stop script runs a third-party tool that can reach past its own tree: a tree kill that follows recorded parent pids without comparing start times ends a stranger's tree (see [Process reaping](../worktrees/process-reaping.md#parent-pids-windows-reuses)). Test one with a stub, never a real stack on a machine running Kangentic.
 
 ## What is preserved on suspend (Done / auto_spawn=false)
 
@@ -226,5 +258,8 @@ them on exactly the slow path where the later read matters most.
 | WORKTREE_HOLDER_STOP_TIMEOUT_MS | 5000 ms | How long a worktree removal's reap waits for the host to stop one holder by pid and creation time (`src/main/pty/session-manager.ts`). The removal waits inside its project's git queue, so a hung host holds that queue this long |
 | COMMAND_TERMINAL_REAP_DELAY_MS | 5000 ms | A Command Terminal's leftover reap starts this long after it ends: the backstop for a WSL shell and the in-process core, which the agent-exit wait holds no ledger for |
 | Command inject delay | 100 ms | Wait after PTY spawn before writing command |
+| STOP_SCRIPT_PAUSE_TIMEOUT_MS | 120000 ms | A Stop script after a pause, outside the task lock (`src/main/stop-script/run-stop-script.ts`) |
+| STOP_SCRIPT_TERMINAL_TIMEOUT_MS | 30000 ms | The Stop scripts of one terminal transition, in all, ahead of the reap and often inside the task lock |
+| HELD_OFF_RECHECK_TICKS | 5 sampler ticks | How often a stop a connected client held off is tried again, about every five minutes (`src/main/stop-script/held-off-stops.ts`) |
 | Idle timeout check | 60000 ms | Polling interval for `checkIdleTimeouts()` (every 60s) |
 | Stale thinking threshold | 180000 ms | If no activity signal for 180s while in "thinking" state, emit synthetic idle event (v2 engine is event-driven, no polling timer) |

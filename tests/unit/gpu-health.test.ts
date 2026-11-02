@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { normalize } from '@sentry/core';
 
 /**
  * gpu-health.ts - the recording/decay/durable-record contract behind
@@ -68,7 +69,9 @@ import {
   summarizeGpuFaults,
   shouldReportEscalation,
   summarizeGpuInfo,
+  buildGpuProcessContext,
 } from '../../src/main/diagnostics/gpu-health';
+import type { GpuEscalationRecord } from '../../src/main/diagnostics/gpu-health';
 
 const START_MS = 1_700_000_000_000;
 
@@ -1117,14 +1120,19 @@ describe('summarizeGpuInfo', () => {
     },
   };
 
-  it('keeps the adapters and driver versions a triage would read', () => {
+  it('keeps the adapters and driver versions a triage would read, on one line', () => {
     const summary = summarizeGpuInfo(realShape);
-    expect(summary?.gpuDevice).toEqual([
-      { vendorId: 4318, deviceId: 11141, driverVersion: '32.0.16.1088', driverVendor: 'NVIDIA', active: true },
-      { vendorId: 4098, deviceId: 5056, driverVersion: '32.0.21045.5002', driverVendor: undefined, active: false },
-      { vendorId: 5140, deviceId: 140, driverVersion: '10.0.26100.9278', driverVendor: undefined, active: false },
-    ]);
+    expect(summary?.gpuDevice).toBe(
+      'vendor=0x10de device=0x2b85 driver=32.0.16.1088 driverVendor=NVIDIA active'
+      + '; vendor=0x1002 device=0x13c0 driver=32.0.21045.5002'
+      + '; vendor=0x1414 device=0x008c driver=10.0.26100.9278',
+    );
     expect(summary?.glRenderer).toContain('RTX 5090');
+  });
+
+  it('reads an id it cannot format as unknown rather than throwing', () => {
+    expect(summarizeGpuInfo({ gpuDevice: [null, { vendorId: 'x' }] })?.gpuDevice)
+      .toBe('vendor=unknown device=unknown; vendor=unknown device=unknown');
   });
 
   it('drops the open-ended payload, so the death sequence keeps its room in the Sentry context', () => {
@@ -1144,7 +1152,7 @@ describe('summarizeGpuInfo', () => {
     expect(summarizeGpuInfo(42)).toBeNull();
     expect(summarizeGpuInfo(true)).toBeNull();
     // A partial object still summarizes; it just carries empty fields.
-    expect(summarizeGpuInfo({})?.gpuDevice).toEqual([]);
+    expect(summarizeGpuInfo({})?.gpuDevice).toBe('');
   });
 
   it('pulls glVendor, glVersion, and isSoftwareRendering out of auxAttributes', () => {
@@ -1171,15 +1179,148 @@ describe('summarizeGpuInfo', () => {
       active: index === 0,
     }));
     const summary = summarizeGpuInfo({ ...realShape, gpuDevice: manyDevices });
-    expect(summary?.gpuDevice).toEqual(
-      manyDevices.slice(0, 4).map((device) => ({
-        vendorId: device.vendorId,
-        deviceId: device.deviceId,
-        driverVersion: device.driverVersion,
-        driverVendor: undefined,
-        active: device.active,
-      })),
-    );
+    expect((summary?.gpuDevice as string).split('; ')).toHaveLength(4);
+    expect(summary?.gpuDevice).toContain('driver=1.0.3');
+    expect(summary?.gpuDevice).not.toContain('driver=1.0.4');
+  });
+});
+
+/**
+ * DESKTOP-29. The event arrived reading `deaths: ["[Object]", ...]`, so nobody
+ * could say why the GPU failed. The real `normalize` is what makes that
+ * checkable: a hand-written assertion about the shape would keep passing if the
+ * SDK's flattening changed.
+ */
+describe('buildGpuProcessContext', () => {
+  /** The SDK default, which this app never overrides. See the builder's doc. */
+  const SENTRY_NORMALIZE_DEPTH = 3;
+
+  /** What Sentry does to the context, one level up, as it sits on the event. */
+  function asSentryStoresIt(context: Record<string, unknown>): string {
+    return JSON.stringify(normalize({ gpu_process: context }, SENTRY_NORMALIZE_DEPTH));
+  }
+
+  /** DESKTOP-29's shape: launch failures, a fallback, then a run that survived. */
+  const record: GpuEscalationRecord = {
+    reason: 'launch-failed',
+    exitCode: 1002,
+    count: 2,
+    firstAt: '2026-10-31T10:00:00.000Z',
+    lastAt: '2026-10-31T10:00:00.062Z',
+    appVersion: '0.51.0',
+    featureStatus: { gpu_compositing: 'disabled_software', webgl: 'disabled_off' },
+    deaths: [
+      { reason: 'launch-failed', exitCode: 1002, at: '2026-10-31T10:00:00.000Z', compositing: 'enabled', webgl: 'enabled' },
+      { reason: 'killed', exitCode: null, at: '2026-10-31T10:00:00.062Z', compositing: 'disabled_software', webgl: 'disabled_off' },
+    ],
+    modeChanges: [
+      {
+        at: '2026-10-31T10:00:00.050Z',
+        compositing: 'disabled_software',
+        webgl: 'disabled_off',
+        linux: { zygote: 'dead', schedulingEntities: 970, maxUserProcesses: '123561' },
+      },
+      { at: '2026-10-31T10:00:00.060Z', compositing: 'disabled_software', webgl: 'unavailable_off' },
+    ],
+  };
+
+  const facts = {
+    featureStatusOnReport: { gpu_compositing: 'enabled', webgl: 'enabled' },
+    previousRunExit: 'clean',
+    gpuInfoOnReport: {
+      gpuDevice: [{ vendorId: 4318, deviceId: 11141, driverVersion: '32.0.16.1088', active: true }],
+      auxAttributes: { glRenderer: 'ANGLE (NVIDIA)' },
+    },
+    killedTheLastRun: false,
+    softwareRenderingEngaged: false,
+  };
+
+  it('the shape it replaced is what Sentry flattens, so the assertion below can fail', () => {
+    const stored = asSentryStoresIt({
+      deaths: record.deaths,
+      modeChanges: record.modeChanges,
+      gpuInfoOnReport: { gpuDevice: [{ vendorId: 4318 }] },
+    });
+    expect(stored).toContain('[Object]');
+    expect(stored).toContain('[Array]');
+  });
+
+  it('holds no [Object] or [Array] once Sentry has normalized it at the default depth', () => {
+    const stored = asSentryStoresIt(buildGpuProcessContext(record, facts));
+    expect(stored).not.toContain('[Object]');
+    expect(stored).not.toContain('[Array]');
+  });
+
+  it('keeps the Linux reading readable after normalization, which is the reason for all of this', () => {
+    const stored = asSentryStoresIt(buildGpuProcessContext(record, facts));
+    expect(stored).toContain('zygote=dead schedulingEntities=970 maxUserProcesses=123561');
+  });
+
+  it('writes each death and each fallback on one line, in order', () => {
+    const context = buildGpuProcessContext(record, facts);
+    expect(context.deaths).toEqual([
+      'launch-failed code=1002 at=2026-10-31T10:00:00.000Z compositing=enabled webgl=enabled',
+      'killed code=none at=2026-10-31T10:00:00.062Z compositing=disabled_software webgl=disabled_off',
+    ]);
+    expect(context.modeChanges).toEqual([
+      'at=2026-10-31T10:00:00.050Z compositing=disabled_software webgl=disabled_off'
+        + ' zygote=dead schedulingEntities=970 maxUserProcesses=123561',
+      // No linux block off Linux, so no fields claiming one.
+      'at=2026-10-31T10:00:00.060Z compositing=disabled_software webgl=unavailable_off',
+    ]);
+  });
+
+  it('shows a null reading as unknown instead of dropping it', () => {
+    const context = buildGpuProcessContext({
+      ...record,
+      modeChanges: [{
+        at: 'z',
+        compositing: 'disabled_software',
+        webgl: 'disabled_off',
+        linux: { zygote: 'unknown', schedulingEntities: null, maxUserProcesses: null },
+      }],
+    }, facts);
+    expect(context.modeChanges).toEqual([
+      'at=z compositing=disabled_software webgl=disabled_off zygote=unknown schedulingEntities=unknown maxUserProcesses=unknown',
+    ]);
+  });
+
+  it("names the build that escalated, not the one reporting it", () => {
+    // Confusing the two misattributes a still-crashing build to a version that
+    // has since been fixed.
+    expect(buildGpuProcessContext(record, facts).escalatedInVersion).toBe('0.51.0');
+  });
+
+  it('keeps the two feature-status reads apart: the record for the failure, the live read for this boot', () => {
+    const context = buildGpuProcessContext(record, facts);
+    expect(context.featureStatusAtEscalation).toEqual(record.featureStatus);
+    expect(context.featureStatusOnReport).toEqual(facts.featureStatusOnReport);
+    expect(context.featureStatusAtEscalation).not.toEqual(context.featureStatusOnReport);
+  });
+
+  it('counts fault deaths apart from count, so a report shows how much of the record was noise', () => {
+    // `count` also collects kills and session-teardown exits.
+    const context = buildGpuProcessContext(record, facts);
+    expect(context.count).toBe(2);
+    expect(context.faultDeathCount).toBe(1);
+  });
+
+  it('carries the rest of the report through unchanged', () => {
+    const context = buildGpuProcessContext(record, { ...facts, killedTheLastRun: true, softwareRenderingEngaged: true });
+    expect(context).toMatchObject({
+      reason: 'launch-failed',
+      exitCode: 1002,
+      firstAt: record.firstAt,
+      lastAt: record.lastAt,
+      previousRunExit: 'clean',
+      killedTheLastRun: true,
+      softwareRenderingEngaged: true,
+    });
+    expect((context.gpuInfoOnReport as Record<string, unknown>).glRenderer).toBe('ANGLE (NVIDIA)');
+  });
+
+  it('reports a failed getGPUInfo as null rather than failing the report', () => {
+    expect(buildGpuProcessContext(record, { ...facts, gpuInfoOnReport: null }).gpuInfoOnReport).toBeNull();
   });
 });
 

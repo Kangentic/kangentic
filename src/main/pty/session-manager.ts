@@ -14,7 +14,7 @@ import { normalizeCommandTerminalName } from '../../shared/command-terminal-name
 export const SHARED_RENDERER_ID = -1;
 import { resolveDebugDumpDir } from '../diagnostics/debug-dump-resolver';
 import { ShellResolver } from './spawn/shell-resolver';
-import { SessionQueue } from './session-queue';
+import { SessionQueue, isColumnExempt, type ColumnHolder, type GatedInput, type QueueGate, type QueuedInput } from './session-queue';
 import { SessionHistoryReader } from './readers/session-history-reader';
 import { StatusFileReader } from './readers/status-file-reader';
 import { SessionTelemetry } from '../activity-engine/session-telemetry';
@@ -87,7 +87,7 @@ import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
-import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
+import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
  *  1 s grace between them, the kills and a survivor check. Counted from when
@@ -97,6 +97,12 @@ import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, ty
  *  an idle Windows machine and 8.5 s at most pinned to one core beside three
  *  busy threads (445 processes), so this keeps 3x headroom over the slow case. */
 const TASK_REAP_TIMEOUT_MS = 30_000;
+/**
+ * How long a Stop script's probe waits for the host. One scan and one connection
+ * read, about 50 ms measured, and outside the reap queue, so anything near this
+ * bound is a host in trouble, and no probe answer means no script.
+ */
+const TASK_PROBE_TIMEOUT_MS = 5_000;
 /** How long a task reap waits for a parked PTY of its task to exit: the
  *  deferred force-kill's grace plus the same kill propagation `suspend()`
  *  allows (`gracefulPtyShutdown`). */
@@ -149,7 +155,7 @@ function noteHostReapResult(result: TaggedReapResult): void {
   if (result.failureReason) {
     console.warn(`[TASK-REAP] reap failed (non-fatal): ${result.failureReason}`);
     const code = result.failureCode ?? 'reap_error';
-    reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass);
+    reportTaskReapFailure('reap', code, code === 'reader_load' ? result.failureReason : null, result.failurePass, result.failureCause);
   }
   // Processes whose environment could not be read (elevated on Windows,
   // non-dumpable on Linux, CS_RESTRICT under SIP on macOS) may carry the
@@ -170,12 +176,15 @@ function noteHostStopResult(result: StopProcessResult): void {
   if (!result.failureCode) return;
   console.warn(`[TASK-REAP] stop failed (non-fatal): ${result.failureReason}`);
   // A Stop never loads the reader (the reap that listed the process did), so no load error rides along.
-  reportTaskReapFailure('stop', result.failureCode, null, result.failurePass);
+  reportTaskReapFailure('stop', result.failureCode, null, result.failurePass, result.failureCause);
 }
 
 /** A spawn inside doSpawn(): see `SessionManager.spawnsInFlight`. */
 interface InFlightSpawn {
   taskId: string;
+  projectId: string;
+  /** A Command Terminal or a workflow's own agent, which holds no column's slot. */
+  columnExempt: boolean;
   cancelled: boolean;
   /** The exit of the PTY a cancelled spawn's host had already started. */
   abandonedPtyExit: Promise<void> | null;
@@ -2003,6 +2012,9 @@ export class SessionManager extends EventEmitter {
    */
   private readonly spawnsInFlight = new Map<string, InFlightSpawn>();
 
+  /** Restarts in place keeping their column slot: see `holdColumnSlot`. */
+  private readonly columnSlotHolds = new Set<ColumnHolder>();
+
   /**
    * Wait for spawns to settle, at most as long as awaitExit waits for a PTY.
    * A teardown that removes a working directory waits here for a spawn it
@@ -2054,10 +2066,100 @@ export class SessionManager extends EventEmitter {
   /**
    * Agent slots free right now: the app-wide cap less every running, starting
    * and queued session. The workflow engine starts no more tasks than this, so
-   * To Do stays its durable queue and nothing piles into the in-memory one.
+   * To Do stays its durable queue and nothing piles into the in-memory one. An
+   * entry waiting on its column claims no slot: it could not take one if it
+   * were free, and counting it would read the whole app as full.
    */
   getFreeAgentSlots(): number {
-    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - this.sessionQueue.length);
+    const claimedByQueue = this.sessionQueue.length - this.sessionQueue.blockedCount;
+    return Math.max(0, this.sessionQueue.maxConcurrentSessions - this.activeCount - claimedByQueue);
+  }
+
+  /** Whether this session was started as a resume of an earlier conversation. */
+  isResuming(sessionId: string): boolean {
+    return this.registry.get(sessionId)?.resuming === true;
+  }
+
+  /** Install what the queue asks about a column's agent limit. */
+  setQueueGate(gate: QueueGate): void {
+    this.sessionQueue.setGate(gate);
+  }
+
+  /**
+   * Whether this task's column holds it back, global slots aside. A running
+   * agent arriving in a full column asks this: it already holds a global slot,
+   * so a full app is no reason to pause it.
+   */
+  columnBlocks(input: GatedInput): boolean {
+    return this.sessionQueue.gateBlocks(input);
+  }
+
+  /**
+   * Re-check the queue after something that frees a place without freeing a
+   * process: a task leaving a limited column, or a column's limit changing.
+   * Nothing to do on an empty queue, so a caller on the move path pays nothing.
+   */
+  drainQueue(): void {
+    if (this.sessionQueue.length === 0) return;
+    this.sessionQueue.notifySlotFreed();
+    this.emit('queue-changed');
+  }
+
+  /** Queued sessions in queue order, for anything that reports the line. */
+  listQueuedInputs(): readonly QueuedInput[] {
+    return this.sessionQueue.entries;
+  }
+
+  /**
+   * Keep a task's column slot across an in-place restart, whose suspend would
+   * otherwise hand it to the next task in line. The caller releases it once the
+   * task's new spawn has been made. A task with no slot has nothing to keep: a
+   * hold would let a queued task's restart past the tasks ahead of it.
+   */
+  holdColumnSlot(projectId: string, taskId: string): () => void {
+    const holdsSlot = this.listColumnHolders().some((holder) => holder.projectId === projectId && holder.taskId === taskId);
+    if (!holdsSlot) return () => undefined;
+    const hold: ColumnHolder = { projectId, taskId, sessionId: null };
+    this.columnSlotHolds.add(hold);
+    return () => {
+      this.columnSlotHolds.delete(hold);
+      this.drainQueue();
+    };
+  }
+
+  /** A project's tasks holding a column slot or queued for one. */
+  listColumnClaims(projectId: string): Set<string> {
+    const claims = new Set<string>();
+    for (const holder of this.listColumnHolders()) {
+      if (holder.projectId === projectId) claims.add(holder.taskId);
+    }
+    for (const input of this.sessionQueue.entries) {
+      if (input.projectId === projectId && !isColumnExempt(input)) claims.add(input.taskId);
+    }
+    return claims;
+  }
+
+  /**
+   * Who holds a slot in whichever column they are in: running agents, spawns on
+   * their way (a promotion's row still reads queued until the host answers), and
+   * restarts keeping theirs. A waiting or idle agent holds it. A paused one has
+   * no running row. Read from the registry, because the database's status is not
+   * reliable: both startup paths record every session as running.
+   */
+  listColumnHolders(): ColumnHolder[] {
+    const holders = new Map<string, ColumnHolder>();
+    const add = (holder: ColumnHolder): void => {
+      holders.set(`${holder.projectId}:${holder.taskId}`, holder);
+    };
+    for (const session of this.registry.values()) {
+      if (session.status !== 'running' || isColumnExempt(session)) continue;
+      add({ projectId: session.projectId, taskId: session.taskId, sessionId: session.id });
+    }
+    for (const [sessionId, inFlight] of this.spawnsInFlight) {
+      if (!inFlight.cancelled && !inFlight.columnExempt) add({ projectId: inFlight.projectId, taskId: inFlight.taskId, sessionId });
+    }
+    for (const hold of this.columnSlotHolds) add(hold);
+    return [...holders.values()];
   }
 
   /** Lightweight session counts without allocating mapped Session objects. */
@@ -2085,7 +2187,7 @@ export class SessionManager extends EventEmitter {
     // find its live PTY and kill it with no grace (pty-teardown-grace).
     if (this.hiddenUntilAdopted.size > 0 && input.taskId) await this.discardHiddenForTask(input.taskId);
 
-    if (this.sessionQueue.shouldQueue()) {
+    if (this.sessionQueue.shouldQueue(input)) {
       // Return a queued placeholder immediately (don't block the caller).
       // SessionQueue will promote it to a running PTY when a slot opens.
       const id = input.id ?? uuidv4();
@@ -2139,7 +2241,7 @@ export class SessionManager extends EventEmitter {
    */
   private async spawnHidden(input: SpawnSessionInput): Promise<Session> {
     const id = input.id ?? uuidv4();
-    if (this.sessionQueue.shouldQueue()) {
+    if (this.sessionQueue.shouldQueue(input)) {
       releaseCommandHold(input.agentParser, input.cwd, id);
       // `spawn()` marked it before handing over; nothing else would clear it.
       this.inputInAlternateScreen.delete(id);
@@ -2202,6 +2304,8 @@ export class SessionManager extends EventEmitter {
     let markSettled: () => void = () => undefined;
     const inFlight: InFlightSpawn = {
       taskId: input.taskId,
+      projectId: input.projectId,
+      columnExempt: isColumnExempt(input),
       cancelled: false,
       abandonedPtyExit: null,
       settled: new Promise<void>((resolve) => { markSettled = resolve; }),
@@ -2998,30 +3102,7 @@ export class SessionManager extends EventEmitter {
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
-    // A young session of an agent that is typed into, which kill() tore down
-    // moments ago, is still running: its PTY is parked for the exit grace
-    // before the force-kill
-    // (pty-teardown-grace.md). Until it exits the host protects it and
-    // everything under it, so a reap now would leave the agent's children
-    // running. That happens on a Done move whose session was stopped just
-    // before, where suspend() has no PTY left to wait for.
-    // A mature session's kill() parks nothing, so this does not cover one
-    // killed without its exit awaited; every terminal transition awaits it.
-    // A Done move's suspend() waits for the exit only up to its grace plus
-    // 1.5 s, so a PTY slower than that to report its exit is still held here.
-    const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(validTasks.map((task) => task.id)));
-    if (parkedSessionIds.length > 0) {
-      const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
-      if (exited.includes(false)) {
-        console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
-      }
-    }
-    // The PTY's exit is the SHELL's. The agent it started gets the console's
-    // close and is often still exiting (its SessionEnd hooks, its transcript,
-    // its fullscreen boot record), and the reap below would terminate it as a
-    // tagged leftover. The host waits, bounded, for the agent each task's
-    // exited shells left running to go by itself (`host/exited-root-wait.ts`).
-    await this.awaitAgentExitOf(validTasks.map((task) => task.id), '[TASK-REAP]');
+    await this.awaitTaskExits(validTasks.map((task) => task.id));
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
     // A task with no usable directory can have nothing killed or reported, so
@@ -3181,6 +3262,72 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       console.warn(`[REAPER] worktree holder stop failed (pid=${pid}):`, error instanceof Error ? error.message : String(error));
       return 'failed';
+    }
+  }
+
+  /**
+   * Wait for what a reap or a probe would otherwise read as a leftover. A young
+   * session of an agent that is typed into, which kill() tore down moments ago,
+   * is still running: its PTY is parked for the exit grace before the force-kill
+   * (pty-teardown-grace.md). Until it exits the host protects it and everything
+   * under it, so a reap now would leave the agent's children running. That
+   * happens on a Done move whose session was stopped just before, where
+   * suspend() has no PTY left to wait for. A mature session's kill() parks
+   * nothing, so this does not cover one killed without its exit awaited; every
+   * terminal transition awaits it. A Done move's suspend() waits for the exit
+   * only up to its grace plus 1.5 s, so a PTY slower than that to report its exit
+   * is still held here.
+   *
+   * The PTY's exit is the SHELL's. The agent it started gets the console's close
+   * and is often still exiting (its SessionEnd hooks, its transcript, its
+   * fullscreen boot record), and a reap would terminate it as a tagged leftover,
+   * as a probe would read it as one. The host waits, bounded, for the agent each
+   * task's exited shells left running to go by itself (`host/exited-root-wait.ts`).
+   */
+  private async awaitTaskExits(taskIds: string[]): Promise<void> {
+    const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(taskIds));
+    if (parkedSessionIds.length > 0) {
+      const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
+      if (exited.includes(false)) {
+        console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
+      }
+    }
+    await this.awaitAgentExitOf(taskIds, '[TASK-REAP]');
+  }
+
+  /**
+   * What these tasks still have running in their folders, and with
+   * `connections`, whether anything outside a task's tree is connected to it.
+   * Signals nothing. Waits, as a reap does, for an agent still exiting, so it is
+   * never read as something left running. A WSL task's processes run inside its
+   * distro, out of the host's sight, so it reads as nothing running.
+   *
+   * Null when the host could not tell, which is never "nothing runs". Never
+   * throws.
+   */
+  async probeTaskProcesses(
+    projectPath: string | null,
+    tasks: ReadonlyArray<{ id: string; worktreePath: string | null }>,
+    options: { connections: boolean },
+  ): Promise<TaskProbeEntry[] | null> {
+    const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
+    if (validTasks.length === 0) return [];
+    try {
+      await this.awaitTaskExits(validTasks.map((task) => task.id));
+      const probeTasks = (await Promise.all(validTasks.map(async (task) => ({
+        taskId: task.id,
+        directories: await resolveTaskDirectories(projectPath, task.worktreePath),
+        worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
+      })))).filter((task) => task.directories.length > 0);
+      if (probeTasks.length === 0) return [];
+      const result = await this.host.probeTaskProcesses(
+        { tasks: probeTasks, mainPid: process.pid, readConnections: options.connections },
+        TASK_PROBE_TIMEOUT_MS,
+      );
+      return result.failed ? null : result.entries;
+    } catch (error) {
+      console.warn('[STOP-SCRIPT] host probe failed (non-fatal):', error);
+      return null;
     }
   }
 
@@ -4413,7 +4560,7 @@ export class SessionManager extends EventEmitter {
    * included, or a spawn still in flight: anything whose PTY the pty host
    * holds or is about to.
    */
-  private hasLiveOrStartingSession(taskId: string): boolean {
+  hasLiveOrStartingSession(taskId: string): boolean {
     if (this.registry.findLiveSessionByTaskId(taskId)) return true;
     for (const inFlight of this.spawnsInFlight.values()) {
       if (inFlight.taskId === taskId) return true;

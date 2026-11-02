@@ -13,6 +13,7 @@ import path from 'node:path';
 import {
   runWorktreeCreation,
   isWorktreeCreationInFlight,
+  tryHoldWorktreeCreation,
   waitForWorktreeCreation,
 } from '../../src/main/git/worktree-creation-registry';
 
@@ -140,6 +141,46 @@ describe('worktree creation registry', () => {
 
     expect(isWorktreeCreationInFlight(worktreePath)).toBe(false);
     expect(await waitForWorktreeCreation(worktreePath)).toBe(false);
+  });
+
+  describe('tryHoldWorktreeCreation', () => {
+    it('holds a free path at once, and refuses it to a creation or a second hold until released', async () => {
+      // The spare worktree's build and a task's claim of one take their path
+      // from inside the git queue, where nothing may wait: a held path is
+      // skipped, never waited on. Its hold must still be the same entry a
+      // removal and a creation see.
+      const worktreePath = uniqueWorktreePath('try-hold');
+      const release = tryHoldWorktreeCreation(worktreePath);
+      expect(release).not.toBeNull();
+      expect(isWorktreeCreationInFlight(worktreePath)).toBe(true);
+      expect(tryHoldWorktreeCreation(worktreePath)).toBeNull();
+
+      const creationStarted = vi.fn();
+      const creation = runWorktreeCreation(worktreePath, undefined, async (waited) => { creationStarted(waited); });
+      const removalWait = waitForWorktreeCreation(worktreePath);
+      await flush();
+      expect(creationStarted).not.toHaveBeenCalled();
+
+      release?.();
+      // A second call to the release is harmless and frees nothing it no longer holds.
+      release?.();
+      await creation;
+      expect(creationStarted).toHaveBeenCalledWith(true);
+      expect(await removalWait).toBe(true);
+      expect(isWorktreeCreationInFlight(worktreePath)).toBe(false);
+    });
+
+    it('refuses a path a creation already holds', async () => {
+      const worktreePath = uniqueWorktreePath('try-hold-busy');
+      const hold = deferred();
+      const creation = runWorktreeCreation(worktreePath, undefined, async () => { await hold.promise; });
+      expect(tryHoldWorktreeCreation(worktreePath)).toBeNull();
+      hold.resolve();
+      await creation;
+      const release = tryHoldWorktreeCreation(worktreePath);
+      expect(release).not.toBeNull();
+      release?.();
+    });
   });
 
   describe('path keys', () => {

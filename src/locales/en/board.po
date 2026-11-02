@@ -296,6 +296,10 @@ msgid "Paused"
 msgstr "Paused"
 
 #: src/renderer/components/board/task-card-view.tsx
+msgid "Queued {position}/{total}..."
+msgstr "Queued {position}/{total}..."
+
+#: src/renderer/components/board/task-card-view.tsx
 msgid "Queued..."
 msgstr "Queued..."
 
@@ -442,6 +446,14 @@ msgstr "View all"
 #: src/renderer/components/board/ArchivedTaskContextMenu.tsx
 msgid "View conversation"
 msgstr "View conversation"
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a free agent slot."
+msgstr "Waiting for a free agent slot."
+
+#: src/renderer/components/board/task-card-view.tsx
+msgid "Waiting for a slot in {columnName}."
+msgstr "Waiting for a slot in {columnName}."
 
 #: src/renderer/components/board/activity-reason-text.ts
 msgid "Waiting for your approval for {duration}"

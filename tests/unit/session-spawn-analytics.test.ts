@@ -219,6 +219,22 @@ function buildMockContext(sessionId: string, agentName: string | undefined) {
       suspend: vi.fn(async () => {}),
       kill: vi.fn(async () => {}),
       on: vi.fn((event: string, handler: (...args: unknown[]) => unknown) => {
+        // Several listeners share 'session-changed' (the held-message flush, the
+        // forwarder under test, the queue push). Capture one that calls them all,
+        // as the manager's emit does; one that throws on this thin context must not
+        // stop the forwarder. Other events keep the last registration.
+        const earlier = capturedSessionEventHandlers.get(event);
+        if (event === 'session-changed' && earlier) {
+          capturedSessionEventHandlers.set(event, (...args: unknown[]) => {
+            try {
+              earlier(...args);
+            } catch {
+              // Not the listener under test.
+            }
+            return handler(...args);
+          });
+          return;
+        }
         capturedSessionEventHandlers.set(event, handler);
       }),
       off: vi.fn(),

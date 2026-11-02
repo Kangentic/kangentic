@@ -13,7 +13,9 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 vi.mock('node-pty', () => ({ spawn: vi.fn() }));
 vi.mock('../../src/main/pty/spawn/shell-resolver', () => {
@@ -27,10 +29,17 @@ vi.mock('../../src/main/analytics/error-reporting', () => ({ reportHandledError:
 
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { HostProcessInfo } from '../../src/main/pty/host/protocol';
-import type { LeftoverProcessEntry, TaggedReapRequest, TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
+import type {
+  LeftoverProcessEntry,
+  TaggedReapRequest,
+  TaggedReapResult,
+  TaskProbeRequest,
+  TaskProbeResult,
+} from '../../src/main/pty/process-tag/tagged-reap';
+import type { AgentExitWaitResult } from '../../src/main/pty/host/exited-root-wait';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const EMPTY_REAP: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 
 type Identity = { pid: number; startKey: string };
 
@@ -38,6 +47,8 @@ interface HostStub {
   checkReportedProcesses: (identities: Identity[], timeoutMs: number) => Promise<Array<boolean | null>>;
   listProcesses: () => Promise<HostProcessInfo[]>;
   reapTaggedProcesses: (request: TaggedReapRequest, timeoutMs: number, onLateResult?: (result: TaggedReapResult) => void) => Promise<TaggedReapResult>;
+  probeTaskProcesses: (request: TaskProbeRequest, timeoutMs: number) => Promise<TaskProbeResult>;
+  awaitAgentExit: (taskIds: string[], timeoutMs: number) => Promise<AgentExitWaitResult>;
 }
 
 function managerWithHost(host: Partial<HostStub>): SessionManager {
@@ -117,6 +128,129 @@ describe('SessionManager.listProcesses', () => {
     const manager = managerWithHost({ listProcesses: async () => { throw new Error('the pty host is not reachable'); } });
 
     expect(await manager.listProcesses()).toEqual([]);
+  });
+});
+
+describe('SessionManager.probeTaskProcesses (the Stop script\'s question)', () => {
+  const OTHER_TASK = '0b9e8d7c-6a5f-4e3d-8c2b-1a0f9e8d7c6b';
+  const NO_AGENT_EXIT: AgentExitWaitResult = { found: [], stillRunning: [], waitedMs: 0 };
+  const FOUND: TaskProbeResult = {
+    entries: [{ taskId: TASK, processes: [{ pid: 5000, startKey: 'start-5000', label: 'node (vite)' }], connected: false }],
+    failed: false,
+  };
+  let scratch: string;
+
+  function freshScratch(): string {
+    scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-probe-task-'));
+    return scratch;
+  }
+
+  afterEach(() => {
+    if (scratch) fs.rmSync(scratch, { recursive: true, force: true });
+    scratch = '';
+  });
+
+  it('asks the host nothing for ids that are not task ids, and answers an empty list', async () => {
+    const probeTaskProcesses = vi.fn(async () => FOUND);
+    const awaitAgentExit = vi.fn(async () => NO_AGENT_EXIT);
+    const manager = managerWithHost({ probeTaskProcesses, awaitAgentExit });
+
+    const answer = await manager.probeTaskProcesses(freshScratch(), [{ id: 'not-a-uuid', worktreePath: null }], { connections: false });
+
+    expect(answer).toEqual([]);
+    expect(probeTaskProcesses).not.toHaveBeenCalled();
+    expect(awaitAgentExit).not.toHaveBeenCalled();
+  });
+
+  it('sends the host only the valid ids', async () => {
+    const probeTaskProcesses = vi.fn(async (_request: TaskProbeRequest, _timeoutMs: number) => FOUND);
+    const manager = managerWithHost({ probeTaskProcesses, awaitAgentExit: async () => NO_AGENT_EXIT });
+
+    await manager.probeTaskProcesses(
+      freshScratch(),
+      [{ id: 'not-a-uuid', worktreePath: null }, { id: TASK, worktreePath: null }],
+      { connections: false },
+    );
+
+    expect(probeTaskProcesses.mock.calls[0][0].tasks.map((task) => task.taskId)).toEqual([TASK]);
+  });
+
+  it('drops a task with no directory to look in, and answers an empty list when none is left', async () => {
+    const probeTaskProcesses = vi.fn(async (_request: TaskProbeRequest, _timeoutMs: number) => FOUND);
+    const manager = managerWithHost({ probeTaskProcesses, awaitAgentExit: async () => NO_AGENT_EXIT });
+    const worktree = path.join(freshScratch(), 'worktree');
+    fs.mkdirSync(worktree);
+
+    // With no project path, a task with no worktree has nowhere to look.
+    const onlyEmpty = await manager.probeTaskProcesses(null, [{ id: TASK, worktreePath: null }], { connections: false });
+    expect(onlyEmpty).toEqual([]);
+    expect(probeTaskProcesses).not.toHaveBeenCalled();
+
+    await manager.probeTaskProcesses(
+      null,
+      [{ id: TASK, worktreePath: null }, { id: OTHER_TASK, worktreePath: worktree }],
+      { connections: false },
+    );
+    expect(probeTaskProcesses).toHaveBeenCalledTimes(1);
+    expect(probeTaskProcesses.mock.calls[0][0].tasks.map((task) => task.taskId)).toEqual([OTHER_TASK]);
+  });
+
+  it('passes whether to read connections on to the host, and names this process', async () => {
+    const probeTaskProcesses = vi.fn(async (_request: TaskProbeRequest, _timeoutMs: number) => FOUND);
+    const manager = managerWithHost({ probeTaskProcesses, awaitAgentExit: async () => NO_AGENT_EXIT });
+    const project = freshScratch();
+
+    await manager.probeTaskProcesses(project, [{ id: TASK, worktreePath: null }], { connections: true });
+    await manager.probeTaskProcesses(project, [{ id: TASK, worktreePath: null }], { connections: false });
+
+    expect(probeTaskProcesses.mock.calls[0][0]).toMatchObject({ readConnections: true, mainPid: process.pid });
+    expect(probeTaskProcesses.mock.calls[1][0]).toMatchObject({ readConnections: false });
+  });
+
+  it('gives back the host\'s entries', async () => {
+    const manager = managerWithHost({ probeTaskProcesses: async () => FOUND, awaitAgentExit: async () => NO_AGENT_EXIT });
+
+    expect(await manager.probeTaskProcesses(freshScratch(), [{ id: TASK, worktreePath: null }], { connections: false })).toEqual(FOUND.entries);
+  });
+
+  it('answers null when the host could not tell, never an empty list', async () => {
+    const manager = managerWithHost({
+      probeTaskProcesses: async () => ({ entries: [], failed: true }),
+      awaitAgentExit: async () => NO_AGENT_EXIT,
+    });
+
+    expect(await manager.probeTaskProcesses(freshScratch(), [{ id: TASK, worktreePath: null }], { connections: false })).toBeNull();
+  });
+
+  it('answers null, and does not reject, when the host throws', async () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+    const manager = managerWithHost({
+      probeTaskProcesses: async () => { throw new Error('pty host request timed out'); },
+      awaitAgentExit: async () => NO_AGENT_EXIT,
+    });
+
+    expect(await manager.probeTaskProcesses(freshScratch(), [{ id: TASK, worktreePath: null }], { connections: false })).toBeNull();
+  });
+
+  it('waits for the agent an exited shell left to finish exiting before it probes', async () => {
+    let release!: (result: AgentExitWaitResult) => void;
+    const exitWait = new Promise<AgentExitWaitResult>((resolve) => { release = resolve; });
+    const awaitAgentExit = vi.fn(() => exitWait);
+    const probeTaskProcesses = vi.fn(async (_request: TaskProbeRequest, _timeoutMs: number) => FOUND);
+    const manager = managerWithHost({ probeTaskProcesses, awaitAgentExit });
+
+    const pending = manager.probeTaskProcesses(freshScratch(), [{ id: TASK, worktreePath: null }], { connections: false });
+    await vi.waitFor(() => expect(awaitAgentExit).toHaveBeenCalledTimes(1));
+    expect(awaitAgentExit.mock.calls[0]).toEqual([[TASK], expect.any(Number)]);
+    // A probe that did not wait would start once the directories resolve, which
+    // takes a few filesystem round trips. Spend a few of our own so it has.
+    for (let roundTrip = 0; roundTrip < 5; roundTrip += 1) await fs.promises.realpath(scratch);
+    expect(probeTaskProcesses).not.toHaveBeenCalled();
+
+    release(NO_AGENT_EXIT);
+    await pending;
+
+    expect(probeTaskProcesses).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,12 +1,17 @@
 ---
 type: Reference
 title: Task tools
-description: "Parameters and guards for creating, updating, moving, reordering, deleting and PR-linking board tasks over MCP: kangentic_create_task's call-time override validation, branch conflict guard and 500-task cap, update_task description edits, and move_task slots and message hand-off."
+description: "Parameters and guards for creating, updating, moving, reordering, deleting and PR-linking board tasks over MCP: kangentic_create_task's call-time override validation, branch conflict guard and 500-task cap, update_task description edits, move_task slots and message hand-off, and the guard that refuses an agent's teardown of another task's running work."
 tags: [mcp, tasks, create, move]
 sources:
   - resource: src/main/agent/mcp-http/task-tools.ts
   - resource: src/main/agent/mcp-http/spawn-override-validation.ts
   - resource: src/main/agent/commands/task-commands.ts
+  - resource: src/main/agent/commands/running-work-guard.ts
+  - resource: src/main/ipc/helpers/task-running-work.ts
+  - resource: src/main/git/worktree-head.ts
+  - resource: src/main/agent/mcp-project-context.ts
+  - resource: src/main/agent/commands/types.ts
   - resource: src/main/agent/commands/task-ordering.ts
   - resource: src/main/agent/commands/move-message-limit.ts
   - resource: src/main/pr/pr-readiness-note.ts
@@ -197,6 +202,8 @@ the agent: "Your session ends when this turn does." for Done or a column with no
 <column> starts a session of its own, yours ends when this turn does." otherwise. See
 [A call that ends the caller's own session](../../architecture/sessions/suspend-and-cleanup.md#a-call-that-ends-the-callers-own-session).
 
+An agent's move of another task into To Do or Done answers to the [running-work guard](#running-work-guard).
+
 To re-sequence several tasks at once, use [kangentic_reorder_tasks](#kangentic_reorder_tasks).
 
 ## kangentic_reorder_tasks
@@ -236,6 +243,40 @@ Permanently delete a task from the board. Removes the task, its attachments, and
 | `taskId` | string | Yes | Task ID (numeric display ID like `"42"` or full UUID). |
 
 Find task IDs with `kangentic_find_task` or `kangentic_search_tasks`.
+
+An agent's delete of another task answers to the [running-work guard](#running-work-guard).
+
+### Running-work guard
+
+An agent cannot end another task's running work. An agent deleted four tasks it had filed, after folding their work into its own commit, and one of them had a live agent and its own branch. Nothing refused, and both went.
+
+Running work is any of these, read at the call from the session registry and git, never from `task.session_id`, which outlives a natural exit:
+
+- A live agent: a running or queued session, or a spawn still in flight.
+- Commits in its worktree not on its base branch (`resolved_base_branch`, else the task's base, else the project default). `origin/<base>` is tried before `<base>`. A rebase-merged commit does not count. A squash-merged one does, which errs toward asking.
+- Uncommitted files in its worktree.
+- A worktree git cannot read, or commits nothing could count: a base that resolves on neither ref form, or a folder that is gone while the row still names it and its branch. The guard fails closed, because a delete cannot be undone.
+
+| Call | Refused for |
+|------|-------------|
+| `kangentic_delete_task` | All four |
+| `kangentic_move_task` to the To Do role column, renamed or not | All four |
+| `kangentic_move_task` to Done | A live agent, uncommitted files, a worktree git cannot read. Not commits, counted or not: Done keeps the branch and the conversation, and moving the task back resumes it. |
+| [kangentic_run_automation](automation-tools.md#kangentic_run_automation) on a Move to column row aimed at To Do or Done | The same as the move |
+
+The error is a recoverable `isError` result that names what would be lost, says nothing changed, and tells the agent to ask the user:
+
+```
+Refused: #12 "Fix the importer" has running work: a live agent and 3 commits on task/importer not on main. Deleting it would end that work, so nothing was changed. Ask the user what to do. Only they can delete it, from the board. Do not retry this or work around it.
+```
+
+No parameter overrides it. An agent could set one on its own, and nothing on the MCP path can show that a person asked, so the person's own delete or drag is the confirmation. Those never reach this guard, and neither does the phone: `CommandContext.callerKind` is `'agent'` only where an MCP tool builds the handler's context, never from a parameter. A caller with no task, such as a Command Terminal or an outside MCP client, is still an agent. A context that cannot read a task's running work refuses the call too, and so does a read that throws. That refusal says the task's running work could not be read, whatever the task holds.
+
+Allowed: a task with nothing above, and a task's own agent acting on its own task, in its main session or an isolated column's. A task with no `worktree_path` has no commits to lose, because a teardown reaches the branch only through that field. A row that names a folder now gone, with a branch, is refused for a delete or a To Do move. Its commits were never counted, and the teardown deletes that branch next. A Done move goes ahead, since Done keeps the branch.
+
+Other paths to the same teardown do not reach another task's work. There is no agent move to the Backlog, since `BACKLOG_DEMOTE` is renderer IPC and "Backlog" is not a column. [kangentic_move_task_to_project](project-tools.md#kangentic_move_task_to_project) refuses anything outside To Do, with a session, or with a worktree on disk. [kangentic_delete_workflow](workflow-tools.md#kangentic_delete_workflow)'s `deleteNeverStarted` deletes only a task with no session, worktree or session record. A Move to column row at a turn end acts on the task whose own turn ended, as the column's author configured it. It is not guarded: a turn-end row aimed at To Do or Done tears down that task's worktree whatever it holds.
+
+The guard stops a tool call. An agent with a shell can still run git. It reads once, at the call. A drag that lands after the read and before the move takes the task lock is not seen. The own-task exemption trusts the caller segment of the MCP URL, as the send guards do. A process that holds the per-launch token and names a session of the target task in its URL is treated as that task's own agent and skips this check. See [How the MCP server works](how-it-works.md#security).
 
 ## kangentic_remove_task_attachment
 

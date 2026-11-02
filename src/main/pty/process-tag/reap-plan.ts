@@ -23,6 +23,17 @@
  * setuid helper). So a child that cleared the tag (the documented opt-out) is
  * never killed through its parent; it saves the parent instead.
  *
+ * A tree spared ONLY because a descendant carrying this task's own tag works
+ * elsewhere is reported as `outside`, not `shared`: nothing in it shows other
+ * work uses it. A .NET Aspire stack has this shape, its dashboard working in a
+ * package cache under the DCP root. It stays spared, and it stops being
+ * evidence: a process in such a tree is no client of a listener, unless real
+ * evidence reaches the tree itself (another task connected to its dashboard),
+ * which makes it `shared`. Measured on a runner: with a dashboard page open,
+ * the dashboard dials the AppHost's port, and counting that as evidence spared
+ * the AppHost, its CLI and all 14 processes. Killing the AppHost is what makes
+ * DCP stop the rest (`tests/unit/aspire-host-death.test.ts`).
+ *
  * A process is spared the same way, with everything under it, when other
  * Kangentic work holds a loopback TCP connection to a port it listens on
  * (`connections`, read by the reader after each scan). A shared server is not
@@ -33,7 +44,8 @@
  * (another task's, or a cleared one), or is itself spared as shared: the adb
  * server another task is using holds a connection to the emulator's adb port,
  * so a headless emulator is spared through it. The reaped tasks' own
- * processes are no evidence (the agent's own browser on its dev server), and
+ * processes are no evidence (the agent's own browser on its dev server), an
+ * `outside` tree is not spared as shared, and
  * neither are Kangentic's other processes (the network service behind a
  * Browser pane), found by walking up to main without passing a live PTY, nor
  * an untagged process outside Kangentic. The connection spares only the
@@ -140,6 +152,13 @@ export interface ReapPlanInput {
    * pass kept and never signalled.
    */
   keepIdentities?: ReadonlySet<string>;
+  /**
+   * The `keepIdentities` an earlier plan kept only as `outside`
+   * (`ReapPlan.keptOutsideIdentities`), which stay no evidence in this plan
+   * unless a real client reaches their tree: a process that outlives its
+   * signal must still get the force kill.
+   */
+  keptOutsideIdentities?: ReadonlySet<string>;
   /**
    * Identities an earlier plan of the same reap asked to exit. One is never
    * kept for its children alone: a shell that ignored SIGTERM, whose only
@@ -298,11 +317,19 @@ function protectedPidsOf(input: Pick<ReapPlanInput, 'processes' | 'mainPid' | 'l
   return protectedPids;
 }
 
+/** A descendant that spares its root, and whether it shows other work or only this task's own process elsewhere. */
+interface ShareEvidence {
+  process: ScannedProcess;
+  reason: 'shared' | 'outside';
+}
+
 /**
- * The descendant that shows `root` serves more than this task (see the module
- * comment), or null when nothing under it does. `taskId` is null for a macOS
- * withheld root, whose descendants may read untagged on a SIP-off machine;
- * only a cleared tag, another task's tag or a directory outside counts there.
+ * The descendant that spares `root` (see the module comment), or null when
+ * nothing under it does. `taskId` is null for a macOS withheld root, whose
+ * descendants may read untagged on a SIP-off machine; only a cleared tag,
+ * another task's tag or a directory outside counts there. A descendant with
+ * this task's own tag that works elsewhere is the weakest evidence, so the walk
+ * goes on past it: anything stronger under the same root decides.
  */
 function shareEvidenceOf(
   root: ScannedProcess,
@@ -312,9 +339,10 @@ function shareEvidenceOf(
   taskId: string | null,
   reapedTaskIds: ReadonlySet<string>,
   caseInsensitive: boolean,
-): ScannedProcess | null {
+): ShareEvidence | null {
   const visited = new Set<number>([root.pid]);
   const queue: ScannedProcess[] = [root];
+  let ownOutside: ScannedProcess | null = null;
   while (queue.length > 0) {
     const parent = queue.shift()!;
     for (const child of children.get(parent.pid) ?? []) {
@@ -325,15 +353,19 @@ function shareEvidenceOf(
       if (protectedPids.has(child.pid)) continue;
       queue.push(child);
       if (child.role === 'console-host' || !child.workingDirectory) continue;
-      if (!isInsideAny(child.workingDirectory, scope, caseInsensitive)) return child;
       const environmentKnown = !child.environmentUnreadable && !child.environmentWithheld;
+      if (!isInsideAny(child.workingDirectory, scope, caseInsensitive)) {
+        if (taskId === null || !environmentKnown || child.tagValue !== taskId) return { process: child, reason: 'shared' };
+        ownOutside ??= child;
+        continue;
+      }
       if (!environmentKnown) continue;
-      if (taskId !== null && child.tagValue !== taskId) return child;
+      if (taskId !== null && child.tagValue !== taskId) return { process: child, reason: 'shared' };
       // A cleared tag ('') is the documented opt-out, not an absent one.
-      if (taskId === null && child.tagValue !== null && !reapedTaskIds.has(child.tagValue)) return child;
+      if (taskId === null && child.tagValue !== null && !reapedTaskIds.has(child.tagValue)) return { process: child, reason: 'shared' };
     }
   }
-  return null;
+  return ownOutside ? { process: ownOutside, reason: 'outside' } : null;
 }
 
 /**
@@ -360,8 +392,11 @@ function rootScope(
   return null;
 }
 
-/** Why a reaped task's own process was left running. */
-export type KeptReason = 'window' | 'multiplexer' | 'shared';
+/**
+ * Why a reaped task's own process was left running. `outside`: all that spared
+ * it is a descendant of its own, with this task's tag, working elsewhere.
+ */
+export type KeptReason = 'window' | 'multiplexer' | 'shared' | 'outside';
 
 /**
  * What a kept process's reason rests on, for the local log only: its own role
@@ -393,18 +428,20 @@ export interface ReapPlan {
   /**
    * The task's own processes the plan left running on purpose: tagged for a
    * reaped task, working in its directories, and a visible app, a tmux server,
-   * or a shared root. The top of each only, never what runs under one (a tmux
-   * pane or a pm2 app can be the user's own). Kangentic's tree and the held
-   * PTYs are never here.
+   * or a root spared as shared or `outside`. The top of each only, never what
+   * runs under one (a tmux pane or a pm2 app can be the user's own). Kangentic's
+   * tree and the held PTYs are never here.
    */
   kept: KeptProcess[];
   /**
    * Everything this plan left running on purpose, by `processIdentity`: what
-   * it spared as shared, with everything under it, and each process kept
-   * because all its children were. The next plan of the same reap takes it
-   * as `keepIdentities`.
+   * it spared, as shared or `outside`, with everything under it, and each
+   * process kept because all its children were. The next plan of the same
+   * reap takes it as `keepIdentities`.
    */
   keptIdentities: ReadonlySet<string>;
+  /** The `keptIdentities` kept only as `outside`, which the next plan takes as `keptOutsideIdentities`. */
+  keptOutsideIdentities: ReadonlySet<string>;
 }
 
 /** The processes a reap kills, from one scan. */
@@ -503,34 +540,45 @@ export function connectionQueryOf(input: ReapPlanInput): { listeners: ScannedPro
 }
 
 /** The order a kept ancestor takes its reason from its kept children in. */
-const KEPT_REASON_ORDER: readonly KeptReason[] = ['window', 'multiplexer', 'shared'];
+const KEPT_REASON_ORDER: readonly KeptReason[] = ['window', 'multiplexer', 'shared', 'outside'];
 
 /** What a reap kills from one scan, and what it reports as stopped and as left running. */
 export function planReapDetailed(input: ReapPlanInput): ReapPlan {
-  if (input.tasks.size === 0) return { targets: [], roots: [], kept: [], keptIdentities: new Set() };
+  if (input.tasks.size === 0) return { targets: [], roots: [], kept: [], keptIdentities: new Set(), keptOutsideIdentities: new Set() };
   const caseInsensitive = input.caseInsensitivePaths ?? true;
   const protectedPids = buildProtectedPids(input);
   const children = indexChildren(input.processes);
   const byPid = indexByPid(input.processes);
   const reapedTaskIds = new Set(input.tasks.keys());
   const roots: Array<{ scanned: ScannedProcess; scope: readonly string[]; taskId: string | null; ownerTaskId: string }> = [];
-  const sharedRoots: Array<ReportedProcess & { because: KeptBecause }> = [];
+  const keptRoots: KeptProcess[] = [];
   // The task each kill root belongs to, shared or not, so a process under one
   // is reported under that task.
   const rootTaskByPid = new Map<number, string>();
   const sparedPids = new Set<number>();
   // What an earlier plan of this reap left running stays running.
   const keptEarlier = new Set<number>();
+  // Spared with no evidence of other work, so no evidence for a listener: each
+  // `outside` root with its subtree (no entry when an earlier plan reported it),
+  // and every pid only such a root spared.
+  const outsideRoots: Array<{ entry: KeptProcess | null; pids: Set<number> }> = [];
+  const outsideOnlyPids = new Set<number>();
   if (input.keepIdentities && input.keepIdentities.size > 0) {
     for (const scanned of input.processes) {
-      if (!protectedPids.has(scanned.pid) && input.keepIdentities.has(processIdentity(scanned))) {
-        collectSubtree(scanned, children, keptEarlier, protectedPids);
+      const identity = processIdentity(scanned);
+      if (protectedPids.has(scanned.pid) || !input.keepIdentities.has(identity)) continue;
+      const subtree = new Set<number>();
+      collectSubtree(scanned, children, subtree, protectedPids);
+      for (const pid of subtree) {
+        keptEarlier.add(pid);
+        sparedPids.add(pid);
       }
+      if (input.keptOutsideIdentities?.has(identity)) outsideRoots.push({ entry: null, pids: subtree });
     }
-    for (const pid of keptEarlier) sparedPids.add(pid);
   }
   // First: a shared root shields its whole subtree, including the task's own
   // processes under it (pm2 would restart an app killed under its daemon).
+  const sparedAsShared = new Set<number>();
   for (const scanned of input.processes) {
     if (protectedPids.has(scanned.pid) || keptEarlier.has(scanned.pid)) continue;
     const root = rootScope(scanned, input, caseInsensitive);
@@ -538,12 +586,24 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     rootTaskByPid.set(scanned.pid, root.ownerTaskId);
     const evidence = shareEvidenceOf(scanned, children, protectedPids, root.scope, root.taskId, reapedTaskIds, caseInsensitive);
     if (evidence) {
-      collectSubtree(scanned, children, sparedPids, protectedPids);
-      sharedRoots.push({ process: scanned, taskId: root.ownerTaskId, because: { basis: 'descendant', evidencePid: evidence.pid } });
+      const subtree = new Set<number>();
+      collectSubtree(scanned, children, subtree, protectedPids);
+      for (const pid of subtree) {
+        sparedPids.add(pid);
+        if (evidence.reason === 'shared') sparedAsShared.add(pid);
+      }
+      const entry: KeptProcess = { process: scanned, taskId: root.ownerTaskId, reason: evidence.reason, because: { basis: 'descendant', evidencePid: evidence.process.pid } };
+      keptRoots.push(entry);
+      if (evidence.reason === 'outside') outsideRoots.push({ entry, pids: subtree });
     } else {
       roots.push({ scanned, ...root });
     }
   }
+  for (const { pids } of outsideRoots) {
+    for (const pid of pids) outsideOnlyPids.add(pid);
+  }
+  // A shared root over the same pid outranks an `outside` one, kept earlier or not.
+  for (const pid of sparedAsShared) outsideOnlyPids.delete(pid);
   const owningTaskOf = (scanned: ScannedProcess): string | null => {
     const own = rootTaskByPid.get(scanned.pid);
     if (own !== undefined) return own;
@@ -585,16 +645,32 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   if (connections.length > 0) {
     const isOtherWork = otherWorkOf(input, byPid, children, reapedTaskIds);
     // Kangentic's own processes are protected, so never spared: only other
-    // work, or a listener this plan already spared, is evidence.
-    const isEvidence = (client: ScannedProcess): boolean => isOtherWork(client) || sparedPids.has(client.pid);
+    // work, or a listener this plan spared as shared, is evidence. An `outside`
+    // tree is the task's own, so its processes are not.
+    const isEvidence = (client: ScannedProcess): boolean => isOtherWork(client)
+      || (sparedPids.has(client.pid) && !outsideOnlyPids.has(client.pid));
     let changed = true;
     while (changed) {
       changed = false;
       for (const connection of connections) {
-        if (!targetPids.has(connection.listenerPid)) continue;
+        const isOutsideOnly = outsideOnlyPids.has(connection.listenerPid);
+        if (!isOutsideOnly && !targetPids.has(connection.listenerPid)) continue;
         const listener = byPid.get(connection.listenerPid);
         const client = byPid.get(connection.clientPid);
         if (!listener || !client || !isEvidence(client)) continue;
+        if (isOutsideOnly) {
+          // Other work reached the tree itself, so it is shared after all, and
+          // from here on what it connects to is spared too.
+          for (const { entry, pids } of outsideRoots) {
+            if (!pids.has(listener.pid)) continue;
+            for (const pid of pids) outsideOnlyPids.delete(pid);
+            if (!entry) continue;
+            entry.reason = 'shared';
+            entry.because = { basis: 'connection', evidencePid: client.pid };
+          }
+          changed = true;
+          continue;
+        }
         const sparedNow = new Set<number>();
         collectSubtree(listener, children, sparedNow, protectedPids);
         for (const pid of sparedNow) {
@@ -602,7 +678,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
           targetPids.delete(pid);
         }
         const taskId = owningTaskOf(listener);
-        if (taskId !== null) sharedRoots.push({ process: listener, taskId, because: { basis: 'connection', evidencePid: client.pid } });
+        if (taskId !== null) keptRoots.push({ process: listener, taskId, reason: 'shared', because: { basis: 'connection', evidencePid: client.pid } });
         changed = true;
       }
     }
@@ -648,7 +724,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     reportedRoots.push({ process: root.scanned, taskId: root.ownerTaskId });
   }
 
-  // Reported as left running: the task's own windows, tmux servers and shared
+  // Reported as left running: the task's own windows, tmux servers and kept
   // roots, never Kangentic's tree or a held PTY.
   const safetyPids = buildSafetyProtectedPids(input);
   const keptByPid = new Map<number, KeptProcess>();
@@ -664,9 +740,9 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
       because: { basis: 'role', evidencePid: null },
     });
   }
-  for (const shared of sharedRoots) {
-    if (safetyPids.has(shared.process.pid) || keptByPid.has(shared.process.pid)) continue;
-    keptByPid.set(shared.process.pid, { ...shared, reason: 'shared' });
+  for (const keptRoot of keptRoots) {
+    if (safetyPids.has(keptRoot.process.pid) || keptByPid.has(keptRoot.process.pid)) continue;
+    keptByPid.set(keptRoot.process.pid, keptRoot);
   }
   // A kept ancestor is reported with the reason of what it was kept for, so
   // the list names the launcher, and its Stop takes the window with it.
@@ -675,7 +751,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     if (entry) return entry.reason;
     if (protectedPids.has(scanned.pid) && scanned.role === 'visible-app') return 'window';
     if (protectedPids.has(scanned.pid) && scanned.role === 'multiplexer') return 'multiplexer';
-    if (sparedPids.has(scanned.pid)) return 'shared';
+    if (sparedPids.has(scanned.pid)) return outsideOnlyPids.has(scanned.pid) ? 'outside' : 'shared';
     if (!keptAncestorPids.has(scanned.pid) || depth >= MAX_TREE_DEPTH) return null;
     const childReasons = new Set(realChildrenOf(scanned).map((child) => reasonOf(child, depth + 1)));
     return KEPT_REASON_ORDER.find((reason) => childReasons.has(reason)) ?? null;
@@ -693,10 +769,19 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     return true;
   });
 
-  const keptIdentities = new Set<string>();
-  for (const pid of [...sparedPids, ...keptAncestorPids]) {
-    const scanned = byPid.get(pid);
-    if (scanned) keptIdentities.add(processIdentity(scanned));
-  }
-  return { targets, roots: reportedRoots, kept, keptIdentities };
+  const identitiesOf = (pids: Iterable<number>): Set<string> => {
+    const identities = new Set<string>();
+    for (const pid of pids) {
+      const scanned = byPid.get(pid);
+      if (scanned) identities.add(processIdentity(scanned));
+    }
+    return identities;
+  };
+  return {
+    targets,
+    roots: reportedRoots,
+    kept,
+    keptIdentities: identitiesOf([...sparedPids, ...keptAncestorPids]),
+    keptOutsideIdentities: identitiesOf(outsideOnlyPids),
+  };
 }

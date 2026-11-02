@@ -1,4 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 // The module under test (`mcp-project-context.ts`) pulls in several
 // Electron/Node-native dependencies through its own imports:
@@ -128,6 +131,21 @@ vi.mock('../../src/main/ipc/handlers/git-diff', async (importOriginal) => ({
   readTaskChanges: readTaskChangesSpy,
 }));
 
+// The running-work read asks the task's base through `resolveEffectiveBaseBranch`
+// (tested where it lives) and reads the worktree through `readWorktreeWork`
+// (task-running-work.test.ts, against real git). Here only the context's wiring
+// of the base into the read is: which arguments the base is resolved with.
+const resolveEffectiveBaseBranchSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/ipc/helpers/task-git', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/task-git')>()),
+  resolveEffectiveBaseBranch: resolveEffectiveBaseBranchSpy,
+}));
+const readWorktreeWorkSpy = vi.hoisted(() => vi.fn());
+vi.mock('../../src/main/git/worktree-head', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/git/worktree-head')>()),
+  readWorktreeWork: readWorktreeWorkSpy,
+}));
+
 // RequestResolver is imported by mcp-project-context and called with `new`.
 // Track constructor calls via a hoisted spy variable that the test body can
 // inspect after each call.
@@ -181,6 +199,7 @@ function makeIpcContext(projectResult: Project | null): IpcContext {
       list: vi.fn(() => (projectResult ? [projectResult] : [])),
     },
     boardEvents: { emitBoardChanged: vi.fn() },
+    sessionManager: { drainQueue: vi.fn() },
   } as unknown as IpcContext;
 }
 
@@ -680,6 +699,36 @@ describe('buildCommandContextForProject - get_task_report reads', () => {
     expect(readTaskChangesSpy).toHaveBeenCalledWith(ipcContext, { projectId: DEFAULT_ID, taskId: 'task-1' }, { commitWebLinks: false });
     expect(result).toBe(changes);
   });
+
+  it('readTaskRunningWork asks the session manager, so the guard hears about a live agent in production', async () => {
+    const { ipcContext, context } = makeReportContext();
+    const hasLiveOrStartingSession = vi.fn((taskId: string) => taskId === 'task-1');
+    (ipcContext.sessionManager as unknown as Record<string, unknown>).hasLiveOrStartingSession = hasLiveOrStartingSession;
+
+    const work = await context.readTaskRunningWork!({ id: 'task-1', worktree_path: null } as never);
+
+    expect(hasLiveOrStartingSession).toHaveBeenCalledWith('task-1');
+    expect(work).toEqual({ liveAgent: true, worktree: null });
+  });
+
+  it('readTaskRunningWork resolves the base of a worktree with no recorded cut from the IPC context, the task and the project path', async () => {
+    const { ipcContext, context } = makeReportContext();
+    (ipcContext.sessionManager as unknown as Record<string, unknown>).hasLiveOrStartingSession = vi.fn(() => false);
+    resolveEffectiveBaseBranchSpy.mockReturnValue('develop');
+    readWorktreeWorkSpy.mockResolvedValue({ branch: 'task/importer', commitsNotOnBase: 2, uncommittedFiles: 0 });
+    const worktreePath = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-project-context-'));
+    const task = { id: 'task-1', worktree_path: worktreePath, resolved_base_branch: null, branch_name: 'task/importer' } as never;
+
+    try {
+      const work = await context.readTaskRunningWork!(task);
+
+      expect(resolveEffectiveBaseBranchSpy).toHaveBeenCalledWith(ipcContext, task, '/projects/example');
+      expect(readWorktreeWorkSpy).toHaveBeenCalledWith(worktreePath, 'develop');
+      expect(work.worktree).toEqual({ readable: true, baseBranch: 'develop', branch: 'task/importer', commitsNotOnBase: 2, uncommittedFiles: 0 });
+    } finally {
+      fs.rmSync(worktreePath, { recursive: true, force: true });
+    }
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -705,17 +754,41 @@ describe('buildCommandContextForProject - onSwimlaneUpdated write-back', () => {
     const send = vi.fn();
     const writeBackForProject = vi.fn();
     const emitBoardChanged = vi.fn();
+    const drainQueue = vi.fn();
     const ipcContext = {
       projectRepo: { getById: vi.fn(() => project), list: vi.fn(() => [project]) },
       mainWindow: { isDestroyed: () => false, webContents: { send } },
       boardConfigManager: { writeBackForProject },
       boardEvents: { emitBoardChanged },
+      sessionManager: { drainQueue },
     } as unknown as IpcContext;
-    return { ipcContext, send, writeBackForProject, emitBoardChanged };
+    return { ipcContext, send, writeBackForProject, emitBoardChanged, drainQueue };
   }
 
   // onSwimlaneUpdated only reads id + name off the swimlane.
   const fakeSwimlane = (): Swimlane => ({ id: 'lane-1', name: 'To Do' }) as unknown as Swimlane;
+
+  // A column's agent limit turned off or raised by an agent frees room for tasks
+  // already queued, yet no session exits to re-check the line. Red-green: delete
+  // the `sessionManager.drainQueue()` call in onSwimlaneUpdated and this fails.
+  it('re-checks the agent queue once after a column update', () => {
+    const { ipcContext, drainQueue } = makeWriteBackContext();
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneUpdated(fakeSwimlane());
+
+    expect(drainQueue).toHaveBeenCalledTimes(1);
+  });
+
+  it('re-checks the agent queue for a background project too (no active-project gate)', () => {
+    const { ipcContext, drainQueue } = makeWriteBackContext();
+    (ipcContext as unknown as { currentProjectId: string }).currentProjectId = 'some-other-project-id';
+    const context = buildCommandContextForProject(ipcContext, DEFAULT_ID);
+
+    context!.onSwimlaneUpdated(fakeSwimlane(), { id: 'lane-1', name: 'Backlog' } as unknown as Swimlane);
+
+    expect(drainQueue).toHaveBeenCalledTimes(1);
+  });
 
   it('writes back the targeted project id and path (project-scoped)', () => {
     const { ipcContext, writeBackForProject } = makeWriteBackContext();
@@ -811,7 +884,7 @@ describe('buildCommandContextForProject - consolidated board-changed bus fan-out
       mainWindow: { isDestroyed: () => false, webContents: { send } },
       boardConfigManager: { writeBackForProject: vi.fn() },
       boardEvents: { emitBoardChanged },
-      sessionManager: { removeByTaskId: vi.fn() },
+      sessionManager: { removeByTaskId: vi.fn(), drainQueue: vi.fn() },
     } as unknown as IpcContext;
     return { ipcContext, send, emitBoardChanged };
   }
@@ -920,6 +993,7 @@ describe('buildCommandContextForProject - onSwimlaneUpdated strategy propagation
       boardConfigManager: { writeBackForProject: vi.fn() },
       boardEvents: { emitBoardChanged: vi.fn() },
       currentProjectId,
+      sessionManager: { drainQueue: vi.fn() },
     } as unknown as IpcContext;
     return { ipcContext };
   }

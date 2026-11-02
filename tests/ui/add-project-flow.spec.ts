@@ -1,6 +1,7 @@
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
 import { launchPage, waitForBoard, createProject, dismissOnboardingChecklist, toastCountRightNow } from './helpers';
+import { PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../src/shared/ipc-channels';
 
 /**
  * Coverage for useAddProject's branches (src/renderer/hooks/useAddProject.ts): the
@@ -191,5 +192,57 @@ test.describe('Add project flow', () => {
     // titles the two git toasts carry today, so they cannot pass on stale copy.
     expect(await toastCountRightNow(page, 'Started a git repo')).toBe(0);
     expect(await toastCountRightNow(page, 'Git setup failed')).toBe(0);
+  });
+
+  test('says the folder cannot be written and adds nothing when main refuses it', async () => {
+    ({ browser, page } = await launchPage());
+    await expect(page.locator('[data-testid="welcome-open-project"]')).toBeVisible();
+
+    // A refused folder fails `git init` too, so ensureGit answers ok: false and
+    // the git-setup warning is the one that must stay away. The rejection is
+    // written the way Electron wraps it, so the sentinel is not at the start.
+    await page.evaluate((sentinel: string) => {
+      (window as unknown as { __mockEnsureGitResult: Record<string, unknown> }).__mockEnsureGitResult = {
+        ok: false,
+        created: false,
+        error: 'git init failed',
+      };
+      (window as unknown as { __mockFolderPath: string }).__mockFolderPath = '/mock/projects/add-project-refused';
+      window.electronAPI.projects.openByPath = async function (folderPath: string) {
+        throw new Error(`Error invoking remote method 'project:openByPath': Error: ${sentinel}EPERM: ${folderPath}`);
+      };
+    }, PROJECT_FOLDER_NOT_WRITABLE_PREFIX);
+
+    await page.locator('[data-testid="welcome-open-project"]').click();
+
+    const errorToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't add project" });
+    await expect(errorToast).toBeVisible({ timeout: 5000 });
+    await expect(errorToast.getByTestId('toast-body')).toHaveText("Kangentic can't write to that folder.");
+    await expect(errorToast).toHaveClass(/border-red-500/);
+
+    expect(await toastCountRightNow(page, 'Git setup failed')).toBe(0);
+    expect(await toastCountRightNow(page, 'Started a git repo')).toBe(0);
+
+    const projectCount = (await page.evaluate(() => window.electronAPI.projects.list())).length;
+    expect(projectCount).toBe(0);
+    await expect(page.locator('[data-testid="welcome-open-project"]')).toBeVisible();
+  });
+
+  test('keeps the reason main wrote for any other failure to add the folder', async () => {
+    ({ browser, page } = await launchPage());
+    await expect(page.locator('[data-testid="welcome-open-project"]')).toBeVisible();
+
+    await page.evaluate(() => {
+      (window as unknown as { __mockFolderPath: string }).__mockFolderPath = '/mock/projects/add-project-other-failure';
+      window.electronAPI.projects.openByPath = async function () {
+        throw new Error('Simulated open failure');
+      };
+    });
+
+    await page.locator('[data-testid="welcome-open-project"]').click();
+
+    const errorToast = page.locator('[data-testid="toast"]').filter({ hasText: "Couldn't add project" });
+    await expect(errorToast).toBeVisible({ timeout: 5000 });
+    await expect(errorToast.getByTestId('toast-body')).toHaveText('Simulated open failure.');
   });
 });

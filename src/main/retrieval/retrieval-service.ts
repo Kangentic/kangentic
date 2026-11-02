@@ -27,6 +27,8 @@
 
 import fs from 'node:fs';
 import { retrievalClient } from './retrieval-client';
+import { searchCommandTerminalConversationsIn } from './retrieval-queries';
+import type { CommandTerminalHistorySearchResult } from '../../shared/types';
 import type { IndexAllStatus, ProjectIndexRead } from './worker/index-status';
 import type { IndexSweepResult, IndexSweepSteps } from './worker/index-methods';
 import { collectRemoteTargets } from './remote-targets';
@@ -71,6 +73,11 @@ const FINALIZE_DEBOUNCE_MS = 3500;
  *  before a live re-index, so a burst of activity transitions within a turn
  *  coalesces into one index and the CLI has flushed the new turn to disk. */
 const LIVE_INDEX_DEBOUNCE_MS = 1500;
+/** Grace after a Command Terminal conversation ends before its text is read. A
+ *  Stop removes the terminal's row before the agent has finished exiting, which
+ *  was measured at 0.3 to 2 s after the close and once at 4 s, so this outlasts
+ *  that. An agent slower still is caught by the next project-open sweep. */
+const COMMAND_TERMINAL_INDEX_DEBOUNCE_MS = 5000;
 /** Grace after a board change before its task records are re-read, so a drag
  *  or a burst of agent edits settles into one sweep. */
 const TASK_RECORD_DEBOUNCE_MS = 2000;
@@ -96,6 +103,8 @@ const pendingTimers = new Set<NodeJS.Timeout>();
 const liveIndexTimers = new Map<string, NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for finalize (suspend / exit) indexing. */
 const finalizeIndexTimers = new Map<string, NodeJS.Timeout>();
+/** Per-conversation trailing-debounce timers for Command Terminal text. */
+const commandTerminalIndexTimers = new Map<string, NodeJS.Timeout>();
 /** Per-session trailing-debounce timers for the transcript archive. */
 const archiveTimers = new Map<string, NodeJS.Timeout>();
 /** Per-project trailing-debounce timers for task-record re-reads. */
@@ -1067,6 +1076,8 @@ export const retrievalService = {
           // Deleted sessions' documents, found by their chunks too.
           purge: 'chunks',
           conversations: true,
+          // Command Terminal conversations, for the Earlier search.
+          commandTerminals: true,
           // The board's own records, the files each conversation changed,
           // the default branch's commits and its code: each cheap once
           // caught up, and complete on the first open.
@@ -1098,6 +1109,39 @@ export const retrievalService = {
    *  turn-boundary index just re-read; nothing waits on it. */
   refreshRecords(context: IpcContext, projectId: string): void {
     queueRecordSweeps(context, projectId);
+  },
+
+  /**
+   * Read a Command Terminal conversation's text into the Earlier search, or
+   * drop it when its row is gone (`index.commandTerminalConversation`). Keyed by
+   * the conversation, not the session: a terminal's row is gone by now, and one
+   * terminal can hold several conversations.
+   */
+  scheduleCommandTerminalIndex(context: IpcContext, projectId: string, agentSessionId: string): void {
+    if (disposed || !isIndexingEnabled(context)) return;
+    const existing = commandTerminalIndexTimers.get(agentSessionId);
+    if (existing) clearTimeout(existing);
+    const timer = setTimeout(() => {
+      commandTerminalIndexTimers.delete(agentSessionId);
+      if (disposed || !isIndexingEnabled(context)) return;
+      chain(() => retrievalClient.call(
+        'index.commandTerminalConversation',
+        { projectId, agentSessionId, remoteTargets: collectRemoteTargets(agentRegistry) },
+        { timeoutMs: null },
+      ));
+    }, COMMAND_TERMINAL_INDEX_DEBOUNCE_MS);
+    timer.unref();
+    commandTerminalIndexTimers.set(agentSessionId, timer);
+  },
+
+  /** Search Command Terminal conversation text, or say why none was searched. */
+  async searchCommandTerminalText(
+    context: IpcContext,
+    projectId: string,
+    query: string,
+  ): Promise<CommandTerminalHistorySearchResult> {
+    if (!isIndexingEnabled(context)) return { indexingOff: true, hits: [] };
+    return { indexingOff: false, hits: await searchCommandTerminalConversationsIn(projectId, query) };
   },
 
   /** The embedder for the search path, or null for lexical-only. Consulted by
@@ -1355,6 +1399,8 @@ export const retrievalService = {
     liveIndexTimers.clear();
     for (const timer of finalizeIndexTimers.values()) clearTimeout(timer);
     finalizeIndexTimers.clear();
+    for (const timer of commandTerminalIndexTimers.values()) clearTimeout(timer);
+    commandTerminalIndexTimers.clear();
     for (const timer of archiveTimers.values()) clearTimeout(timer);
     archiveTimers.clear();
     for (const timer of taskRecordTimers.values()) clearTimeout(timer);

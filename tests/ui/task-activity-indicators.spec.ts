@@ -489,14 +489,15 @@ test.describe('Task Activity Indicators', () => {
       await browser?.close();
     });
 
-    test('queued task shows "Queued..." bottom bar with spinner', async () => {
+    test('queued task shows "Queued..." bottom bar with a still clock', async () => {
       const card = page.locator(`[data-task-id="${TASK_ID}"]`);
       await expect(card).toBeVisible();
 
       const bottomBar = card.locator('[data-testid="status-bar"]');
       await expect(bottomBar).toBeVisible();
       await expect(bottomBar).toContainText('Queued...');
-      await expect(bottomBar.locator('.lucide-loader-circle')).toBeVisible();
+      await expect(bottomBar.locator('.lucide-clock')).toBeVisible();
+      await expect(bottomBar.locator('.animate-spin')).toHaveCount(0);
 
       const titleRow = card.locator('text=Test Initializing Task').first().locator('..');
       await expect(titleRow.locator('[data-mark="agent-idle"]')).not.toBeVisible();

@@ -75,6 +75,8 @@ export const IPC = {
   // raises the desktop notification itself.
   WORKFLOW_STALLED: 'workflow:stalled',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
+  // A project's Stop script failed for a task. Nothing else changed.
+  STOP_SCRIPT_FAILED: 'task:stopScriptFailed',
   // Non-blocking spawn anomaly: the agent still started, but from a base that
   // could not be freshened (network/credential fetch failure).
   TASK_SPAWN_WARNING: 'task:spawnWarning',
@@ -162,6 +164,8 @@ export const IPC = {
   SESSION_GET_MESSAGE_TRAILS: 'session:getMessageTrails',
   SESSION_STATUS: 'session:status',
   SESSION_REMOVED: 'session:removed',
+  SESSION_QUEUE_SNAPSHOT: 'session:queueSnapshot',
+  SESSION_QUEUE_CHANGED: 'session:queueChanged',
   SESSION_SUSPEND: 'session:suspend',
   SESSION_RESUME: 'session:resume',
   SESSION_RECONCILE: 'session:reconcile',
@@ -179,6 +183,9 @@ export const IPC = {
   SESSION_SET_TRANSIENT_BRANCH: 'session:setTransientBranch',
   SESSION_RENAME_TRANSIENT: 'session:renameTransient',
   COMMAND_TERMINAL_HISTORY_LIST: 'commandTerminalHistory:list',
+  COMMAND_TERMINAL_HISTORY_RENAME: 'commandTerminalHistory:rename',
+  COMMAND_TERMINAL_HISTORY_REMOVE: 'commandTerminalHistory:remove',
+  COMMAND_TERMINAL_HISTORY_SEARCH: 'commandTerminalHistory:search',
   COMMAND_TERMINAL_HISTORY_CHANGED: 'commandTerminalHistory:changed',
   SESSION_SET_FOCUSED: 'session:setFocused',
   SESSION_SET_MOUNTED: 'session:setMounted',
@@ -303,6 +310,7 @@ export const IPC = {
   BOARD_CONFIG_SET_SHORTCUTS: 'boardConfig:setShortcuts',
   BOARD_CONFIG_SHORTCUTS_CHANGED: 'boardConfig:shortcutsChanged',
   BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH: 'boardConfig:setDefaultBaseBranch',
+  BOARD_CONFIG_SET_STOP_SCRIPT: 'boardConfig:setStopScript',
 
   // Mobile Bridge -- machine-global (like config), not project-scoped.
   MOBILE_GET_STATUS: 'mobile:getStatus',
@@ -749,3 +757,13 @@ export const PROJECT_PATH_MISSING_PREFIX = 'PROJECT_PATH_MISSING:';
  * could no longer resolve, and the failure had nowhere to go.
  */
 export const PROJECT_NOT_FOUND_PREFIX = 'PROJECT_NOT_FOUND:';
+
+/**
+ * Sentinel prefix for "a folder being added cannot hold `.kangentic`". Nothing
+ * is registered, since a project there could not run. Electron wraps handler
+ * errors in its own Error, so the renderer detects this case via
+ * `error.message.includes(PROJECT_FOLDER_NOT_WRITABLE_PREFIX)` and shows its
+ * own translated sentence. The English text after the prefix is for the log.
+ * See Sentry DESKTOP-28.
+ */
+export const PROJECT_FOLDER_NOT_WRITABLE_PREFIX = 'PROJECT_FOLDER_NOT_WRITABLE:';

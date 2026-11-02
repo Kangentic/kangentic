@@ -176,8 +176,8 @@ msgid "{rule}<0>, as in {sample}</0>"
 msgstr "{rule}<0>，例如 {sample}</0>"
 
 #: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "{runningCount} / {maxConcurrent, plural, one {# agent slot in use} other {# agent slots in use}}"
-msgstr "{maxConcurrent, plural, other {已使用 {runningCount} / # 個代理名額}}"
+msgid "{runningCount} of {maxConcurrent, plural, one {# agent running} other {# agents running}}"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "{savedTotal, plural, one {# column} other {# columns}}"
@@ -663,8 +663,12 @@ msgid "Columns"
 msgstr "欄"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Columns share the task's main conversation unless you give this one its own. An isolated session starts clean on every entry, which suits a code review or any pass that should not inherit the work before it."
-msgstr "除非你為這個欄指定專屬工作階段，否則各欄會共用任務的主要對話。隔離的工作階段每次進入都從頭開始，適合程式碼審查，或不應沿用先前成果的處理。"
+msgid "Columns share the task's main conversation unless you give this one its own. An isolated column starts a new conversation on every entry, which suits a code review or any pass that should not inherit the work before it."
+msgstr ""
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Command Terminal"
+msgstr "命令終端機"
 
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Commands"
@@ -726,7 +730,7 @@ msgid "Confirm"
 msgstr "確認"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgctxt "board overview column header"
 msgid "Conversation"
 msgstr "對話"
 
@@ -870,6 +874,10 @@ msgstr "無法傳送至待辦清單"
 #: src/renderer/components/dialogs/task-detail/useTaskActions.ts
 msgid "Couldn't switch branch"
 msgstr "無法切換分支"
+
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Counts tasks whose agent is working or waiting on you. Max concurrent sessions in Settings still applies."
+msgstr ""
 
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/NewTaskDialog.tsx
@@ -1365,8 +1373,8 @@ msgid "Main"
 msgstr "主要"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Main continues the task's conversation, and Isolated starts clean on every entry."
-msgstr "「主要」會延續任務的對話，「獨立」則在每次進入時重新開始。"
+msgid "Main continues the task's conversation, and Isolated starts a new one on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgctxt "plan approval"
@@ -1446,6 +1454,10 @@ msgstr "名稱、描述、色彩和圖示由所有設定檔共用。請切換至
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Needs both images"
 msgstr "需要兩張影像"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Needs you"
+msgstr "需要你處理"
 
 #: src/renderer/components/dialogs/board-manager/AddAutomationPicker.tsx
 msgid "New automation"
@@ -1671,6 +1683,11 @@ msgstr "{exitBudgetSeconds, plural, other {離開時，此欄的自動化共用�
 msgid "On turn end"
 msgstr "輪次結束時"
 
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+msgctxt "board overview column header"
+msgid "One at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "Only one agent CLI detected - install another to choose"
 msgstr "僅偵測到一個代理 CLI，請再安裝一個以供選擇"
@@ -1751,6 +1768,10 @@ msgstr "開啟工作樹資料夾"
 msgid "Opens this part of the conversation"
 msgstr "開啟這段對話"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Other tasks wait in this column and start in the order they arrived."
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Outcome"
@@ -1825,10 +1846,6 @@ msgstr "計畫核准由所有設定檔共用。請切換到「預設」以變更
 msgid "Pop out of tiling"
 msgstr "從並排顯示中彈出"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "Position {queuePosition} of {queueTotal}"
-msgstr "第 {queuePosition} 個，共 {queueTotal} 個"
-
 #: src/renderer/components/dialogs/task-detail/graph/CommitGraphPanel.tsx
 msgid "PR #{prNumber}"
 msgstr "PR #{prNumber}"
@@ -1892,9 +1909,17 @@ msgstr "提取要求"
 msgid "Pull Request"
 msgstr "提取要求"
 
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Queued (click to pause)"
 msgstr "已排入佇列 (按一下以暫停)"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgid "Queued {position}/{total}"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "call outcome"
@@ -2049,6 +2074,10 @@ msgstr "在新的工作樹中執行"
 msgid "Run in the project folder"
 msgstr "在專案資料夾中執行"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Run one agent in this column at a time"
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 msgctxt "task status"
 msgid "Running"
@@ -2133,16 +2162,6 @@ msgstr "改為傳送原始檔案。"
 msgid "Sent to backlog"
 msgstr "已移至待辦清單"
 
-#: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgctxt "board manager field"
-msgid "Session"
-msgstr "工作階段"
-
-#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
-msgctxt "board overview column header"
-msgid "Session"
-msgstr "工作階段"
-
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgctxt "column header"
 msgid "Session"
@@ -2159,6 +2178,11 @@ msgstr "工作階段可能已過期"
 #: src/renderer/components/dialogs/completed-tasks/StaleTaskWarning.tsx
 msgid "Session may need to be re-created"
 msgstr "工作階段可能需要重新建立"
+
+#: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Sessions"
+msgstr "工作階段"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Sessions don't run in {roleName} columns, so {label} doesn't apply."
@@ -2286,8 +2310,8 @@ msgid "Start"
 msgstr "啟動"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
-msgid "Start a clean conversation on every entry."
-msgstr "每次進入時都開始全新的對話。"
+msgid "Start a new conversation on every entry."
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Start an agent automatically when a task enters this column."
@@ -2314,10 +2338,6 @@ msgstr "開始時間"
 #: src/renderer/components/dialogs/task-detail/TaskDetailBody.tsx
 msgid "Starting agent..."
 msgstr "正在啟動代理..."
-
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "Starts automatically when a slot opens up"
-msgstr "有名額空出時自動開始"
 
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Starts over when you move the task or it leaves Done, not when an agent or an automation moves it elsewhere."
@@ -2662,10 +2682,6 @@ msgstr "檢視選項"
 msgid "View PR #{prNumber}"
 msgstr "檢視 PR #{prNumber}"
 
-#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
-msgid "Waiting in queue"
-msgstr "正在佇列中等待"
-
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "What happens when a task enters this column, each time its agent finishes a turn here, and when it leaves, in this order."
 msgstr "任務進入此欄時、其代理每次在此完成一輪時，以及任務離開時會發生的事，依下列順序執行。"
@@ -2702,6 +2718,10 @@ msgstr "代理離開規劃模式後，任務的去向。"
 msgid "Whether you approve each plan or Kangentic does. A workflow task can override it for itself."
 msgstr "每個計畫由你核准，或由 Kangentic 自動核准。工作流程任務可自行覆寫此設定。"
 
+#: src/renderer/components/dialogs/BoardManagerDialog.tsx
+msgid "Which conversation this column uses"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/WildcardExamplesTip.tsx
 msgid "Wildcard examples"
 msgstr "萬用字元範例"
@@ -2717,6 +2737,11 @@ msgstr "已達視窗數量上限"
 #: src/renderer/components/dialogs/task-detail/completed/UsageTab.tsx
 msgid "Workflow step"
 msgstr "工作流程步驟"
+
+#: src/renderer/components/dialogs/task-detail/QueuedPlaceholder.tsx
+msgctxt "Agent status"
+msgid "Working"
+msgstr ""
 
 #: src/renderer/components/dialogs/task-detail/changes/FileTreePanel.tsx
 msgctxt "git area"

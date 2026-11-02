@@ -21,6 +21,11 @@ import { useSessionStore } from '../../../stores/session-store';
 import { TaskDetailHostProvider } from './task-detail-host';
 import type { TaskDetailHostValue } from './task-detail-host';
 
+/** The open board's live title for a task, subscribed so a rename redraws the row. */
+function useBoardTaskTitle(taskId: string): string | undefined {
+  return useBoardStore((state) => state.tasks.find((candidate) => candidate.id === taskId)?.title);
+}
+
 export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
   const projectId = useProjectStore((state) => state.currentProject?.id ?? '');
   const projectPath = useProjectStore((state) => state.currentProject?.path ?? '');
@@ -90,6 +95,7 @@ export function BoardTaskDetailHost({ children }: { children: ReactNode }) {
     isMoveConfirmPending: () => useBoardStore.getState().pendingMoveConfirm !== null,
     shortcutsSuppressed: boardManagerOpen || settingsOpen || commandTerminalOpen,
     canOpenConversation: true,
+    useLiveTaskTitle: useBoardTaskTitle,
   }), [
     projectId, projectPath, defaultAgent, swimlanes, shortcuts, config,
     updateTask, deleteTask, moveTask, unarchiveTask, archiveTask, updateAttachmentCount, loadBoard,

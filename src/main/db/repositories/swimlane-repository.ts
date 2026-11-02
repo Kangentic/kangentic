@@ -36,6 +36,8 @@ interface SwimlaneRow {
   auto_command_mode: string;
   // NOT NULL DEFAULT 'manual'; narrowed in mapRow.
   plan_approval: string;
+  // NULL means no limit; narrowed in mapRow.
+  max_agents: number | null;
 }
 
 /**
@@ -130,12 +132,13 @@ export class SwimlaneRepository {
       handoff_context: input.handoff_context ?? false,
       session_target: input.session_target ?? 'main',
       session_spawn_strategy: input.session_spawn_strategy ?? 'create_or_resume',
+      max_agents: input.max_agents ?? null,
       created_at: now,
     };
 
     this.db.prepare(
-      'INSERT INTO swimlanes (id, name, description, role, position, color, icon, is_archived, is_ghost, permission_mode, auto_spawn, auto_command, auto_command_mode, plan_exit_target_id, plan_approval, agent_override, model_override, effort_override, handoff_context, session_target, session_spawn_strategy, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-    ).run(swimlane.id, swimlane.name, swimlane.description, swimlane.role, swimlane.position, swimlane.color, swimlane.icon, swimlane.is_archived ? 1 : 0, swimlane.is_ghost ? 1 : 0, swimlane.permission_mode, swimlane.auto_spawn ? 1 : 0, swimlane.auto_command, swimlane.auto_command_mode, swimlane.plan_exit_target_id, swimlane.plan_approval, swimlane.agent_override, swimlane.model_override, swimlane.effort_override, swimlane.handoff_context ? 1 : 0, swimlane.session_target, swimlane.session_spawn_strategy, swimlane.created_at);
+      'INSERT INTO swimlanes (id, name, description, role, position, color, icon, is_archived, is_ghost, permission_mode, auto_spawn, auto_command, auto_command_mode, plan_exit_target_id, plan_approval, agent_override, model_override, effort_override, handoff_context, session_target, session_spawn_strategy, max_agents, created_at) VALUES (?, ?,?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+    ).run(swimlane.id, swimlane.name, swimlane.description, swimlane.role, swimlane.position, swimlane.color, swimlane.icon, swimlane.is_archived ? 1 : 0, swimlane.is_ghost ? 1 : 0, swimlane.permission_mode, swimlane.auto_spawn ? 1 : 0, swimlane.auto_command, swimlane.auto_command_mode, swimlane.plan_exit_target_id, swimlane.plan_approval, swimlane.agent_override, swimlane.model_override, swimlane.effort_override, swimlane.handoff_context ? 1 : 0, swimlane.session_target, swimlane.session_spawn_strategy, swimlane.max_agents, swimlane.created_at);
 
     return swimlane;
   }
@@ -164,6 +167,7 @@ export class SwimlaneRepository {
     if (input.handoff_context !== undefined) updated.handoff_context = input.handoff_context;
     if (input.session_target !== undefined) updated.session_target = input.session_target;
     if (input.session_spawn_strategy !== undefined) updated.session_spawn_strategy = input.session_spawn_strategy;
+    if (input.max_agents !== undefined) updated.max_agents = input.max_agents;
 
     // `role` is deliberately absent here, and from SwimlaneUpdateInput. A column's
     // role is identity, fixed at create: it decides which lane is the To Do slot and
@@ -173,8 +177,8 @@ export class SwimlaneRepository {
     // repaired by the catch-all in runProjectMigrations, not from here.
     writeTransaction(this.db, () => {
       this.db.prepare(
-        'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, plan_approval = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ? WHERE id = ?'
-      ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.plan_approval, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.id);
+        'UPDATE swimlanes SET name = ?, description = ?, color = ?, icon = ?, position = ?, is_archived = ?, is_ghost = ?, permission_mode = ?, auto_spawn = ?, auto_command = ?, auto_command_mode = ?, plan_exit_target_id = ?, plan_approval = ?, agent_override = ?, model_override = ?, effort_override = ?, handoff_context = ?, session_target = ?, session_spawn_strategy = ?, max_agents = ? WHERE id = ?'
+      ).run(updated.name, updated.description, updated.color, updated.icon, updated.position, updated.is_archived ? 1 : 0, updated.is_ghost ? 1 : 0, updated.permission_mode, updated.auto_spawn ? 1 : 0, updated.auto_command, updated.auto_command_mode, updated.plan_exit_target_id, updated.plan_approval, updated.agent_override, updated.model_override, updated.effort_override, updated.handoff_context ? 1 : 0, updated.session_target, updated.session_spawn_strategy, updated.max_agents, updated.id);
       // An automation that names this column (Move to column's Column) follows
       // the rename, in the same transaction, so a renamed column never strands
       // a row that pointed at it.
@@ -279,6 +283,9 @@ export class SwimlaneRepository {
       handoff_context: Boolean(row.handoff_context),
       session_target: (row.session_target as SessionTarget) ?? 'main',
       session_spawn_strategy: (row.session_spawn_strategy as SessionSpawnStrategy) ?? 'create_or_resume',
+      // Narrowed: a limit under one would hold every task forever, and the
+      // absent column on a row read mid-migration is no limit too.
+      max_agents: row.max_agents && row.max_agents >= 1 ? row.max_agents : null,
       created_at: row.created_at,
     };
   }

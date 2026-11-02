@@ -225,6 +225,10 @@ function makeContext(task: Task | null) {
     boardEvents: { emitBoardChanged: vi.fn() },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       removeByTaskId: vi.fn(),
       killByTaskId: vi.fn(),
       listSessions: vi.fn(() => []),

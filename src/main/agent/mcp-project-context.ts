@@ -10,6 +10,8 @@ import { autoSpawnForTask, reapTaskLeftovers } from '../ipc/helpers';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { getProjectRepos } from '../ipc/helpers/project-repos';
 import { closeTaskWindows } from '../ipc/helpers/task-windows';
+import { readTaskRunningWork } from '../ipc/helpers/task-running-work';
+import { resolveEffectiveBaseBranch } from '../ipc/helpers/task-git';
 import { deliverMessageAfterMove } from '../automations/turn-end/deliver-message';
 import { runAutomationAgain } from '../ipc/helpers/automation-run-again';
 import { readTaskReport } from '../ipc/helpers/task-report';
@@ -290,6 +292,9 @@ export function buildCommandContextForProject(
       // just the currently-active one. Best-effort: writeBackForProject never
       // throws.
       ipcContext.boardConfigManager.writeBackForProject(projectId, projectPath);
+      // A limit turned off lets the next tasks start in ANY project. This starts
+      // what already waits, so it needs none of the scoping below.
+      ipcContext.sessionManager.drainQueue();
       // The same live-session propagation the Board Manager's own save runs. This
       // path used to do NOTHING here, so an agent editing a column missed even
       // the model/effort injection the UI path has, on top of the auto_spawn
@@ -374,6 +379,11 @@ export function buildCommandContextForProject(
     // read skips their web links.
     readTaskReport: (taskId, options) => readTaskReport(ipcContext, projectId, taskId, options),
     readTaskChanges: (taskId) => readTaskChanges(ipcContext, { projectId, taskId }, { commitWebLinks: false }),
+
+    readTaskRunningWork: (task) => readTaskRunningWork(task, {
+      hasLiveOrStartingSession: (taskId) => ipcContext.sessionManager.hasLiveOrStartingSession(taskId),
+      defaultBaseBranchOf: (taskToRead) => resolveEffectiveBaseBranch(ipcContext, taskToRead, projectPath),
+    }),
   };
 }
 

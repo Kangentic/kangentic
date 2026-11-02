@@ -156,6 +156,23 @@ describe('resolvePreviewTaskLabel', () => {
     expect(resolvePreviewTaskLabel(worktreePath(folder))).toBe('#34 - Right task');
   });
 
+  it('resolves a worktree a task adopted as a spare from the task row, whose folder carries no number', () => {
+    // A task that adopted a pre-installed spare worktree keeps the spare's
+    // `spare_<8 hex>` folder for good. Neither a display number nor a legacy id
+    // prefix can be read off that name; the row that records the path can.
+    const folder = 'spare_0a1b2c3d';
+    mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
+    mockState.tasksRows = [
+      { id: 'deadbeef-0000-0000-0000-000000000000', title: 'Other task', displayId: 12, worktree_path: worktreePath('12') },
+      { id: 'feedface-1111-1111-1111-111111111111', title: 'Adopted a spare', displayId: 612, worktree_path: worktreePath(folder) },
+    ];
+    touchDbFiles(true, true);
+
+    expect(resolvePreviewTaskLabel(worktreePath(folder))).toBe('#612 - Adopted a spare');
+    // A path inside the worktree resolves the same task.
+    expect(resolvePreviewTaskLabel(path.join(worktreePath(folder), 'packages', 'app'))).toBe('#612 - Adopted a spare');
+  });
+
   it('returns null when the path is not inside a worktrees dir', () => {
     mockState.projectsRows = [{ id: PROJECT_ID, path: projectRoot }];
     mockState.tasksRows = [{ id: TASK_ID, title: 'Improve /preview dev UX', worktree_path: null }];

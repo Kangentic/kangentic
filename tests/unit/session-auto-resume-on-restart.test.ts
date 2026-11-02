@@ -24,9 +24,11 @@ vi.mock('../../src/main/db/database', () => ({
 
 const markRecordSuspendedMock = vi.fn(() => true);
 const markRecordExitedMock = vi.fn(() => true);
+const settleQueuedRecordMock = vi.fn(() => true);
 vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
   markRecordSuspended: (...args: unknown[]) => markRecordSuspendedMock(...args),
   markRecordExited: (...args: unknown[]) => markRecordExitedMock(...args),
+  settleQueuedRecord: (...args: unknown[]) => settleQueuedRecordMock(...args),
 }));
 
 // Partial SessionRecord shape: shutdown.ts only reads `id` and `status` on the
@@ -85,6 +87,7 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
   beforeEach(() => {
     markRecordSuspendedMock.mockClear();
     markRecordExitedMock.mockClear();
+    settleQueuedRecordMock.mockClear();
     taskRepoUpdateMock.mockClear();
     sessionRecordStatusRef.current = 'running';
   });
@@ -107,13 +110,13 @@ describe('syncShutdownCleanup: session + task bookkeeping', () => {
     });
   });
 
-  it("marks queued sessions as exited (no resumable transcript) AND clears task.session_id", () => {
+  it("settles a queued session by what it was (session-lifecycle pins the outcome) AND clears task.session_id", () => {
     sessionRecordStatusRef.current = 'queued';
 
     syncShutdownCleanup(makeDeps({ sessionStatus: 'queued' }));
 
-    // Queued sessions never reached Claude CLI - exited, not suspended
-    expect(markRecordExitedMock).toHaveBeenCalledTimes(1);
+    expect(settleQueuedRecordMock).toHaveBeenCalledTimes(1);
+    expect(settleQueuedRecordMock).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: 'record-1' }), undefined, 'system');
     expect(markRecordSuspendedMock).not.toHaveBeenCalled();
 
     // Still clear the stale pointer so the task row doesn't reference a dead PTY

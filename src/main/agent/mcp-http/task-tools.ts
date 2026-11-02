@@ -783,7 +783,7 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_move_task',
     {
-      description: 'Move a task to a different column, optionally placing it at a chosen slot in that column, and optionally handing the agent there a message. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running the columns\' automations. Moving to the Done column auto-archives the task. Moving to To Do kills the session, removes the worktree, and drops the PR link of a task that did its own work. `column: "next"` moves to the column after the task\'s current one. From the task\'s own agent, "next" is refused once the task has left the column the agent\'s current turn began in (a plan approval moved it on, say), and the refusal names where it is now. `message` reaches the agent in the destination column once it is ready, after that column\'s own automations: use it to hand off context with the move ("back from review, fix these findings: ..."), since a separate send cannot reach a session the move is suspending or starting. Naming the task\'s CURRENT column together with `position` repositions it in place, which changes nothing but its order - no session, worktree, or lifecycle effects. To re-sequence several tasks at once, use kangentic_reorder_tasks. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
+      description: 'Move a task to a different column, optionally placing it at a chosen slot in that column, and optionally handing the agent there a message. Triggers the same lifecycle as a UI drag: spawning/suspending agents, creating/cleaning up worktrees, and running the columns\' automations. Moving to the Done column auto-archives the task. Moving to To Do kills the session, removes the worktree, and drops the PR link of a task that did its own work. Moving another task to To Do is refused when it holds running work (a live agent, commits not on its base branch, uncommitted files, or a worktree that cannot be read), and moving it to Done is refused for a live agent, uncommitted files or an unreadable worktree. The error names what would be lost. Ask the user. Only they can do it, and no parameter overrides this. Your own task is never refused. `column: "next"` moves to the column after the task\'s current one. From the task\'s own agent, "next" is refused once the task has left the column the agent\'s current turn began in (a plan approval moved it on, say), and the refusal names where it is now. `message` reaches the agent in the destination column once it is ready, after that column\'s own automations: use it to hand off context with the move ("back from review, fix these findings: ..."), since a separate send cannot reach a session the move is suspending or starting. Naming the task\'s CURRENT column together with `position` repositions it in place, which changes nothing but its order - no session, worktree, or lifecycle effects. To re-sequence several tasks at once, use kangentic_reorder_tasks. If the user\'s prompt names a different Kangentic project, pass that name as `project` to route the move to that project instead of the active default. The name counts however it is phrased: "move task #7 in X to Done", "on the X board", and "in X" all target project X.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         column: z.string().describe('Target column name (case-insensitive, e.g. "Review", "In Progress", "Done"), or "next" for the column after the task\'s current one (refused to the task\'s own agent once the task has left the column its current turn began in).'),
@@ -795,7 +795,7 @@ export function registerTaskTools(
     },
     // The caller's task and session ride the context, never the params (see
     // `CommandContext.callerTaskId`).
-    async ({ taskId, column, position, message, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null, message: message ?? null }, { ...ctx, callerTaskId, callerSessionId }, 'Failed to move task')),
+    async ({ taskId, column, position, message, project }) => withProject(resolver, project, (ctx) => callHandler('move_task', { taskId, column, position: position ?? null, message: message ?? null }, { ...ctx, callerKind: 'agent', callerTaskId, callerSessionId }, 'Failed to move task')),
   );
 
   // --- kangentic_reorder_tasks ---
@@ -871,6 +871,7 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).nullable().optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "medium", "high", "xhigh", "max"). Valid values are agent-specific. Null to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.nullable().optional().describe('Permission mode for agents spawned in this column. Null to use project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        maxAgents: z.number().int().min(1).nullable().optional().describe('How many agents run in this column at once. Other tasks wait and start in the order they entered the column. 1 runs one at a time. Null for no limit.'),
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().nullable().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning. Null to disable.'),
@@ -879,7 +880,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
+    async ({ column, name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, maxAgents, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, project }) => withProject(resolver, project, (ctx) => callHandler('update_column', {
       column,
       name: name ?? undefined,
       description: description === undefined ? undefined : description,
@@ -893,6 +894,7 @@ export function registerTaskTools(
       effortOverride: effortOverride === undefined ? undefined : effortOverride,
       permissionMode: permissionMode === undefined ? undefined : permissionMode,
       handoffContext: handoffContext ?? undefined,
+      maxAgents,
       sessionTarget: sessionTarget ?? undefined,
       sessionSpawnStrategy: sessionSpawnStrategy ?? undefined,
       planExitTargetColumn: planExitTargetColumn === undefined ? undefined : planExitTargetColumn,
@@ -918,6 +920,7 @@ export function registerTaskTools(
         effortOverride: z.string().max(50).optional().describe('Adapter-specific effort/reasoning level passed at spawn time (e.g. Claude "low", "high", "xhigh"). Omit to inherit the agent default.'),
         permissionMode: PERMISSION_MODE_SCHEMA.optional().describe('Permission mode for agents spawned in this column. Omit to use the project default.'),
         handoffContext: z.boolean().optional().describe('Enable multi-agent handoff context preservation when entering this column.'),
+        maxAgents: z.number().int().min(1).nullable().optional().describe('How many agents run in this column at once. Other tasks wait and start in the order they entered the column. 1 runs one at a time. Null for no limit.'),
         sessionTarget: SESSION_TARGET_SCHEMA.optional().describe(SESSION_TARGET_DESCRIPTION),
         sessionSpawnStrategy: SESSION_SPAWN_STRATEGY_SCHEMA.optional().describe(SESSION_SPAWN_STRATEGY_DESCRIPTION),
         planExitTargetColumn: z.string().optional().describe('Column to auto-move the task to when an agent in plan mode exits planning.'),
@@ -927,7 +930,7 @@ export function registerTaskTools(
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
+    async ({ name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, maxAgents, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval, position, project }) => withProject(resolver, project, (ctx) => callHandler('create_column', {
       name,
       description,
       color,
@@ -940,6 +943,7 @@ export function registerTaskTools(
       effortOverride,
       permissionMode,
       handoffContext,
+      maxAgents,
       sessionTarget,
       sessionSpawnStrategy,
       planExitTargetColumn,
@@ -968,14 +972,15 @@ export function registerTaskTools(
   server.registerTool(
     'kangentic_delete_task',
     {
-      description: 'Permanently delete a task from the Kangentic board. This removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. Find the task ID first with kangentic_find_task or kangentic_search_tasks. Pass `project` to delete a task in a different project.',
+      description: 'Permanently delete a task from the Kangentic board. This removes the task, its attachments, and session records. The associated worktree and branch may also be cleaned up. Deleting another task is refused when it holds running work (a live agent, commits not on its base branch, uncommitted files, or a worktree that cannot be read). The error names what would be lost. Ask the user. Only they can delete it, from the board, and no parameter overrides this. Your own task is never refused. Find the task ID first with kangentic_find_task or kangentic_search_tasks. Pass `project` to delete a task in a different project.',
       inputSchema: z.object({
         taskId: z.string().describe('Task ID (numeric display ID like "42" or full UUID).'),
         project: z.string().optional().describe(PROJECT_SELECTOR_DESCRIPTION),
       }),
       annotations: MUTATING_ANNOTATIONS,
     },
-    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_task', { taskId }, ctx, 'Failed to delete task')),
+    // The caller rides the context, never the params (see `CommandContext.callerKind`).
+    async ({ taskId, project }) => withProject(resolver, project, (ctx) => callHandler('delete_task', { taskId }, { ...ctx, callerKind: 'agent', callerTaskId, callerSessionId }, 'Failed to delete task')),
   );
 
   // --- kangentic_remove_task_attachment ---

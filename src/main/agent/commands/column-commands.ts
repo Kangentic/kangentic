@@ -28,6 +28,19 @@ import { writeTransaction } from '../../db/transaction';
 const DEFAULT_SESSION_TARGET: SessionTarget = 'main';
 const DEFAULT_SESSION_SPAWN_STRATEGY: SessionSpawnStrategy = 'create_or_resume';
 
+const INVALID_MAX_AGENTS = 'maxAgents must be a whole number of at least 1, or null for no limit.';
+
+/**
+ * A column's agent limit from a tool call: a number, null for no limit, or
+ * undefined when it is neither. Checked here and not only in the zod schema,
+ * because the mobile bridge routes `update_column` straight to this handler, and
+ * a limit under one would hold every task in the column forever.
+ */
+function parseMaxAgents(value: unknown): number | null | undefined {
+  if (value === null) return null;
+  return typeof value === 'number' && Number.isInteger(value) && value >= 1 ? value : undefined;
+}
+
 /**
  * The message this column actually sends, for the `autoCommand` field these
  * tools echo back. Goes through the same resolver the engine uses, so what a
@@ -133,6 +146,12 @@ export const handleUpdateColumn: CommandHandler = (
     updates.handoff_context = Boolean(params.handoffContext);
     changedFields.push('handoffContext');
   }
+  if (params.maxAgents !== undefined) {
+    const maxAgents = parseMaxAgents(params.maxAgents);
+    if (maxAgents === undefined) return { success: false, error: INVALID_MAX_AGENTS };
+    updates.max_agents = maxAgents;
+    changedFields.push('maxAgents');
+  }
   if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
     const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
     if ('error' in parsed) return { success: false, error: parsed.error };
@@ -187,7 +206,7 @@ export const handleUpdateColumn: CommandHandler = (
   if (changedFields.length === 0) {
     return {
       success: false,
-      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval.',
+      error: 'No fields to update. Provide at least one of: name, description, color, icon, autoSpawn, autoCommand, autoCommandMode, agentOverride, modelOverride, effortOverride, permissionMode, handoffContext, maxAgents, sessionTarget, sessionSpawnStrategy, planExitTargetColumn, planApproval.',
     };
   }
 
@@ -234,6 +253,7 @@ export const handleUpdateColumn: CommandHandler = (
       effortOverride: updated.effort_override,
       permissionMode: updated.permission_mode,
       handoffContext: updated.handoff_context,
+      maxAgents: updated.max_agents,
       sessionTarget: updated.session_target,
       sessionSpawnStrategy: updated.session_spawn_strategy,
       planExitTargetId: updated.plan_exit_target_id,
@@ -311,6 +331,11 @@ export const handleCreateColumn: CommandHandler = (
   }
   if (params.handoffContext !== undefined && params.handoffContext !== null) {
     input.handoff_context = Boolean(params.handoffContext);
+  }
+  if (params.maxAgents !== undefined) {
+    const maxAgents = parseMaxAgents(params.maxAgents);
+    if (maxAgents === undefined) return { success: false, error: INVALID_MAX_AGENTS };
+    input.max_agents = maxAgents;
   }
   if (params.sessionTarget !== undefined && params.sessionTarget !== null) {
     const parsed = parseEnumParam(params.sessionTarget, VALID_SESSION_TARGETS, 'sessionTarget');
@@ -419,6 +444,7 @@ export const handleCreateColumn: CommandHandler = (
       effortOverride: created.effort_override,
       permissionMode: created.permission_mode,
       handoffContext: created.handoff_context,
+      maxAgents: created.max_agents,
       sessionTarget: created.session_target,
       sessionSpawnStrategy: created.session_spawn_strategy,
       planExitTargetId: created.plan_exit_target_id,

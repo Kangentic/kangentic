@@ -113,6 +113,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
+    listCappedColumnTasks() { return []; }
     list = (swimlaneId?: string) => {
       if (swimlaneId !== undefined) {
         return taskRepoList().filter((task: Task) => task.swimlane_id === swimlaneId);

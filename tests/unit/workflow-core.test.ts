@@ -198,6 +198,23 @@ describe('the start and completion plan', () => {
     ]);
   });
 
+  it('starts no more into a limited column than it has room for, leaving the rest in To Do', () => {
+    const plan = workflow([coreTask('t1', 'todo'), coreTask('t2', 'todo', { todoPosition: 1 })], []);
+    const started = planPass([plan], 4, new Set(), () => 1).filter((intent) => intent.kind === 'start');
+    expect(started.map((intent) => intent.kind === 'start' ? intent.taskId : null)).toEqual(['t1']);
+  });
+
+  it('starts nothing into a full column, and spends no slot on it', () => {
+    const plan = workflow([coreTask('t1', 'todo'), coreTask('t2', 'todo', { todoPosition: 1, startColumnId: 'testing' })], []);
+    const started = planPass([plan], 1, new Set(), (_projectId, column) => (column === 'executing' ? 0 : 1));
+    expect(started.map((intent) => intent.kind === 'start' ? intent.taskId : null)).toEqual(['t2']);
+  });
+
+  it('asks no column about a start that takes no agent slot', () => {
+    const plan = workflow([coreTask('t1', 'todo', { startTakesSlot: false })], []);
+    expect(planPass([plan], 0, new Set(), () => 0).map((intent) => intent.kind)).toEqual(['start']);
+  });
+
   it('drops gone links of a paused workflow too, and starts nothing there', () => {
     const plan = workflow([coreTask('t2', 'todo')], [], { state: 'paused', goneLinks: [link('deleted', 't2')] });
     expect(planPass([plan], 1, new Set()).map((intent) => intent.kind)).toEqual(['drop-links']);

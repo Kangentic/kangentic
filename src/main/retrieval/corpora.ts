@@ -24,7 +24,7 @@ export type IndexCorpus = KnowledgeGraphIndexCorpus;
 /** Every corpus, in the order the embedding drain serves them. Source code is
  *  last: its first fill is about 12k chunks (half an hour on a GPU), and
  *  conversations and task records must never wait behind it. */
-export const INDEX_CORPORA = ['conversation', 'task', 'change', 'commit', 'code'] as const satisfies ReadonlyArray<IndexCorpus>;
+export const INDEX_CORPORA = ['conversation', 'task', 'change', 'commit', 'code', 'command_terminal'] as const satisfies ReadonlyArray<IndexCorpus>;
 
 /** Fails to compile when the shared union names a corpus `INDEX_CORPORA` leaves out. */
 type ListsEveryCorpus<Missing extends never> = Missing;
@@ -32,6 +32,15 @@ export type IndexCorporaComplete = ListsEveryCorpus<Exclude<IndexCorpus, typeof 
 
 /** The conversation corpus alone: what the map is drawn from. */
 export const CONVERSATION_CORPUS: ReadonlyArray<IndexCorpus> = ['conversation'];
+
+/**
+ * Command Terminal conversations, for the panel's Earlier search and nothing
+ * else: every other search names its corpora, so none of them reads these, and
+ * they are not task work the map or Ask should draw on. A Command Terminal has
+ * no `sessions` row, so its chunks have no session or task, and the document id
+ * is the agent's session id, which `command_terminal_history` keys on.
+ */
+export const COMMAND_TERMINAL_CORPUS = 'command_terminal' satisfies IndexCorpus;
 
 /**
  * The corpora that get vectors. Session changes do not: measured free on the
@@ -52,6 +61,9 @@ export const CONVERSATION_CORPUS: ReadonlyArray<IndexCorpus> = ['conversation'];
  * full-text index. Over 17 code questions whose answer file the project's own
  * rules name (12,186 chunks), meaning put that file first 7 times and in the
  * top five 16 times; keywords, 4 and 12; the two fused, 6 and 15.
+ *
+ * Command Terminal conversations do not get vectors either: the Earlier search
+ * finds a word the user remembers, as it types.
  */
 export const EMBEDDED_CORPORA: ReadonlyArray<IndexCorpus> = ['conversation', 'task', 'code'];
 

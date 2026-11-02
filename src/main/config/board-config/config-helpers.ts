@@ -190,6 +190,8 @@ export function validateBoardConfig(config: BoardConfig): string | null {
  *   - transitions: matched by (from, to). Local replaces team; local-only
  *     transitions are appended.
  *   - defaultBaseBranch: scalar - local wins when defined.
+ *   - stopScript: scalar - local wins when defined, so an empty local value
+ *     turns a team's script off on one machine.
  *   - shortcuts: matched by id, same rules as actions.
  *
  * Both files came from JSON.parse, and this runs before the validator for
@@ -259,6 +261,10 @@ export function mergeBoardConfigs(team: BoardConfig, local: Partial<BoardConfig>
 
   if (local.defaultBaseBranch !== undefined) {
     result.defaultBaseBranch = local.defaultBaseBranch;
+  }
+
+  if (local.stopScript !== undefined) {
+    result.stopScript = local.stopScript;
   }
 
   if (Array.isArray(local.shortcuts) && isMergeableTeamList(team.shortcuts)) {

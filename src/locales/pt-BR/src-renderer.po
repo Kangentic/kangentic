@@ -154,7 +154,24 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" ficou sem atividade por # minuto.} many {\"{taskTitle}\" ficou sem atividade por # minutos.} other {\"{taskTitle}\" ficou sem atividade por # minutos.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr "\"{taskTitle}\": \"{automationName}\" falhou em {columnName}."
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": exited with code {exitCode}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
@@ -1071,6 +1088,11 @@ msgstr "Ir para o início"
 msgid "just now"
 msgstr "agora mesmo"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "O Kangentic não pode gravar nessa pasta."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1337,6 +1359,10 @@ msgstr "Opcional"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Outros trabalhos também o usam. Interrompê-lo pode prejudicar esses trabalhos."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"
@@ -1480,8 +1506,9 @@ msgid "Restart to update"
 msgstr "Reiniciar para atualizar"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "Agora, retomar segue a nova conversa do agente."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1600,9 @@ msgid "Settings"
 msgstr "Configurações"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Falha no script de configuração"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
@@ -1625,6 +1653,10 @@ msgstr "Ainda em preparação: {taskTitle}"
 #, fuzzy
 msgid "Still running: {tasks}."
 msgstr "Ainda em execução: {tasks}."
+
+#: src/renderer/App.tsx
+msgid "Stop script failed"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

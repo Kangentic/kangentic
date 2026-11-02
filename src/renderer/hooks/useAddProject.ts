@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import type { Project } from '../../shared/types';
+import { PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../shared/ipc-channels';
 import { useProjectStore } from '../stores/project-store';
 import { useToastStore } from '../stores/toast-store';
 import { asSentence, describeIpcError } from '../lib/ipc-error';
@@ -86,9 +87,14 @@ export function useAddProject() {
     try {
       added = await openProjectByPath(selectedPath, { name: probe.suggestedName });
     } catch (error) {
+      // Not describeIpcError for a refused folder: that message IS the sentinel,
+      // which it has no reason to know how to strip.
+      const folderRefused = error instanceof Error && error.message.includes(PROJECT_FOLDER_NOT_WRITABLE_PREFIX);
       useToastStore.getState().addToast({
         title: i18n._(msg`Couldn't add project`),
-        message: asSentence(describeIpcError(error)),
+        message: folderRefused
+          ? i18n._(msg`Kangentic can't write to that folder.`)
+          : asSentence(describeIpcError(error)),
         variant: 'error',
       });
       return;

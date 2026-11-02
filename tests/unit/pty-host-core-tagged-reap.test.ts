@@ -10,8 +10,9 @@
 import { describe, it, expect, vi } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import { PtyHostClient, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
-import type { KillStrength, ProcessScan, ScannedProcess, TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import { ScanStepError, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
 const MAIN_PID = 1000;
@@ -162,9 +163,50 @@ describe('PtyHostCore reapTaggedProcesses', () => {
       coalesceMs: 0,
       createTaggedProcessReader: () => null,
     });
-    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] });
+    await expect(core.reapTaggedProcesses(REQUEST)).resolves.toEqual({ killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] });
     await expect(core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID })).resolves.toEqual({
-      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
+    });
+  });
+
+  it('hands main the cause a reader step failed with, for a reap and for a Stop', async () => {
+    // A non-null cause is what a field-by-field rebuild of the result in the host would drop,
+    // and every other assertion here sees null.
+    const failingReader: TaggedProcessReader = {
+      async scan(): Promise<ProcessScan> {
+        throw new ScanStepError('window_list', 'lsappinfo list did not run: timeout', 'timeout');
+      },
+      async kill(): Promise<boolean> {
+        throw new Error('a failed scan kills nothing');
+      },
+      async describe(): Promise<Map<number, string>> {
+        return new Map();
+      },
+    };
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => failingReader,
+    });
+
+    const reapResult = await core.reapTaggedProcesses(REQUEST);
+    expect(reapResult).toMatchObject({
+      killedPids: [],
+      failureCode: 'window_list',
+      failurePass: 'first',
+      failureCause: 'timeout',
+      failureReason: 'lsappinfo list did not run: timeout',
+    });
+
+    const stopResult = await core.stopReportedProcess({ pid: 5000, startKey: 'start-5000', mainPid: MAIN_PID });
+    expect(stopResult).toMatchObject({
+      outcome: 'failed',
+      failureCode: 'window_list',
+      failurePass: 'first',
+      failureCause: 'timeout',
+      failureReason: 'lsappinfo list did not run: timeout',
     });
   });
 
@@ -185,7 +227,7 @@ describe('PtyHostCore reapTaggedProcesses', () => {
     core.spawn(spawnParams());
     // A refusal, not a failure: no code goes back to main.
     await expect(core.stopReportedProcess({ pid: PTY_ROOT_PID, startKey: `start-${PTY_ROOT_PID}`, mainPid: MAIN_PID })).resolves.toEqual({
-      outcome: 'failed', failureCode: null, failurePass: null, failureReason: null,
+      outcome: 'failed', failureCode: null, failurePass: null, failureCause: null, failureReason: null,
     });
     expect(reader.kills).toEqual([]);
   });
@@ -240,6 +282,66 @@ describe('PtyHostCore checkReportedProcesses', () => {
       createTaggedProcessReader: () => null,
     });
     await expect(core.checkReportedProcesses([{ pid: 5000, startKey: 'start-5000' }])).resolves.toEqual([null]);
+  });
+});
+
+describe('PtyHostCore probeTaskProcesses request (the Stop script\'s question)', () => {
+  const PROBE_REQUEST = { tasks: REQUEST.tasks, mainPid: MAIN_PID, readConnections: false };
+
+  it('reaches the reaper\'s probe: scans, signals nothing, and answers what the task has running', async () => {
+    const reader = new TableReader([
+      row(MAIN_PID, 900, null),
+      row(5000, 1, TASK),
+    ]);
+    const scan = vi.spyOn(reader, 'scan');
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => reader,
+    });
+
+    const answer = await core.handleRequest('probeTaskProcesses', PROBE_REQUEST);
+
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(answer.failed).toBe(false);
+    expect(answer.entries).toHaveLength(1);
+    expect(answer.entries[0]).toMatchObject({ taskId: TASK, connected: false });
+    expect(answer.entries[0].processes.map((probed) => probed.pid)).toEqual([5000]);
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('answers failed, with no entries, on a platform with no reader', async () => {
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => null,
+    });
+
+    await expect(core.handleRequest('probeTaskProcesses', PROBE_REQUEST)).resolves.toEqual({ entries: [], failed: true });
+  });
+});
+
+describe('PtyHostClient.probeTaskProcesses', () => {
+  it('sends the probeTaskProcesses request with the budget it was given, and returns the host\'s answer', async () => {
+    const answer = { entries: [], failed: false };
+    const request = vi.fn(async () => answer);
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: 1234,
+      shutdown: () => undefined,
+    };
+    const probe = { tasks: REQUEST.tasks, mainPid: MAIN_PID, readConnections: true };
+
+    const result = await new PtyHostClient(transport).probeTaskProcesses(probe, 5_000);
+
+    expect(request).toHaveBeenCalledWith('probeTaskProcesses', probe, { timeoutMs: 5_000 });
+    expect(result).toBe(answer);
   });
 });
 

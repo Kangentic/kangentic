@@ -923,6 +923,12 @@ export interface Swimlane {
   session_target: SessionTarget;
   /** What to do with that track on entry (see SessionSpawnStrategy). Defaults to 'create_or_resume'. */
   session_spawn_strategy: SessionSpawnStrategy;
+  /**
+   * How many agents run in this column at once. Other tasks wait in the column
+   * and start in the order they entered it. Null means no limit. The UI offers
+   * only 1 today. Not a Board Profile field: a limit is shared across profiles.
+   */
+  max_agents: number | null;
   created_at: string;
 }
 
@@ -4124,12 +4130,13 @@ export interface MonitorView {
 
 /**
  * Why a task's own process was left running when the task ended: it has an
- * open window, it is a tmux server, or other work uses it too (something under
- * it is not the task's, or other Kangentic work is connected to it). A launcher
- * kept because every child is kept takes its children's reason. See
+ * open window, it is a tmux server, other work uses it too (something under it
+ * is not the task's, or other Kangentic work is connected to it), or part of it
+ * runs outside the task's folders with nothing showing other work uses it. A
+ * launcher kept because every child is kept takes its children's reason. See
  * `src/main/pty/process-tag/reap-plan.ts`.
  */
-export type LeftoverKeptReason = 'window' | 'multiplexer' | 'shared';
+export type LeftoverKeptReason = 'window' | 'multiplexer' | 'shared' | 'outside';
 
 /** One process a task left running, as the toast and the list show it. */
 export interface LeftoverProcess {
@@ -4299,6 +4306,13 @@ export interface AppConfig {
     defaultBaseBranch: string;
     copyFiles: string[];
     initScript: string | null;
+    /**
+     * The project's Stop script, for the settings row only. Its one store is
+     * `stopScript` in `kangentic.json`, with `kangentic.local.json` over it
+     * (`BoardConfig.stopScript`). `CONFIG_GET` lays that value here, and nothing
+     * writes this key to a config file, so main never reads it from here.
+     */
+    stopScript: string | null;
     /**
      * Symlink the root node_modules into each worktree so agents skip a fresh
      * install. Disable to let initScript own the worktree's deps, which a
@@ -5077,6 +5091,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     defaultBaseBranch: 'main',
     copyFiles: [],
     initScript: null,
+    stopScript: null,
     linkNodeModules: true,
     holdPromptForInitScript: true,
     prAutoRefresh: true,
@@ -6368,6 +6383,7 @@ export interface SwimlaneCreateInput {
   handoff_context?: boolean;
   session_target?: SessionTarget;
   session_spawn_strategy?: SessionSpawnStrategy;
+  max_agents?: number | null;
 }
 
 export interface SwimlaneUpdateInput {
@@ -6391,6 +6407,7 @@ export interface SwimlaneUpdateInput {
   handoff_context?: boolean;
   session_target?: SessionTarget;
   session_spawn_strategy?: SessionSpawnStrategy;
+  max_agents?: number | null;
 }
 
 export interface ActionCreateInput {
@@ -7206,6 +7223,37 @@ export type ExitSequenceStep = string | { delayMs: number };
 /** Who resumed a session (`SpawnSessionInput.resumedBy`): a person, or Kangentic itself. */
 export type SessionResumer = 'user' | 'recovery' | 'memory';
 
+/** A task in the line for an agent slot, across projects. */
+export interface QueueTask {
+  /** Null for a slot a restart is keeping, which has no session for a moment. */
+  sessionId: string | null;
+  taskId: string;
+  projectId: string;
+  projectName: string;
+  /** Null for a session with no task of its own, a Command Terminal. */
+  title: string | null;
+  displayId: number | null;
+}
+
+/** A column with an agent limit and tasks waiting in it. */
+export interface QueueColumnLine {
+  projectId: string;
+  swimlaneId: string;
+  columnName: string;
+  maxAgents: number;
+  /** Agents holding the column's slot. More than its limit after the limit is turned on. */
+  holders: QueueTask[];
+  /** Tasks waiting, first in line first: the order they entered the column. */
+  waiting: QueueTask[];
+}
+
+/** Who is waiting for an agent slot, and why. Only main can see all of it. */
+export interface QueueSnapshot {
+  columns: QueueColumnLine[];
+  /** Every queued session in queue order, whatever it waits for. */
+  global: QueueTask[];
+}
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7392,6 +7440,23 @@ export interface CommandTerminalHistoryEntry {
   endedAt: string;
 }
 
+/** One conversation whose transcript matched a search of the Earlier list. */
+export interface CommandTerminalHistorySearchHit {
+  agentSessionId: string;
+  /** The transcript around the best match, on one line. */
+  snippet: string;
+  /** Where the match sits in `snippet`; equal when no word could be placed. */
+  matchStart: number;
+  matchEnd: number;
+}
+
+export interface CommandTerminalHistorySearchResult {
+  /** Knowledge Graph indexing is off, so no conversation text was searched. */
+  indexingOff: boolean;
+  /** Best match first, one per conversation. */
+  hits: CommandTerminalHistorySearchHit[];
+}
+
 export interface SpawnTransientSessionResult {
   session: Session;
   /** The slot main gave the terminal (`slot-N`). */
@@ -7424,6 +7489,8 @@ export interface BoardColumnConfig {
   planExitTarget?: string; // name of target column
   /** Who approves a plan in this column (see PlanApproval). Omitted = 'manual'. */
   planApproval?: PlanApproval;
+  /** How many agents run in this column at once (see `Swimlane.max_agents`). Omitted = no limit. */
+  maxAgents?: number | null;
   archived?: boolean;
   /**
    * LEGACY. The column's message to its agent, before automations existed.
@@ -7602,7 +7669,34 @@ export interface BoardConfig {
    */
   profiles?: BoardProfile[];
   defaultBaseBranch?: string;
+  /**
+   * The project's Stop script: a shell command Kangentic runs in a task's folder
+   * after an idle or low-memory pause, and before a terminal transition's reap,
+   * when the task left something running (`src/main/stop-script/`). Team-shared,
+   * since how to stop a stack is a fact about the repository. Absent, or empty
+   * in `kangentic.local.json`, means none. Like `shortcuts`, it has no DB
+   * representation, so `buildBoardConfigFromDb` must carry it across.
+   */
+  stopScript?: string;
   _modifiedBy?: string;
+}
+
+/**
+ * Why a Stop script failed, as facts the renderer words: a non-zero exit with the
+ * last line it printed, a run past its budget, or a run that never got that far
+ * (`detail` is the raw error).
+ */
+export type StopScriptFailure =
+  | { kind: 'exit-code'; exitCode: number; detail: string }
+  | { kind: 'timeout'; timeoutMs: number }
+  | { kind: 'error'; detail: string };
+
+/** A Stop script run that failed, pushed on `STOP_SCRIPT_FAILED`, at most one a minute per project. */
+export interface StopScriptFailedEvent {
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
+  failure: StopScriptFailure;
 }
 
 // === Preload API (exposed to renderer via contextBridge) ===
@@ -7947,6 +8041,8 @@ export interface ElectronAPI {
      * the renderer already toasts.
      */
     onSpawnBlocked: (callback: (taskId: string, taskTitle: string, message: string, projectId?: string) => void) => () => void;
+    /** A project's Stop script failed for this task. Everything else about the task went on. */
+    onStopScriptFailed: (callback: (event: StopScriptFailedEvent) => void) => () => void;
     /**
      * Non-blocking spawn warning: the agent STARTED, but its base branch could
      * not be freshened (a network or credential fetch failure), so it may be
@@ -8174,6 +8270,8 @@ export interface ElectronAPI {
      * `taskId`.
      */
     onRemoved: (callback: (sessionId: string, session: Session, projectId?: string) => void) => () => void;
+    getQueueSnapshot: () => Promise<QueueSnapshot>;
+    onQueueChanged: (callback: (snapshot: QueueSnapshot) => void) => () => void;
     onUsage: (callback: (sessionId: string, data: SessionUsage, projectId?: string) => void) => () => void;
     getActivity: (projectId?: string) => Promise<Record<string, ActivityState>>;
     onActivity: (callback: (sessionId: string, state: ActivityState, reason: ActivityReason, projectId?: string, taskId?: string) => void) => () => void;
@@ -8228,6 +8326,12 @@ export interface ElectronAPI {
     renameTransient: (sessionId: string, name: string | null) => Promise<boolean>;
     /** A project's earlier Command Terminal conversations, newest first. */
     listCommandTerminalHistory: (projectId: string) => Promise<CommandTerminalHistoryEntry[]>;
+    /** Rename an Earlier row. Null clears it. False: a live terminal holds it, or it is gone. */
+    renameCommandTerminalHistory: (projectId: string, agentSessionId: string, name: string | null) => Promise<boolean>;
+    /** Remove an Earlier row and its search text. The agent's transcript stays. */
+    removeCommandTerminalHistory: (projectId: string, agentSessionId: string) => Promise<boolean>;
+    /** Earlier conversations whose transcript matches, for the rail's search. */
+    searchCommandTerminalHistory: (projectId: string, query: string) => Promise<CommandTerminalHistorySearchResult>;
     /** A project's earlier conversations changed: re-list them. */
     onCommandTerminalHistoryChanged: (callback: (projectId: string) => void) => () => void;
     setFocused: (sessionIds: string[]) => Promise<void>;
@@ -8821,6 +8925,11 @@ export interface ElectronAPI {
     getShortcuts: () => Promise<(ShortcutConfig & { source: 'team' | 'local' })[]>;
     setShortcuts: (actions: ShortcutConfig[], target: 'team' | 'local') => Promise<void>;
     setDefaultBaseBranch: (branch: string) => Promise<void>;
+    /**
+     * The project the Settings panel is editing, which can be one whose board is not
+     * open. Null or an empty string clears it in the file the value is read from.
+     */
+    setStopScript: (projectId: string, script: string | null) => Promise<void>;
   };
 
   // Clipboard
@@ -9414,7 +9523,7 @@ export interface KnowledgeGraphProjection {
 }
 
 /** A corpus of the memory index, as the Index panel lists it. */
-export type KnowledgeGraphIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code';
+export type KnowledgeGraphIndexCorpus = 'conversation' | 'task' | 'change' | 'commit' | 'code' | 'command_terminal';
 
 /** What one corpus holds. */
 export interface KnowledgeGraphIndexCorpusSummary {

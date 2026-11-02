@@ -16,6 +16,7 @@ import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
 import { createLowMemoryAgentPauser, sampleAsRead, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { tickHeldOffStops } from './stop-script/parked-stop-service';
 import { workflowMemoryGate } from './workflows/workflow-memory-gate';
 import { resumeMemoryPausedWorkflowTasks } from './workflows/workflow-memory-resume';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
@@ -49,7 +50,7 @@ import { initAnalytics, trackEvent, sanitizeErrorMessage, shouldEmitHeartbeat, s
 import { initErrorReporting, isErrorReportingActive, reportHandledError, setErrorReportingUser, setHostMemoryContext } from './analytics/error-reporting';
 import { initUsageAnalytics, trackUpdateOutcome } from './analytics/usage';
 import { initRunUptimeTracking, checkpointRunUptime, recordRunExit, previousRunLaunchProps, previousRunLastAliveAt, previousRunLogLine, peekPreviousRun, RUN_UPTIME_CHECKPOINT_INTERVAL_MS } from './analytics/run-uptime';
-import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, summarizeGpuInfo } from './diagnostics/gpu-health';
+import { readPendingGpuEscalation, clearGpuEscalation, isEscalationFromCurrentRun, gpuEndedPreviousRun, summarizeGpuFaults, shouldReportEscalation, buildGpuProcessContext } from './diagnostics/gpu-health';
 import { trackSettingsSnapshot } from './analytics/settings-snapshot';
 import { resolveClientId } from './analytics/client-id';
 import { PATHS } from './config/paths';
@@ -74,6 +75,7 @@ import { PATHS } from './config/paths';
 const configFileExistedAtLaunch = fs.existsSync(PATHS.configFile);
 import { initStartupTimer, mark, phase, endPhase, finishStartupTimer } from './startup-timer';
 import { resolveBackgroundColor, resolveIconPath, resolveWindowBounds, resolveRendererIndexPath, computeWindowTitle } from './window-utils';
+import { findTaskByWorktreePath } from './worktree-task-lookup';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { destroyAllLanes } from './browser/browser-lane-manager';
 import { markBrowserGuestWebContents } from './analytics/renderer-classification';
@@ -1652,7 +1654,16 @@ const createWindow = () => {
     // would silently clobber it. Nothing in the main-window tree writes one.
     if (mainWindow) {
       const appLabel = __KANGENTIC_DEV__ ? 'Kangentic (dev)' : 'Kangentic';
-      mainWindow.setTitle(computeWindowTitle(appLabel, cwd, getPreviewTaskTitle));
+      // The number is read from the worktree's task row in this instance's own
+      // databases, never parsed from the folder name (a task that adopted a
+      // spare worktree lives in `spare_<8 hex>`).
+      const worktreeCwd = cwd;
+      mainWindow.setTitle(computeWindowTitle(
+        appLabel,
+        worktreeCwd,
+        getPreviewTaskTitle,
+        () => (worktreeCwd ? findTaskByWorktreePath(PATHS.configDir, worktreeCwd)?.displayId ?? null : null),
+      ));
     }
 
     // Await the preload that started during createWindow -- typically already resolved
@@ -2019,6 +2030,14 @@ app.whenReady().then(async () => {
       } catch (error) {
         console.error('[idle-agent-pause] Tick failed:', error);
       }
+      // Stops a connected client held off. Nothing to do, and no work, unless
+      // one is waiting (`src/main/stop-script/held-off-stops.ts`).
+      try {
+        const stopContext = getOptionalIpcContext();
+        if (stopContext) tickHeldOffStops(stopContext);
+      } catch (error) {
+        console.error('[stop-script] Tick failed:', error);
+      }
       // The workflow's nudges and memory resumes wait their turn on the same
       // reading (`workflow-memory-gate.ts`), and the paused tasks come back
       // one at a time once it clears (`workflow-memory-resume.ts`).
@@ -2276,46 +2295,14 @@ app.whenReady().then(async () => {
           crashCount: String(pendingGpuEscalation.count),
         },
         // Content goes in a context, never a tag, matching restart-policy.ts.
-        // previousRunExit separates the two shapes seen so far: 'abrupt'
-        // means the escalating run ended in a browser-process kill
-        // (DESKTOP-W's shape); 'clean' or 'failsafe' means Chromium
-        // recovered on its own (DESKTOP-15's). TWO feature-status reads,
-        // deliberately not one: featureStatusAtEscalation is what Chromium's
-        // GPU mode was at the record's latest write, a death or a fallback
-        // (captured back then); featureStatusOnReport is what it is on THIS
-        // boot, which may already differ (a machine that recovers on its own,
-        // or one still stuck) - reporting only the live read would silently
-        // claim to describe the failure while actually describing whatever
-        // came up afterwards.
         {
-          gpu_process: {
-            reason: pendingGpuEscalation.reason,
-            exitCode: pendingGpuEscalation.exitCode,
-            count: pendingGpuEscalation.count,
-            // The deaths that counted as GPU faults. `count` includes kills
-            // and session-teardown exits, which the recovery ignores, so the
-            // gap between the two says how much of the record was noise.
-            faultDeathCount: gpuFaultSummary.faultCount,
-            firstAt: pendingGpuEscalation.firstAt,
-            lastAt: pendingGpuEscalation.lastAt,
-            escalatedInVersion: pendingGpuEscalation.appVersion,
-            featureStatusAtEscalation: pendingGpuEscalation.featureStatus,
+          gpu_process: buildGpuProcessContext(pendingGpuEscalation, {
             featureStatusOnReport: app.getGPUFeatureStatus(),
             previousRunExit: previousRunProps.lastRunExit ?? 'unknown',
-            // The SEQUENCE, which is the thing a single end-state snapshot
-            // could never say: how Chromium walked its fallback ladder. Each
-            // entry names the rung its death left behind, so the death that
-            // triggered a fallback already reads the lower one. This is what
-            // the next occurrence needs for anyone to name a cause.
-            deaths: pendingGpuEscalation.deaths,
-            // Each step down the ladder that Chromium announced, which on a
-            // launch-failure ladder is the only trace of the incident. On
-            // Linux each step carries whether the GPU's zygote was alive.
-            modeChanges: pendingGpuEscalation.modeChanges,
-            gpuInfoOnReport: summarizeGpuInfo(gpuInfoOnReport),
+            gpuInfoOnReport,
             killedTheLastRun,
             softwareRenderingEngaged: graphicsMode.engagedNow,
-          },
+          }),
         },
       );
     }

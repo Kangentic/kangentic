@@ -32,11 +32,13 @@ import { promisify } from 'node:util';
 import { scanAllProcesses, findWorktreePathProcesses } from '../../src/main/git/zombie-reaper';
 import { isProcessAlive } from '../../src/main/shared/process-liveness';
 import { createTaggedProcessReader } from '../../src/main/pty/process-tag/reader-factory';
-import { reapTaggedOnce, stopProcessTree } from '../../src/main/pty/process-tag/tagged-reap';
+import { probeTaskTrees, reapTaggedOnce, stopProcessTree } from '../../src/main/pty/process-tag/tagged-reap';
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 import { resolveTaskDirectories } from '../../src/main/pty/process-tag/task-directories';
 import { buildWslReapInvocation } from '../../src/main/pty/process-tag/wsl-reap';
 import { isInsideDirectory } from '../../src/main/pty/process-tag/reap-plan';
+import { stopParkedTask, type ParkedStopDeps } from '../../src/main/stop-script/parked-stop';
+import { isStopScriptRunning, runStopScript } from '../../src/main/stop-script/run-stop-script';
 import type { ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const execFileAsync = promisify(execFile);
@@ -153,6 +155,25 @@ function writeTcpClient(directory: string): string {
     'setTimeout(() => process.exit(0), 60000);',
   ].join('\n'));
   return clientPath;
+}
+
+/**
+ * A detached parent that starts a child with its own tag, working in argv[3],
+ * and stays alive beside it. Writes `<parentPid> <childPid>` to argv[2].
+ */
+function writeOutsideChildParent(directory: string, sleeperPath: string): string {
+  const parentPath = path.join(directory, 'outside-child-parent.js');
+  fs.writeFileSync(parentPath, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    `const childPidFile = process.argv[2] + '.child';`,
+    `const child = spawn(process.execPath, [${JSON.stringify(sleeperPath)}, childPidFile], { stdio: 'ignore', windowsHide: true, cwd: process.argv[3] });`,
+    'const wait = setInterval(() => {',
+    '  try { const childPid = fs.readFileSync(childPidFile, "utf8"); if (childPid) { fs.writeFileSync(process.argv[2], process.pid + " " + childPid); clearInterval(wait); } } catch {}',
+    '}, 50);',
+    'setTimeout(() => {}, 60000);',
+  ].join('\n'));
+  return parentPath;
 }
 
 function envWithTag(tagValue: string | null): NodeJS.ProcessEnv {
@@ -470,6 +491,136 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(result.killedPids).not.toContain(childPid);
     expect(isProcessAlive(parentPid)).toBe(true);
     expect(isProcessAlive(childPid)).toBe(true);
+  }, 60_000);
+
+  it('keeps a tagged parent whose own tagged child works outside the task, and reports it as outside, not shared', async () => {
+    const scratch = makeScratch();
+    const sleeperPath = writeSleeper(scratch.root);
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const parentPath = writeOutsideChildParent(scratch.root, sleeperPath);
+    const pairFile = path.join(scratch.root, 'outside-child.pids');
+    spawn(process.execPath, [launcherPath, parentPath, pairFile, scratch.elsewhere], { stdio: 'ignore', windowsHide: true, cwd: scratch.worktree, env: envWithTag(TASK_ID) });
+    const [parentPid, childPid] = (await waitForFile(pairFile)).split(' ').map(Number);
+    startedPids.push(parentPid, childPid);
+
+    const result = await reap(scratch);
+    expect(result.killedPids).toEqual([]);
+    expect(result.entries).toEqual([expect.objectContaining({ pid: parentPid, outcome: 'kept', reason: 'outside', place: 'worktree' })]);
+    expect(isProcessAlive(parentPid)).toBe(true);
+    expect(isProcessAlive(childPid)).toBe(true);
+  }, 60_000);
+
+  it('a probe finds a real server, reads a real untagged client as connected, and signals neither', async () => {
+    const scratch = makeScratch();
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const serverPath = writeTcpServer(scratch.root);
+    const clientPath = writeTcpClient(scratch.root);
+    const serverFile = path.join(scratch.root, 'probed-server.txt');
+    spawn(process.execPath, [launcherPath, serverPath, serverFile], {
+      cwd: scratch.worktree,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, [TASK_PROCESS_TAG_ENV]: TASK_ID },
+    }).unref();
+    await waitForFile(serverFile);
+    const [serverPid, port] = fs.readFileSync(serverFile, 'utf8').split(' ');
+    startedPids.push(Number(serverPid));
+    const probeRequest = {
+      tasks: [{ taskId: TASK_ID, directories: await resolveTaskDirectories(scratch.project, scratch.worktree), worktreePath: scratch.worktree }],
+      mainPid: process.pid,
+      readConnections: true,
+    };
+    const probeDeps = { reader, liveRootPids: () => [] };
+
+    // Nobody connected: running, and nothing holds the stop off.
+    const idle = await probeTaskTrees(probeRequest, probeDeps);
+    expect(idle.failed).toBe(false);
+    expect(idle.entries[0].processes.map((found) => found.pid)).toContain(Number(serverPid));
+    expect(idle.entries[0].connected).toBe(false);
+
+    // An untagged client outside the tree, as a browser tab on a dev server is.
+    // (This test runner may carry a tag of its own; a client carries none.)
+    const untagged: NodeJS.ProcessEnv = { ...process.env };
+    delete untagged[TASK_PROCESS_TAG_ENV];
+    const clientFile = path.join(scratch.root, 'probed-client.txt');
+    const client = spawn(process.execPath, [clientPath, clientFile, port], { cwd: scratch.elsewhere, stdio: 'ignore', windowsHide: true, env: untagged });
+    startedPids.push(client.pid as number);
+    await waitForFile(clientFile);
+
+    const connected = await probeTaskTrees(probeRequest, probeDeps);
+    expect(connected.entries[0].connected).toBe(true);
+    expect(isProcessAlive(Number(serverPid))).toBe(true);
+    expect(isProcessAlive(client.pid as number)).toBe(true);
+  }, 60_000);
+
+  // No agent here: this is everything a parked stop does after the pause, on real
+  // processes through the real shell, with a stub standing in for the project's
+  // stop. The session record check is the one fake.
+  it('a parked stop holds off for a real client, then the real script stops the real server and the message names it', async () => {
+    const scratch = makeScratch();
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const serverPath = writeTcpServer(scratch.root);
+    const clientPath = writeTcpClient(scratch.root);
+    const serverFile = path.join(scratch.root, 'parked-server.txt');
+    spawn(process.execPath, [launcherPath, serverPath, serverFile], {
+      cwd: scratch.worktree,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, [TASK_PROCESS_TAG_ENV]: TASK_ID },
+    }).unref();
+    await waitForFile(serverFile);
+    const [serverPidText, port] = fs.readFileSync(serverFile, 'utf8').split(' ');
+    const serverPid = Number(serverPidText);
+    startedPids.push(serverPid);
+
+    const untagged: NodeJS.ProcessEnv = { ...process.env };
+    delete untagged[TASK_PROCESS_TAG_ENV];
+    const clientFile = path.join(scratch.root, 'parked-client.txt');
+    const client = spawn(process.execPath, [clientPath, clientFile, port], { cwd: scratch.elsewhere, stdio: 'ignore', windowsHide: true, env: untagged });
+    startedPids.push(client.pid as number);
+    await waitForFile(clientFile);
+
+    const stubPath = path.join(scratch.root, 'stop-stub.js');
+    fs.writeFileSync(stubPath, `process.kill(${serverPid}); require('fs').writeFileSync('ran-here.txt', process.cwd());`);
+    const held: string[] = [];
+    const directories = await resolveTaskDirectories(scratch.project, scratch.worktree);
+    const deps: ParkedStopDeps = {
+      scriptOf: () => `node "${stubPath}"`,
+      isStoppingEnabled: () => true,
+      isShuttingDown: () => false,
+      parkedTask: () => ({ title: 'Fix login', worktreePath: scratch.worktree }),
+      isScriptRunning: isStopScriptRunning,
+      probe: async (_target, worktreePath, connections) => {
+        const result = await probeTaskTrees(
+          { tasks: [{ taskId: TASK_ID, directories, worktreePath }], mainPid: process.pid, readConnections: connections },
+          { reader, liveRootPids: () => [] },
+        );
+        return result.failed ? null : result.entries.find((entry) => entry.taskId === TASK_ID) ?? null;
+      },
+      closeOffscreenLanes: () => 0,
+      folderOf: async (_target, worktreePath) => worktreePath ?? scratch.project,
+      runScript: (taskId, script, cwd) => runStopScript({ taskId, script, cwd, timeoutMs: 20_000 }),
+      holdMessage: (_target, message) => { held.push(message); },
+      reportFailure: () => {},
+      wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+    };
+    const target = { projectId: 'proj-1', projectPath: scratch.project, taskId: TASK_ID };
+
+    // Someone is using it: nothing runs, and the server stays up.
+    expect(await stopParkedTask(deps, target)).toBe('held-off');
+    expect(fs.existsSync(path.join(scratch.worktree, 'ran-here.txt'))).toBe(false);
+    expect(isProcessAlive(serverPid)).toBe(true);
+
+    // The client leaves, and the recheck finds the way clear.
+    client.kill();
+    expect(await waitUntilDead([client.pid as number])).toEqual([]);
+
+    expect(await stopParkedTask(deps, target)).toBe('stopped');
+    expect(await waitUntilDead([serverPid])).toEqual([]);
+    expect(fs.realpathSync.native(fs.readFileSync(path.join(scratch.worktree, 'ran-here.txt'), 'utf8'))).toBe(fs.realpathSync.native(scratch.worktree));
+    expect(held).toHaveLength(1);
+    expect(held[0]).toContain("The project's Stop script stopped what this task left running");
+    expect(held[0]).toContain('node');
   }, 60_000);
 
   it('keeps a server another task holds a TCP connection to, and stops one only its own task uses and an idle one', async () => {

@@ -15,6 +15,11 @@ sources:
   - resource: src/main/transition-engine/session-startup/missing-worktree.ts
   - resource: src/main/transition-engine/resource-cleanup.ts
   - resource: src/main/git/removed-worktrees.ts
+  - resource: src/main/git/spare-worktree.ts
+  - resource: src/main/worktree-task-lookup.ts
+  - resource: src/main/window-utils.ts
+    title: computeWindowTitle
+  - resource: src/devtools/main/preview-task-title.ts
   - resource: src/main/fs/directory-move.ts
   - resource: src/renderer/utils/worktree-placement.tsx
   - resource: src/main/agent/adapters/claude/hook-manager.ts
@@ -101,8 +106,20 @@ task that never had a worktree the enclosing worktree's name - permanently, sinc
 write-once. The migration deliberately does not attempt this, because it receives only the database
 handle and has no project path to anchor against.
 
-Parsers that read a folder name (the `/preview` title resolver, the window title, `get_current_task`)
-accept both the numeric and the legacy shape.
+One more shape: a task that adopted a [spare worktree](worktree-creation.md#the-spare-worktree)
+keeps the spare's folder, `spare_<8 hex>`, for good. It is written like any other, through
+`recordWorktree`, so the invariant above holds.
+
+So nothing reads a task's number off its folder name. The window title and the `/preview` title read
+it from the task row that records the worktree's path (`src/main/worktree-task-lookup.ts`), falling
+back to a numeric folder's display number and a legacy folder's id prefix only when no row that
+records the path has a title. `get_current_task` matches the path itself.
+
+The window title (`computeWindowTitle`, `src/main/window-utils.ts`) is built in this order. A `/preview`
+task label (`#<N> - <title>`, `src/devtools/main/preview-task-title.ts`, dev builds only) wins outright,
+with no app name in front. Otherwise it is `<app name> - #<N>` with the number from the task row. When
+the row cannot be read, the folder shows instead: `#<digits>` for a numeric folder, verbatim for any
+other. Outside a worktree it is the app name alone.
 
 Numeric folders are unique per project, not globally: everything here is project-scoped (per-project
 database, per-project worktrees directory). `display_id` never recycles, so a deleted task's number
@@ -527,6 +544,7 @@ the next open.
 
 - **`pruneOrphanedWorktreeTasks()`** (`src/main/transition-engine/resource-cleanup.ts`) -- Scans the tasks whose `worktree_path` directory is gone and deletes them, except a task in a To Do lane (a To Do move removes the directory before it clears `worktree_path`, so the To Do sweep clears those fields instead), a workflow task, and a task with a running or queued session. It re-reads the lane after its existence probes, so a task moved to To Do during the probes is kept.
 - **`retryFailedDoneCleanups()`** - Every Done task whose `worktree_path` is still set: a removal that failed, or a quit before the Done move reached it. It moves the worktree aside as a Done move does, and removes it in place only when that fails.
+- **The spare worktree's startup pass** (`sweepSpareWorktreesAtOpen`, beside `cleanupStaleResourcesAsync`) - Discards a `spare_` folder no task names whose build was cut off (no ready record) or whose settings are stale, and keeps a ready one. The orphan sweep never takes a `spare_` folder. See [The spare worktree](worktree-creation.md#the-spare-worktree).
 - **`scheduleRemovedWorktreeDeletion()`** - Starts the deleter on `.kangentic/removed-worktrees/`, so a copy a quit left behind is deleted on the next open. Starting it again while it runs only makes it list the folder once more.
 
 ### On Project Close/Delete

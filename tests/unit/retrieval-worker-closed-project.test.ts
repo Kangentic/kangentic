@@ -162,6 +162,17 @@ describe('retrieval worker: a record sweep queued behind a project close', () =>
     },
   ];
 
+  it('index.sweep commandTerminals: never reopens the closed database', async () => {
+    const projectId = 'project-closed-before-command-terminal-sweep';
+    await callWorker('project.close', { projectId });
+    getProjectDbMock.mockClear();
+
+    const reply = await callWorker('index.sweep', { projectId, remoteTargets: [], commandTerminals: true });
+
+    expect(reply.ok).toBe(true);
+    expect(getProjectDbMock).not.toHaveBeenCalled();
+  });
+
   it.each(sweeps)('index.sweep $step: reports nothing indexed and never reopens the closed database', async ({ step, steps, slot, result }) => {
     const projectId = `project-closed-before-${step}-sweep`;
     await callWorker('project.close', { projectId });

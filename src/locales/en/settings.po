@@ -708,6 +708,10 @@ msgstr "Couldn't save base branch"
 msgid "Couldn't save shortcuts"
 msgstr "Couldn't save shortcuts"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr "Couldn't save Stop script"
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Count merge bypass as ready"
 msgstr "Count merge bypass as ready"
@@ -1162,6 +1166,10 @@ msgstr "How the Changes panel shows a file's diff."
 msgid "How the relay works"
 msgstr "How the relay works"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr "How this project stops what a task leaves running."
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
 msgstr "How to install and pair"
@@ -1299,6 +1307,11 @@ msgstr "Layout"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Leave blank if the server does not require credentials"
 msgstr "Leave blank if the server does not require credentials"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Leftover processes"
+msgstr "Leftover processes"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Let agents drive the Browser pane."
@@ -2129,8 +2142,17 @@ msgid "Stop leftover processes"
 msgstr "Stop leftover processes"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr "Stop script"
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
+msgstr "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"

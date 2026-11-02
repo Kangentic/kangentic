@@ -23,8 +23,12 @@ import path from 'node:path';
  */
 const creationsInFlight = new Map<string, Promise<void>>();
 
-/** Normalize a worktree path for use as a key (Windows is case-insensitive). */
-function creationKey(worktreePath: string): string {
+/**
+ * Normalize a path for use as a map key: resolved, and case-folded on Windows,
+ * whose filesystem is case-insensitive. The spare worktree pool keys its
+ * projects with it too.
+ */
+export function pathKey(worktreePath: string): string {
   const resolved = path.resolve(worktreePath);
   return process.platform === 'win32' ? resolved.toLowerCase() : resolved;
 }
@@ -42,7 +46,7 @@ export async function runWorktreeCreation<T>(
   signal: AbortSignal | undefined,
   creation: (waited: boolean) => Promise<T>,
 ): Promise<T> {
-  const key = creationKey(worktreePath);
+  const key = pathKey(worktreePath);
   let waited = false;
   let inFlight = creationsInFlight.get(key);
   while (inFlight) {
@@ -66,7 +70,34 @@ export async function runWorktreeCreation<T>(
 
 /** True while a creation for `worktreePath` has not settled. */
 export function isWorktreeCreationInFlight(worktreePath: string): boolean {
-  return creationsInFlight.has(creationKey(worktreePath));
+  return creationsInFlight.has(pathKey(worktreePath));
+}
+
+/**
+ * Claim `worktreePath` as a creation in flight, only if nothing holds it now.
+ * The check and the claim are one synchronous step, so two callers can never
+ * both take the path. Returns the release, or null when the path is held: the
+ * caller skips the path rather than waiting on it.
+ *
+ * For work on a path whose start is decided inside the git queue, where a
+ * `runWorktreeCreation` callback cannot wrap the rest of the work: a spare
+ * worktree's build, and a task's claim of one (`spare-worktree.ts`). A removal
+ * outside the queue waits on the hold and one inside refuses it, exactly as for
+ * a creation.
+ */
+export function tryHoldWorktreeCreation(worktreePath: string): (() => void) | null {
+  const key = pathKey(worktreePath);
+  if (creationsInFlight.has(key)) return null;
+  let release: () => void = () => undefined;
+  const claim = new Promise<void>((resolve) => { release = resolve; });
+  creationsInFlight.set(key, claim);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    if (creationsInFlight.get(key) === claim) creationsInFlight.delete(key);
+    release();
+  };
 }
 
 /**
@@ -84,7 +115,7 @@ const backgroundSetups = new Map<string, AbortController>();
  * the creation calls once the script has settled.
  */
 export function registerBackgroundSetup(worktreePath: string, controller: AbortController): () => void {
-  const key = creationKey(worktreePath);
+  const key = pathKey(worktreePath);
   backgroundSetups.set(key, controller);
   return () => {
     if (backgroundSetups.get(key) === controller) backgroundSetups.delete(key);
@@ -98,7 +129,7 @@ export function registerBackgroundSetup(worktreePath: string, controller: AbortC
  * on `waitForWorktreeCreation` waits only for that, not for the install.
  */
 export function abortWorktreeSetup(worktreePath: string): boolean {
-  const controller = backgroundSetups.get(creationKey(worktreePath));
+  const controller = backgroundSetups.get(pathKey(worktreePath));
   if (!controller) return false;
   controller.abort();
   return true;
@@ -110,7 +141,7 @@ export function abortWorktreeSetup(worktreePath: string): boolean {
  * setup script is still writing to. Resolves `true` when it had to wait.
  */
 export async function waitForWorktreeCreation(worktreePath: string): Promise<boolean> {
-  const key = creationKey(worktreePath);
+  const key = pathKey(worktreePath);
   let waited = false;
   let inFlight = creationsInFlight.get(key);
   while (inFlight) {

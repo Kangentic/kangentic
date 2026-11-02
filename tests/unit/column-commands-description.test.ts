@@ -599,6 +599,27 @@ describe('handleUpdateColumn - enum narrowing on the unvalidated path', () => {
   }
 });
 
+describe('handleUpdateColumn - agent limit on the unvalidated path', () => {
+  // The mobile bridge reaches this handler with no zod in the way, and a limit
+  // under one would hold every task in the column forever.
+  it.each([0, -1, 1.5, '1', true])('refuses a maxAgents of %s', (value) => {
+    const db = createMockDb([makeSwimlaneRow()]);
+
+    const result = handleUpdateColumn({ column: 'To Do', maxAgents: value }, createMockContext(db));
+
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('maxAgents');
+  });
+
+  it.each([1, null])('accepts a maxAgents of %s', (value) => {
+    const db = createMockDb([makeSwimlaneRow()]);
+
+    const result = handleUpdateColumn({ column: 'To Do', maxAgents: value }, createMockContext(db));
+
+    expect(result.success).toBe(true);
+  });
+});
+
 // ---------------------------------------------------------------------------
 // handleGetColumnDetail - auto-command timing
 // ---------------------------------------------------------------------------

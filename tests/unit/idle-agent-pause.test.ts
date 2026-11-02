@@ -150,6 +150,102 @@ describe('pickAgentToPause', () => {
   });
 });
 
+describe('createIdleAgentPauser with a parked pass', () => {
+  /** Lets the pass's promise chain settle: the pause, when it comes, is a turn later. */
+  const settle = (): Promise<void> => new Promise((resolve) => { setTimeout(resolve, 0); });
+
+  function makePauser(relieveParked: () => Promise<'started' | 'held' | 'none'>) {
+    const pause = vi.fn(async () => true);
+    const pauser = createIdleAgentPauser({
+      isEnabled: () => true,
+      listCandidates: () => [facts()],
+      relieveParked,
+      pause,
+      onPaused: vi.fn(),
+      now: () => NOW,
+    });
+    return { pauser, pause };
+  }
+
+  it('stops a parked task before it pauses an agent, and the stop is that tick\'s one action', async () => {
+    const relieveParked = vi.fn(async () => 'started' as const);
+    const { pauser, pause } = makePauser(relieveParked);
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+
+    expect(relieveParked).toHaveBeenCalledTimes(1);
+    expect(pause).not.toHaveBeenCalled();
+  });
+
+  it('pauses the agent in the same tick when nothing parked could be stopped', async () => {
+    const { pauser, pause } = makePauser(async () => 'none');
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+
+    expect(pause).toHaveBeenCalledTimes(1);
+  });
+
+  it('skips the scan for the rest of a spell that found nothing, and scans again in the next spell', async () => {
+    const relieveParked = vi.fn(async () => 'none' as const);
+    const { pauser } = makePauser(relieveParked);
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+    await settle();
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+    expect(relieveParked).toHaveBeenCalledTimes(1);
+
+    pauser.onSample(windowsSample(RECOVERED));
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+    expect(relieveParked).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps asking each tick while a client holds a parked task off, and still pauses', async () => {
+    const relieveParked = vi.fn(async () => 'held' as const);
+    const { pauser, pause } = makePauser(relieveParked);
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+    await settle();
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+
+    expect(relieveParked).toHaveBeenCalledTimes(2);
+    expect(pause).toHaveBeenCalledTimes(2);
+  });
+
+  it('still pauses when the pass throws', async () => {
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const { pauser, pause } = makePauser(async () => { throw new Error('host gone'); });
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+
+    expect(pause).toHaveBeenCalledTimes(1);
+    consoleError.mockRestore();
+  });
+
+  it('asks nothing with the setting off', async () => {
+    const relieveParked = vi.fn(async () => 'none' as const);
+    const pauser = createIdleAgentPauser({
+      isEnabled: () => false,
+      listCandidates: () => [facts()],
+      relieveParked,
+      pause: vi.fn(),
+      onPaused: vi.fn(),
+    });
+
+    pauser.onSample(windowsSample(LOW));
+    await settle();
+
+    expect(relieveParked).not.toHaveBeenCalled();
+  });
+});
+
 describe('createIdleAgentPauser', () => {
   async function settle(): Promise<void> {
     for (let tick = 0; tick < 10; tick++) await Promise.resolve();

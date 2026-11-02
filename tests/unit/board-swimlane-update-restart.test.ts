@@ -179,6 +179,10 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
     currentProjectId: 'proj-board-1',
     currentProjectPath: '/mock/board-project',
     sessionManager: {
+      drainQueue: vi.fn(),
+      columnBlocks: vi.fn(() => false),
+      isResuming: vi.fn(() => false),
+      holdColumnSlot: vi.fn(() => () => undefined),
       getSession: vi.fn(() => ({ status: 'running' })),
       // Read by resolveReportedEffort; empty = the agent reports no effort, so
       // the delta source falls back to the session record as it did before.

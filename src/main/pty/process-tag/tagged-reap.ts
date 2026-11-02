@@ -47,6 +47,7 @@ import {
   connectionQueryOf,
   isInsideDirectory,
   planReapDetailed,
+  buildProtectedPids,
   processIdentity,
   subtreeOf,
   type KeptBecause,
@@ -62,7 +63,15 @@ import {
   type ScannedProcess,
   type ScanStepFailureCode,
   type TaggedProcessReader,
+  type ToolFailureCause,
 } from './process-scan';
+import {
+  hasOutsideClient,
+  runningInTaskFolders,
+  topOfRunning,
+  treeConnectionQueryOf,
+  type TaskTreeProbeInput,
+} from './task-tree-probe';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -88,6 +97,34 @@ export interface TaggedReapRequest {
   mainPid: number;
   /** False when the user turned stopping off: plan and report, kill nothing. */
   stop: boolean;
+}
+
+export interface TaskProbeRequest {
+  tasks: TaggedReapTask[];
+  mainPid: number;
+  /** Read the TCP table too: a pause asks whether anyone is using the stack, a terminal transition does not. */
+  readConnections: boolean;
+}
+
+/** One top-level process a probe found, named as a reported process is. */
+export interface ProbedProcess {
+  pid: number;
+  startKey: string;
+  label: string;
+}
+
+/** What one task has running. `processes` empty means nothing to stop. */
+export interface TaskProbeEntry {
+  taskId: string;
+  processes: ProbedProcess[];
+  /** A process outside the task's tree is connected to a port the tree listens on. */
+  connected: boolean;
+}
+
+export interface TaskProbeResult {
+  entries: TaskProbeEntry[];
+  /** The scan failed, so `entries` says nothing about what runs. */
+  failed: boolean;
 }
 
 /** What happened to one reported process. */
@@ -131,7 +168,9 @@ function keptWhyOf(reason: KeptReason, because: KeptExplanation | null): string 
   if (!because) return reason;
   switch (because.basis) {
     case 'descendant':
-      return `shared, by descendant ${evidenceOf(because)}, which works outside the task's directories or does not carry its tag`;
+      return reason === 'outside'
+        ? `its descendant ${evidenceOf(because)} carries the task's tag and works outside the task's directories`
+        : `shared, by descendant ${evidenceOf(because)}, which works outside the task's directories or does not carry its tag`;
     case 'connection':
       return `shared, by a connection from ${evidenceOf(because)}`;
     case 'children':
@@ -187,6 +226,8 @@ export interface TaggedReapResult {
   failureCode: ReapFailureCode | null;
   /** The pass the reap failed in, or null when it failed before its first scan or did not fail. */
   failurePass: ReapPass | null;
+  /** How the failed scan step's tool failed, or null when the step runs none or the reap did not fail. */
+  failureCause: ToolFailureCause | null;
   /** What the user is told: stopped, not stopped, and left running. */
   entries: LeftoverProcessEntry[];
 }
@@ -214,7 +255,7 @@ export interface TaggedReaperDeps {
 
 /** A fresh result each time, so no caller can share another's arrays. */
 export function emptyReapResult(): TaggedReapResult {
-  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+  return { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 }
 
 function messageOf(error: unknown): string {
@@ -249,6 +290,11 @@ function failureCodeOf(error: unknown): ReapFailureCode {
   if (error instanceof EmptyScanError) return 'empty_scan';
   if (error instanceof ScanStepError) return error.code;
   return 'reap_error';
+}
+
+/** How the tool behind what a pass threw failed, or null when nothing named one. */
+function failureCauseOf(error: unknown): ToolFailureCause | null {
+  return error instanceof ScanStepError ? error.failureCause : null;
 }
 
 function defaultWait(ms: number): Promise<void> {
@@ -357,6 +403,52 @@ function scopesOf(tasks: readonly TaggedReapTask[], homeDirectory: string): Map<
     .map(([taskId, scope]) => [taskId, { directories: [...scope.directories], worktreePath: scope.worktreePath }]));
 }
 
+/**
+ * What each task has running, and with `readConnections`, whether anything
+ * outside its tree is connected to it (`task-tree-probe.ts`). Scans and reads
+ * and signals nothing. A failed scan answers `failed`, never an empty table,
+ * since an empty one would read as nothing running. Exported for tests.
+ */
+export async function probeTaskTrees(request: TaskProbeRequest, deps: TaggedReaperDeps): Promise<TaskProbeResult> {
+  try {
+    const scopes = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
+    if (scopes.size === 0) return { entries: [], failed: false };
+    await deps.reader.ready?.();
+    const scan = requireProcesses(await deps.reader.scan());
+    const input: TaskTreeProbeInput = {
+      processes: scan.processes,
+      mainPid: request.mainPid,
+      liveRootPids: deps.liveRootPids(),
+      caseInsensitivePaths: deps.caseInsensitivePaths ?? process.platform !== 'linux',
+    };
+    const protectedPids = buildProtectedPids(input);
+    const entries: TaskProbeEntry[] = [];
+    for (const [taskId, scope] of scopes) {
+      const running = runningInTaskFolders(input, protectedPids, taskId, scope);
+      if (running.length === 0) {
+        entries.push({ taskId, processes: [], connected: false });
+        continue;
+      }
+      const tops = topOfRunning(running);
+      const labels = await describeSafely(deps.reader, tops);
+      let connected = false;
+      if (request.readConnections && deps.reader.connections) {
+        const query = treeConnectionQueryOf(input, protectedPids, taskId);
+        connected = hasOutsideClient(await deps.reader.connections(query.listeners, query.clients), query.treePids);
+      }
+      entries.push({
+        taskId,
+        processes: tops.map((scanned) => ({ pid: scanned.pid, startKey: scanned.startKey, label: labels.get(scanned.pid) ?? UNNAMED_LABEL })),
+        connected,
+      });
+    }
+    return { entries, failed: false };
+  } catch (error) {
+    console.warn('[STOP-SCRIPT] probe failed:', messageOf(error));
+    return { entries: [], failed: true };
+  }
+}
+
 /** One reap for one batch of tasks. Exported for tests. */
 export async function reapTaggedOnce(
   request: TaggedReapRequest,
@@ -440,11 +532,8 @@ export async function reapTaggedOnce(
 
     if (!request.stop || firstPlan.targets.length === 0) {
       return {
-        killedPids: [],
+        ...emptyReapResult(),
         unreadableCount: firstScan.unreadableCount,
-        failureReason: null,
-        failureCode: null,
-        failurePass: null,
         entries: [...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, 'kept', null)), ...keptEntries],
       };
     }
@@ -462,6 +551,7 @@ export async function reapTaggedOnce(
     const secondPlan = await planWithConnections(deps.reader, {
       ...planInput(secondScan.processes),
       keepIdentities: firstPlan.keptIdentities,
+      keptOutsideIdentities: firstPlan.keptOutsideIdentities,
       signalledIdentities: new Set(firstPlan.targets.map(processIdentity)),
     });
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
@@ -524,11 +614,9 @@ export async function reapTaggedOnce(
     }));
 
     return {
+      ...emptyReapResult(),
       killedPids: [...killed].sort((left, right) => left - right),
       unreadableCount,
-      failureReason: null,
-      failureCode: null,
-      failurePass: null,
       entries: [
         ...firstPlan.roots.map((root) => entryFor(root.process, root.taskId, failedRootPids.has(root.process.pid) ? 'failed' : 'stopped', null)),
         ...orphanEntries,
@@ -542,6 +630,7 @@ export async function reapTaggedOnce(
       failureReason: messageOf(error),
       failureCode: failureCodeOf(error),
       failurePass: pass,
+      failureCause: failureCauseOf(error),
       entries: signalledEntries ? signalledEntries() : [],
     };
   }
@@ -587,12 +676,13 @@ export interface StopProcessResult {
   outcome: StopProcessOutcome;
   failureCode: ReapFailureCode | null;
   failurePass: ReapPass | null;
+  failureCause: ToolFailureCause | null;
   failureReason: string | null;
 }
 
 /** A stop's answer with no failure to report. */
 export function stopAnswer(outcome: StopProcessOutcome): StopProcessResult {
-  return { outcome, failureCode: null, failurePass: null, failureReason: null };
+  return { outcome, failureCode: null, failurePass: null, failureCause: null, failureReason: null };
 }
 
 /**
@@ -642,7 +732,7 @@ export async function stopProcessTree(
     const aliveAtLast = runningIdentitiesOf(lastScan);
     return stopAnswer(survivors.some((survivor) => aliveAtLast.has(processIdentity(survivor))) ? 'failed' : 'stopped');
   } catch (error) {
-    return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureReason: messageOf(error) };
+    return { outcome: 'failed', failureCode: failureCodeOf(error), failurePass: pass, failureCause: failureCauseOf(error), failureReason: messageOf(error) };
   }
 }
 
@@ -722,6 +812,16 @@ export class TaggedReaper {
       }
     }
     return answers;
+  }
+
+  /**
+   * What the tasks have running, for a project's Stop script. Outside both
+   * queues, since it kills nothing and a pause must not wait behind a reap's
+   * grace. It is a full scan, so it runs on demand, and on a timer only for a
+   * stop a connected client held off (`src/main/stop-script/held-off-stops.ts`).
+   */
+  probe(request: TaskProbeRequest): Promise<TaskProbeResult> {
+    return probeTaskTrees(request, this.deps);
   }
 
   /** A failure to tell main (a closed port at quit) must not strand a waiter: a reap never throws. */

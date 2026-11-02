@@ -8,6 +8,8 @@ sources:
     title: Command Terminal layer, panel, rail, window, pane, icon and reconcile
   - resource: src/main/ipc/handlers/transient-sessions.ts
   - resource: src/main/ipc/helpers/command-terminal-history.ts
+  - resource: src/main/retrieval/conversation/command-terminal-search.ts
+    title: The Earlier search's text half
   - resource: src/main/agent/shared/command-terminal-namer.ts
   - resource: src/main/pty/session-manager.ts
     title: renameCommandTerminal, setCommandTerminalLabel, endCommandTerminal
@@ -404,8 +406,16 @@ SessionManager's own events, in main:
   (`canResumeConversationById`, `src/main/agent/shared/workflow-agent-capability.ts`, the same
   test a workflow's own agent passes) and can still find the transcript (the adapter's
   `locateSessionHistoryFile`, wired in `register-all.ts`), and no live terminal or resume in
-  flight holds it. The newest 50 ended rows per project are kept
-  (`COMMAND_TERMINAL_HISTORY_LIMIT`).
+  flight holds it. Nothing else limits the table: the list deletes a row whose transcript is gone,
+  so the agent's own cleanup sets the bound (30 days for Claude Code). A 50-row prune came first, and
+  the rows it deleted cannot come back. The checks run 8 at a time, because a miss in Claude's
+  locator scans every project folder. Measured through the IPC on a machine with 863 Claude project
+  folders: 5 to 7 ms for 300 rows and 13 to 21 ms for 1,000, each a real transcript, with no main
+  lag spike; the first read of 1,000 rows plus 150 purged ones took 50 ms and dropped the 150. That
+  is cheap enough once, but every rename and every terminal's end re-lists every row, so a
+  transcript found stays known for 5 minutes (`AVAILABILITY_RECHECK_MS`) and a re-list walks
+  nothing. A resume always asks the agent itself, so a row shown stale costs only its
+  `conversation-gone`. The phone's answer stops at the newest 500.
 - **A row reads as its name, else its first prompt.** The name comes from the namer, which runs
   only with an Automation agent set, and the Automation agent has no default. Every row read
   "Untitled conversation" until the row kept the conversation's first prompt too (`first_prompt`,
@@ -431,6 +441,61 @@ by the conversation they actually wanted. A used terminal is never replaced, and
 opens beside the others in the next free slot instead. The slot's window takes the request
 (`requestCommandTerminalResume`) whether it is live or still mounting, and a request for a slot
 whose window closed first is dropped with it. At the cap the rows are off and say why.
+
+The list scrolls and is drawn through a virtualizer, since an agent that never purges its transcripts
+gives it no limit. Add terminal, Running, the search field, the heading and Hide stay put. When
+Running leaves Earlier under 124px (the field, the heading and two rows: four terminals in a panel at
+its minimum), the rail's body scrolls instead. Each row reads whether its name is cut when the pointer
+or focus arrives, so a long list keeps no `ResizeObserver` per row. The row being renamed is always
+kept in the virtualizer's range (`rangeExtractor`), because scrolling it out of the window would
+unmount its field and drop the typed name with no save and no blur.
+
+### The row menu
+
+A row's right-click is Resume, Rename and Remove (`CommandTerminalContextMenu`, the shell the Running
+menu uses). The wrapper takes the right-click, and the button is `aria-disabled` at the cap rather
+than `disabled`, because Rename and Remove start nothing and stay on there. Resume is off with the
+row's reason. Rename turns the name into `CommandTerminalNameField` and saves through
+`commandTerminalHistory:rename`, keyed by the conversation, since no session exists to rename. It
+refuses a conversation a live terminal or a resume in flight holds, so it never races the live name.
+The row holds the committed name until the list that carries it arrives. Remove confirms first,
+through a `ConfirmDialog` portaled to the body, because `BaseDialog` is inline and fixed and the
+panel is transformed. It deletes the row and schedules the conversation's text out of the index; the
+agent's transcript stays. View conversation was drawn and dropped: a user who wants a conversation
+resumes it.
+
+### Search
+
+The field filters as the user types, in two steps. `earlier-search.ts` matches the name and first
+prompt from the list the rail already holds, with no call to main, and every word must appear in one
+or the other, as the text search requires. A row whose name shows the word marks it there; one that
+matched only in a prompt its name hides shows that passage under the name, with the date beside it.
+
+Conversation text comes from main 200 ms after typing stops (`useEarlierSearch`,
+`commandTerminalHistory:search`) and goes below the others under "In conversations", so a row on
+screen never moves when the answer lands. One merged, date-ordered list was drawn and rejected for
+that reason. The previous answer holds until the next replaces it, so the text rows do not drop out
+on every keystroke, as long as the new query extends the answered one; another word drops those rows
+at once. "No conversations match" waits for main's answer, so it never flashes. With Knowledge Graph
+indexing off, the rail says conversation text was not searched.
+
+The text lives in the retrieval worker, never on main (`.claude/rules/retrieval-out-of-process.md`),
+as a corpus of its own, `command_terminal`, because a Command Terminal has no `sessions` row and the
+conversation corpus keys on one. `CommandTerminalHistory` reports a conversation's end
+(`conversationEnded`, from a terminal's removal and from a `/clear` or `/resume` that moves on), and
+`retrievalService.scheduleCommandTerminalIndex` reads it 5 s later. A Stop removes the row before
+Claude finishes exiting, measured at 0.3 to 2 s and once 4 s. The same method drops the document when
+its row is gone. A quit removes no row, so the project-open sweep backfills what is missing, 25 per
+open, and purges documents whose row went. It runs at a conversation's end, not per turn, because
+nothing searches a live conversation, so it keeps no resume point. Keywords only: no vectors, and no
+turns in the usage ledger, which never counted Command Terminals. Every other search names its
+corpora, so none of them reads this one. It stays out of the Index panel, whose lines are a closed
+list.
+
+The corpus shares `memory_chunks_fts`, and every chunk there costs every keyword search. Measured on
+a copy of a real index of 155,584 conversation chunks, median of seven runs: adding 10,000 chunks, about
+what 100 conversations hold, moved Quick Find's lexical pass 0 to 6% across six queries, and 30,000
+moved it 8 to 20%. A corpus-only FTS table was the alternative, past a 25% rise that did not happen.
 
 ## Expand and swap
 
@@ -745,9 +810,13 @@ The name reaches Earlier because `CommandTerminalHistory` writes the row's label
 the live label, a clear included (last write wins, `setLabel`), and an unchanged push writes
 nothing, so a `/resume` inside a renamed terminal into another conversation keeps that row's own
 name. A rename that lands before the agent reports its id, right after a resume's spawn, is held
-per session and written over the row once it exists. A resume brings the name back. The accepted
-limit: a cleared name is not remembered across a resume, since the row holds null either way.
-Renaming an Earlier row, and renaming from the phone or the Agent Monitor, are out of scope.
+per session and written over the row once it exists. A resume brings the name back. The row's
+`named_by_user` carries the user's choice across a resume, a clear included: a row with no name
+holds null either way, so the flag is what keeps the namer off, and the resume hands it back through
+`renameCommandTerminal`. That normalizes against the new slot, so a row named exactly "Command
+Terminal 2" and resumed into slot 2 loses the name, which is harmless and pinned by a test. A rename
+of an Earlier row is in [The row menu](#the-row-menu). Renaming from the phone or the Agent Monitor is
+out of scope.
 
 ## Starting one from a phone
 

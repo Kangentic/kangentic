@@ -136,6 +136,9 @@ vi.mock('../../src/main/pty/session-manager', async () => {
       setEarlierRunsSource = mockSetEarlierRunsSource;
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       setMaxConcurrent = vi.fn();
+      setQueueGate = vi.fn();
+      drainQueue = vi.fn();
+      listColumnHolders = vi.fn(() => []);
     },
   };
 });
@@ -159,6 +162,7 @@ vi.mock('../../src/main/config/board-config-manager', () => ({
   BoardConfigManager: class {
     attach = vi.fn();
     detach = vi.fn();
+    setOnConfigApplied = vi.fn();
   },
 }));
 vi.mock('../../src/main/transition-engine/terminal-submit-scheduler', () => ({

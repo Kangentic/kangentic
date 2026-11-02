@@ -57,6 +57,8 @@ vi.mock('../../src/main/pty/terminal-trace', async (importOriginal) => {
 
 import * as pty from 'node-pty';
 import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-manager';
+import { InProcessPtyHostTransport } from '../../src/main/pty/host/pty-host-client';
+import type { PtyHostMethod, PtyHostRequestMap } from '../../src/main/pty/host/protocol';
 import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
 import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { ClaudeAdapter } from '../../src/main/agent/adapters/claude/claude-adapter';
@@ -103,9 +105,42 @@ function createMockPty() {
   };
 }
 
+/**
+ * The in-process host core, holding every `spawn` request until the test
+ * releases it. A spawn is then observable inside `doSpawn`, between its start
+ * and the host's answer, which the synchronous mock PTY otherwise hides.
+ */
+class HeldSpawnTransport extends InProcessPtyHostTransport {
+  private readonly held: Array<() => void> = [];
+
+  constructor() {
+    super({ resolveAgent: () => undefined, transcriptSinkFor: () => null });
+  }
+
+  override request<M extends PtyHostMethod>(
+    method: M,
+    params: PtyHostRequestMap[M]['params'],
+  ): Promise<PtyHostRequestMap[M]['result']> {
+    if (method !== 'spawn') return super.request(method, params);
+    return new Promise((resolve, reject) => {
+      this.held.push(() => {
+        super.request(method, params).then(resolve, reject);
+      });
+    });
+  }
+
+  get heldSpawns(): number {
+    return this.held.length;
+  }
+
+  releaseSpawns(): void {
+    for (const release of this.held.splice(0)) release();
+  }
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
-  tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-session-'));
+  tmpDir =fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-session-'));
 });
 
 afterEach(() => {
@@ -496,7 +531,13 @@ describe('Respawn grid', () => {
 
   async function spawnFor(
     taskId: string,
-    extra: { resuming?: boolean; restoredGrid?: { cols: number; rows: number } } = {},
+    extra: {
+      resuming?: boolean;
+      restoredGrid?: { cols: number; rows: number };
+      projectId?: string;
+      transient?: boolean;
+      workflowId?: string;
+    } = {},
   ) {
     const mock = createMockPty();
     vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
@@ -773,6 +814,190 @@ describe('Respawn grid', () => {
     await spawnFor('task-promotion-resize', { resuming: true });
 
     expect(lastSpawnGrid()).toEqual([190, 50]);
+  });
+
+  describe('with a column gate', () => {
+    let columnFull: boolean;
+
+    beforeEach(() => {
+      columnFull = true;
+      manager.setQueueGate({
+        mustWait: () => columnFull,
+        pick: () => (columnFull ? -1 : 0),
+        countBlocked: (queued) => (columnFull ? queued.length : 0),
+      });
+    });
+
+    it('queues a spawn its column holds back, with global slots free, and starts it on a drain', async () => {
+      const queued = await manager.spawn({ taskId: 'task-gated', command: '', cwd: tmpDir });
+      expect(queued.status).toBe('queued');
+
+      columnFull = false;
+      manager.drainQueue();
+
+      await vi.waitFor(() => expect(manager.getSession(queued.id)?.status).toBe('running'));
+    });
+
+    it('counts a gated entry as claiming no slot, so the app does not read as full', async () => {
+      const free = manager.getFreeAgentSlots();
+      await manager.spawn({ taskId: 'task-gated', command: '', cwd: tmpDir });
+      expect(manager.getFreeAgentSlots()).toBe(free);
+    });
+
+    it('refuses an early launch into a full column rather than queuing it', async () => {
+      await expect(manager.spawn({ taskId: 'task-hidden', command: '', cwd: tmpDir, hiddenUntilAdopted: true })).rejects.toThrow('No agent slot is free');
+    });
+
+    it('announces a drain only when something waits', async () => {
+      const announced = vi.fn();
+      manager.on('queue-changed', announced);
+      manager.drainQueue();
+      expect(announced).not.toHaveBeenCalled();
+
+      await manager.spawn({ taskId: 'task-gated', command: '', cwd: tmpDir });
+      manager.drainQueue();
+      expect(announced).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe('column holders', () => {
+    it('lists a running agent, and neither a paused one nor a queued one', async () => {
+      const { session: running } = await spawnFor('task-running');
+      const { session: paused } = await spawnFor('task-paused');
+      await manager.suspend(paused.id);
+      manager.setMaxConcurrent(1);
+      await manager.spawn({ taskId: 'task-queued', command: '', cwd: tmpDir });
+
+      expect(manager.listColumnHolders().map((holder) => holder.taskId)).toEqual(['task-running']);
+      expect(manager.listColumnHolders()[0].sessionId).toBe(running.id);
+    });
+
+    it('leaves out a Command Terminal and a workflow agent, which hold no column', async () => {
+      await spawnFor('task-terminal', { transient: true });
+      await spawnFor('task-workflow-agent', { transient: true, workflowId: 'workflow-1' });
+
+      expect(manager.listColumnHolders()).toEqual([]);
+    });
+
+    it('keeps a restart in the line until its hold is released, then re-checks the queue', async () => {
+      // A restart holds the slot its running agent has; the suspend that
+      // follows would otherwise hand it to the next task in line.
+      const { session } = await spawnFor('task-restarting', { projectId: 'project-a' });
+      const release = manager.holdColumnSlot('project-a', 'task-restarting');
+      await manager.suspend(session.id);
+
+      expect(manager.listColumnHolders()).toEqual([{ projectId: 'project-a', taskId: 'task-restarting', sessionId: null }]);
+
+      const drained = vi.spyOn(manager, 'drainQueue');
+      release();
+
+      expect(manager.listColumnHolders()).toEqual([]);
+      expect(drained).toHaveBeenCalledTimes(1);
+    });
+
+    it('takes no hold for a task that holds no slot, and its release drains nothing', async () => {
+      // A queued task's restart is not in the line's front: a hold would let
+      // it past the tasks ahead of it.
+      await spawnFor('task-running', { projectId: 'project-a' });
+      manager.setMaxConcurrent(1);
+      const queued = await manager.spawn({ taskId: 'task-queued', projectId: 'project-a', command: '', cwd: tmpDir });
+      expect(queued.status).toBe('queued');
+      const before = manager.listColumnHolders();
+
+      const releaseQueued = manager.holdColumnSlot('project-a', 'task-queued');
+      const releaseUnknown = manager.holdColumnSlot('project-a', 'task-never-spawned');
+
+      expect(manager.listColumnHolders()).toEqual(before);
+      expect(manager.listColumnHolders().some((holder) => holder.sessionId === null)).toBe(false);
+
+      const drained = vi.spyOn(manager, 'drainQueue');
+      releaseQueued();
+      releaseUnknown();
+      expect(drained).not.toHaveBeenCalled();
+    });
+
+    it('takes no hold for a task running in another project', async () => {
+      await spawnFor('task-shared-id', { projectId: 'project-b' });
+
+      manager.holdColumnSlot('project-a', 'task-shared-id');
+
+      expect(manager.listColumnHolders().some((holder) => holder.sessionId === null)).toBe(false);
+    });
+
+    it('claims a project\'s running and queued tasks together, and no other project\'s', async () => {
+      await spawnFor('task-running', { projectId: 'project-a' });
+      await spawnFor('task-other-running', { projectId: 'project-b' });
+      manager.setMaxConcurrent(1);
+      await manager.spawn({ taskId: 'task-queued', projectId: 'project-a', command: '', cwd: tmpDir });
+      await manager.spawn({ taskId: 'task-other-queued', projectId: 'project-b', command: '', cwd: tmpDir });
+
+      expect([...manager.listColumnClaims('project-a')].sort()).toEqual(['task-queued', 'task-running']);
+      expect([...manager.listColumnClaims('project-b')].sort()).toEqual(['task-other-queued', 'task-other-running']);
+      expect([...manager.listColumnClaims('project-c')]).toEqual([]);
+    });
+
+    describe('while a spawn waits on the host', () => {
+      // `spawnFor` finishes the spawn, so nothing there sees the gap. Two starts
+      // arriving together must each see the other, or both enter a full column.
+      let transport: HeldSpawnTransport;
+      let held: SessionManager;
+      const outcomes: Array<Promise<unknown>> = [];
+
+      beforeEach(() => {
+        transport = new HeldSpawnTransport();
+        held = new SessionManager({ ptyHostTransport: transport });
+        vi.mocked(pty.spawn).mockImplementation(() => createMockPty().mockPty as unknown as pty.IPty);
+      });
+
+      afterEach(async () => {
+        transport.releaseSpawns();
+        await Promise.allSettled(outcomes.splice(0));
+        held.killAll();
+        await new Promise((resolve) => setTimeout(resolve, 20));
+      });
+
+      /** Start a spawn and leave it pending at the host. */
+      async function spawnHeld(id: string, taskId: string, extra: { transient?: boolean; workflowId?: string } = {}): Promise<void> {
+        const heldBefore = transport.heldSpawns;
+        outcomes.push(held.spawn({ id, taskId, projectId: 'project-a', command: '', cwd: tmpDir, ...extra }).catch(() => undefined));
+        await vi.waitFor(() => expect(transport.heldSpawns).toBe(heldBefore + 1));
+      }
+
+      it('lists a task agent whose spawn has not been answered, under the spawn\'s id', async () => {
+        await spawnHeld('in-flight-1', 'task-in-flight');
+
+        expect(held.getSession('in-flight-1')).toBeUndefined();
+        expect(held.listColumnHolders()).toEqual([{ projectId: 'project-a', taskId: 'task-in-flight', sessionId: 'in-flight-1' }]);
+        expect([...held.listColumnClaims('project-a')]).toEqual(['task-in-flight']);
+        expect([...held.listColumnClaims('project-b')]).toEqual([]);
+      });
+
+      it('leaves out an in-flight Command Terminal and workflow agent, which hold no column', async () => {
+        await spawnHeld('in-flight-terminal', 'task-terminal', { transient: true });
+        await spawnHeld('in-flight-workflow', 'task-workflow-agent', { transient: true, workflowId: 'workflow-1' });
+        await spawnHeld('in-flight-task', 'task-in-flight');
+
+        expect(held.listColumnHolders().map((holder) => holder.taskId)).toEqual(['task-in-flight']);
+      });
+
+      it('drops a spawn that was cancelled while it waited', async () => {
+        await spawnHeld('in-flight-cancelled', 'task-cancelled');
+        await spawnHeld('in-flight-kept', 'task-kept');
+
+        held.kill('in-flight-cancelled');
+
+        expect(held.listColumnHolders().map((holder) => holder.taskId)).toEqual(['task-kept']);
+      });
+
+      it('lists the task once, under the same id, after the spawn is answered', async () => {
+        await spawnHeld('in-flight-1', 'task-in-flight');
+
+        transport.releaseSpawns();
+        await vi.waitFor(() => expect(held.getSession('in-flight-1')?.status).toBe('running'));
+
+        expect(held.listColumnHolders()).toEqual([{ projectId: 'project-a', taskId: 'task-in-flight', sessionId: 'in-flight-1' }]);
+      });
+    });
   });
 });
 

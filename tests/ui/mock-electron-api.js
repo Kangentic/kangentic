@@ -362,6 +362,7 @@
       defaultBaseBranch: 'main',
       copyFiles: [],
       initScript: null,
+      stopScript: null,
       linkNodeModules: true,
       holdPromptForInitScript: true,
       prAutoRefresh: true,
@@ -706,13 +707,13 @@
   // Mirrors the production seed in src/main/db/migrations/default-data.ts;
   // tests/unit/default-swimlanes-seed-parity.test.ts binds the two lists.
   var DEFAULT_SWIMLANES = [
-    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
-    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume' },
+    { name: 'To Do', description: null, role: 'todo', color: '#6b7280', icon: 'layers', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Planning', description: null, role: null, color: '#8b5cf6', icon: 'map', is_archived: false, is_ghost: false, permission_mode: 'plan', auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: '__executing__', plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Executing', description: null, role: null, color: '#3b82f6', icon: 'square-terminal', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Code Review', description: null, role: null, color: '#f59e0b', icon: 'code', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Testing', description: null, role: null, color: '#06b6d4', icon: 'flask-conical', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Merge', description: null, role: null, color: '#f97316', icon: 'merge', is_archived: false, is_ghost: false, permission_mode: null, auto_spawn: true, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
+    { name: 'Done', description: null, role: 'done', color: '#10b981', icon: 'circle-check-big', is_archived: true, is_ghost: false, permission_mode: null, auto_spawn: false, auto_command: null, auto_command_mode: 'immediate', plan_exit_target_id: null, plan_approval: 'manual', agent_override: null, model_override: null, effort_override: null, handoff_context: false, session_target: 'main', session_spawn_strategy: 'create_or_resume', max_agents: null },
   ];
 
   var MOCK_PROJECT_ENTRIES = [
@@ -1710,6 +1711,23 @@
           if (index !== -1) listeners.splice(index, 1);
         };
       },
+      onStopScriptFailed: function (callback) {
+        // Tests fire this via window.__mockFireStopScriptFailed(event).
+        if (!window.__mockStopScriptFailedListeners) window.__mockStopScriptFailedListeners = [];
+        window.__mockStopScriptFailedListeners.push(callback);
+        if (!window.__mockFireStopScriptFailed) {
+          window.__mockFireStopScriptFailed = function (event) {
+            var listeners = (window.__mockStopScriptFailedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(event); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockStopScriptFailedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
       onSpawnWarning: function (callback) {
         // Tests fire this via window.__mockFireTaskSpawnWarning(taskId, message, projectId, kind).
         if (!window.__mockTaskSpawnWarningListeners) window.__mockTaskSpawnWarningListeners = [];
@@ -2250,6 +2268,7 @@
           handoff_context: input.handoff_context !== undefined ? input.handoff_context : false,
           session_target: input.session_target ?? 'main',
           session_spawn_strategy: input.session_spawn_strategy ?? 'create_or_resume',
+          max_agents: input.max_agents ?? null,
           position: swimlanes.length,
           created_at: now(),
         };
@@ -2734,6 +2753,19 @@
           if (idx >= 0) listeners.splice(idx, 1);
         };
       },
+      // Seeded by a spec through window.__mockQueueSnapshot, or pushed with
+      // window.__mockFireQueueChanged(snapshot). Main builds the real one from
+      // its queue and each project's database, which this mock does not model.
+      getQueueSnapshot: async function () {
+        return window.__mockQueueSnapshot || { columns: [], global: [] };
+      },
+      onQueueChanged: function (callback) {
+        window.__mockFireQueueChanged = function (snapshot) {
+          window.__mockQueueSnapshot = snapshot;
+          callback(snapshot);
+        };
+        return function () { window.__mockFireQueueChanged = undefined; };
+      },
       onRemoved: function (callback) {
         // Tests can fire this via window.__mockFireRemoved(sessionId, session, projectId).
         // The mock's own tasks.move fires it for a move into a todo-role
@@ -2987,6 +3019,83 @@
         var seeded = typeof window !== 'undefined' && window.__mockCommandTerminalHistory;
         var entries = (seeded && seeded[projectId]) || [];
         return entries.slice();
+      },
+      // Mirrors CommandTerminalHistory.rename: one line, cut to 64, empty
+      // clears, and the changed push goes out. Call log for assertions:
+      // window.__mockRenameCommandTerminalHistoryCalls.
+      renameCommandTerminalHistory: async function (projectId, agentSessionId, name) {
+        if (typeof window === 'undefined') return false;
+        window.__mockRenameCommandTerminalHistoryCalls = window.__mockRenameCommandTerminalHistoryCalls || [];
+        window.__mockRenameCommandTerminalHistoryCalls.push({ projectId: projectId, agentSessionId: agentSessionId, name: name });
+        // window.__mockCommandTerminalHistoryRefusal = { rename: 'refuse' | 'reject', message?: string }:
+        // 'refuse' answers false as main does when a terminal holds the conversation;
+        // 'reject' throws, with `message` as the decorated text Electron would hand over.
+        var renameRefusal = window.__mockCommandTerminalHistoryRefusal;
+        if (renameRefusal && renameRefusal.rename === 'reject') {
+          throw new Error(renameRefusal.message || 'the conversation could not be saved');
+        }
+        if (renameRefusal && renameRefusal.rename === 'refuse') return false;
+        var seeded = window.__mockCommandTerminalHistory;
+        var entries = (seeded && seeded[projectId]) || [];
+        var entry = entries.find(function (candidate) { return candidate.agentSessionId === agentSessionId; });
+        if (!entry) return false;
+        var line = String(name || '').replace(/\s+/g, ' ').trim().slice(0, 64).trim();
+        entry.label = line || null;
+        if (window.__mockFireCommandTerminalHistoryChanged) window.__mockFireCommandTerminalHistoryChanged(projectId);
+        return true;
+      },
+      // Mirrors CommandTerminalHistory.remove: the row goes and the changed push fires.
+      removeCommandTerminalHistory: async function (projectId, agentSessionId) {
+        if (typeof window === 'undefined') return false;
+        // Call log for assertions: window.__mockRemoveCommandTerminalHistoryCalls. The same
+        // window.__mockCommandTerminalHistoryRefusal knob as rename, under `remove`.
+        window.__mockRemoveCommandTerminalHistoryCalls = window.__mockRemoveCommandTerminalHistoryCalls || [];
+        window.__mockRemoveCommandTerminalHistoryCalls.push({ projectId: projectId, agentSessionId: agentSessionId });
+        var removeRefusal = window.__mockCommandTerminalHistoryRefusal;
+        if (removeRefusal && removeRefusal.remove === 'reject') {
+          throw new Error(removeRefusal.message || 'the conversation could not be removed');
+        }
+        if (removeRefusal && removeRefusal.remove === 'refuse') return false;
+        var seeded = window.__mockCommandTerminalHistory;
+        var entries = (seeded && seeded[projectId]) || [];
+        var index = entries.findIndex(function (candidate) { return candidate.agentSessionId === agentSessionId; });
+        if (index === -1) return false;
+        entries.splice(index, 1);
+        if (window.__mockFireCommandTerminalHistoryChanged) window.__mockFireCommandTerminalHistoryChanged(projectId);
+        return true;
+      },
+      // A project's conversation text, as the search index would answer it. Seed
+      // window.__mockCommandTerminalHistoryText = { [agentSessionId]: text }, and
+      // window.__mockCommandTerminalHistoryIndexingOff = true for indexing off.
+      // window.__mockHoldCommandTerminalHistorySearch = true keeps the answer
+      // until window.__mockReleaseCommandTerminalHistorySearch() is called.
+      searchCommandTerminalHistory: async function (projectId, query) {
+        if (typeof window === 'undefined') return { indexingOff: false, hits: [] };
+        if (window.__mockCommandTerminalHistoryIndexingOff) return { indexingOff: true, hits: [] };
+        // window.__mockHoldCommandTerminalHistorySearchPerQuery = true parks each query's
+        // answer on its own, released by window.__mockHeldCommandTerminalHistorySearches[query](),
+        // so a slow answer for an older query can land after a newer one.
+        if (window.__mockHoldCommandTerminalHistorySearchPerQuery) {
+          await new Promise(function (resolve) {
+            window.__mockHeldCommandTerminalHistorySearches = window.__mockHeldCommandTerminalHistorySearches || {};
+            window.__mockHeldCommandTerminalHistorySearches[String(query).trim()] = resolve;
+          });
+        }
+        if (window.__mockHoldCommandTerminalHistorySearch) {
+          await new Promise(function (resolve) { window.__mockReleaseCommandTerminalHistorySearch = resolve; });
+        }
+        var texts = window.__mockCommandTerminalHistoryText || {};
+        var needle = String(query).trim().toLowerCase();
+        var hits = [];
+        if (needle) {
+          Object.keys(texts).forEach(function (agentSessionId) {
+            var text = texts[agentSessionId];
+            var start = text.toLowerCase().indexOf(needle);
+            if (start < 0) return;
+            hits.push({ agentSessionId: agentSessionId, snippet: text, matchStart: start, matchEnd: start + needle.length });
+          });
+        }
+        return { indexingOff: false, hits: hits };
       },
       // Tests fire it via window.__mockFireCommandTerminalHistoryChanged(projectId).
       onCommandTerminalHistoryChanged: function (callback) {
@@ -3447,6 +3556,13 @@
 
     config: {
       get: async function (projectId) {
+        // Off by default. A spec of a per-project read seeds
+        // window.__mockStopScriptByProject = { [projectId]: 'script' } and gets that
+        // project's Stop script back for that id only, over the config below.
+        if (projectId && window.__mockStopScriptByProject && projectId in window.__mockStopScriptByProject) {
+          var seededGit = Object.assign({}, config.git, { stopScript: window.__mockStopScriptByProject[projectId] });
+          return Object.assign({}, config, { git: seededGit });
+        }
         // Another project's effective config (a workflow's planned task on its
         // board), as main answers config:get with a projectId: global merged
         // with that project's overrides. Outside the graphics-acceleration
@@ -5173,6 +5289,22 @@
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
       setDefaultBaseBranch: async function (/* branch */) {},
+      setStopScript: async function (projectId, script) {
+        // Main writes the board config file and overlays it at config:get, so a
+        // spec reads what was saved from __mockStopScriptSaves, not config:set.
+        if (!window.__mockStopScriptSaves) window.__mockStopScriptSaves = [];
+        window.__mockStopScriptSaves.push(script);
+        if (!window.__mockStopScriptSaveProjects) window.__mockStopScriptSaveProjects = [];
+        window.__mockStopScriptSaveProjects.push(projectId);
+        if (window.__mockStopScriptSaveError) throw new Error(window.__mockStopScriptSaveError);
+        // A project the spec seeded per project keeps its own value, as main's
+        // per-project board config file does; any other id writes the shared config.
+        if (window.__mockStopScriptByProject && projectId in window.__mockStopScriptByProject) {
+          window.__mockStopScriptByProject[projectId] = script || null;
+          return;
+        }
+        config.git.stopScript = script || null;
+      },
     },
 
     updater: {

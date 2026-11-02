@@ -116,7 +116,7 @@ function storedDistroTarget(distro: string): string {
   return serialized;
 }
 
-function createContext(history: Record<string, { agent_name: string; label: string | null; cli_target?: string | null }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
+function createContext(history: Record<string, { agent_name: string; label: string | null; cli_target?: string | null; named_by_user?: number }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
   return {
     currentProjectId: 'proj-1',
     projectRepo: {
@@ -146,6 +146,7 @@ function createContext(history: Record<string, { agent_name: string; label: stri
       getShell: vi.fn(async () => 'bash'),
       listSessions: vi.fn(() => []),
       setCommandTerminalLabel: vi.fn(() => true),
+      renameCommandTerminal: vi.fn(() => true),
       endCommandTerminal: vi.fn(),
       emit: vi.fn(),
     },
@@ -189,6 +190,26 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     // The conversation is claimed before the spawn and handed to its terminal after.
     expect(context.commandTerminalHistory.claimResume).toHaveBeenCalledWith('proj-1', 'conversation-a');
     expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
+  });
+
+  it("resumes a row a user named as a user's name, so a suggestion never replaces it", async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: 'My rail fix', named_by_user: 1 } });
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+    expect(context.sessionManager.renameCommandTerminal).toHaveBeenCalledWith('session-1', 'My rail fix');
+    expect(context.sessionManager.setCommandTerminalLabel).not.toHaveBeenCalled();
+  });
+
+  it('resumes a row a user cleared as a clear, so the namer stays off with no name to seed', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, named_by_user: 1 } });
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+    expect(context.sessionManager.renameCommandTerminal).toHaveBeenCalledWith('session-1', null);
+  });
+
+  it('leaves a row nobody named to the namer', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, named_by_user: 0 } });
+    await spawn(context, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' });
+    expect(context.sessionManager.renameCommandTerminal).not.toHaveBeenCalled();
+    expect(context.sessionManager.setCommandTerminalLabel).not.toHaveBeenCalled();
   });
 
   it('refuses a conversation another terminal holds with conversation-open and spawns nothing', async () => {

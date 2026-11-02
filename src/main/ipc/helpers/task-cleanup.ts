@@ -22,6 +22,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import type { LeftoverSweepOptions } from '../../transition-engine/resource-cleanup';
 import { backgroundSessionHoldingConversation } from '../../transition-engine/resume-id-reconcile';
 import { closeTaskWindows } from './task-windows';
+import { stopBeforeReap } from '../../stop-script/terminal-stop';
 // Dev-only (dropped from prod via __KANGENTIC_DEV__ dead-code elimination).
 import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-stop';
 
@@ -53,6 +54,10 @@ import { stopWorktreePreviews } from '../../../devtools/main/worktree-preview-st
  * under each task's title, so pass `title` where the caller has it. A reap the
  * host finishes after main stopped waiting is reported when it finishes.
  *
+ * A project's Stop script runs first, bounded, when a task left something
+ * running (`src/main/stop-script/terminal-stop.ts`), so every terminal transition
+ * gets it from here.
+ *
  * Best-effort by contract: a teardown never fails because a reap did.
  */
 export async function reapTaskLeftovers(
@@ -62,12 +67,19 @@ export async function reapTaskLeftovers(
   options: {
     /** Distros the caller knows a CLI ran in, beyond the ones the session records name. */
     wslDistros?: readonly string[];
+    /** A Command Terminal is no task of the project, so its end runs no Stop script. */
+    skipStopScript?: boolean;
+    /** A superseding move: cancels the Stop script, and the reap still goes on. */
+    signal?: AbortSignal;
   } = {},
 ): Promise<void> {
   if (tasks.length === 0) return;
   // Before the reap, which would otherwise kill it: a conversation moved into
   // the agent CLI's own background session is still the task's agent.
   await stopTaskBackgroundSessions(context, projectPath ?? null, tasks.map((task) => task.id));
+  // Before the reap too: a stack stopped by its own project's script goes
+  // cleanly, containers included, which the reap can neither see nor do.
+  if (!options.skipStopScript) await stopBeforeReap(context, projectPath ?? null, tasks, options.signal);
   // Held for the whole reap, so a bulk delete's reaps, which the host runs in
   // two batches a second apart, still make one toast.
   const releaseReport = leftoverProcessReports.beginReap();
@@ -411,6 +423,7 @@ export async function cleanupTaskSession(
   tasks: TaskRepository,
   projectId?: string | null,
   projectPath?: string | null,
+  options: { signal?: AbortSignal } = {},
 ): Promise<void> {
   const resolvedProjectId = projectId ?? context.currentProjectId;
   const resolvedProjectPath = projectPath ?? context.currentProjectPath;
@@ -449,7 +462,7 @@ export async function cleanupTaskSession(
   // directory as its cwd, which is what makes the removal in
   // cleanupTaskResources fail. After removeByTaskId, so every session of the
   // task has exited and none is force-killed outside its exit grace.
-  await reapTaskLeftovers(context, resolvedProjectPath, [{ ...task, title: task.title ?? tasks.getById(task.id)?.title }]);
+  await reapTaskLeftovers(context, resolvedProjectPath, [{ ...task, title: task.title ?? tasks.getById(task.id)?.title }], options);
 
   // Remove session DB records + directories from disk
   if (resolvedProjectId) {
@@ -520,8 +533,9 @@ export async function cleanupTaskResources(
   tasks: TaskRepository,
   projectId?: string | null,
   projectPath?: string | null,
+  options: { signal?: AbortSignal } = {},
 ): Promise<void> {
-  await cleanupTaskSession(context, task, tasks, projectId, projectPath);
+  await cleanupTaskSession(context, task, tasks, projectId, projectPath, options);
 
   // A full reset ends the spawn decision `worktree_skip_reason` describes; the
   // next spawn re-decides. Unconditional (not inside the worktree block below)

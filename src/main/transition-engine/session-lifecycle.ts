@@ -1,6 +1,6 @@
 import type { SessionRepository } from '../db/repositories/session-repository';
 import { resolveOwnSessionRecord } from '../db/repositories/session-own-record';
-import type { SuspendedBy } from '../../shared/types';
+import type { SessionRecord, SuspendedBy } from '../../shared/types';
 import { destroyLanesForSession } from '../browser/browser-lane-manager';
 import { releaseViewportOverridesForSession } from '../browser/viewport-override';
 
@@ -14,6 +14,8 @@ import { releaseViewportOverridesForSession } from '../browser/viewport-override
 // Valid transitions:
 //   queued     → running    (slot opened)
 //   queued     → exited     (cancelled before start)
+//   queued     → suspended  (a queued resume keeping its conversation through a
+//                            quit, a pause or a move)
 //   running    → suspended  (user pause, move to Done, auto_spawn=false, or a
 //                            PTY exit during app shutdown via onExit hardening)
 //   running    → exited     (Claude exits naturally, crash, killed)
@@ -33,13 +35,13 @@ import { releaseViewportOverridesForSession } from '../browser/viewport-override
 export function markRecordExited(
   sessionRepo: SessionRepository,
   recordId: string,
-  extra?: { exit_code?: number; exited_at?: string },
+  extra?: { exit_code?: number; exited_at?: string; agent_session_id?: null },
 ): boolean {
   const transitioned = sessionRepo.compareAndUpdateStatus(
     recordId,
     ['running', 'queued'],
     'exited',
-    { exit_code: extra?.exit_code, exited_at: extra?.exited_at ?? new Date().toISOString() },
+    { ...extra, exited_at: extra?.exited_at ?? new Date().toISOString() },
   );
 
   // Destroy any offscreen browser lanes this session opened.
@@ -99,6 +101,43 @@ export function markRecordSuspended(
     'suspended',
     { suspended_at: new Date().toISOString(), suspended_by: suspendedBy },
   );
+}
+
+/**
+ * Mark a queued resume suspended. `markRecordSuspended` refuses a queued record
+ * on purpose: a queued record has usually never run. This one has a conversation,
+ * and retiring the record it resumed happened when it queued, so it is the only
+ * record left that says how to get back to it.
+ */
+export function suspendQueuedResume(
+  sessionRepo: SessionRepository,
+  recordId: string,
+  suspendedBy: SuspendedBy,
+): boolean {
+  return sessionRepo.compareAndUpdateStatus(
+    recordId,
+    'queued',
+    'suspended',
+    { suspended_at: new Date().toISOString(), suspended_by: suspendedBy },
+  );
+}
+
+/**
+ * Settle a queued record whose session is ending before it started. A fresh
+ * start never ran, so it exits and gives up the id minted for it: that id names
+ * a conversation no CLI wrote, and the resume guard needs an agent's own report
+ * to tell, so a later spawn would `--resume` into "No conversation found". A
+ * resume keeps its conversation: a task queued for its column's slot must come
+ * back to the same one after a quit or a pause, and only a suspended record does.
+ */
+export function settleQueuedRecord(
+  sessionRepo: SessionRepository,
+  record: Pick<SessionRecord, 'id' | 'agent_session_id'>,
+  resuming: boolean,
+  suspendedBy: SuspendedBy,
+): boolean {
+  if (resuming && record.agent_session_id) return suspendQueuedResume(sessionRepo, record.id, suspendedBy);
+  return markRecordExited(sessionRepo, record.id, { agent_session_id: null });
 }
 
 /**

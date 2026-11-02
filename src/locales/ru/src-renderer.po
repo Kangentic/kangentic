@@ -154,7 +154,24 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {Задача «{taskTitle}» простаивала # минуту.} few {Задача «{taskTitle}» простаивала # минуты.} many {Задача «{taskTitle}» простаивала # минут.} other {Задача «{taskTitle}» простаивала # минуты.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr "Задача «{taskTitle}»: автоматизация «{automationName}» завершилась с ошибкой в столбце {columnName}."
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": exited with code {exitCode}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
@@ -1071,6 +1088,11 @@ msgstr "Перейти к началу"
 msgid "just now"
 msgstr "только что"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic не может записывать в эту папку."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1337,6 +1359,10 @@ msgstr "Необязательно"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Он используется и в другой работе. Его остановка может её нарушить."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"
@@ -1480,8 +1506,9 @@ msgid "Restart to update"
 msgstr "Перезапустить для обновления"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "Теперь возобновление продолжит новую беседу агента."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1600,9 @@ msgid "Settings"
 msgstr "Настройки"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Ошибка скрипта настройки"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
@@ -1625,6 +1653,10 @@ msgstr "Подготовка продолжается: {taskTitle}"
 #, fuzzy
 msgid "Still running: {tasks}."
 msgstr "Ещё выполняются: {tasks}."
+
+#: src/renderer/App.tsx
+msgid "Stop script failed"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

@@ -15,6 +15,7 @@ import type { TranscriptSearchHit } from './memory-search';
 import type { CommitHit } from './commit/commit-search';
 import type { ProjectRef, RankedRelatedWork } from './worker/methods';
 import type { Embedder } from './types';
+import type { CommandTerminalHistorySearchHit } from '../../shared/types';
 
 /** What a caller tells an agent or a reader when the worker cannot answer. */
 export const INDEX_RESTARTING = 'The Knowledge Graph index is restarting. Try again in a moment.';
@@ -56,6 +57,20 @@ export async function searchConversations(
   } catch (error) {
     if (error instanceof RetrievalUnavailableError) onUnavailable?.();
     console.warn('[retrieval] conversation search unavailable:', error instanceof Error ? error.message : error);
+    return [];
+  }
+}
+
+/** Command Terminal conversations whose text matches, for the Earlier search.
+ *  None while the worker is down: the rail then shows its name matches alone. */
+export async function searchCommandTerminalConversationsIn(
+  projectId: string,
+  query: string,
+): Promise<CommandTerminalHistorySearchHit[]> {
+  try {
+    return await retrievalClient.call('search.commandTerminalConversations', { projectId, query });
+  } catch (error) {
+    console.warn('[retrieval] Command Terminal search unavailable:', error instanceof Error ? error.message : error);
     return [];
   }
 }

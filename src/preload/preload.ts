@@ -1,5 +1,6 @@
 import { contextBridge, ipcRenderer, webUtils } from 'electron';
 import { IPC } from '../shared/ipc-channels';
+import type { QueueSnapshot, StopScriptFailedEvent } from '../shared/types';
 import type { ElectronAPI, WorkflowChangedEvent, WorkflowCompletedEvent, WorkflowStalledEvent, LeftoverProcessReport, LeftoverStopSettled, AutomationInterruptedSummary, AutomationRunFailure, NotificationInput, Project, PtyResizeOrigin, Session, SessionUsage, ActivityState, ActivityReason, AssistantMessageTrailEntry, SessionEvent, UpdateDownloadedInfo, HostMemoryPressureEvent, HostMemoryRecoveryEvent, HostMemoryAgentPausedEvent, UsageTimePeriod, UsageStatsScope, UsageDayDrill, UsageCustomWindow, TaskBulkDeleteProgress, ProjectMoveProgress, DictationModelProgress, MobilePairingSasPayload, MobilePairingConfirmedPayload, MobilePairingEndedPayload, MonitorSnapshot, TaskDetailHost, TaskDetailRemoteOwner, AutoCommandResultNotice, ConversationExpiredNotice, BrowserDownloadDone, BrowserViewportOverride, GuestMouseButtonEvent, RendererErrorContext, KnowledgeGraphAnswerStreamPush, KnowledgeGraphBuildProgress, KnowledgeGraphAnswerContext, DevSeedKnowledgeGraphDemoPlan, McpConnectionFailure, SpawnWarningKind } from '../shared/types';
 import type { AnnouncementsChangedPayload } from '../shared/announcements';
 import { POPOUT_ARG_PREFIX } from '../shared/pop-out-arg';
@@ -145,6 +146,11 @@ const api: ElectronAPI = {
         callback(taskId, taskTitle, message, projectId);
       ipcRenderer.on(IPC.TASK_SPAWN_BLOCKED, handler);
       return () => ipcRenderer.removeListener(IPC.TASK_SPAWN_BLOCKED, handler);
+    },
+    onStopScriptFailed: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, failedEvent: StopScriptFailedEvent) => callback(failedEvent);
+      ipcRenderer.on(IPC.STOP_SCRIPT_FAILED, handler);
+      return () => ipcRenderer.removeListener(IPC.STOP_SCRIPT_FAILED, handler);
     },
     onSpawnWarning: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, taskId: string, message: string, projectId?: string, kind?: SpawnWarningKind) =>
@@ -328,6 +334,12 @@ const api: ElectronAPI = {
       ipcRenderer.on(IPC.SESSION_REMOVED, handler);
       return () => ipcRenderer.removeListener(IPC.SESSION_REMOVED, handler);
     },
+    getQueueSnapshot: () => ipcRenderer.invoke(IPC.SESSION_QUEUE_SNAPSHOT),
+    onQueueChanged: (callback) => {
+      const handler = (_event: Electron.IpcRendererEvent, snapshot: QueueSnapshot) => callback(snapshot);
+      ipcRenderer.on(IPC.SESSION_QUEUE_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.SESSION_QUEUE_CHANGED, handler);
+    },
     onUsage: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, sessionId: string, data: SessionUsage, projectId?: string) => callback(sessionId, data, projectId);
       ipcRenderer.on(IPC.SESSION_USAGE, handler);
@@ -372,6 +384,12 @@ const api: ElectronAPI = {
     setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
     renameTransient: (sessionId: string, name: string | null) => ipcRenderer.invoke(IPC.SESSION_RENAME_TRANSIENT, sessionId, name),
     listCommandTerminalHistory: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_LIST, projectId),
+    renameCommandTerminalHistory: (projectId: string, agentSessionId: string, name: string | null) =>
+      ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_RENAME, projectId, agentSessionId, name),
+    removeCommandTerminalHistory: (projectId: string, agentSessionId: string) =>
+      ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_REMOVE, projectId, agentSessionId),
+    searchCommandTerminalHistory: (projectId: string, query: string) =>
+      ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_SEARCH, projectId, query),
     onCommandTerminalHistoryChanged: (callback) => {
       const handler = (_event: Electron.IpcRendererEvent, projectId: string) => callback(projectId);
       ipcRenderer.on(IPC.COMMAND_TERMINAL_HISTORY_CHANGED, handler);
@@ -832,6 +850,7 @@ const api: ElectronAPI = {
     getShortcuts: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_GET_SHORTCUTS),
     setShortcuts: (actions, target) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_SHORTCUTS, actions, target),
     setDefaultBaseBranch: (branch: string) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH, branch),
+    setStopScript: (projectId: string, script: string | null) => ipcRenderer.invoke(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, projectId, script),
   },
 
   clipboard: {

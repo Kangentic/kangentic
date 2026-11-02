@@ -372,6 +372,12 @@ src/main/workflows/
     `stallReader` shows no mark.
   - The core's `readyTasks` skips a held task (`CoreTask.held`), and `startTask` re-checks it, so
     a held task in To Do stays queued and what waits for it keeps waiting.
+  - `planPass` takes an optional `columnRoom` reader, built by `columnRoomReader()` in the host from
+    `columnRoom` (`src/main/transition-engine/column-capacity.ts`). A start whose column has no room
+    for another agent (see [a column's agent limit](../sessions/spawn-flow.md#a-columns-agent-limit))
+    is skipped in that pass and takes no global slot, so the task stays in To Do, the workflow's
+    durable queue, instead of piling into the in-memory one. One pass fills a column only up to its
+    room. A project that is not open reads as no limit.
   - The lock lets a person move its card to any column but To Do (`taskHeld`), and the board's
     reads agree: `humanGateExit` names no gate for it, `isLockedOnBoard` and `sendAwayRefusal`
     read the hold, and the phone's `lock_reason` is null. Backlog and Archive stay refused.

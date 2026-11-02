@@ -673,6 +673,7 @@ export const handleGetColumnDetail: CommandHandler = (
     `  Session: ${matched.session_target === 'isolated' ? 'isolated (own conversation)' : 'main (task conversation)'}`,
     `  On enter: ${matched.session_spawn_strategy === 'always_spawn_new' ? 'always spawn new' : 'create or resume'}`,
     `  Handoff context: ${matched.handoff_context ? 'yes' : 'no'}`,
+    `  Agents at once: ${matched.max_agents ?? 'no limit'}`,
     `  Plan approval: ${matched.plan_approval}${matched.permission_mode === 'plan' ? '' : ' (applies only while permission mode is plan)'}`,
   ];
   if (completedCount !== null) lines.push(`  Completed: ${completedCount}`);
@@ -759,6 +760,7 @@ export const handleGetColumnDetail: CommandHandler = (
       modelOverride: matched.model_override,
       effortOverride: matched.effort_override,
       handoffContext: matched.handoff_context,
+      maxAgents: matched.max_agents,
       sessionTarget: matched.session_target,
       sessionSpawnStrategy: matched.session_spawn_strategy,
       planExitTarget: planExitTargetName,

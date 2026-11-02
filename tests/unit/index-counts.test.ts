@@ -139,6 +139,7 @@ describe('corporaOf', () => {
       // No row in the totals: zeros, and it does not embed.
       { corpus: 'commit', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
       { corpus: 'code', documents: 1, chunks: 2, embeddedChunks: 1, embeds: true },
+      { corpus: 'command_terminal', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
     ]);
   });
 
@@ -157,6 +158,7 @@ describe('corporaOf', () => {
       // The totals trail a fresh index: more wait than the totals hold, so the
       // corpus counts at least the passages that wait, none of them embedded.
       { corpus: 'code', documents: 1, chunks: 5, embeddedChunks: 0, embeds: true },
+      { corpus: 'command_terminal', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
     ]);
     expect(countChunksNeedingEmbedding).toHaveBeenCalledWith('bge@2');
   });

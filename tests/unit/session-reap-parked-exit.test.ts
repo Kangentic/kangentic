@@ -25,7 +25,7 @@ import { AGENT_EXIT_REQUEST_TIMEOUT_MS, type AgentExitWaitResult } from '../../s
 import type { TaggedReapResult } from '../../src/main/pty/process-tag/tagged-reap';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
-const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, entries: [] };
+const EMPTY: TaggedReapResult = { killedPids: [], unreadableCount: 0, failureReason: null, failureCode: null, failurePass: null, failureCause: null, entries: [] };
 
 function setup() {
   const manager = new SessionManager();

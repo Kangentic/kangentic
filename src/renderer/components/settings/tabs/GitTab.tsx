@@ -1,18 +1,80 @@
-import { GitBranch, GitFork, GitPullRequest } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { CircleStop, GitBranch, GitFork, GitPullRequest } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { useSettingsProject } from '../use-settings-project';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 
 /**
- * Three cards: Branches (where work starts and how current it stays),
- * Worktrees (the feature switch and everything that only matters with it on),
- * and Pull requests. Only Worktrees has a master switch. Branches and pull
- * requests work either way, so their cards have no switch and always show.
+ * The Stop script lives in the project's board config files, not in the project
+ * overrides `config` carries, so the row reads and writes by project id. The panel's
+ * switcher can name a project whose board is not open, and a write that followed the
+ * open board would land on the wrong repository. `key` gives each project its own
+ * field, so an unsaved edit flushes to the project it was typed for. The field stays
+ * disabled until this project's value has loaded: a commit of the empty draft would
+ * delete the script.
+ */
+function StopScriptRow() {
+  const { t } = useLingui();
+  const projectId = useSettingsProject()?.id ?? null;
+  const [loaded, setLoaded] = useState<{ projectId: string; script: string } | null>(null);
+  const isLoaded = loaded?.projectId === projectId;
+
+  useEffect(() => {
+    if (!projectId) return;
+    let stale = false;
+    window.electronAPI.config.get(projectId).then(
+      (projectConfig) => {
+        if (!stale) setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' });
+      },
+      (error: unknown) => console.warn('[SETTINGS] Could not read the Stop script:', error),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [projectId]);
+
+  return (
+    <CardRow {...settingProps('git.stopScript')}>
+      <SettingTextInput
+        key={projectId}
+        value={isLoaded ? loaded.script : ''}
+        disabled={!isLoaded}
+        onCommit={(nextStopScript) => {
+          if (!projectId) return;
+          window.electronAPI.boardConfig.setStopScript(projectId, nextStopScript || null)
+            .then(() => window.electronAPI.config.get(projectId))
+            .then(
+              (projectConfig) => setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' }),
+              (error: unknown) => {
+                useToastStore.getState().addToast({
+                  title: t`Couldn't save Stop script`,
+                  message: asSentence(describeIpcError(error)),
+                  variant: 'error',
+                });
+              },
+            );
+        }}
+        // i18n-ok: an example shell command
+        placeholder="npm run stop"
+        ariaLabel={t`Stop script`}
+        className="placeholder-fg-faint"
+      />
+    </CardRow>
+  );
+}
+
+/**
+ * Four cards: Branches (where work starts and how current it stays), Worktrees
+ * (the feature switch and everything that only matters with it on), Leftover
+ * processes (the project's Stop script), and Pull requests. Only Worktrees has a
+ * master switch. The others work either way, so they have no switch and always
+ * show.
  */
 export function GitTab({ config }: { config: AppConfig }) {
   const { t } = useLingui();
@@ -106,6 +168,17 @@ export function GitTab({ config }: { config: AppConfig }) {
             ) : null}
           </>
         ) : null}
+      </SettingsCard>
+
+      {/* Not in the Worktrees card: the script also runs in the project folder
+          for a task with no worktree, so a project with worktrees off needs it. */}
+      <SettingsCard
+        icon={<CircleStop size={16} />}
+        label={t`Leftover processes`}
+        description={t`How this project stops what a task leaves running.`}
+        searchIds={['git.stopScript']}
+      >
+        <StopScriptRow />
       </SettingsCard>
 
       <SettingsCard

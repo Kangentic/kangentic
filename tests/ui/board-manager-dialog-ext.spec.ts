@@ -204,12 +204,12 @@ test.describe('BoardManagerDialog extended', () => {
   // of Automation - so it is asserted through that toggle's presence rather than
   // through a notice of its own.
 
-  test('To Do column collapses Agent/Conversation to inline explanations', async () => {
+  test('To Do column collapses Agent and Sessions to inline explanations', async () => {
     await openManagerByHeader('To Do');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
     await expect(dialog.getByText("Sessions don't run in To Do columns, so Agent doesn't apply.")).toBeVisible();
-    await expect(dialog.getByText("Sessions don't run in To Do columns, so Conversation doesn't apply.")).toBeVisible();
+    await expect(dialog.getByText("Sessions don't run in To Do columns.", { exact: true })).toBeVisible();
 
     // The collapsed sections render no fields, the handoff toggle among them.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
@@ -253,8 +253,8 @@ test.describe('BoardManagerDialog extended', () => {
     // back to it.
     await expect(dialog.locator('[role="switch"][aria-label="Start an agent here"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toBeVisible();
-    // Handoff rides inside Conversation, so it collapses with it.
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Sessions.')).toBeVisible();
+    // Handoff rides inside Sessions, so it collapses with it.
     await expect(dialog.locator('[role="switch"][aria-label="Receive context from prior agent"]')).toHaveCount(0);
 
     // Close before cleanup, then delete the test column.
@@ -270,16 +270,16 @@ test.describe('BoardManagerDialog extended', () => {
   //
   // "Start an agent here" leads the Agent section and gates the agent-behavior
   // config. The column page renders every section at once; toggling it off
-  // hides the agent fields (the toggle itself stays) and collapses Conversation
+  // hides the agent fields (the toggle itself stays) and collapses Sessions
   // to its inline explanation; toggling it back on restores the fields.
 
   test('toggling "Start an agent here" expands and collapses the dependent sections in place', async () => {
     await openManagerByHeader('Code Review'); // auto_spawn=true
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
-    // With it on, the Agent field is present and the Conversation hint is absent.
+    // With it on, the Agent field is present and the Sessions hint is absent.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toBeVisible();
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toHaveCount(0);
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Sessions.')).toHaveCount(0);
 
     const autoSpawnSwitch = dialog.locator('[role="switch"][aria-label="Start an agent here"]');
     await expect(autoSpawnSwitch).toHaveAttribute('aria-checked', 'true');
@@ -289,7 +289,7 @@ test.describe('BoardManagerDialog extended', () => {
     // The agent fields unmount (the toggle stays) and the downstream hint appears.
     await expect(dialog.locator('[data-testid="column-agent-override"]')).toHaveCount(0);
     await expect(autoSpawnSwitch).toBeVisible();
-    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Conversation.')).toBeVisible();
+    await expect(dialog.getByText('Turn on "Start an agent here" in the Agent section to enable Sessions.')).toBeVisible();
 
     // Toggle back on: the field returns (net no change, so the dialog stays clean).
     await autoSpawnSwitch.click();
@@ -523,7 +523,7 @@ test.describe('BoardManagerDialog extended', () => {
   // always_spawn_new). Verify the defaults, the isolated -> always-spawn-new
   // snap, and that both persist.
 
-  // ── Conversation card: Session ───────────────────────────────────────────
+  // ── Sessions card: which conversation ───────────────────────────────────────────
   //
   // One control, a two-option radiogroup. The spawn-strategy Select that used to
   // sit beside it is gone from the UI: `resolveForceFresh` already derives it
@@ -532,7 +532,7 @@ test.describe('BoardManagerDialog extended', () => {
   // still READS the column value, which is why the last assertion here checks
   // that saving does not disturb it.
 
-  test('Conversation: Session is a two-option radiogroup that saves, carrying the spawn strategy with it', async () => {
+  test('Sessions: the conversation row is a two-option radiogroup that saves, carrying the spawn strategy with it', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');
 
@@ -546,10 +546,10 @@ test.describe('BoardManagerDialog extended', () => {
     const isolated = dialog.locator('[data-testid="column-session-target-isolated"]');
     await expect(main).toHaveAttribute('aria-checked', 'true');
     // One line on the row, the full explanation behind the info icon, and a tip per option.
-    await expect(dialog.getByText("Main continues the task's conversation, and Isolated starts clean on every entry.")).toBeVisible();
-    await expect(dialog.getByRole('button', { name: 'About Session' })).toHaveAccessibleDescription(/unless you give this one its own/);
+    await expect(dialog.getByText("Main continues the task's conversation, and Isolated starts a new one on every entry.")).toBeVisible();
+    await expect(dialog.getByRole('button', { name: 'About Which conversation this column uses' })).toHaveAccessibleDescription(/unless you give this one its own/);
     await expect(main).toHaveAccessibleDescription("Share the task's conversation with the other columns.");
-    await expect(isolated).toHaveAccessibleDescription('Start a clean conversation on every entry.');
+    await expect(isolated).toHaveAccessibleDescription('Start a new conversation on every entry.');
     // Isolated leads with the Split icon that marks an isolated session everywhere; the word names it.
     await expect(isolated.getByTestId('isolated-icon')).toHaveCount(1);
     await expect(main.getByTestId('isolated-icon')).toHaveCount(0);
@@ -694,7 +694,7 @@ test.describe('BoardManagerDialog extended', () => {
     // Dirty edit is discarded by afterEach.
   });
 
-  // The table's first row is the band row (Agent / Conversation / Automations), whose colspan
+  // The table's first row is the band row (Agent / Sessions / Automations), whose colspan
   // cells carry no width, and under table-layout: fixed the first row is what sizes the columns.
   // Until DataTable carried the widths in a <colgroup>, every column was an equal tenth of the
   // table and "Plan (Read-Only)" was cut mid-glyph. Relative, not pixel-exact: Permissions is

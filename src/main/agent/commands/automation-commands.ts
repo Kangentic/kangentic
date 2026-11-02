@@ -26,6 +26,8 @@ import {
   AUTOMATION_MANIFEST,
   AUTOMATION_TRIGGER_LABELS,
   AUTOMATION_TRIGGERS,
+  automationMovesTask,
+  automationMoveTargetName,
   canColumnRun,
   isAutomationTrigger,
   isAutomationType,
@@ -36,7 +38,10 @@ import {
 import { describeAutomation, describeAutomationMarksInWords } from '../../../shared/automation-describe';
 import { englishI18n, englishText } from '../../../shared/i18n/english';
 import { TEXT_MATCH_UNAVAILABLE_REASON, textMatchCanMatch } from '../../../shared/final-line-match';
+import { resolveMoveTarget, routeOf } from '../../automations/move-target';
+import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { resolveColumn, listActiveSwimlanes } from './column-resolver';
+import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './running-work-guard';
 import { resolveTask } from './task-resolver';
 import { agentRegistry } from '../agent-registry';
 import type { CommandContext, CommandHandler, CommandResponse } from './types';
@@ -382,6 +387,27 @@ export const handleRunAutomation: CommandHandler = async (
   const selector = String(params.task);
   const task = resolveTask(new TaskRepository(db), selector.replace(/^#/, ''));
   if (!task) return { success: false, error: `No task matches "${selector}". Pass a task id or its #number.` };
+
+  // A Move to column row run by hand on another task reaches the same teardown
+  // as `kangentic_move_task`, so it answers to the same guard. At a turn end the
+  // row acts on the task whose own turn ended, and this path is not involved.
+  if (automationMovesTask(automation.type) && needsRunningWorkCheck(context, task)) {
+    // Run-again refuses this too, but a refusal here reads as work at risk when
+    // the row would move nothing. Answered, not skipped: a drag back into the
+    // column before run-again takes the lock would pass the guard unasked.
+    if (task.swimlane_id !== columnResolution.swimlane.id) {
+      return { success: false, error: `#${task.display_id} "${task.title}" is no longer in ${columnResolution.swimlane.name}, so this row cannot move it.` };
+    }
+    const target = resolveMoveTarget(
+      new SwimlaneRepository(db).list(),
+      columnResolution.swimlane.id,
+      automationMoveTargetName(automation.type, automation.config),
+      routeOf(task),
+    );
+    const teardown = target.ok ? teardownOfColumn(target.column) : null;
+    const refusal = teardown ? await refuseRunningWork(context, task, teardown) : null;
+    if (refusal) return { success: false, error: refusal };
+  }
 
   const result = await context.onRunAutomation(automation.id, task.id);
   if (!result.ok) return { success: false, error: result.error };

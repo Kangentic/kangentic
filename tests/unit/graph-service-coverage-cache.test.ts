@@ -136,6 +136,8 @@ describe('graph service coverage cache', () => {
       { corpus: 'commit', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
       // Embedded while its switch is on: its row carries an embedded share.
       { corpus: 'code', documents: 0, chunks: 0, embeddedChunks: 0, embeds: true },
+      // The Earlier search's text: keywords only, so no embedded share either.
+      { corpus: 'command_terminal', documents: 0, chunks: 0, embeddedChunks: 0, embeds: false },
     ]);
     // No projection yet and no stored width: the size is the other corpora's text.
     expect(first.index.storageBytes).toBe(300);

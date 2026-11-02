@@ -338,7 +338,8 @@ export type SpawnPhase =
   | 'switching-agent'
   | 'applying-settings'
   | 'new-session'
-  | 'resending-command';
+  | 'resending-command'
+  | 'queuing-for-column';
 
 /** Phase → user-facing label (single source of truth for display text). */
 const PHASE_LABELS: Record<SpawnPhase, string> = {
@@ -372,6 +373,9 @@ const PHASE_LABELS: Record<SpawnPhase, string> = {
   // prompt. Named for what it is rather than "Starting new session..." (it is
   // a resume) so the card and the phone say why the terminal churned.
   'resending-command': 'Re-sending command...',
+  // A running agent arrived in a full column: it pauses, then queues for its
+  // turn. This covers the gap until the queued row replaces the label.
+  'queuing-for-column': 'Queued...',
 };
 
 /** Get the user-facing label for a spawn phase. */

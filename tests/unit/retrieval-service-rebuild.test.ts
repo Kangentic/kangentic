@@ -52,10 +52,14 @@ const embedEngineMock = vi.hoisted(() => ({
 }));
 vi.mock('../../src/main/retrieval/embedder/embed-engine', () => ({ embedEngine: embedEngineMock }));
 
-const conversationIndexerMock = vi.hoisted(() => ({ sweepProject: vi.fn(async () => undefined) }));
+const conversationIndexerMock = vi.hoisted(() => ({
+  sweepProject: vi.fn(async () => undefined),
+  sweepCommandTerminalConversations: vi.fn(async () => undefined),
+}));
 vi.mock('../../src/main/retrieval/conversation/conversation-indexer', () => ({
   ConversationIndexer: class {
     sweepProject = conversationIndexerMock.sweepProject;
+    sweepCommandTerminalConversations = conversationIndexerMock.sweepCommandTerminalConversations;
     purgeDeletedSessions = vi.fn(async () => 0);
     indexSession = vi.fn(async () => ({}));
     indexSubagentUsage = vi.fn(async () => 'indexed');
@@ -268,6 +272,9 @@ describe('retrievalService.rebuildEverything', () => {
     expect(sweepers.sweepCodeRecords).toHaveBeenCalledTimes(1);
     expect(sweepers.sweepCodeRecords.mock.calls[0]?.[0]).toBe('proj-b');
     expect(sweepers.purgeCodeRecords).not.toHaveBeenCalled();
+    // Rebuild clears the Command Terminal text too (`resetIndexState`), so the open project's
+    // is read again with the rest; its neighbours' wait for their next open.
+    expect(conversationIndexerMock.sweepCommandTerminalConversations.mock.calls.map((call) => call[0])).toEqual(['proj-b']);
     // And its summaries are asked for, its neighbours' are not: they wait for their next open.
     expect(summarySchedulerMock.request.mock.calls.map((call) => call[1])).toContain('proj-b');
     expect(summarySchedulerMock.request.mock.calls.map((call) => call[1])).not.toContain('proj-a');

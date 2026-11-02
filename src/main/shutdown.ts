@@ -4,10 +4,11 @@ import { destroyAllLanes } from './browser/browser-lane-manager';
 import { popOutWindowManager } from './pop-out/pop-out-window-manager';
 import { answerSessionPool } from './retrieval/answer-session-pool';
 import { stopAllCliRuns } from './agent/shared/cli-print';
+import { spareWorktreePool } from './git/spare-worktree';
 import { SessionRepository } from './db/repositories/session-repository';
 import { TaskRepository } from './db/repositories/task-repository';
 import { UsageHistoryRepository } from './db/repositories/usage-history-repository';
-import { markRecordSuspended, markRecordExited } from './transition-engine/session-lifecycle';
+import { markRecordSuspended, settleQueuedRecord } from './transition-engine/session-lifecycle';
 import { captureSessionMetrics, captureWorkflowAgentUsage } from './ipc/handlers/session-metrics';
 import { isWorkflowAgentSession } from '../shared/session-owner';
 import { stopMetricsSnapshotTimer } from './ipc/handlers/metrics-snapshot-timer';
@@ -127,6 +128,11 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
     // the app (Windows), so one left here keeps running after the quit.
     runCleanupStep('stopAllCliRuns', () => stopAllCliRuns());
 
+    // And a spare worktree's build: its init script runs outside any session,
+    // so no PTY kill reaches it. The abort kills the script's tree in place.
+    // What it leaves has no ready record, and the next open's pass deletes it.
+    runCleanupStep('spareWorktreePool.abortAllBuilds', () => spareWorktreePool.abortAllBuilds());
+
     // Close active project's file watchers before killing sessions
     runCleanupStep('boardConfigManager.detach', () => dependencies.getBoardConfigManager().detach());
 
@@ -207,9 +213,10 @@ export function syncShutdownCleanup(dependencies: ShutdownDependencies): PtyKill
               markRecordSuspended(sessionRepo, record.id, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             } else if (record && record.status === 'queued') {
-              // Queued sessions never started Claude CLI - mark as exited
-              // (not suspended) since there's nothing to resume.
-              markRecordExited(sessionRepo, record.id);
+              // A queued fresh start never ran, so it exits with nothing to
+              // resume. A queued resume stays resumable, or a task waiting its
+              // turn in a column would relaunch without its conversation.
+              settleQueuedRecord(sessionRepo, record, session.resuming, 'system');
               taskRepo.update({ id: session.taskId, session_id: null });
             }
           }

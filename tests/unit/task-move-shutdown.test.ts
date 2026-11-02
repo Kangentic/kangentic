@@ -22,7 +22,7 @@
  * handler via the mocked ipcMain.handle capture.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Task, Swimlane } from '../../src/shared/types';
 
 // ---------------------------------------------------------------------------
@@ -50,13 +50,47 @@ vi.mock('../../src/main/db/database', () => ({ getProjectDb: vi.fn(() => ({})) }
 vi.mock('../../src/main/db/repositories/task-repository', () => ({
   TaskRepository: class {},
 }));
+// The one session record the queued-settle tests seed. Null everywhere else, so
+// the other tests keep "no own-record row".
+const { queuedRecordState } = vi.hoisted(() => ({
+  queuedRecordState: {
+    record: null as null | {
+      id: string;
+      task_id: string;
+      status: string;
+      agent_session_id: string | null;
+      session_type: string;
+      started_at: string;
+      suspended_by: string | null;
+    },
+  },
+}));
 vi.mock('../../src/main/db/repositories/session-repository', () => ({
   SessionRepository: class {
-    // No own-record row, so the capture sites fall back to getLatestForTask.
-    findByAnyId = vi.fn(() => undefined);
+    // No own-record row unless a test seeds one, so the capture sites fall
+    // back to getLatestForTask.
+    findByAnyId = vi.fn(() => queuedRecordState.record ?? undefined);
     getLatestForTask = vi.fn(() => null);
     getSummaryForTask = vi.fn(() => null);
     updateGitStats = vi.fn();
+    // Mirrors the real compare-and-set: moves the seeded record only when its
+    // current status is in the expected-from list, and nulls the agent session
+    // id when asked to.
+    compareAndUpdateStatus = vi.fn((
+      recordId: string,
+      expectedFrom: string | string[],
+      to: string,
+      extra?: { suspended_by?: string | null; agent_session_id?: null },
+    ) => {
+      const record = queuedRecordState.record;
+      if (!record || record.id !== recordId) return false;
+      const fromList = Array.isArray(expectedFrom) ? expectedFrom : [expectedFrom];
+      if (!fromList.includes(record.status)) return false;
+      record.status = to;
+      if (extra?.agent_session_id === null) record.agent_session_id = null;
+      if (extra?.suspended_by !== undefined) record.suspended_by = extra.suspended_by;
+      return true;
+    });
   },
 }));
 vi.mock('../../src/main/db/repositories/swimlane-repository', () => ({
@@ -93,9 +127,19 @@ vi.mock('../../src/main/pr/pr-linking', () => ({
   autoLinkPRForTask: (...args: unknown[]) => mockAutoLinkPRForTask(...args),
 }));
 
-vi.mock('../../src/main/transition-engine/session-lifecycle', () => ({
+// settleQueuedRecord stays REAL so the queued-settle tests observe the record's
+// end state. It calls the module's own markRecordExited, which reaches the
+// browser lane and viewport code, so those two are stubbed below.
+vi.mock('../../src/main/transition-engine/session-lifecycle', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/transition-engine/session-lifecycle')>()),
   markRecordExited: vi.fn(),
   markRecordSuspended: vi.fn(),
+}));
+vi.mock('../../src/main/browser/browser-lane-manager', () => ({
+  destroyLanesForSession: vi.fn(),
+}));
+vi.mock('../../src/main/browser/viewport-override', () => ({
+  releaseViewportOverridesForSession: vi.fn(async () => {}),
 }));
 
 const mockClearSpawnProgress = vi.fn();
@@ -194,6 +238,9 @@ interface MockSessionManager {
   killByTaskId: ReturnType<typeof vi.fn>;
   listSessions: ReturnType<typeof vi.fn>;
   suspend: ReturnType<typeof vi.fn>;
+  drainQueue: ReturnType<typeof vi.fn>;
+  columnBlocks: ReturnType<typeof vi.fn>;
+  isResuming: ReturnType<typeof vi.fn>;
   getSession: ReturnType<typeof vi.fn>;
   findLiveSessionByTaskId: ReturnType<typeof vi.fn>;
 }
@@ -271,6 +318,9 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => {}),
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
     // Phase 1 reconciles task.session_id against the registry before the
     // Priority ladder; a live row for the pointed-at id keeps these fixtures
     // on the branches they exercise.
@@ -618,6 +668,129 @@ describe('handleTaskMove shutdown protection', () => {
     expect(pushedChannels).not.toContain(IPC.TASK_SESSION_RESYNC);
     // The settle-time TASK_UPDATED_BY_AGENT is gated too: no push at all.
     expect(pushedChannels).toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A task queued for its column's slot has a session record in 'queued' that
+// never ran. Moving it to a column that parks it (Done, or a column with
+// auto_spawn off) settles that record through settleQueuedRecord, which keys on
+// sessionManager.isResuming(<pty session id>):
+//   - a queued RESUME keeps its conversation: the record ends 'suspended' with
+//     agent_session_id intact, so the task comes back to the same conversation;
+//   - a queued FRESH start never ran: it ends 'exited' and gives up the id
+//     minted for it, since no CLI wrote that conversation and a later spawn
+//     would --resume into "No conversation found".
+// Both records carry a non-null agent_session_id (a fresh start has a minted
+// one), so isResuming is the only thing separating the two outcomes. The
+// resume-side assertions fail if the handler goes back to marking the record
+// exited; the fresh-side ones guard against always suspending.
+// task-move.ts also settles a queued record in suspendLiveSessionForRespawn
+// (the settings/handoff respawn). That call is reachable only through
+// task-move-settings-restart.test.ts's prepareInjectionPlan stub and is not
+// covered here.
+// ---------------------------------------------------------------------------
+
+describe('handleTaskMove settles a queued session record when it parks the task', () => {
+  const QUEUED_PTY_SESSION_ID = 'pty-session-queued';
+  const QUEUED_RECORD_ID = 'record-queued-001';
+  const MINTED_AGENT_SESSION_ID = 'agent-conversation-abc';
+
+  function seedQueuedRecord(): void {
+    queuedRecordState.record = {
+      id: QUEUED_RECORD_ID,
+      task_id: 'task-aaa00001',
+      status: 'queued',
+      agent_session_id: MINTED_AGENT_SESSION_ID,
+      session_type: 'claude_agent',
+      started_at: '2026-01-01T00:00:00.000Z',
+      suspended_by: null,
+    };
+  }
+
+  /** Move the queued task into `targetLane` and return the context. */
+  async function moveQueuedTask(targetLane: Swimlane, resuming: boolean) {
+    const sourceLane = makeSwimlane(SOURCE_LANE_ID, { role: 'todo' });
+    const swimlaneRepo = makeSwimlaneRepo([sourceLane, targetLane]);
+    const task = makeTask({
+      id: 'task-aaa00001',
+      swimlane_id: SOURCE_LANE_ID,
+      session_id: QUEUED_PTY_SESSION_ID,
+    });
+    const taskRepo = {
+      ...makeTaskRepo(task),
+      setWorktreeSkipReason: vi.fn(),
+    };
+    const context = makeContext(taskRepo, swimlaneRepo);
+    context.sessionManager.getSession.mockImplementation((id: string) => ({ id, status: 'queued' }));
+    // Keyed on the PTY session id so a call with any other id reads as fresh.
+    context.sessionManager.isResuming.mockImplementation((id: string) => resuming && id === QUEUED_PTY_SESSION_ID);
+
+    await handleTaskMove(context as never, {
+      taskId: task.id,
+      targetSwimlaneId: targetLane.id,
+      targetPosition: 0,
+    }, 'renderer');
+
+    return { context, taskRepo };
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsShuttingDown.mockReturnValue(false);
+    ipcHandlers.clear();
+    seedQueuedRecord();
+  });
+
+  afterEach(() => {
+    queuedRecordState.record = null;
+  });
+
+  describe('Done column', () => {
+    const doneLane = () => makeSwimlane('lane-done', { role: 'done', auto_spawn: false });
+
+    it('keeps the conversation of a queued resume: suspended, agent_session_id intact', async () => {
+      const { context, taskRepo } = await moveQueuedTask(doneLane(), true);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(queuedRecordState.record?.status).toBe('suspended');
+      expect(queuedRecordState.record?.agent_session_id).toBe(MINTED_AGENT_SESSION_ID);
+      expect(queuedRecordState.record?.suspended_by).toBe('system');
+      // The move itself still parked the session and cleared the pointer.
+      expect(context.sessionManager.suspend).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-aaa00001', session_id: null });
+    });
+
+    it('exits a queued fresh start and gives up its minted agent_session_id', async () => {
+      const { context } = await moveQueuedTask(doneLane(), false);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(queuedRecordState.record?.status).toBe('exited');
+      expect(queuedRecordState.record?.agent_session_id).toBeNull();
+    });
+  });
+
+  describe('column with auto_spawn off', () => {
+    const parkingLane = () => makeSwimlane('lane-review', { role: null, auto_spawn: false });
+
+    it('keeps the conversation of a queued resume: suspended, agent_session_id intact', async () => {
+      const { context, taskRepo } = await moveQueuedTask(parkingLane(), true);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(queuedRecordState.record?.status).toBe('suspended');
+      expect(queuedRecordState.record?.agent_session_id).toBe(MINTED_AGENT_SESSION_ID);
+      expect(queuedRecordState.record?.suspended_by).toBe('system');
+      expect(context.sessionManager.suspend).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(taskRepo.update).toHaveBeenCalledWith({ id: 'task-aaa00001', session_id: null });
+    });
+
+    it('exits a queued fresh start and gives up its minted agent_session_id', async () => {
+      const { context } = await moveQueuedTask(parkingLane(), false);
+
+      expect(context.sessionManager.isResuming).toHaveBeenCalledWith(QUEUED_PTY_SESSION_ID);
+      expect(queuedRecordState.record?.status).toBe('exited');
+      expect(queuedRecordState.record?.agent_session_id).toBeNull();
+    });
   });
 });
 

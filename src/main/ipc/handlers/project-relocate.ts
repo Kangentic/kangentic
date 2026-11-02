@@ -16,6 +16,7 @@ import { abortInFlightResume } from './session-resume-controllers';
 import { trackEvent } from '../../analytics/analytics';
 import { agentRegistry } from '../../agent/agent-registry';
 import { replacePathPrefix } from '../../../shared/paths';
+import { discardProjectSpares } from '../helpers/spare-worktrees';
 import type { ProjectRelocateOptions, ProjectRelocateResult, ProjectRelocateWarning } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -160,6 +161,9 @@ export async function relocateProject(
   // The background deleter of worktrees a Done move set aside holds handles
   // inside the folder while it runs. The next open sweeps at the new path.
   await stopRemovedWorktreeDeletion(storedOldPath);
+  // A spare worktree build holds handles inside the folder too. The spares
+  // themselves are discarded at the new path below.
+  await context.spareWorktrees?.stop(storedOldPath);
 
   // `move` mode: move the folder on disk now that nothing of ours holds a
   // handle inside it. Errors propagate; the engine leaves the source intact
@@ -210,6 +214,10 @@ export async function relocateProject(
     } catch (err) {
       console.warn('[PROJECT_RELOCATE] git worktree repair failed (non-fatal):', err);
     }
+    // Spare worktrees are not repaired: a pnpm install's junctions hold the
+    // old absolute paths, and the init script exits 0 over the broken tree.
+    // Discarded instead; the next eligible start asks for a new one.
+    await discardProjectSpares(context, resolved, taskRepo);
   }
 
   // Give each agent adapter a chance to migrate per-project data it keeps

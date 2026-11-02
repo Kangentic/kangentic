@@ -150,8 +150,18 @@ export function registerSystemHandlers(context: IpcContext): void {
     const boardDefaultBranch = otherProject
       ? context.boardConfigManager.getDefaultBaseBranchForPath(otherProject.path)
       : context.boardConfigManager.getDefaultBaseBranch();
-    if (boardDefaultBranch) {
-      return { ...config, git: { ...config.git, defaultBaseBranch: boardDefaultBranch } };
+    // The Stop script has no other store, so this is the settings row's only read of it.
+    const stopScriptPath = otherProject ? otherProject.path : context.currentProjectPath;
+    const stopScript = stopScriptPath ? context.boardConfigManager.getStopScriptForPath(stopScriptPath) : null;
+    if (boardDefaultBranch || stopScript) {
+      return {
+        ...config,
+        git: {
+          ...config.git,
+          defaultBaseBranch: boardDefaultBranch || config.git.defaultBaseBranch,
+          stopScript,
+        },
+      };
     }
     return config;
   });

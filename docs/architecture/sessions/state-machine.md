@@ -44,7 +44,7 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 
 | State | Scope | Description |
 |-------|-------|-------------|
-| `queued` | Both | Waiting for a concurrency slot to open |
+| `queued` | Both | Waiting for a concurrency slot or a column's agent limit to open |
 | `running` | Both | PTY is live, Claude Code CLI process is active |
 | `suspended` | Both | PTY killed, but session ID and files preserved for resume |
 | `exited` | Both | Process exited naturally or was killed; terminal state |
@@ -55,7 +55,8 @@ The in-memory `SessionStatus` does not include `orphaned` (that is a DB-only con
 | From | To | Trigger |
 |------|----|---------|
 | `queued` | `running` | Concurrency slot opens, `SessionQueue` promotes |
-| `queued` | `exited` | Session killed while still queued |
+| `queued` | `exited` | A fresh start killed, paused or moved while still queued (a queued resume goes to `suspended`, next row) |
+| `queued` | `suspended` | A queued resume that is quit, paused or moved before it starts (`settleQueuedRecord` to `suspendQueuedResume`). The record it resumed was already retired, so this one keeps the conversation |
 | `running` | `suspended` | Task moved to Done or `auto_spawn=false` column (a move to Done also closes the task's pop-out windows and destroys its offscreen lane, `closeTaskWindows`) |
 | `running` | `suspended` | A column or Board Profile edit flips `auto_spawn` to false while the task is already sitting there, with no move at all (`reconcileAutoSpawnChange`, `suspended_by='system'`) |
 | `running` | `suspended` | The user pauses it (`suspended_by='user'`), or Kangentic does while it waits on the user: the idle timeout (`suspended_by='auto'`) or the low-memory pause (`suspended_by='low_memory'`). All go through `pauseTaskSession`, which writes the record before the PTY goes down. All three are held pauses: no restart, column move or auto-spawn starts the task again until the user resumes it. The one exception is a running workflow's task under a `'low_memory'` pause, which the workflow's memory resume brings back once memory recovers (`workflow-memory-resume.ts`) |

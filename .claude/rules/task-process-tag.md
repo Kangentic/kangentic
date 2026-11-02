@@ -8,6 +8,7 @@ paths:
   - "src/main/agent/mcp-project-context.ts"
   - "src/main/transition-engine/resource-cleanup.ts"
   - "src/main/agent/adapters/codex/command-builder.ts"
+  - "src/main/stop-script/**"
 ---
 # Rule: a task's processes carry its tag, and every terminal transition reaps what is the task's
 
@@ -81,7 +82,14 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   unless it listens on a port itself or the first pass already signalled it. What the first pass
   kept, the second pass keeps. A process
   whose directory cannot be read is never
-  killed. Do not add a kill path that skips any of these, and do not exempt processes by name: each
+  killed. A tree spared only because a descendant with this task's own tag works elsewhere (a .NET
+  Aspire stack's dashboard) is kept as `outside`, not `shared`, and its processes are no client of a
+  listener, or one open dashboard page spares the AppHost and the reap stops nothing. Stronger
+  evidence under the same root, or a real client of the tree, makes it `shared`, and the
+  second pass reads the difference from `keptOutsideIdentities`. Killing the AppHost is what makes
+  DCP stop the rest, so the DCP root stays kept. That DCP stop follows recorded parent pids with
+  no creation-time check and can end a stranger's tree under a pid collision (`process-reaping.md`,
+  "Parent pids Windows reuses" and "A .NET Aspire stack"). Do not add a kill path that skips any of these, and do not exempt processes by name: each
   protection rests on a measured mechanism (`docs/architecture/worktrees/process-reaping.md`, "What the reap kills").
   An untagged client outside Kangentic (the user's browser, Android Studio) is no evidence, by
   decision: a dev server open in a browser tab must still stop at Done.
@@ -100,8 +108,41 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `wsl.exe` runs without the tag main holds when Kangentic itself runs from a task's terminal, so
   the script's own subshells never read as a task's.
 - **A mid-board suspend never reaps.** Pause, Stop, an `auto_spawn=false` column (Code Review
-  entry), a handoff or settings respawn, an idle-timeout suspend, and quit leave the processes
-  running, by decision: the task is parked, and its dev server stays up for testing.
+  entry), a handoff or settings respawn, an idle-timeout suspend, a low-memory pause, and quit
+  kill nothing, by decision: the task is parked, and its dev server stays up for testing.
+- **A project that declares a Stop script gets one exception, and only through its own script.**
+  `stopScript` in `kangentic.json` (`kangentic.local.json` overrides it; an empty value there turns
+  it off on one machine) runs after a pause Kangentic made, `suspended_by` `auto` or `low_memory`,
+  never after a user's Pause or Stop, an `auto_spawn=false` entry, a respawn, a handoff or a quit.
+  Kangentic still kills nothing on a pause: only the project's own script stops anything, and a
+  project that sets none makes no host call at all. It runs only when `probeTaskProcesses` finds a
+  process with the task's tag in the task's folders (`task-tree-probe.ts`), and not while a client
+  is connected: a process outside the task's tree holding a TCP connection to a port the tree
+  listens on. The tree is tag-only, with everything under it, never narrowed by folder: a stack's
+  own dashboard can work in a package cache and must not read as its client. Unlike at Done, an
+  untagged client counts here, and so does Kangentic's network service, since a person in a Browser
+  pane is using the stack. An offscreen lane is no person, so a connected pause closes the task's
+  lanes first. Do not run the script from a new pause without the record check in `parked-stop.ts`,
+  and do not widen the pauses it reads: each one left out is someone testing or an agent coming back.
+- **A stop a client held off is the one scan on a timer.** `held-off-stops.ts` rechecks on the
+  host memory sampler's tick, every five minutes, and only while a task is held off. Empty, a tick
+  returns on its first line. Do not add a task with nothing running or a poll of every paused task:
+  the recheck rule below stands for everything else. A low-memory pass reads the paused tasks from
+  the database, one scan per task with a script, and stops scanning for the rest of a spell that
+  found nothing.
+- **Before every reap, the Stop script runs once per folder, bounded.** `reapTaskLeftovers` calls
+  `stopBeforeReap` (`src/main/stop-script/terminal-stop.ts`), so a new terminal transition gets it
+  by reaping. No connected check, as at the reap. This runs inside the task lock on every transition
+  that reaps inside it, by decision: 30 s at most for the whole call, a superseding move's signal
+  ends it, and splitting six teardown paths around an unlocked gap was weighed and declined. Pauses,
+  low memory and the recheck stay outside the lock. A Command Terminal passes `skipStopScript`, and
+  the startup sweep reaps through `reapTaskProcesses`, so neither runs it.
+- **A Stop script can reach past its own tree.** It runs a third-party tool. A tree kill that
+  follows recorded parent pids without comparing start times ends a stranger's tree (see "Parent
+  pids Windows reuses" in `process-reaping.md`). Kangentic cannot prevent that from inside, so test
+  with a stub script, never a real stack on a machine running Kangentic. The script gets no
+  `KANGENTIC_TASK_ID`, even when main carries one, so it is never its own leftover. A failure, a
+  timeout and an abort change nothing else: the pause stands and the reap goes on.
 - **The setting gates the kill, never the report.** `reapTaskLeftovers` and the startup sweep
   read `stopLeftoverProcesses` and pass it as `stop`; with it off the host plans and reports and
   kills nothing. Every reap's result goes to `publishLeftoverProcesses`, so the user is told what
@@ -123,8 +164,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   task's worktree removal, as a Stop does.
 - **The reap logs what it left running, by what the report already carries.** One
   `[TASK-REAP] kept` (or `could not stop`) line per entry (`leftoverLogLine`): the label, pid,
-  short task id, place, reason, and the plan's basis for it (`KeptExplanation`: the role, or the
-  pid and label of the descendant or client that made it shared, or children all kept). Nothing
+  short task id, place, reason, and the plan's basis for it (`KeptExplanation`: the role; the pid
+  and label of the descendant or client that made it `shared`; the descendant that made it
+  `outside`, which carries the task's tag and works outside its folders; or children all kept). Nothing
   more of a command line, and `because` never reaches the renderer.
 - **A Windows process still listed while it terminates is `exited`, not running.** Its exit code
   is set before it leaves the Toolhelp listing (a `/preview`'s `dev.js` was still listed at least
@@ -178,11 +220,18 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `ScanStepError` (`process-scan.ts`) with a fixed code (`process_list`, `window_list`,
   `connection_list`), and the
   reap maps the type to that code. The pass a reap failed in (`failurePass`: `first`, `second`,
-  `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A Stop
-  the user asks for from the list returns the same code and pass (`StopProcessResult`), and main
-  reports it as stage `stop`. A refusal or a survivor is an answer, and main never reports it. The
-  removal-failure reap's holder Stop (`SessionManager.stopProcessByCreationTime`) only logs its
-  failure.
+  `last`) is sent as its own `pass` tag, outside the message and the once-per-launch key. A step
+  that runs a tool also names how the tool failed (`failureCause`, a `ToolFailureCause`:
+  `spawn_error`, `exit_code`, `signal`, `timeout`), sent as a `cause` tag beside `pass` and kept out
+  of the message and the key the same way. It is a fixed value and never tool output, a pid or a
+  path. `runToolThrough` classifies it for the utility host and `runTool` for the in-process core.
+  The window list is retried once through the reader's `runLsappinfo`, so the retry starts on the
+  spawn worker too, on a shorter timeout that keeps a batch's worst case inside
+  `TASK_REAP_TIMEOUT_MS`. A failed retry fails the scan with the last attempt's cause, never with
+  an empty list. A Stop the user asks for from the list returns the same code, pass and cause
+  (`StopProcessResult`), and main reports it as stage `stop`. A refusal or a survivor is an answer,
+  and main never reports it. The removal-failure reap's holder Stop
+  (`SessionManager.stopProcessByCreationTime`) only logs its failure.
 - **The dead-shell orphan cleanup is a second kill path with its own identity, not a reap.** When a
   session's shell exits on its own on Windows, `host/dead-root-orphans.ts` finds the shell's
   children created between the shell's own creation and exit, read off the handle the pty host
@@ -235,7 +284,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   Windows runners (tmux, pm2, console hosts, visible apps, daemons that move away), and the
   connection evidence and kept launchers measured on a developer's Windows machine (the adb
   server, qemu, netsimd and the emulator launcher; which clients count; propagation; a listener
-  that is never kept for its children). `tests/unit/local-connections.test.ts` pins the pairing.
+  that is never kept for its children), and a real .NET Aspire stack's 45 rows (`outside`, an open
+  dashboard, a real client of it, stronger evidence found later, the force pass).
+  `tests/unit/local-connections.test.ts` pins the pairing.
   `tests/unit/task-directories.test.ts` pins the roots that are never accepted.
 - **Test (background session):** `tests/unit/session-leftover-reap-wiring.test.ts` pins that
   `reapTaskLeftovers` stops a background session holding the conversation before the reap, with
@@ -254,6 +305,19 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `tests/unit/session-wsl-reap-live-task.test.ts` that the in-distro WSL reap leaves out a task
   with a live or starting session (the sweep takes no task lock) and that its `wsl.exe` carries no
   task tag. Runs in CI.
+- **Test (Stop script):** `tests/unit/stop-script-parked.test.ts` pins each pause (`auto` and
+  `low_memory` run it; `user`, `system` and a quit do not), no host call with no script, the hold
+  on a connected client, the recheck that stops it once the client has gone, that an empty set polls
+  nothing, the lane close, the held message and its absence, and the low-memory pass.
+  `tests/unit/session-leftover-reap-wiring.test.ts` pins the terminal row through the real
+  `reapTaskLeftovers` (script, then reap, on the terminal budget, once per folder, a failure still
+  reaps, a Command Terminal runs none) and the Pause, Stop and `auto_spawn=false` negatives.
+  `tests/unit/task-tree-probe.test.ts` pins the two sets, and `session-reap-real-processes.test.ts`
+  a probe over a real server and a real untagged client, and a whole parked stop on real processes:
+  held off for a live client, then a stub script stops the server and the message names it.
+  `tests/unit/run-stop-script.test.ts` runs a
+  real stub through the real shell: its folder, no tag, each failure, the bound, the abort, one run
+  per task. `tests/unit/idle-agent-pause.test.ts` pins the pass before a pause.
 - **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, a
   Command Terminal's own tag, and `WSLENV`. `transition-engine.test.ts` and
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,
@@ -327,6 +391,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   exited is reported stopped and a Stop of an exited process answers ended.
   `leftover-worktree-retry.test.ts` pins the Done move's one delayed removal retry, and
   `session-leftover-reap-wiring.test.ts` that the Done move schedules it only when its removal failed.
+- **Test (Aspire, by hand):** `tests/unit/aspire-host-death.test.ts` runs a real `aspire run` through
+  the real reap, with the dashboard idle and open in a browser, and follows the stack by identity.
+  It needs `CI` and `KANGENTIC_ASPIRE_PROBE=1`, because DCP's tree stop can reach a stranger's
+  processes, and only a `workflow_dispatch` of `task-reap-real-processes.yml` runs it. Rerun it when
+  the Aspire version moves.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, a server another task holds a TCP
@@ -344,10 +413,15 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   the real Toolhelp listing.
 - **Test (failure report):** `tests/unit/task-tagged-reap.test.ts` pins `reader_load`,
   `empty_scan`, `connection_list` in either pass, the failing pass, and, over the macOS reader
-  with a fake kernel, `window_list`, `process_list` and `connection_list`, and a Stop's code and
-  pass (none for a refusal or a survivor);
+  with a fake kernel, `window_list`, `process_list` and `connection_list`, the window list's retry
+  and last cause, the retry's worst case against the budget, and a Stop's code, pass and cause
+  (none for a refusal or a survivor);
+  `tests/unit/darwin-run-tool-seam.test.ts` pins each cause through `runToolThrough`, a retry
+  through the injected tool, and Node's real `execFile` fields on POSIX, and
+  `task-process-readers.test.ts` and `darwin-reader-run-tool-env.test.ts` pin each cause of
+  `runTool`;
   `tests/unit/task-reap-failure-report.test.ts` pins the once-per-launch latch, the
-  fixed message, that no other failure's text reaches the event, and SessionManager's reports,
+  fixed message, the `cause` tag, that no other failure's text reaches the event, and SessionManager's reports,
   the WSL one included and the three host codes by error type.
   `tests/unit/utility-pty-host-transport.test.ts` pins the rejection types, that a request
   queued behind a batch inside its budget does not time out, and that a late answer reaches its

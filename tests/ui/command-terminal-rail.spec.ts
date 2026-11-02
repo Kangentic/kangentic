@@ -240,6 +240,8 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('the whole edge takes the drag, the half over the terminals too: a terminal focused since never covers it', async () => {
+    // An edge drag opens terminals first, which the 15 s default leaves no room for on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
@@ -267,6 +269,8 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('in a maximized panel there is no edge to move, so the terminals give the rail its room', async () => {
+    // An edge drag opens terminals first, which the 15 s default leaves no room for on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
@@ -293,6 +297,8 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('Escape cancels an edge drag: the rail goes back and nothing is saved', async () => {
+    // An edge drag opens terminals first, which the 15 s default leaves no room for on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 1);
@@ -319,6 +325,8 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('a drag below 200px holds the rail there down to 100, so a release in between keeps it open at its narrowest', async () => {
+    // An edge drag opens terminals first, which the 15 s default leaves no room for on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 1);
@@ -532,6 +540,8 @@ test.describe('Command Terminal rail', () => {
   });
 
   test('Escape during a push puts the rail and the panel back where the drag found them', async () => {
+    // An edge drag opens terminals first, which the 15 s default leaves no room for on a CI runner.
+    test.setTimeout(45000);
     const { browser, page } = await launch(WIDE_VIEWPORT);
     try {
       await openTerminals(page, 2);
@@ -690,6 +700,30 @@ test.describe('Command Terminal rail', () => {
     }
   });
 
+  test('with four terminals in a short panel the rail body scrolls, so the search and two rows stay in reach', async () => {
+    const endedAt = new Date().toISOString();
+    const entries = Array.from({ length: 12 }, (_, index) => ({
+      agentSessionId: `conversation-${index}`, agentName: 'claude', label: `Conversation ${index}`, firstPrompt: null, endedAt,
+    }));
+    const { browser, page } = await launch({ width: 1600, height: 620 }, entries);
+    try {
+      await openTerminals(page, 4);
+      const body = page.getByTestId('command-terminal-rail-body');
+      const field = page.getByTestId('command-terminal-earlier-search');
+      await expect(field).toBeAttached();
+      expect(await body.evaluate((element) => element.scrollHeight > element.clientHeight + 1)).toBe(true);
+
+      await body.evaluate((element) => { element.scrollTop = element.scrollHeight; });
+      await expect(field).toBeInViewport();
+      // Two rows' worth of the list under the field and heading, however short the panel.
+      const listHeight = await page.getByTestId('command-terminal-earlier').evaluate((list) => list.clientHeight);
+      expect(listHeight).toBeGreaterThan(40);
+      await expect(page.getByTestId('command-terminal-rail-toggle')).toBeInViewport();
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('an Earlier name the rail cuts short shows in full on hover, and one shown whole has no tip', async () => {
     const endedAt = new Date().toISOString();
     const longName = 'Investigate the flaky window-edge drag tests on the starved CI runner and the seam settle points';
@@ -703,7 +737,9 @@ test.describe('Command Terminal rail', () => {
       const shortRow = page.locator('[data-testid="command-terminal-earlier-row"][data-agent-session-id="conversation-short"]');
       await expect(longRow).toBeVisible();
       await expect(shortRow).toBeVisible();
+      await longRow.hover();
       await expect(longRow).toHaveAccessibleDescription(longName);
+      await shortRow.hover();
       await expect(shortRow).toHaveAccessibleDescription('');
     } finally {
       await browser.close();

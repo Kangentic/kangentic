@@ -180,6 +180,10 @@ function makeSwimlane(id: string, overrides: Partial<Swimlane> = {}): Swimlane {
 
 function makeContext(taskRepo: unknown, swimlaneRepo: unknown) {
   const sessionManager = {
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
+    holdColumnSlot: vi.fn(() => () => undefined),
     removeByTaskId: vi.fn(),
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),

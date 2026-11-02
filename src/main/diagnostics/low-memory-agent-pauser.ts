@@ -13,6 +13,7 @@ import { hasPendingMessageDelivery } from '../automations/turn-end/turn-end-pass
 import { pauseTaskSession } from '../ipc/handlers/session-pause';
 import { getProjectRepos } from '../ipc/helpers';
 import type { IpcContext } from '../ipc/ipc-context';
+import { relieveParkedTasks, startParkedStop } from '../stop-script/parked-stop-service';
 import { noteWorkflowTaskPaused } from '../workflows/workflow-recovery';
 import { isInWorkingWait } from '../workflows/workflow-recovery-state';
 import type { OpenWork } from '../activity-engine/open-work-ledger';
@@ -115,6 +116,10 @@ export function createLowMemoryAgentPauser(getContext: () => IpcContext | null):
       const context = getContext();
       return context ? collectIdleAgentFacts(context) : [];
     },
+    relieveParked: async () => {
+      const context = getContext();
+      return context ? relieveParkedTasks(context) : 'none';
+    },
     pause: async (facts) => {
       const context = getContext();
       if (!context) return false;
@@ -140,6 +145,9 @@ export function createLowMemoryAgentPauser(getContext: () => IpcContext | null):
       // A running workflow task under recovery has nobody left to nudge it:
       // its recovery stops and the user is told, window or not.
       noteWorkflowTaskPaused(context, paused.facts.taskId);
+      // Started, not awaited, and before the window check: what the agent left
+      // running holds memory whether or not a window is open.
+      startParkedStop(context, paused.facts.projectId, paused.facts.taskId);
       if (context.mainWindow.isDestroyed()) return;
       context.mainWindow.webContents.send(IPC.HOST_MEMORY_AGENT_PAUSED, buildAgentPausedEvent(context, paused));
     },

@@ -65,6 +65,9 @@ export function propagateStrategyToLiveSessions(
   changes: StrategyChange[],
   projectId: string | null,
 ): void {
+  // Ahead of the early return: a column's agent limit changes no task's
+  // strategy, and turning it off is what lets the next tasks start.
+  context.sessionManager.drainQueue();
   if (changes.length === 0) return;
 
   reconcileAutoSpawnChange(context, projectId, label, changes);

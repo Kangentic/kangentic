@@ -18,6 +18,8 @@ sources:
   - resource: src/main/transition-engine/session-startup/auto-spawn.ts
   - resource: src/main/agent/handoff/index.ts
   - resource: src/main/transition-engine/early-agent.ts
+  - resource: src/main/transition-engine/column-capacity.ts
+  - resource: src/main/ipc/helpers/queue-snapshot.ts
 ---
 # Spawn flow
 
@@ -149,14 +151,28 @@ modes and their failure handling: [Worktree creation](../worktrees/worktree-crea
 - When a running session exits or is suspended, `notifySlotFreed()` promotes the next queued entry.
 - Reentrancy-safe: a `_processing` flag prevents concurrent promotion, and a `_dirty` flag ensures re-iteration if the queue changed during a spawn await.
 
+### A column's agent limit
+
+`swimlanes.max_agents` limits one column. It shares the one queue through an injected gate (`QueueGate`, built by `createColumnCapacityGate` in `src/main/transition-engine/column-capacity.ts` and installed in `register-all.ts`, because `pty/` imports no database code). With no gate the queue is a plain FIFO.
+
+- **`mustWait`** decides a new start: true when other agents fill its column, or an earlier-entered task is already queued there. `spawn()` checks it with the global limit and reserves its slot in the same tick, so two starts cannot both take a column. Command Terminals and a workflow's own agent belong to no column.
+- **`pick`** chooses the next entry: it walks queue order, skips a full column, and takes a column's earliest-entered entry rather than its first queued one, since worktree setup makes queue order differ from arrival. A column's order comes from `task_moves` (`listCappedColumnTasks`): the latest entry into the column, not counting a rollback, so a reorder keeps a task's place and leaving loses it.
+- **Holders** come from the registry, not the database, whose status is unreliable after startup (`listColumnHolders`): running rows, spawns in flight, and a restart in place keeping its slot (`holdColumnSlot`). A paused or queued session holds nothing. An agent waiting on the user holds its slot.
+- **`countBlocked`** keeps `getFreeAgentSlots` honest: an entry waiting on its column claims no global slot. The workflow planner also reads `columnRoom`, so a full column leaves tasks in To Do rather than the in-memory queue.
+- **A running agent arriving in a full column** pauses in `handleTaskMove` (`'system'`, phase `queuing-for-column`) and Phase 3's `spawnAgent` queues its resume. It holds only the mover's own task lock, and nothing ever pauses another task.
+- **A queued resume keeps its conversation.** The record it resumed was retired when it queued, so `settleQueuedRecord` suspends it rather than exiting it on a quit, a pause or a move. A queued fresh start still exits, and gives up its minted `agent_session_id`: no CLI wrote that conversation, and the resume guard needs an agent's own report to tell, so keeping the id would `--resume` into "No conversation found".
+- **Drains:** a move's Phase 1 `.finally` (a task that kept its agent frees its old column with no process ending), a rollback, `propagateStrategyToLiveSessions`, an MCP column update, and an applied `kangentic.json`.
+- **Startup** spawns a project's tasks in column-entry order (`orderByColumnEntry`), and a closed project's tasks are admitted, since a limit nothing can read must not strand them.
+- **Known order gaps:** a task still building its worktree can be overtaken on an idle column, a memory-paused task rejoins behind queued peers, and a pty host loss can reorder a column. The limit and the conversations hold in all three.
+
 ## Isolated Sessions (Per-Column Session Model)
 
-A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`. Only the first is offered in the UI, on the Column Manager's Conversation card: `session_spawn_strategy` is derived from it by `resolveForceFresh` and is settable by hand in `kangentic.json` only (see [Swimlane-Level Configuration](../../settings/cascade.md#swimlane-level-configuration) for why the two combinations that derivation does not reach are both bad).
+A task can run on multiple parallel, independently-resumable sessions. Two orthogonal column fields control the behavior; the pure rules live in `src/main/transition-engine/session-isolation.ts`. Only the first is offered in the UI, on the Column Manager's Sessions card: `session_spawn_strategy` is derived from it by `resolveForceFresh` and is settable by hand in `kangentic.json` only (see [Swimlane-Level Configuration](../../settings/cascade.md#swimlane-level-configuration) for why the two combinations that derivation does not reach are both bad).
 
 - **`session_target`** (`main` | `isolated`, default `main`) - which session track a task runs on. `main` is the task's shared main conversation (resumed as the task moves between normal columns); `isolated` is this column's own separate, context-isolated session, keyed by the swimlane id. Resolved by `resolveSessionTarget` / `resolveIsolatedSwimlaneId`; the discriminator is `sessions.isolated_swimlane_id` (`NULL` = main, swimlane id = isolated).
 - **`session_spawn_strategy`** (`create_or_resume` | `always_spawn_new`, default `create_or_resume`) - what to do with that track on entry. `create_or_resume` resumes the track's session if one exists, else spawns it; `always_spawn_new` always spawns fresh, retiring the prior session for that `(task, target)`. Read by `resolveForceFresh`, which is a plain comparison for any stored column: the DB column is `NOT NULL DEFAULT 'create_or_resume'` and `SwimlaneRepository.create` writes a concrete string, so the context-aware fallback in that function never evaluates for a real lane and survives only for a partial object.
 
-  **"Isolated means a fresh pass each entry" is enforced by the WRITERS, not the resolver.** The two interactive writers pair the fields through one shared rule, `snapSpawnStrategyToTarget` (`src/shared/session-track.ts`): moving a column to `isolated` carries its strategy to `always_spawn_new`, and back to `main` returns it to `create_or_resume`, in both cases only when the strategy still sits at the outgoing track's default, so a deliberate pairing survives. The Column Manager's Session select and the MCP `create_column` / `update_column` handlers both call it, which is what keeps an agent-created review column identical to a hand-made one. The `kangentic.json` sync does NOT pair them: `apply-config.ts` applies each key as written. An app-written file always carries both, since `build-config.ts` emits both whenever either is non-default, but a hand-edited one naming only `sessionTarget: isolated` lands as `isolated` + `create_or_resume`.
+  **"Isolated means a fresh pass each entry" is enforced by the WRITERS, not the resolver.** The two interactive writers pair the fields through one shared rule, `snapSpawnStrategyToTarget` (`src/shared/session-track.ts`): moving a column to `isolated` carries its strategy to `always_spawn_new`, and back to `main` returns it to `create_or_resume`, in both cases only when the strategy still sits at the outgoing track's default, so a deliberate pairing survives. The Column Manager's conversation control and the MCP `create_column` / `update_column` handlers both call it, which is what keeps an agent-created review column identical to a hand-made one. The `kangentic.json` sync does NOT pair them: `apply-config.ts` applies each key as written. An app-written file always carries both, since `build-config.ts` emits both whenever either is non-default, but a hand-edited one naming only `sessionTarget: isolated` lands as `isolated` + `create_or_resume`.
 
 The four combinations:
 

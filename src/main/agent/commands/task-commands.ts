@@ -26,6 +26,7 @@ import {
   computeReorderedIds,
   resolveRawPosition,
 } from './task-ordering';
+import { needsRunningWorkCheck, refuseRunningWork, teardownOfColumn } from './running-work-guard';
 import { handleCreateBacklogTask, BACKLOG_DESCRIPTION_MAX_LENGTH } from './backlog-commands';
 import { resolveProfileSelector } from './profile-commands';
 import { linkPRForTask } from '../../pr/pr-linking';
@@ -862,7 +863,7 @@ function parseSlotParam(value: unknown): { slot: number } | { error: string } | 
 export const handleMoveTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): CommandResponse | Promise<CommandResponse> => {
   const taskIdParam = params.taskId as string | null;
   const columnName = params.column as string | null;
 
@@ -981,57 +982,75 @@ export const handleMoveTask: CommandHandler = (
     return { success: false, error: refusal };
   }
 
-  // Cross-column. The task is not in the target lane yet, so its length is a
-  // legal (appending) slot. An ordinal has to be translated into a RAW position
-  // before it reaches the repository: the two diverge as soon as archiving has
-  // left the lane's positions gapped. See `resolveRawPosition`.
-  const targetTasks = taskRepo.list(targetSwimlane.id);
-  const slot = parsedSlot ? clampSlot(parsedSlot.slot, targetTasks.length) : targetTasks.length;
-  const targetPosition = resolveRawPosition(
-    targetTasks.map((laneTask) => laneTask.position),
-    slot,
-    taskRepo.nextPositionInSwimlane(targetSwimlane.id),
-  );
+  const startMove = (movingTask: Task): CommandResponse => {
+    // Cross-column. The task is not in the target lane yet, so its length is a
+    // legal (appending) slot. An ordinal has to be translated into a RAW position
+    // before it reaches the repository: the two diverge as soon as archiving has
+    // left the lane's positions gapped. See `resolveRawPosition`.
+    const targetTasks = taskRepo.list(targetSwimlane.id);
+    const slot = parsedSlot ? clampSlot(parsedSlot.slot, targetTasks.length) : targetTasks.length;
+    const targetPosition = resolveRawPosition(
+      targetTasks.map((laneTask) => laneTask.position),
+      slot,
+      taskRepo.nextPositionInSwimlane(targetSwimlane.id),
+    );
 
-  // The calling session, when it is the task's live one. A move that ends it
-  // waits for this turn to end first, so the call and this reply reach the
-  // agent's own conversation (ended at once, Claude exits without writing
-  // them, and a later resume of that conversation makes the move again).
-  const moverSessionId = moverIsTaskAgent && context.callerSessionId && task.session_id === context.callerSessionId
-    ? context.callerSessionId
-    : null;
+    // The calling session, when it is the task's live one. A move that ends it
+    // waits for this turn to end first, so the call and this reply reach the
+    // agent's own conversation (ended at once, Claude exits without writing
+    // them, and a later resume of that conversation makes the move again).
+    const moverSessionId = moverIsTaskAgent && context.callerSessionId && movingTask.session_id === context.callerSessionId
+      ? context.callerSessionId
+      : null;
 
-  // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
-  // The MCP response confirms intent; the LLM should re-query to verify state if needed.
-  const moveInput = { taskId: task.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
-  const moveOptions = {
-    ...(message ? { message } : {}),
-    ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
-    ...(moverSessionId ? { moverSessionId } : {}),
+    // Fire-and-forget the async move (transition engine, agent spawn/suspend, worktree management).
+    // The MCP response confirms intent; the LLM should re-query to verify state if needed.
+    const moveInput = { taskId: movingTask.id, targetSwimlaneId: targetSwimlane.id, targetPosition };
+    const moveOptions = {
+      ...(message ? { message } : {}),
+      ...(moverIsTaskAgent ? { moverIsTaskAgent: true } : {}),
+      ...(moverSessionId ? { moverSessionId } : {}),
+    };
+    const moving = Object.keys(moveOptions).length > 0
+      ? context.onTaskMove(moveInput, moveOptions)
+      : context.onTaskMove(moveInput);
+    void moving.catch((error) => {
+      console.error(`[move_task] Failed for task ${movingTask.id.slice(0, 8)}:`, error);
+    });
+
+    const placement = parsedSlot ? ` at position ${slot}` : '';
+    // Where the column runs no agent, the message is held for the task's next one
+    // (src/main/held-messages); Done holds nothing.
+    let handOff = '';
+    if (message && targetSwimlane.role === 'done') {
+      handOff = ' Done runs no agent and holds no messages, so your message is not delivered.';
+    } else if (message && targetSwimlane.auto_spawn === false) {
+      handOff = ` No agent runs in ${targetSwimlane.name}, so your message is held for the task's next agent.`;
+    } else if (message) {
+      handOff = ' Its agent there gets your message once it is ready.';
+    }
+    return {
+      success: true,
+      message: `Moving "${movingTask.title}" (#${movingTask.display_id}) to ${targetSwimlane.name}${placement}.${handOff}${ownSessionNote(moverSessionId, targetSwimlane)}`,
+      data: { id: movingTask.id, displayId: movingTask.display_id, column: targetSwimlane.name, position: slot },
+    };
   };
-  const moving = Object.keys(moveOptions).length > 0
-    ? context.onTaskMove(moveInput, moveOptions)
-    : context.onTaskMove(moveInput);
-  void moving.catch((error) => {
-    console.error(`[move_task] Failed for task ${task.id.slice(0, 8)}:`, error);
-  });
 
-  const placement = parsedSlot ? ` at position ${slot}` : '';
-  // Where the column runs no agent, the message is held for the task's next one
-  // (src/main/held-messages); Done holds nothing.
-  let handOff = '';
-  if (message && targetSwimlane.role === 'done') {
-    handOff = ' Done runs no agent and holds no messages, so your message is not delivered.';
-  } else if (message && targetSwimlane.auto_spawn === false) {
-    handOff = ` No agent runs in ${targetSwimlane.name}, so your message is held for the task's next agent.`;
-  } else if (message) {
-    handOff = ' Its agent there gets your message once it is ready.';
+  // Asked before the move fires, like the lock above: a refusal inside the
+  // fire-and-forget would never reach the agent. A task's own agent skips it.
+  const teardown = teardownOfColumn(targetSwimlane);
+  if (teardown && needsRunningWorkCheck(context, task)) {
+    return refuseRunningWork(context, task, teardown).then((workRefusal) => {
+      if (workRefusal) return { success: false, error: workRefusal };
+      // Read again: the guard's git reads gave the task time to go, or a workflow
+      // time to take it.
+      const currentTask = taskRepo.getById(task.id);
+      if (!currentTask) return { success: false, error: `Task "${taskIdParam}" not found` };
+      const lockRefusal = checkWorkflowMoveForAgent(context.projectId, currentTask, targetSwimlane.id, moverIsTaskAgent);
+      return lockRefusal ? { success: false, error: lockRefusal } : startMove(currentTask);
+    });
   }
-  return {
-    success: true,
-    message: `Moving "${task.title}" (#${task.display_id}) to ${targetSwimlane.name}${placement}.${handOff}${ownSessionNote(moverSessionId, targetSwimlane)}`,
-    data: { id: task.id, displayId: task.display_id, column: targetSwimlane.name, position: slot },
-  };
+  return startMove(task);
 };
 
 /**
@@ -1326,7 +1345,7 @@ export function handleMoveTaskToProject(
 export const handleDeleteTask: CommandHandler = (
   params: Record<string, unknown>,
   context: CommandContext,
-): CommandResponse => {
+): CommandResponse | Promise<CommandResponse> => {
   const taskId = params.taskId as string;
 
   if (!taskId) {
@@ -1336,28 +1355,39 @@ export const handleDeleteTask: CommandHandler = (
   const db = context.getProjectDb();
   const taskRepo = new TaskRepository(db);
   const task = resolveTask(taskRepo, taskId);
-  if (!task) {
-    return { success: false, error: `Task "${taskId}" not found` };
-  }
+  const notFound: CommandResponse = { success: false, error: `Task "${taskId}" not found` };
+  if (!task) return notFound;
 
-  const attachmentRepo = new AttachmentRepository(db);
-  const sessionRepo = new SessionRepository(db);
+  const deleteTask = (taskToDelete: Task): CommandResponse => {
+    const attachmentRepo = new AttachmentRepository(db);
+    const sessionRepo = new SessionRepository(db);
 
-  // Delete attachments and session records before task (FK constraints)
-  attachmentRepo.deleteByTaskId(task.id);
-  sessionRepo.deleteByTaskId(task.id);
+    // Delete attachments and session records before task (FK constraints)
+    attachmentRepo.deleteByTaskId(taskToDelete.id);
+    sessionRepo.deleteByTaskId(taskToDelete.id);
 
-  // Fire-and-forget async cleanup (PTY kill, worktree removal, renderer notification)
-  context.onTaskDeleted(task);
+    // Fire-and-forget async cleanup (PTY kill, worktree removal, renderer notification)
+    context.onTaskDeleted(taskToDelete);
 
-  // Delete the task from DB
-  taskRepo.delete(task.id);
+    // Delete the task from DB
+    taskRepo.delete(taskToDelete.id);
 
-  return {
-    success: true,
-    message: `Deleted task "${task.title}" (#${task.display_id}).`,
-    data: { id: task.id, displayId: task.display_id, title: task.title },
+    return {
+      success: true,
+      message: `Deleted task "${taskToDelete.title}" (#${taskToDelete.display_id}).`,
+      data: { id: taskToDelete.id, displayId: taskToDelete.display_id, title: taskToDelete.title },
+    };
   };
+
+  if (needsRunningWorkCheck(context, task)) {
+    return refuseRunningWork(context, task, { kind: 'delete' }).then((refusal) => {
+      if (refusal) return { success: false, error: refusal };
+      // Read again: the guard's git reads gave the task time to change or go.
+      const currentTask = taskRepo.getById(task.id);
+      return currentTask ? deleteTask(currentTask) : notFound;
+    });
+  }
+  return deleteTask(task);
 };
 
 /**

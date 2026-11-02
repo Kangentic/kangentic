@@ -154,7 +154,24 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, other {\"{taskTitle}\"이(가) #분 동안 유휴 상태였습니다.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr "\"{taskTitle}\": {columnName}에서 \"{automationName}\"이(가) 실패했습니다."
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": exited with code {exitCode}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
@@ -1071,6 +1088,11 @@ msgstr "처음으로 이동"
 msgid "just now"
 msgstr "방금 전"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic이 해당 폴더에 쓸 수 없습니다."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1337,6 +1359,10 @@ msgstr "선택 사항"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "다른 작업에서도 사용 중입니다. 중지하면 해당 작업이 중단될 수 있습니다."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"
@@ -1480,8 +1506,9 @@ msgid "Restart to update"
 msgstr "다시 시작하여 업데이트"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "이제 재개 시 에이전트의 새 대화를 따릅니다."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1600,9 @@ msgid "Settings"
 msgstr "설정"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "설정 스크립트 실패"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
@@ -1625,6 +1653,10 @@ msgstr "아직 준비 중: {taskTitle}"
 #, fuzzy
 msgid "Still running: {tasks}."
 msgstr "아직 실행 중: {tasks}."
+
+#: src/renderer/App.tsx
+msgid "Stop script failed"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

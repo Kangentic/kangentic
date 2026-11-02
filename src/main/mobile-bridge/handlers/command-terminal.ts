@@ -53,6 +53,14 @@ const START_REFUSAL_CODES: Record<CommandTerminalStartErrorCode, CapabilityError
 };
 
 /**
+ * The newest conversations a phone's list carries. An agent that never purges
+ * its transcripts gives the record no limit of its own. At about 700 bytes for a
+ * row with a 200-character CJK prompt, 500 rows stay far inside the protocol's
+ * 4 MiB decoded cap.
+ */
+export const PHONE_EARLIER_LIMIT = 500;
+
+/**
  * `command-terminal`: a phone starts, resumes or stops a Command Terminal, the
  * agent the desktop's Ctrl+Shift+P panel runs at a project's root, and lists
  * the ended conversations it can resume. Start and resume run the very
@@ -95,7 +103,7 @@ export async function handleCommandTerminal(
     const earlierPayload: CommandTerminalEarlierResponsePayload = {
       ok: true,
       projectId: project.projectId,
-      conversations: entries.map((entry) => ({
+      conversations: entries.slice(0, PHONE_EARLIER_LIMIT).map((entry) => ({
         agentSessionId: entry.agentSessionId,
         // The words the desktop's row reads.
         name: commandTerminalHistoryName(entry),

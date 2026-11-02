@@ -323,8 +323,11 @@ in one Sentry org, one triage surface.
   The filter fails closed, the opposite of `beforeSendEvent`: a throw drops the crumb. The
   `[SHUTDOWN] pty-drain:*` lines pass byte-identical. electron-updater's own lines, which carried
   the Squirrel and package-manager detail on past updater issues, go through a tagged logger in
-  `src/main/updater.ts`, with its debug output kept out. Events uploaded before this change still
-  carry the unfiltered trail.
+  `src/main/updater.ts`, with its debug output kept out. That logger also strips every URL's query
+  and fragment, because the policy keeps URLs in a console line and `AppUpdater` logs a failed
+  download's whole stack, signed link included, before the app's own `error` listener runs. A
+  suppressed failure would otherwise leave the link in the ring for the next event. Events uploaded
+  before this change still carry the unfiltered trail.
 
 ## Handled errors and event context
 
@@ -352,7 +355,11 @@ in one Sentry org, one triage surface.
   a scan pass also carries a `pass` tag. `first`: nothing was signalled yet. `second`: the
   graceful kills went out. `last`: the force pass ran as well, possibly with no target.
   `reader_load`, the three host codes, `wsl_error`, and a `reap_error` from the home-directory
-  lookup (which runs before any scan), carry no `pass` tag. A Stop
+  lookup (which runs before any scan), carry no `pass` tag. A `window_list` failure also carries a
+  `cause` tag saying how `lsappinfo`'s last attempt failed. `spawn_error`: it never started, or the
+  spawn worker lost the run. `exit_code`: it exited non-zero. `signal`: something other than the
+  timeout killed it. `timeout`: it ran past its timeout. `pass` and `cause` stay out of the message
+  and the once-per-launch key, so neither splits the issue. A Stop
   that refused a process, such as Kangentic's own tree or a held PTY, is not reported. Neither is
   one that found the process still running after the force kill), and a guarded synchronous write that could not
   reach disk (`src/main/config/write-failure-notice.ts`, one report per failing `source` tag per
@@ -429,13 +436,20 @@ in one Sentry org, one triage surface.
 
 ## Counted, not reported
 
-- **User-configuration errors are the one deliberate exclusion.** `reportHandledError`
+- **User-configuration errors are a deliberate exclusion.** `reportHandledError`
   early-returns on a `UserConfigurationError` (`src/shared/user-configuration-error.ts`). A
   missing agent CLI (`AgentCliNotFoundError`) is the user's environment, not a defect we can ship
   a fix for, so it is surfaced in the app instead - the spawn-blocked toast names the agent and
   points at the CLI path override in Settings > Agent - while `spawn_failed` still counts it, so
   "how often are users hitting a missing CLI" stays answerable. A future user-config error opts
   itself out by extending that class rather than by adding a message pattern to a filter list.
+- **A folder Kangentic cannot write to is refused, not reported.** Before it registers a new
+  project, `openProjectByPath` (`src/main/ipc/handlers/projects.ts`) writes and removes a probe
+  file in `<folder>/.kangentic/`. A refusal throws an error that starts with
+  `PROJECT_FOLDER_NOT_WRITABLE_PREFIX`, which reaches no Sentry issue because a user's folder
+  permissions are not a defect in the app (Sentry DESKTOP-28 was this folder arriving through the
+  config write instead). The Add project flow turns the sentinel into a toast, and nothing is
+  registered, so `project_create` does not fire either.
 - **A recoverable utility crash is counted, not reported.** Only the crash that exhausts the
   restart cap produces a Sentry issue, and only once per latch; Aptabase sees at most two
   `utility_worker_crashed` events per service per app run, the first crash and the latch. The same
@@ -543,6 +557,19 @@ in one Sentry org, one triage surface.
   `modeChanges` (the fallback steps above),
   `gpuInfoOnReport` (`app.getGPUInfo('complete')`, the one call of it in this path, naming the
   machine's actual graphics stack), `killedTheLastRun`, and `softwareRenderingEngaged`.
+
+  `buildGpuProcessContext` in `gpu-health.ts` builds this object. Sentry normalizes contexts to
+  depth 3, which turned every entry of `deaths` and `modeChanges` into `[Object]` and
+  `gpuInfoOnReport.gpuDevice` into `[Array]`, so DESKTOP-29 arrived with none of the fields that
+  explain it and the Linux reading had never reached Sentry. Each `deaths` and `modeChanges` entry
+  is now one line, as in `launch-failed code=1002 at=<iso> compositing=<value> webgl=<value>`, and a
+  `modeChanges` line on Linux ends with `zygote=<state> schedulingEntities=<n>
+  maxUserProcesses=<limit>`. `gpuDevice` sits a level deeper, where any array flattens, so it is one
+  string with its first four adapters joined by `; `. `normalizeDepth` stays at the default, because raising it
+  is global, grows every event, and widens what `redact-event-paths.ts` walks.
+  `tests/unit/gpu-health.test.ts` runs the builder's output through the real `@sentry/core`
+  `normalize`. The other contexts were audited for the same flattening and hold only flat values:
+  `host_memory`, `native_crash`, `task_reap`, `call_site` (a list of strings) and `diff_viewer_N`.
 - **A GPU failure that killed the last run also downgrades this one, once.** When
   `killedTheLastRun` (`gpuEndedPreviousRun`, above) holds, `src/main/index.ts` has already started Chromium with
   `app.disableHardwareAcceleration()` and `--in-process-gpu` (decided at module scope, because
@@ -641,9 +668,19 @@ in one Sentry org, one triage surface.
   suppressions above are not uniform about it, and the split is older than any of them.
   `isTransientUpdaterError` gates ABOVE `trackEvent`, so the classes it catches (a raw
   `ECONNRESET`, `ETIMEDOUT`, `EAI_AGAIN`, `ENOTFOUND`, `ENETUNREACH`, `EPIPE`, an `HTTP_ERROR_5xx`
-  / `408` / `429` / `618`, a `net::ERR_`, an aborted request, a failed pipe) produce no event at
-  all. That was the deliberate call when it was written: keep network blips out of `app_error`
+  / `408` / `429` / `618`, a download whose message reads `Cannot download "...", status 5xx | 408 |
+  429 | 618:`, a `net::ERR_`, an aborted request, a failed pipe) produce no event at all. That was the deliberate call when it was written: keep network blips out of `app_error`
   entirely. Every gate added since sits BELOW `trackEvent` and keeps the count.
+
+  A failed download never matches the `HTTP_ERROR_` branch. `doDownload` passes a plain Error with
+  no `code` to its callback, so those statuses are matched in its message, `Cannot download "...", status <code>:`.
+  DESKTOP-24 was a signed link that expired while the machine slept (status 618), and the next
+  check gets a fresh link. `tests/unit/updater-error-classifier.test.ts` renders the template it
+  reads from the `httpExecutor.js` electron-updater loads and runs the predicate on the result, so
+  an upstream fix or reword fails a test instead of going quiet. A 403 or 404 stays reportable, and
+  its URL holds `sig=` and `jwt=`. `stripUrlQueries` in `updater.ts` removes every URL's query and
+  fragment from what leaves the app: the report's message and stack, the `app_error` message, and
+  the `[electron-updater]` log line (see "Breadcrumbs are filtered at the source").
 
   The practical consequence: one underlying network failure is counted or not depending on
   whether electron-updater rewrapped it. A feed fetch that fails with an intact errno is

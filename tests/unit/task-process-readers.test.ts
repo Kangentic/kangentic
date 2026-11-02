@@ -27,7 +27,7 @@ import {
 import { TASK_PROCESS_TAG_ENV as TASK_TAG } from '../../src/main/pty/process-tag/task-process-tag';
 import { Win32TaggedProcessReader, findTagInWindowsEnvironment, listWin32Processes, loadWin32OrphanApi } from '../../src/main/pty/process-tag/win32-reader';
 import { toProcessInfo } from '../../src/main/pty/host/host-process-table';
-import { seedsAndDescendants, type LocalConnection, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
+import { seedsAndDescendants, type LocalConnection, type ScannedProcess, type TaggedProcessReader, type ToolRun } from '../../src/main/pty/process-tag/process-scan';
 import type { SocketRow } from '../../src/main/pty/process-tag/local-connections';
 
 const TASK = '7a1f2c3d-4b5e-4f60-8a71-92b3c4d5e6f7';
@@ -315,7 +315,8 @@ describe('Linux reader: TCP connections from net/tcp and the fd links', () => {
     const procRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-proc-net-'));
     temporaryRoots.push(procRoot);
     const reader = new LinuxTaggedProcessReader({ procRoot, uid: 1000, littleEndian: true });
-    await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list' });
+    // No tool ran, so the failure names no cause (only macOS's lsappinfo step does).
+    await expect(reader.connections([asProcess(50)], [])).rejects.toMatchObject({ code: 'connection_list', failureCause: null });
   });
 
   describe('clients\' fd links are read only until every peer has an owner', () => {
@@ -529,7 +530,7 @@ describe('macOS reader', () => {
         },
         procArgs: (pid) => records.get(pid) ?? null,
       }),
-      runLsappinfo: async () => '    pid = 504 type="Foreground" flavor=3\n',
+      runLsappinfo: async () => ({ ok: true, output: '    pid = 504 type="Foreground" flavor=3\n' }),
     });
     const scan = await reader.scan();
     const byPid = new Map(scan.processes.map((entry) => [entry.pid, entry]));
@@ -550,7 +551,7 @@ describe('macOS reader', () => {
   });
 
   it('reads no working directory and spawns nothing when no process is tagged or withheld', async () => {
-    const runLsappinfo = vi.fn(async () => '');
+    const runLsappinfo = vi.fn(async () => ({ ok: true as const, output: '' }));
     const workingDirectory = vi.fn(() => null);
     const reader = new DarwinTaggedProcessReader({
       uid: 501,
@@ -578,15 +579,15 @@ describe('macOS reader', () => {
       };
     }
 
-    it('fails the scan when lsappinfo could not run: the window list is the only protection a dev-built app has', async () => {
-      const runLsappinfo = vi.fn(async (): Promise<string | null> => null);
+    it('fails the scan when lsappinfo could not run twice: the window list is the only protection a dev-built app has', async () => {
+      const runLsappinfo = vi.fn(async () => ({ ok: false as const, cause: 'spawn_error' as const }));
       const reader = new DarwinTaggedProcessReader({ uid: 501, loadKernel: async () => kernelWithOneTaggedProcess(), runLsappinfo });
       await expect(reader.scan()).rejects.toThrow(/lsappinfo/);
-      expect(runLsappinfo).toHaveBeenCalledTimes(1);
+      expect(runLsappinfo).toHaveBeenCalledTimes(2);
     });
 
     it('lets the scan resolve when lsappinfo ran and listed no window', async () => {
-      const runLsappinfo = vi.fn(async (): Promise<string | null> => '');
+      const runLsappinfo = vi.fn(async () => ({ ok: true as const, output: '' }));
       const reader = new DarwinTaggedProcessReader({ uid: 501, loadKernel: async () => kernelWithOneTaggedProcess(), runLsappinfo });
       const scan = await reader.scan();
       expect(runLsappinfo).toHaveBeenCalledTimes(1);
@@ -660,33 +661,33 @@ describe('macOS reader', () => {
 
   describe('runTool', () => {
     /** Run a one-line node program as the tool, so the cases behave the same on every OS. */
-    function runNodeProgram(source: string): Promise<string | null> {
+    function runNodeProgram(source: string): Promise<ToolRun> {
       return runDarwinTool(process.execPath, ['-e', source]);
     }
 
     it('resolves the output of a tool that exits cleanly', async () => {
-      expect(await runNodeProgram("process.stdout.write('listed')")).toBe('listed');
+      expect(await runNodeProgram("process.stdout.write('listed')")).toEqual({ ok: true, output: 'listed' });
     });
 
-    it('resolves null for a tool that wrote output and then exited with an error: a failed run is no answer', async () => {
-      expect(await runNodeProgram("process.stdout.write('partial listing', () => process.exit(1))")).toBeNull();
+    it('names a non-zero exit for a tool that wrote output and then exited with an error: a failed run is no answer', async () => {
+      expect(await runNodeProgram("process.stdout.write('partial listing', () => process.exit(1))")).toEqual({ ok: false, cause: 'exit_code' });
     });
 
-    it('resolves null, not an empty string, for a tool that exited with an error and no output', async () => {
-      expect(await runNodeProgram('process.exit(1)')).toBeNull();
+    it('names a non-zero exit, not an empty answer, for a tool that exited with an error and no output', async () => {
+      expect(await runNodeProgram('process.exit(1)')).toEqual({ ok: false, cause: 'exit_code' });
     });
 
-    it('resolves null for a tool that cannot start', async () => {
+    it('names a spawn error for a tool that cannot start', async () => {
       // Under os.tmpdir() and never created.
       const missingTool = path.join(os.tmpdir(), 'kangentic-missing-tool-that-does-not-exist');
-      expect(await runDarwinTool(missingTool, [])).toBeNull();
+      expect(await runDarwinTool(missingTool, [])).toEqual({ ok: false, cause: 'spawn_error' });
     });
 
-    it('resolves null soon after a short timeout for a tool that outlives it, long before the tool would have exited', async () => {
+    it('names the timeout soon after a short timeout for a tool that outlives it, long before the tool would have exited', async () => {
       const startedAt = Date.now();
-      // The tool would run for 10 s. Run to completion it would exit cleanly and resolve '', not null.
-      const output = await runDarwinTool(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], 300);
-      expect(output).toBeNull();
+      // The tool would run for 10 s. Run to completion it would exit cleanly and resolve an empty answer.
+      const run = await runDarwinTool(process.execPath, ['-e', 'setTimeout(() => {}, 10000)'], 300);
+      expect(run).toEqual({ ok: false, cause: 'timeout' });
       expect(Date.now() - startedAt).toBeLessThan(5000);
     });
 
@@ -723,7 +724,7 @@ describe('macOS reader', () => {
         expect(isRunning(toolPid)).toBe(true);
 
         vi.advanceTimersByTime(60_000);
-        expect(await run).toBeNull();
+        expect(await run).toEqual({ ok: false, cause: 'timeout' });
 
         const deathDeadline = Date.now() + 5000;
         while (isRunning(toolPid) && Date.now() < deathDeadline) await pause(25);

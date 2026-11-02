@@ -154,7 +154,24 @@ msgid "\"{taskTitle}\" was idle for {timeoutMinutes, plural, one {# minute} othe
 msgstr "{timeoutMinutes, plural, one {\"{taskTitle}\" è rimasta inattiva per # minuto.} many {\"{taskTitle}\" è rimasta inattiva per # minuti.} other {\"{taskTitle}\" è rimasta inattiva per # minuti.}}"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
+msgstr "\"{taskTitle}\": \"{automationName}\" non è riuscita su {columnName}."
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": exited with code {exitCode}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {minutes, plural, one {# minute} other {# minutes}}."
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": timed out after {seconds, plural, one {# second} other {# seconds}}."
 msgstr ""
 
 #: src/renderer/lib/paused-for-memory.ts
@@ -1071,6 +1088,11 @@ msgstr "Vai all'inizio"
 msgid "just now"
 msgstr "proprio ora"
 
+#: src/renderer/hooks/useAddProject.ts
+#, fuzzy
+msgid "Kangentic can't write to that folder."
+msgstr "Kangentic non può scrivere in questa cartella."
+
 #: src/renderer/hooks/useProjectRelocation.tsx
 #, fuzzy
 msgid "Kangentic will move the folder on disk. All tasks, history, and worktrees move with it."
@@ -1337,6 +1359,10 @@ msgstr "Facoltativo"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "È usato anche da altro lavoro. Arrestarlo può comprometterlo."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"
@@ -1480,8 +1506,9 @@ msgid "Restart to update"
 msgstr "Riavvia per aggiornare"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Resume now follows the agent's new conversation."
-msgstr ""
+msgstr "La ripresa ora segue la nuova conversazione dell'agente."
 
 #: src/renderer/stores/board-store/archived-tasks-slice.ts
 #: src/renderer/utils/task-progress.ts
@@ -1573,8 +1600,9 @@ msgid "Settings"
 msgstr "Impostazioni"
 
 #: src/renderer/App.tsx
+#, fuzzy
 msgid "Setup script failed"
-msgstr ""
+msgstr "Script di configurazione non riuscito"
 
 #: src/renderer/components/DataTable.tsx
 #, fuzzy
@@ -1625,6 +1653,10 @@ msgstr "Preparazione in corso: {taskTitle}"
 #, fuzzy
 msgid "Still running: {tasks}."
 msgstr "Ancora in esecuzione: {tasks}."
+
+#: src/renderer/App.tsx
+msgid "Stop script failed"
+msgstr ""
 
 #: src/renderer/stores/board-store/task-completion-slice.ts
 #, fuzzy

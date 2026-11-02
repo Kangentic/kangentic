@@ -106,7 +106,7 @@ describe('graph service when a project\'s summary store cannot be obtained', () 
       choice: null,
     });
     // The rest of the Index panel is intact.
-    expect(wire.index.corpora.map((entry) => entry.corpus)).toEqual(['conversation', 'task', 'change', 'commit', 'code']);
+    expect(wire.index.corpora.map((entry) => entry.corpus)).toEqual(['conversation', 'task', 'change', 'commit', 'code', 'command_terminal']);
     expect(wire.index.corpora.find((entry) => entry.corpus === 'task')).toMatchObject({ chunks: 3 });
     expect(wire.index.storageBytes).toBe(300);
   });

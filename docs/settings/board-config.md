@@ -41,7 +41,8 @@ session spawn strategy, plan-exit target). A task selects one and rides its ladd
 in Opus xhigh and Merge in Sonnet high while another runs the same board more cheaply. Column
 *identity* (which columns exist, their name, order, role, color, icon) is singular across profiles;
 only strategy is profile-scoped. Plan approval is not part of a profile either: it is the column's
-own, every profile shares it, and the Column Manager disables it while a profile is selected.
+own, every profile shares it, and the Column Manager disables it while a profile is selected. The
+same goes for a column's agent limit.
 
 Profiles are authored in the Column Manager and stored under a `profiles` key in
 `kangentic.json`. Unlike shortcuts they are **team-only** - never `kangentic.local.json` - because
@@ -199,6 +200,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
       "modelOverride": null,
       "effortOverride": null,
       "handoffContext": false,
+      "maxAgents": 1,
       "sessionTarget": "main",
       "sessionSpawnStrategy": "create_or_resume",
       "archived": false,
@@ -225,6 +227,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
     }
   ],
   "defaultBaseBranch": "main",
+  "stopScript": "npm run stop",
   "shortcuts": [],
   "profiles": [
     {
@@ -250,6 +253,10 @@ picker has listed that family, so a gateway model named `"Workhorse"` reaches th
 before the first picker scan on a machine, write the alias in lowercase. What an alias means is
 decided by the CLI on each machine: the provider and variables such as
 `ANTHROPIC_DEFAULT_OPUS_MODEL` can point it at a different version.
+
+**`maxAgents` is written only when a column has a limit.** An absent key is no limit, not "keep
+what is here", so a teammate turning the limit off reaches every machine. To Do and Done never carry
+one, and a value under 1 reads as no limit.
 
 **`planApproval` is written only when it is `"automatic"`** (`"planApproval": "automatic"` on a
 column whose `permissionMode` is `"plan"`). The export omits it at `"manual"`, and
@@ -342,6 +349,18 @@ list, an entry in one that is not an object, a column with no name, or a transit
 entry that is not an object. A `shortcuts` or `profiles` value that is not a list reads as none.
 
 The `defaultBaseBranch` field sets the team-shared default base branch for worktree creation. When present, it takes precedence over the per-user `git.defaultBaseBranch` in `AppConfig`. Individual users can override it via `kangentic.local.json`.
+
+## stopScript
+
+The `stopScript` field names a project's Stop script: a shell command Kangentic runs in a task's worktree, or the project folder for a task with none, after an idle or low-memory pause and before every reap, when the task left something running. It runs through the platform shell, `cmd.exe` on Windows and `sh` elsewhere, not the shell set for terminals. [Suspend and cleanup](../architecture/sessions/suspend-and-cleanup.md#a-projects-stop-script) has which events run it and why.
+
+```json
+{
+  "stopScript": "npm run stop"
+}
+```
+
+It lives here, and only here, because how to stop a stack is a fact about the repository, and teammates want it without setting it on each machine. Settings > Git > Leftover processes writes it for the project the panel is editing, and an empty field removes the key. `CONFIG_GET` lays it on `AppConfig.git.stopScript` for that row, and nothing else reads that copy. It has no database representation, so `buildBoardConfigFromDb` carries it across a write-back. An individual can replace it in `kangentic.local.json`, or turn it off on one machine with `"stopScript": ""`. While that file holds the key, the row edits it there, since a change to the team's value would not reach this machine, and an empty field leaves `""`. A project with no `kangentic.json` still reads the script from `kangentic.local.json` alone. A script committed here runs on every teammate's machine with no prompt, as a committed Run script automation does when a project opens. There is no per-script trust record for either. The one difference is an edit that lands while the project is open: a Run script automation waits for the reconciliation banner, and `stopScript` is read straight from the file, so it takes effect at once.
 
 The `_modifiedBy` field is auto-set by Kangentic to record which device last wrote the file (last-writer provenance) and should not be edited manually.
 

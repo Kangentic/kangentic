@@ -49,6 +49,7 @@ src/
     pr/           # PR subsystem (mirrors agent/boards): shared/ contract + errors,
                   #   adapters/github/ connector, pr-registry, linking, refresh, scheduler
     pty/          # PTY session manager, shell resolver
+    stop-script/  # A project's Stop script: after an idle or low-memory pause, before every reap
     workflows/    # Linked tasks that run on their own: pure engine/ core (starts, lock) + main host,
                   #   turn-end step check, operations behind the kangentic_*_workflow MCP tools
   preload/        # Context bridge (preload.ts)

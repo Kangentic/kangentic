@@ -285,6 +285,32 @@ describe('computeWindowTitle', () => {
     computeWindowTitle('Kangentic (dev)', 'C:\\Users\\dev\\projects\\kangentic', resolvePreviewTaskTitle);
     expect(resolvePreviewTaskTitle).not.toHaveBeenCalled();
   });
+
+  it('worktree a task adopted as a spare: the number comes from the task row, not the folder name', () => {
+    // A task that adopted a pre-installed spare worktree keeps the spare's folder
+    // for good, so the folder says nothing about its number.
+    expect(
+      computeWindowTitle(
+        'Kangentic',
+        'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\spare_0a1b2c3d',
+        noPreviewTitle,
+        () => 612,
+      ),
+    ).toBe('Kangentic - #612');
+  });
+
+  it('the row\'s number wins over a numeric folder, and the folder shows only when the row cannot be read', () => {
+    const worktree = 'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\566';
+    expect(computeWindowTitle('Kangentic', worktree, noPreviewTitle, () => 567)).toBe('Kangentic - #567');
+    expect(computeWindowTitle('Kangentic', worktree, noPreviewTitle, () => null)).toBe('Kangentic - #566');
+  });
+
+  it('reads the task row only inside a worktree, and not when a preview label already names the task', () => {
+    const resolveWorktreeTaskNumber = vi.fn(() => 612);
+    computeWindowTitle('Kangentic', 'C:\\Users\\dev\\projects\\kangentic', noPreviewTitle, resolveWorktreeTaskNumber);
+    computeWindowTitle('Kangentic', 'C:\\Users\\dev\\kangentic\\.kangentic\\worktrees\\spare_0a1b2c3d', () => '#612 - Some task', resolveWorktreeTaskNumber);
+    expect(resolveWorktreeTaskNumber).not.toHaveBeenCalled();
+  });
 });
 
 describe('resolveBackgroundColor', () => {

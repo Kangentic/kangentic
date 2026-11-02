@@ -100,6 +100,7 @@ function makeLane(id: string, name: string, position: number, role: 'todo' | 'do
     handoff_context: false,
     session_target: 'main',
     session_spawn_strategy: 'create_or_resume',
+    max_agents: null,
     created_at: CREATED_AT,
   };
 }

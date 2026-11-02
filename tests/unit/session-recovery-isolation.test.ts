@@ -100,6 +100,7 @@ vi.mock('../../src/main/db/repositories/session-repository', () => {
 
 vi.mock('../../src/main/db/repositories/task-repository', () => {
   class FakeTaskRepository {
+    listCappedColumnTasks() { return []; }
     list = (swimlaneId?: string) => {
       if (swimlaneId !== undefined) {
         // autoSpawnTasks calls list(swimlaneId): return tasks in that lane.

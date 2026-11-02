@@ -19,8 +19,9 @@
  *      fails schedules the one delayed retry (`scheduleDoneWorktreeRemovalRetry`),
  *      right after it and for that task; a removal that succeeds schedules none.
  *   3. The deliberate negatives: a move into an auto_spawn=false column and
- *      the Stop / Pause handlers (SESSION_KILL, SESSION_SUSPEND) never reap.
- *      The user chose to keep a parked task's dev server running.
+ *      the Stop / Pause handlers (SESSION_KILL, SESSION_SUSPEND) never reap, and
+ *      never start a project's Stop script. The user chose to keep a parked
+ *      task's dev server running.
  *   4. `PROJECT_DELETE` reaps after its sessions' exits and before removing
  *      worktrees (static line-order scan; the handler's mock graph is large).
  *
@@ -51,8 +52,10 @@ import type { TaskRepository } from '../../src/main/db/repositories/task-reposit
 // Shared call-order tracker. Reset per test.
 // ---------------------------------------------------------------------------
 
-const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, mockListForTaskNewestFirst, latestSession } = vi.hoisted(() => ({
+const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, mockListForTaskNewestFirst, latestSession, mockSpawnWithAbort } = vi.hoisted(() => ({
   callOrder: [] as string[],
+  // The Stop script's one way to start, so a test can hold or fail it.
+  mockSpawnWithAbort: vi.fn(async (_target: unknown, _options: unknown): Promise<{ stdout: string; stderr: string }> => ({ stdout: '', stderr: '' })),
   // The task's newest session record, as `getLatestForTask` answers it. Null
   // (no record) unless a test sets one; a held pause keeps a move from spawning.
   latestSession: { record: null as unknown },
@@ -69,6 +72,14 @@ const { callOrder, mockGetOpenProjectDb, mockListCliTargetsOfTasks, mockListForT
 // ---------------------------------------------------------------------------
 
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }));
+
+vi.mock('../../src/main/git/spawn-with-abort', () => ({
+  spawnWithAbort: (target: unknown, options: unknown) => {
+    callOrder.push('stopScript');
+    return mockSpawnWithAbort(target, options);
+  },
+  TREE_EXIT_WAIT_MS: 5000,
+}));
 
 vi.mock('simple-git', () => ({
   simpleGit: vi.fn(() => ({ diffSummary: vi.fn(async () => ({ insertions: 0, deletions: 0, changed: 0 })) })),
@@ -208,6 +219,8 @@ import type { AgentAdapter } from '../../src/main/agent/agent-adapter';
 import { claudeSessionStartLine } from './helpers/claude-session-start';
 import { handleTaskMove } from '../../src/main/ipc/handlers/task-move';
 import { clearSpawnProgress } from '../../src/main/transition-engine/spawn-progress';
+import { IPC } from '../../src/shared/ipc-channels';
+import { resetStopScriptFailureReportsForTests } from '../../src/main/stop-script/stop-script-failure';
 
 // ---------------------------------------------------------------------------
 // Shared factories
@@ -263,6 +276,7 @@ function makeSwimlane(id: string, overrides: Partial<Swimlane> = {}): Swimlane {
 }
 
 interface MockSessionManager {
+  probeTaskProcesses: ReturnType<typeof vi.fn>;
   kill: ReturnType<typeof vi.fn>;
   awaitExit: ReturnType<typeof vi.fn>;
   remove: ReturnType<typeof vi.fn>;
@@ -277,6 +291,7 @@ interface MockSessionManager {
 
 function makeSessionManager(): MockSessionManager {
   return {
+    probeTaskProcesses: vi.fn(async () => []),
     kill: vi.fn(() => { callOrder.push('kill'); }),
     awaitExit: vi.fn(async () => {}),
     remove: vi.fn(),
@@ -284,6 +299,10 @@ function makeSessionManager(): MockSessionManager {
     killByTaskId: vi.fn(),
     listSessions: vi.fn(() => []),
     suspend: vi.fn(async () => { callOrder.push('suspend'); }),
+    drainQueue: vi.fn(),
+    columnBlocks: vi.fn(() => false),
+    isResuming: vi.fn(() => false),
+    holdColumnSlot: vi.fn(() => () => undefined),
     // Phase 1 reconciles task.session_id against the registry before the
     // Priority ladder; a live row for the pointed-at id keeps these fixtures
     // on the branches they exercise.
@@ -322,6 +341,9 @@ beforeEach(() => {
 function reapSettings(stopLeftoverProcesses = true) {
   return {
     configManager: { load: vi.fn(() => ({ stopLeftoverProcesses })), getEffectiveConfig: vi.fn(() => ({ git: { autoCleanup: false } })) },
+    // No Stop script unless a test sets one, so every case above behaves as a
+    // project that never set one.
+    boardConfigManager: { getStopScriptForPath: vi.fn((_projectPath: string): string | null => null) },
     mainWindow: { isDestroyed: vi.fn(() => false), webContents: { send: vi.fn() } },
   };
 }
@@ -453,6 +475,252 @@ describe('cleanupTaskSession / cleanupTaskResources ordering (real task-cleanup.
     await cleanupTaskResources(context, task, tasks, null, '/mock/project');
 
     expect(callOrder).toEqual(['kill', 'removeByTaskId', 'closeWindows', 'reap', 'prepare', 'withLock', 'removeWorktree']);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 1a: the project's Stop script, before the reap of every terminal
+// transition (`stopBeforeReap`, reached through the real `reapTaskLeftovers`, so a
+// transition that reaps gets it, and a new one needs no wiring). Bounded, and it
+// never stops the reap. A project that sets none makes no host call at all.
+// ---------------------------------------------------------------------------
+
+describe('the project Stop script before the reap (real reapTaskLeftovers)', () => {
+  const PROJECT_PATH = '/mock/project';
+  const SCRIPT = 'npm run stop';
+  const RUNNING = [{ pid: 501, startKey: 'k-501', label: 'node (vite)' }];
+  let folder: string;
+
+  function makeStopContext(script: string | null = SCRIPT, stopLeftoverProcesses = true) {
+    const sessionManager = makeSessionManager();
+    const settings = reapSettings(stopLeftoverProcesses);
+    settings.boardConfigManager.getStopScriptForPath.mockReturnValue(script);
+    const context = {
+      sessionManager,
+      currentProjectId: null,
+      currentProjectPath: null,
+      projectRepo: { list: vi.fn(() => [{ id: 'proj-stop', path: PROJECT_PATH }]) },
+      ...settings,
+    } as unknown as IpcContext;
+    return { context, sessionManager, send: settings.mainWindow.webContents.send };
+  }
+
+  beforeEach(() => {
+    folder = fs.mkdtempSync(path.join(os.tmpdir(), 'kng-stop-before-reap-'));
+    mockSpawnWithAbort.mockReset();
+    mockSpawnWithAbort.mockResolvedValue({ stdout: '', stderr: '' });
+    resetStopScriptFailureReportsForTests();
+  });
+
+  afterEach(() => {
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('makes no host call and runs nothing for a project that set no script', async () => {
+    const { context, sessionManager } = makeStopContext(null);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s1', worktree_path: folder }]);
+
+    expect(sessionManager.probeTaskProcesses).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('runs the script in the worktree, on the terminal budget, and then reaps', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s2', processes: RUNNING, connected: false }]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s2', worktree_path: folder }]);
+
+    expect(callOrder).toEqual(['stopScript', 'reap']);
+    expect(sessionManager.probeTaskProcesses).toHaveBeenCalledWith(PROJECT_PATH, [{ id: 'task-s2', worktreePath: folder }], { connections: false });
+    const [target, options] = mockSpawnWithAbort.mock.calls[0] as [{ command: string; cwd: string }, { timeoutMs: number }];
+    expect(target).toMatchObject({ command: SCRIPT, cwd: folder });
+    expect(options.timeoutMs).toBeLessThanOrEqual(30_000);
+  });
+
+  it('runs it in the project folder for a task with no worktree, or whose worktree is gone', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s3', processes: RUNNING, connected: false }]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s3', worktree_path: path.join(folder, 'gone') }]);
+
+    expect((mockSpawnWithAbort.mock.calls[0][0] as { cwd: string }).cwd).toBe(PROJECT_PATH);
+  });
+
+  it('runs no script for a task that left nothing running', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s4', processes: [], connected: false }]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s4', worktree_path: folder }]);
+
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('runs no script when the host could not tell, and still reaps', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue(null);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s5', worktree_path: folder }]);
+
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('runs even with a client connected: at a terminal transition that is no evidence', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s6', processes: RUNNING, connected: true }]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s6', worktree_path: folder }]);
+
+    expect(callOrder).toEqual(['stopScript', 'reap']);
+  });
+
+  it('runs nothing with "Stop leftover processes" off', async () => {
+    const { context, sessionManager } = makeStopContext(SCRIPT, false);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s7', worktree_path: folder }]);
+
+    expect(sessionManager.probeTaskProcesses).not.toHaveBeenCalled();
+    expect(mockSpawnWithAbort).not.toHaveBeenCalled();
+  });
+
+  it('runs nothing for a Command Terminal', async () => {
+    const { context, sessionManager } = makeStopContext();
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'terminal-1', worktree_path: null }], { skipStopScript: true });
+
+    expect(sessionManager.probeTaskProcesses).not.toHaveBeenCalled();
+    expect(callOrder).toEqual(['reap']);
+  });
+
+  it('goes on to the reap after a failed run, and pushes it for the toast', async () => {
+    const { context, sessionManager, send } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s8', processes: RUNNING, connected: false }]);
+    mockSpawnWithAbort.mockRejectedValue(new Error('stop script exited with code 2: boom'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s8', worktree_path: folder, title: 'Fix login' }]);
+
+    expect(callOrder).toEqual(['stopScript', 'reap']);
+    expect(send).toHaveBeenCalledWith(IPC.STOP_SCRIPT_FAILED, {
+      projectId: 'proj-stop',
+      taskId: 'task-s8',
+      taskTitle: 'Fix login',
+      failure: { kind: 'exit-code', exitCode: 2, detail: 'boom' },
+    });
+    warn.mockRestore();
+  });
+
+  it('runs once per folder, so tasks sharing the project folder do not run it twice', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([
+      { taskId: 'task-s9', processes: RUNNING, connected: false },
+      { taskId: 'task-s10', processes: RUNNING, connected: false },
+    ]);
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s9', worktree_path: null }, { id: 'task-s10', worktree_path: null }]);
+
+    expect(mockSpawnWithAbort).toHaveBeenCalledTimes(1);
+  });
+
+  it('hands a superseding move\'s signal to the script, which reads as no failure', async () => {
+    const { context, sessionManager, send } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s11', processes: RUNNING, connected: false }]);
+    const controller = new AbortController();
+    mockSpawnWithAbort.mockImplementation(async (_target, options) => {
+      controller.abort();
+      expect((options as { signal?: AbortSignal }).signal?.aborted).toBe(true);
+      throw new Error('stop script aborted (external abort) (child process killed)');
+    });
+
+    await reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s11', worktree_path: folder }], { signal: controller.signal });
+
+    expect(callOrder).toEqual(['stopScript', 'reap']);
+    expect(send).not.toHaveBeenCalledWith(IPC.STOP_SCRIPT_FAILED, expect.anything());
+  });
+
+  it('never fails the teardown when the probe itself throws', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockRejectedValue(new Error('host gone'));
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    await expect(reapTaskLeftovers(context, PROJECT_PATH, [{ id: 'task-s12', worktree_path: folder }])).resolves.toBeUndefined();
+
+    expect(callOrder).toEqual(['reap']);
+    warn.mockRestore();
+  });
+
+  it('carries a superseding move\'s signal from cleanupTaskResources (a move to To Do) to the script', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s13', processes: RUNNING, connected: false }]);
+    const controller = new AbortController();
+    let signalAbortedInsideScript: boolean | undefined;
+    mockSpawnWithAbort.mockImplementation(async (_target, options) => {
+      controller.abort();
+      signalAbortedInsideScript = (options as { signal?: AbortSignal }).signal?.aborted;
+      throw new Error('stop script aborted (external abort) (child process killed)');
+    });
+    const task = { id: 'task-s13', session_id: null, worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn(), setWorktreeSkipReason: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskResources(context, task, tasks, null, PROJECT_PATH, { signal: controller.signal });
+
+    // A signal dropped on the way would leave the script's own signal un-aborted.
+    expect(signalAbortedInsideScript).toBe(true);
+    expect(callOrder).toContain('reap');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 1a-bis: source scans for the Stop script's two wiring points that no
+// unit can drive cheaply: the Command Terminal's reaper opts out, and the host
+// memory sampler's tick drives the held-off recheck.
+// ---------------------------------------------------------------------------
+
+describe('Stop script wiring (static scans)', () => {
+  const readSource = (relativePath: string): string => fs.readFileSync(path.join(__dirname, '../../', relativePath), 'utf8');
+
+  it('the Command Terminal\'s leftover reaper passes skipStopScript, so a terminal runs no project script', () => {
+    const registerAll = readSource('src/main/ipc/register-all.ts');
+    const start = registerAll.indexOf('new CommandTerminalLeftoverReaper(');
+    expect(start).toBeGreaterThan(-1);
+    const reaperRegion = registerAll.slice(start, registerAll.indexOf('.start()', start));
+
+    expect(reaperRegion).toContain('reapTaskLeftovers(');
+    expect(reaperRegion).toMatch(/reapTaskLeftovers\([\s\S]*skipStopScript: true/);
+    // The one opt-out: every other caller of the reap runs the script.
+    expect(registerAll.match(/skipStopScript/g)).toHaveLength(1);
+  });
+
+  it('a move to To Do hands its signal to cleanupTaskResources, which reaches the reap and the script', () => {
+    const moveSource = readSource('src/main/ipc/handlers/task-move.ts');
+    const calls = moveSource.match(/await cleanupTaskResources\([^;]*\);/g) ?? [];
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call).toMatch(/\{ signal \}\)/);
+    // And the Done move's own reap carries it too.
+    const doneReaps = moveSource.match(/await reapTaskLeftovers\([^;]*\);/g) ?? [];
+    expect(doneReaps.length).toBeGreaterThan(0);
+    for (const call of doneReaps) expect(call).toMatch(/\{ signal \}\)/);
+  });
+
+  /** Whether the sampler callback in index.ts ticks the held-off stops inside its own try. */
+  function samplerTicksHeldOffStops(source: string): boolean {
+    const start = source.indexOf('onSample: (sample) => {');
+    if (start === -1) return false;
+    const end = source.indexOf('resumeMemoryPausedWorkflowTasks(', start);
+    const callback = source.slice(start, end === -1 ? undefined : end);
+    return /try \{[^}]*tickHeldOffStops\(stopContext\)/.test(callback);
+  }
+
+  it('the host memory sampler\'s onSample drives tickHeldOffStops, which is the recheck\'s only timer', () => {
+    const indexSource = readSource('src/main/index.ts');
+
+    expect(indexSource).toContain("import { tickHeldOffStops } from './stop-script/parked-stop-service';");
+    expect(samplerTicksHeldOffStops(indexSource)).toBe(true);
+    // Positive control: with the call taken out, the same check reads false.
+    expect(samplerTicksHeldOffStops(indexSource.replace('tickHeldOffStops(stopContext)', 'void stopContext'))).toBe(false);
+    // Nothing else in main ticks it, so no second timer was added.
+    expect(indexSource.match(/tickHeldOffStops\(/g)).toHaveLength(1);
   });
 });
 
@@ -1083,7 +1351,9 @@ describe('handleTaskMove Done branch: suspend -> close windows -> reap -> delete
     // session still ran would be handed off to a lane.
     expect(callOrder).toEqual(['suspend', 'closeWindows', 'reap', 'deleteWorktree']);
     expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-test', 'task-done-1');
-    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-1', worktree_path: '/mock/project/.kangentic/worktrees/task-done-1' })]);
+    // The move's signal goes with it, so a second move of the task cancels the
+    // project's Stop script rather than waiting out its bound in the task lock.
+    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-1', worktree_path: '/mock/project/.kangentic/worktrees/task-done-1' })], { signal: expect.any(AbortSignal) });
   });
 
   it('closes the windows and reaps on Done even when the session ended before the move (a Code Review entry suspended it)', async () => {
@@ -1107,7 +1377,7 @@ describe('handleTaskMove Done branch: suspend -> close windows -> reap -> delete
 
     expect(callOrder).toEqual(['closeWindows', 'reap', 'deleteWorktree']);
     expect(mockCloseTaskWindows).toHaveBeenCalledWith('proj-test', 'task-done-2');
-    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-2', worktree_path: '/mock/project/.kangentic/worktrees/task-done-2' })]);
+    expect(mockReapTaskLeftovers).toHaveBeenCalledWith(context, '/mock/project', [expect.objectContaining({ id: 'task-done-2', worktree_path: '/mock/project/.kangentic/worktrees/task-done-2' })], { signal: expect.any(AbortSignal) });
   });
 
   it('closes the windows against the explicit project the caller passed, not the ambient one', async () => {
@@ -1442,25 +1712,40 @@ describe('Stop and Pause never reap (SESSION_KILL and SESSION_SUSPEND)', () => {
   it('SESSION_KILL never references reapTaskLeftovers / reapTaskProcesses', () => {
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_KILL');
     expect(handlerRegion).toContain('getSessionTaskId');
-    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses|startParkedStop/);
   });
 
   it('SESSION_SUSPEND (the Pause toggle) never references reapTaskLeftovers / reapTaskProcesses', () => {
     // The handler delegates to `pauseTaskSession` (session-pause.ts), checked below.
     const handlerRegion = extractHandlerBody(sessionsSource, 'SESSION_SUSPEND');
     expect(handlerRegion).toContain('pauseTaskSession');
-    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+    expect(handlerRegion).not.toMatch(/reapTaskLeftovers|reapTaskProcesses|startParkedStop/);
+  });
+
+  it('only the idle timeout and the low-memory pause start a Stop script', () => {
+    // Beside its one caller in the idle continuation, sessions.ts names it in
+    // its import alone, so no other handler in the file can start one.
+    expect(sessionsSource.match(/startParkedStop\(/g)).toHaveLength(1);
+    const idleRegion = sessionsSource.slice(sessionsSource.indexOf("on('idle-timeout'"));
+    expect(idleRegion.slice(0, idleRegion.indexOf('startParkedStop('))).toContain("suspendedBy: 'auto'");
+
+    // The move that parks a task in an auto_spawn=false column names it nowhere.
+    const moveSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/task-move.ts'), 'utf8');
+    expect(moveSource).not.toContain('startParkedStop');
+
+    const pauserSource = fs.readFileSync(path.join(__dirname, '../../src/main/diagnostics/low-memory-agent-pauser.ts'), 'utf8');
+    expect(pauserSource.match(/startParkedStop\(/g)).toHaveLength(1);
   });
 
   it("pauseTaskSession (the desktop Pause's, the phone's pause-session's and Pause workflow's shared path) never references reapTaskLeftovers / reapTaskProcesses", () => {
     const pauseSource = fs.readFileSync(path.join(__dirname, '../../src/main/ipc/handlers/session-pause.ts'), 'utf8');
     expect(pauseSource).toContain('applySuspendDbWrites');
-    expect(pauseSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+    expect(pauseSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses|startParkedStop/);
 
     // The phone's handler adds nothing to the shared path, a reap included.
     const phoneSource = fs.readFileSync(path.join(__dirname, '../../src/main/mobile-bridge/handlers/pause-session.ts'), 'utf8');
     expect(phoneSource).toContain('pauseTaskSession');
-    expect(phoneSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses/);
+    expect(phoneSource).not.toMatch(/reapTaskLeftovers|reapTaskProcesses|startParkedStop/);
 
     // Pause workflow pauses each task through the same path, and reaps nothing either.
     const workflowSource = fs.readFileSync(path.join(__dirname, '../../src/main/workflows/workflow-service.ts'), 'utf8');

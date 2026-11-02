@@ -293,6 +293,7 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
   sessionMessageTrails: {},
   sessionEvents: {},
   seenIdleSessions: {},
+  queueSnapshot: { columns: [], global: [] },
   pendingCommandLabel: preservedPendingCommandLabel,
   spawnProgress: preservedSpawnProgress,
   _pendingOpenTaskId: null,
@@ -919,13 +920,10 @@ const sessionStoreInitializer: StateCreator<SessionStore> = (set, get, api) => (
 
   getRunningCount: () => get().sessions.filter((s) => s.status === 'running').length,
   getQueuedCount: () => get().sessions.filter((s) => s.status === 'queued').length,
-  getQueuePosition: (sessionId) => {
-    const queued = get().sessions
-      .filter((s) => s.status === 'queued')
-      .sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-    const idx = queued.findIndex((s) => s.id === sessionId);
-    if (idx === -1) return null;
-    return { position: idx + 1, total: queued.length };
+  setQueueSnapshot: (snapshot) => set({ queueSnapshot: snapshot }),
+  syncQueueSnapshot: async () => {
+    const snapshot = await window.electronAPI.sessions.getQueueSnapshot();
+    set({ queueSnapshot: snapshot });
   },
 
   ...createTaskChangesPanelSlice(set, get, api),

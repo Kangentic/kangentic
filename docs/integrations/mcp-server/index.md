@@ -6,7 +6,7 @@
 
 ## Tasks and board
 
-* [Task tools](task-tools.md) - Parameters and guards for creating, updating, moving, reordering, deleting and PR-linking board tasks over MCP: kangentic_create_task's call-time override validation, branch conflict guard and 500-task cap, update_task description edits, and move_task slots and message hand-off.
+* [Task tools](task-tools.md) - Parameters and guards for creating, updating, moving, reordering, deleting and PR-linking board tasks over MCP: kangentic_create_task's call-time override validation, branch conflict guard and 500-task cap, update_task description edits, move_task slots and message hand-off, and the guard that refuses an agent's teardown of another task's running work.
 * [Task read tools](task-read-tools.md) - Read-only MCP tools for tasks and board totals: list_tasks ordinal positions, find_task by display ID, branch or PR number with Knowledge Graph lines, get_task_report's route, commits and per-file changes, get_current_task from a worktree, board_summary label vocabulary, and get_task_stats and get_usage_stats cost, token and subagent fan-out figures.
 * [Search tools](search-tools.md) - kangentic_search's unified keyword and semantic search over tasks, backlog, session events, conversations, commits and projects, with groupBy task and relatedToTask rankings, the Ask caller's four-search budget, and the board-scoped kangentic_search_tasks.
 * [Column tools](column-tools.md) - Reading and editing board columns over MCP: list_columns and get_column_detail output, update_column and create_column parameters (autoSpawn, session track, planApproval, model and effort overrides), the cross-project no-reconcile rule, and what delete_column refuses.

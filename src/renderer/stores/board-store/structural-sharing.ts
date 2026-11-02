@@ -212,6 +212,7 @@ function swimlaneContentsMatch(previous: Swimlane, next: Swimlane): boolean {
     previous.model_override === next.model_override &&
     previous.effort_override === next.effort_override &&
     previous.handoff_context === next.handoff_context &&
+    previous.max_agents === next.max_agents &&
     previous.session_target === next.session_target &&
     previous.session_spawn_strategy === next.session_spawn_strategy &&
     previous.created_at === next.created_at
