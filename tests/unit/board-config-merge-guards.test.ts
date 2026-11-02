@@ -27,6 +27,19 @@ function asLocal(value: object): Partial<BoardConfig> {
   return value as unknown as Partial<BoardConfig>;
 }
 
+describe('mergeBoardConfigs: the Stop script', () => {
+  it('keeps the team\'s when the local file says nothing', () => {
+    expect(mergeBoardConfigs(asBoardConfig({ version: 1, columns: [], stopScript: 'npm run stop' }), {}).stopScript).toBe('npm run stop');
+  });
+
+  it('lets the local file replace it, and an empty local value turn it off on one machine', () => {
+    const team = asBoardConfig({ version: 1, columns: [], stopScript: 'npm run stop' });
+
+    expect(mergeBoardConfigs(team, { stopScript: 'npm run stop:local' }).stopScript).toBe('npm run stop:local');
+    expect(mergeBoardConfigs(team, { stopScript: '' }).stopScript).toBe('');
+  });
+});
+
 describe('mergeBoardConfigs: a team list the merge cannot read is left for the validator', () => {
   const localColumns = [{ id: 'local-lane', name: 'Local Lane' }];
 

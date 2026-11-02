@@ -64,6 +64,14 @@ import {
   type TaggedProcessReader,
   type ToolFailureCause,
 } from './process-scan';
+import {
+  hasOutsideClient,
+  protectedPidsOfProbe,
+  runningInTaskFolders,
+  topOfRunning,
+  treeConnectionQueryOf,
+  type TaskTreeProbeInput,
+} from './task-tree-probe';
 
 /** How long the first pass's targets get to exit before the second scan. */
 export const REAP_GRACE_MS = 1000;
@@ -89,6 +97,34 @@ export interface TaggedReapRequest {
   mainPid: number;
   /** False when the user turned stopping off: plan and report, kill nothing. */
   stop: boolean;
+}
+
+export interface TaskProbeRequest {
+  tasks: TaggedReapTask[];
+  mainPid: number;
+  /** Read the TCP table too: a pause asks whether anyone is using the stack, a terminal transition does not. */
+  readConnections: boolean;
+}
+
+/** One top-level process a probe found, named as a reported process is. */
+export interface ProbedProcess {
+  pid: number;
+  startKey: string;
+  label: string;
+}
+
+/** What one task has running. `processes` empty means nothing to stop. */
+export interface TaskProbeEntry {
+  taskId: string;
+  processes: ProbedProcess[];
+  /** A process outside the task's tree is connected to a port the tree listens on. */
+  connected: boolean;
+}
+
+export interface TaskProbeResult {
+  entries: TaskProbeEntry[];
+  /** The scan failed, so `entries` says nothing about what runs. */
+  failed: boolean;
 }
 
 /** What happened to one reported process. */
@@ -363,6 +399,52 @@ function scopesOf(tasks: readonly TaggedReapTask[], homeDirectory: string): Map<
   return new Map([...scopes]
     .filter(([, scope]) => scope.directories.size > 0)
     .map(([taskId, scope]) => [taskId, { directories: [...scope.directories], worktreePath: scope.worktreePath }]));
+}
+
+/**
+ * What each task has running, and with `readConnections`, whether anything
+ * outside its tree is connected to it (`task-tree-probe.ts`). Scans and reads
+ * and signals nothing. A failed scan answers `failed`, never an empty table,
+ * since an empty one would read as nothing running. Exported for tests.
+ */
+export async function probeTaskTrees(request: TaskProbeRequest, deps: TaggedReaperDeps): Promise<TaskProbeResult> {
+  try {
+    const scopes = scopesOf(request.tasks, deps.homeDirectory ?? os.homedir());
+    if (scopes.size === 0) return { entries: [], failed: false };
+    await deps.reader.ready?.();
+    const scan = requireProcesses(await deps.reader.scan());
+    const input: TaskTreeProbeInput = {
+      processes: scan.processes,
+      mainPid: request.mainPid,
+      liveRootPids: deps.liveRootPids(),
+      caseInsensitivePaths: deps.caseInsensitivePaths ?? process.platform !== 'linux',
+    };
+    const protectedPids = protectedPidsOfProbe(input);
+    const entries: TaskProbeEntry[] = [];
+    for (const [taskId, scope] of scopes) {
+      const running = runningInTaskFolders(input, protectedPids, taskId, scope);
+      if (running.length === 0) {
+        entries.push({ taskId, processes: [], connected: false });
+        continue;
+      }
+      const tops = topOfRunning(running);
+      const labels = await describeSafely(deps.reader, tops);
+      let connected = false;
+      if (request.readConnections && deps.reader.connections) {
+        const query = treeConnectionQueryOf(input, protectedPids, taskId);
+        connected = hasOutsideClient(await deps.reader.connections(query.listeners, query.clients), query.treePids);
+      }
+      entries.push({
+        taskId,
+        processes: tops.map((scanned) => ({ pid: scanned.pid, startKey: scanned.startKey, label: labels.get(scanned.pid) ?? UNNAMED_LABEL })),
+        connected,
+      });
+    }
+    return { entries, failed: false };
+  } catch (error) {
+    console.warn('[STOP-SCRIPT] probe failed:', messageOf(error));
+    return { entries: [], failed: true };
+  }
 }
 
 /** One reap for one batch of tasks. Exported for tests. */
@@ -727,6 +809,16 @@ export class TaggedReaper {
       }
     }
     return answers;
+  }
+
+  /**
+   * What the tasks have running, for a project's Stop script. Outside both
+   * queues, since it kills nothing and a pause must not wait behind a reap's
+   * grace. It is a full scan, so it runs on demand, and on a timer only for a
+   * stop a connected client held off (`src/main/stop-script/held-off-stops.ts`).
+   */
+  probe(request: TaskProbeRequest): Promise<TaskProbeResult> {
+    return probeTaskTrees(request, this.deps);
   }
 
   /** A failure to tell main (a closed port at quit) must not strand a waiter: a reap never throws. */

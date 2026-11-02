@@ -33,6 +33,7 @@ import { resolveAutoFocusTarget } from './utils/auto-focus';
 import { endsOwnCallTurn, resolveIdleToast } from './utils/idle-toast';
 import { openTaskFromNotification } from './utils/open-task-from-notification';
 import { asSentence, describeIpcError } from './lib/ipc-error';
+import { stopScriptFailureBody } from './lib/stop-script-toast';
 import { resolveGpuNotice } from './utils/gpu-notice';
 import { setSoftwareRenderingActive } from './utils/terminal-webgl';
 import { derivePanelSessions } from './utils/panel-sessions';
@@ -996,6 +997,21 @@ export function App() {
           onOpen: openProjectId
             ? () => { openTaskFromNotification(openProjectId, blockedTaskId); }
             : undefined,
+        });
+      }));
+    }
+
+    // A project's Stop script failed for a task. Current project only, as
+    // onSpawnBlocked: the toast names a task from that project's board.
+    if (tasks?.onStopScriptFailed) {
+      cleanups.push(tasks.onStopScriptFailed((failed) => {
+        if (failed.projectId !== useProjectStore.getState().currentProject?.id) return;
+        useToastStore.getState().addToast({
+          title: i18n._(msg`Stop script failed`),
+          message: stopScriptFailureBody(failed),
+          variant: 'warning',
+          durationMs: 12000,
+          onOpen: () => { openTaskFromNotification(failed.projectId, failed.taskId); },
         });
       }));
     }

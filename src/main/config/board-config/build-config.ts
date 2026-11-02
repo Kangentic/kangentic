@@ -29,7 +29,7 @@ import {
  *
  * `existingTeamConfig` lets the caller pass in the currently-on-disk
  * kangentic.json so fields that are NOT stored in the DB (shortcuts,
- * defaultBaseBranch) are preserved across writes. Passing `null`
+ * defaultBaseBranch, stopScript) are preserved across writes. Passing `null`
  * drops them.
  *
  * Excludes ghost lanes (they represent columns with orphaned tasks
@@ -121,6 +121,9 @@ export function buildBoardConfigFromDb(params: {
   }
   if (params.existingTeamConfig?.defaultBaseBranch) {
     boardConfig.defaultBaseBranch = params.existingTeamConfig.defaultBaseBranch;
+  }
+  if (params.existingTeamConfig?.stopScript) {
+    boardConfig.stopScript = params.existingTeamConfig.stopScript;
   }
 
   boardConfig._modifiedBy = params.fingerprint;

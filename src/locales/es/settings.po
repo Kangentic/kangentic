@@ -877,6 +877,10 @@ msgstr "No se pudo guardar la rama base"
 msgid "Couldn't save shortcuts"
 msgstr "No se pudieron guardar los accesos directos"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Count merge bypass as ready"
@@ -1438,6 +1442,10 @@ msgstr "Cómo muestra el panel Cambios las diferencias de un archivo."
 msgid "How the relay works"
 msgstr "Cómo funciona el relay"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "How to install and pair"
@@ -1608,6 +1616,12 @@ msgstr "Diseño"
 #, fuzzy
 msgid "Leave blank if the server does not require credentials"
 msgstr "Déjalo en blanco si el servidor no requiere credenciales"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "Procesos residuales"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2634,9 +2648,18 @@ msgid "Stop leftover processes"
 msgstr "Detener procesos sobrantes"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Detiene lo que un agente dejó en ejecución en su carpeta cuando su tarea termina, vuelve a To Do o se elimina, o cuando finaliza su Command Terminal."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

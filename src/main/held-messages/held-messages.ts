@@ -21,8 +21,10 @@ import { isExpiredRecapSession } from '../automations/turn-end/recap-turns';
  *
  * Producers, all through `holdTaskMessage`: `kangentic_send_session_message`
  * to a task with no live agent, a Move to column message into a column that
- * runs none, and the phone's chat (the mobile bridge's `send-user-message`) to
- * a task session that is not writable, a paused one above all.
+ * runs none, the phone's chat (the mobile bridge's `send-user-message`) to a
+ * task session that is not writable, a paused one above all, a setup script that
+ * failed in the background, and a project's Stop script saying what it stopped
+ * (`src/main/stop-script/parked-stop.ts`).
  *
  * Storage: the sent-messages log (`session_messages_sent`). The `held` row is
  * the hold itself, keyed on the task with no session yet, and its status moves

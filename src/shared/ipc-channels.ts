@@ -75,6 +75,8 @@ export const IPC = {
   // raises the desktop notification itself.
   WORKFLOW_STALLED: 'workflow:stalled',
   TASK_SPAWN_BLOCKED: 'task:spawnBlocked',
+  // A project's Stop script failed for a task. Nothing else changed.
+  STOP_SCRIPT_FAILED: 'task:stopScriptFailed',
   // Non-blocking spawn anomaly: the agent still started, but from a base that
   // could not be freshened (network/credential fetch failure).
   TASK_SPAWN_WARNING: 'task:spawnWarning',
@@ -308,6 +310,7 @@ export const IPC = {
   BOARD_CONFIG_SET_SHORTCUTS: 'boardConfig:setShortcuts',
   BOARD_CONFIG_SHORTCUTS_CHANGED: 'boardConfig:shortcutsChanged',
   BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH: 'boardConfig:setDefaultBaseBranch',
+  BOARD_CONFIG_SET_STOP_SCRIPT: 'boardConfig:setStopScript',
 
   // Mobile Bridge -- machine-global (like config), not project-scoped.
   MOBILE_GET_STATUS: 'mobile:getStatus',

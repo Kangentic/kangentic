@@ -32,7 +32,7 @@ import { promisify } from 'node:util';
 import { scanAllProcesses, findWorktreePathProcesses } from '../../src/main/git/zombie-reaper';
 import { isProcessAlive } from '../../src/main/shared/process-liveness';
 import { createTaggedProcessReader } from '../../src/main/pty/process-tag/reader-factory';
-import { reapTaggedOnce, stopProcessTree } from '../../src/main/pty/process-tag/tagged-reap';
+import { probeTaskTrees, reapTaggedOnce, stopProcessTree } from '../../src/main/pty/process-tag/tagged-reap';
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 import { resolveTaskDirectories } from '../../src/main/pty/process-tag/task-directories';
 import { buildWslReapInvocation } from '../../src/main/pty/process-tag/wsl-reap';
@@ -470,6 +470,49 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(result.killedPids).not.toContain(childPid);
     expect(isProcessAlive(parentPid)).toBe(true);
     expect(isProcessAlive(childPid)).toBe(true);
+  }, 60_000);
+
+  it('a probe finds a real server, reads a real untagged client as connected, and signals neither', async () => {
+    const scratch = makeScratch();
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const serverPath = writeTcpServer(scratch.root);
+    const clientPath = writeTcpClient(scratch.root);
+    const serverFile = path.join(scratch.root, 'probed-server.txt');
+    spawn(process.execPath, [launcherPath, serverPath, serverFile], {
+      cwd: scratch.worktree,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, [TASK_PROCESS_TAG_ENV]: TASK_ID },
+    }).unref();
+    await waitForFile(serverFile);
+    const [serverPid, port] = fs.readFileSync(serverFile, 'utf8').split(' ');
+    startedPids.push(Number(serverPid));
+    const probeRequest = {
+      tasks: [{ taskId: TASK_ID, directories: await resolveTaskDirectories(scratch.project, scratch.worktree), worktreePath: scratch.worktree }],
+      mainPid: process.pid,
+      readConnections: true,
+    };
+    const probeDeps = { reader, liveRootPids: () => [] };
+
+    // Nobody connected: running, and nothing holds the stop off.
+    const idle = await probeTaskTrees(probeRequest, probeDeps);
+    expect(idle.failed).toBe(false);
+    expect(idle.entries[0].processes.map((found) => found.pid)).toContain(Number(serverPid));
+    expect(idle.entries[0].connected).toBe(false);
+
+    // An untagged client outside the tree, as a browser tab on a dev server is.
+    // (This test runner may carry a tag of its own; a client carries none.)
+    const untagged: NodeJS.ProcessEnv = { ...process.env };
+    delete untagged[TASK_PROCESS_TAG_ENV];
+    const clientFile = path.join(scratch.root, 'probed-client.txt');
+    const client = spawn(process.execPath, [clientPath, clientFile, port], { cwd: scratch.elsewhere, stdio: 'ignore', windowsHide: true, env: untagged });
+    startedPids.push(client.pid as number);
+    await waitForFile(clientFile);
+
+    const connected = await probeTaskTrees(probeRequest, probeDeps);
+    expect(connected.entries[0].connected).toBe(true);
+    expect(isProcessAlive(Number(serverPid))).toBe(true);
+    expect(isProcessAlive(client.pid as number)).toBe(true);
   }, 60_000);
 
   it('keeps a server another task holds a TCP connection to, and stops one only its own task uses and an idle one', async () => {

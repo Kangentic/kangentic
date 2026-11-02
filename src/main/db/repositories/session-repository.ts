@@ -549,6 +549,26 @@ export class SessionRepository {
     return rows.map((row) => ({ taskId: row.task_id, suspendedAt: row.suspended_at }));
   }
 
+  /**
+   * Tasks whose latest session is a pause Kangentic made (`'auto'`, the idle
+   * timeout, or `'low_memory'`): the parked tasks a project's Stop script may
+   * stop under low memory. A user's Pause and a move's suspend stay out, since a
+   * parked task the user left there may be under test. Same shape of query as
+   * `listMemoryPausedTasks`, for the same reason.
+   */
+  listStopEligiblePausedTasks(): string[] {
+    const rows = this.db.prepare(`
+      SELECT s.task_id FROM sessions s
+      WHERE s.status = 'suspended' AND s.suspended_by IN ('auto', 'low_memory')
+        AND NOT EXISTS (
+          SELECT 1 FROM sessions newer
+          WHERE newer.task_id = s.task_id AND newer.started_at > s.started_at
+        )
+      ORDER BY s.suspended_at ASC
+    `).all() as Array<{ task_id: string }>;
+    return rows.map((row) => row.task_id);
+  }
+
   /** Get all distinct session record IDs (for stale directory cleanup). */
   listAllSessionIds(): string[] {
     const rows = this.db.prepare(

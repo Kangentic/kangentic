@@ -8,6 +8,7 @@ paths:
   - "src/main/agent/mcp-project-context.ts"
   - "src/main/transition-engine/resource-cleanup.ts"
   - "src/main/agent/adapters/codex/command-builder.ts"
+  - "src/main/stop-script/**"
 ---
 # Rule: a task's processes carry its tag, and every terminal transition reaps what is the task's
 
@@ -100,8 +101,41 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `wsl.exe` runs without the tag main holds when Kangentic itself runs from a task's terminal, so
   the script's own subshells never read as a task's.
 - **A mid-board suspend never reaps.** Pause, Stop, an `auto_spawn=false` column (Code Review
-  entry), a handoff or settings respawn, an idle-timeout suspend, and quit leave the processes
-  running, by decision: the task is parked, and its dev server stays up for testing.
+  entry), a handoff or settings respawn, an idle-timeout suspend, a low-memory pause, and quit
+  kill nothing, by decision: the task is parked, and its dev server stays up for testing.
+- **A project that declares a Stop script gets one exception, and only through its own script.**
+  `stopScript` in `kangentic.json` (`kangentic.local.json` overrides it; an empty value there turns
+  it off on one machine) runs after a pause Kangentic made, `suspended_by` `auto` or `low_memory`,
+  never after a user's Pause or Stop, an `auto_spawn=false` entry, a respawn, a handoff or a quit.
+  Kangentic still kills nothing on a pause: only the project's own script stops anything, and a
+  project that sets none makes no host call at all. It runs only when `probeTaskProcesses` finds a
+  process with the task's tag in the task's folders (`task-tree-probe.ts`), and not while a client
+  is connected: a process outside the task's tree holding a TCP connection to a port the tree
+  listens on. The tree is tag-only, with everything under it, never narrowed by folder: a stack's
+  own dashboard can work in a package cache and must not read as its client. Unlike at Done, an
+  untagged client counts here, and so does Kangentic's network service, since a person in a Browser
+  pane is using the stack. An offscreen lane is no person, so a connected pause closes the task's
+  lanes first. Do not run the script from a new pause without the record check in `parked-stop.ts`,
+  and do not widen the pauses it reads: each one left out is someone testing or an agent coming back.
+- **A stop a client held off is the one scan on a timer.** `held-off-stops.ts` rechecks on the
+  host memory sampler's tick, every five minutes, and only while a task is held off. Empty, a tick
+  returns on its first line. Do not add a task with nothing running or a poll of every paused task:
+  the recheck rule below stands for everything else. A low-memory pass reads the paused tasks from
+  the database, one scan per task with a script, and stops scanning for the rest of a spell that
+  found nothing.
+- **Before every reap, the Stop script runs once per folder, bounded.** `reapTaskLeftovers` calls
+  `stopBeforeReap` (`src/main/stop-script/terminal-stop.ts`), so a new terminal transition gets it
+  by reaping. No connected check, as at the reap. This runs inside the task lock on every transition
+  that reaps inside it, by decision: 30 s at most for the whole call, a superseding move's signal
+  ends it, and splitting six teardown paths around an unlocked gap was weighed and declined. Pauses,
+  low memory and the recheck stay outside the lock. A Command Terminal passes `skipStopScript`, and
+  the startup sweep reaps through `reapTaskProcesses`, so neither runs it.
+- **A Stop script can reach past its own tree.** It runs a third-party tool. A tree kill that
+  follows recorded parent pids without comparing start times ends a stranger's tree (see "Parent
+  pids Windows reuses" in `process-reaping.md`). Kangentic cannot prevent that from inside, so test
+  with a stub script, never a real stack on a machine running Kangentic. The script gets no
+  `KANGENTIC_TASK_ID`, even when main carries one, so it is never its own leftover. A failure, a
+  timeout and an abort change nothing else: the pause stands and the reap goes on.
 - **The setting gates the kill, never the report.** `reapTaskLeftovers` and the startup sweep
   read `stopLeftoverProcesses` and pass it as `stop`; with it off the host plans and reports and
   kills nothing. Every reap's result goes to `publishLeftoverProcesses`, so the user is told what
@@ -261,6 +295,17 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `tests/unit/session-wsl-reap-live-task.test.ts` that the in-distro WSL reap leaves out a task
   with a live or starting session (the sweep takes no task lock) and that its `wsl.exe` carries no
   task tag. Runs in CI.
+- **Test (Stop script):** `tests/unit/stop-script-parked.test.ts` pins each pause (`auto` and
+  `low_memory` run it; `user`, `system` and a quit do not), no host call with no script, the hold
+  on a connected client, the recheck that stops it once the client has gone, that an empty set polls
+  nothing, the lane close, the held message and its absence, and the low-memory pass.
+  `tests/unit/session-leftover-reap-wiring.test.ts` pins the terminal row through the real
+  `reapTaskLeftovers` (script, then reap, on the terminal budget, once per folder, a failure still
+  reaps, a Command Terminal runs none) and the Pause, Stop and `auto_spawn=false` negatives.
+  `tests/unit/task-tree-probe.test.ts` pins the two sets, and `session-reap-real-processes.test.ts`
+  a probe over a real server and a real untagged client. `tests/unit/run-stop-script.test.ts` runs a
+  real stub through the real shell: its folder, no tag, each failure, the bound, the abort, one run
+  per task. `tests/unit/idle-agent-pause.test.ts` pins the pass before a pause.
 - **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, a
   Command Terminal's own tag, and `WSLENV`. `transition-engine.test.ts` and
   `prepare-agent-spawn.test.ts` pin `taskProcessTag` on both task spawn chokepoints,

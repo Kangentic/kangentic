@@ -22,6 +22,12 @@
  * critical pressure level and stops when the level returns to normal. Nothing
  * stops the session queue or a workflow from filling the slot a pause frees:
  * #873 decided against a memory gate on spawning.
+ *
+ * Before it pauses another agent, a tick stops what a task parked by an earlier
+ * idle or low-memory pause left running, in a project with a Stop script
+ * (`relieveParked`, `src/main/stop-script/`). A parked stack can hold several
+ * agents' worth of memory and loses less than a pause does. Starting a stop is
+ * that tick's one action, and the tick does not wait for the script.
  */
 
 import type { ActivityState, HostMemorySample, SessionStatus } from '../../shared/types';
@@ -144,6 +150,13 @@ export interface IdleAgentPauserDeps {
   /** Every live session's facts, read fresh on every tick that acts. */
   listCandidates: () => IdleAgentFacts[];
   /**
+   * Stop what a parked task left running before pausing another agent, since a
+   * parked stack costs more and loses less. `started`: a stop is that tick's one
+   * action. `held`: nothing started, but a task is held off, so ask again next
+   * tick. `none`: nothing to stop, so the rest of the spell skips the scan.
+   */
+  relieveParked?: () => Promise<'started' | 'held' | 'none'>;
+  /**
    * Pause the agent, re-checking it under the task lock. Resolves true when it
    * paused, false when the agent no longer qualified or was gone.
    */
@@ -166,27 +179,49 @@ export function createIdleAgentPauser(deps: IdleAgentPauserDeps): IdleAgentPause
   const state = createMemoryReliefState();
   const now = deps.now ?? Date.now;
   let pauseInFlight = false;
+  /** This low spell found nothing parked to stop, so its later ticks skip the scan. */
+  let parkedSpellDone = false;
+
+  const pauseLongestWaiter = (): void => {
+    const startedAt = now();
+    const target = pickAgentToPause(deps.listCandidates(), startedAt);
+    if (!target) return;
+    pauseInFlight = true;
+    deps.pause(target)
+      .then((paused) => {
+        if (!paused) return;
+        const pausedAt = now();
+        deps.onPaused({ facts: target, pausedAt, waitedMs: pausedAt - (target.waitingSince ?? pausedAt) });
+      })
+      .catch((error: unknown) => {
+        console.error('[idle-agent-pause] Pause failed:', error);
+      })
+      .finally(() => {
+        pauseInFlight = false;
+      });
+  };
+
   return {
     onSample(sample) {
       // The latch follows memory whether or not the setting is on, so turning
       // it on during a low spell acts on the next tick.
       const shouldRelieve = evaluateMemoryRelief(memoryHeadroom(sample), state);
+      if (!shouldRelieve) parkedSpellDone = false;
       if (!shouldRelieve || pauseInFlight || !deps.isEnabled()) return;
-      const startedAt = now();
-      const target = pickAgentToPause(deps.listCandidates(), startedAt);
-      if (!target) return;
+      if (!deps.relieveParked || parkedSpellDone) {
+        pauseLongestWaiter();
+        return;
+      }
       pauseInFlight = true;
-      deps.pause(target)
-        .then((paused) => {
-          if (!paused) return;
-          const pausedAt = now();
-          deps.onPaused({ facts: target, pausedAt, waitedMs: pausedAt - (target.waitingSince ?? pausedAt) });
+      deps.relieveParked()
+        .catch((error: unknown): 'none' => {
+          console.error('[idle-agent-pause] Parked stop failed:', error);
+          return 'none';
         })
-        .catch((error: unknown) => {
-          console.error('[idle-agent-pause] Pause failed:', error);
-        })
-        .finally(() => {
+        .then((relief) => {
           pauseInFlight = false;
+          if (relief === 'none') parkedSpellDone = true;
+          if (relief !== 'started') pauseLongestWaiter();
         });
     },
   };

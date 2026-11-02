@@ -708,6 +708,10 @@ msgstr "無法儲存基底分支"
 msgid "Couldn't save shortcuts"
 msgstr "無法儲存快捷鍵"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Count merge bypass as ready"
 msgstr "略過審查視為就緒"
@@ -1162,6 +1166,10 @@ msgstr "變更面板如何顯示檔案差異。"
 msgid "How the relay works"
 msgstr "中繼的運作方式"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "How to install and pair"
 msgstr "安裝與配對方式"
@@ -1299,6 +1307,12 @@ msgstr "版面配置"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Leave blank if the server does not require credentials"
 msgstr "伺服器不需要認證時請留空"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "殘留的處理程序"
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Let agents drive the Browser pane."
@@ -2129,8 +2143,17 @@ msgid "Stop leftover processes"
 msgstr "停止殘留處理程序"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "任務完成、退回待辦或刪除，或命令終端機結束時，停止代理留在其資料夾中仍在執行的程序。"
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "Summaries rewritten"

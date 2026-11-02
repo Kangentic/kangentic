@@ -87,7 +87,7 @@ import { reapTaggedProcessesInWsl, wslReapSpecs } from './process-tag/wsl-reap';
 import { childProcessEnv } from '../shared/child-env';
 import { resolveTaskDirectories } from './process-tag/task-directories';
 import { hostFailureCodeOf, reportTaskReapFailure } from './task-reap-failure-report';
-import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult } from './process-tag/tagged-reap';
+import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, type StopProcessRequest, type StopProcessResult, type TaggedReapResult, type TaskProbeEntry } from './process-tag/tagged-reap';
 
 /** How long one reap batch, or one Stop, may run in the host: two scans, the
  *  1 s grace between them, the kills and a survivor check. Counted from when
@@ -97,6 +97,12 @@ import { leftoverLogLine, type LeftoverProcessEntry, type StopProcessOutcome, ty
  *  an idle Windows machine and 8.5 s at most pinned to one core beside three
  *  busy threads (445 processes), so this keeps 3x headroom over the slow case. */
 const TASK_REAP_TIMEOUT_MS = 30_000;
+/**
+ * How long a Stop script's probe waits for the host. One scan and one connection
+ * read, about 50 ms measured, and outside the reap queue, so anything near this
+ * bound is a host in trouble, and no probe answer means no script.
+ */
+const TASK_PROBE_TIMEOUT_MS = 5_000;
 /** How long a task reap waits for a parked PTY of its task to exit: the
  *  deferred force-kill's grace plus the same kill propagation `suspend()`
  *  allows (`gracefulPtyShutdown`). */
@@ -3096,30 +3102,7 @@ export class SessionManager extends EventEmitter {
   ): Promise<LeftoverProcessEntry[]> {
     const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
     if (validTasks.length === 0) return [];
-    // A young session of an agent that is typed into, which kill() tore down
-    // moments ago, is still running: its PTY is parked for the exit grace
-    // before the force-kill
-    // (pty-teardown-grace.md). Until it exits the host protects it and
-    // everything under it, so a reap now would leave the agent's children
-    // running. That happens on a Done move whose session was stopped just
-    // before, where suspend() has no PTY left to wait for.
-    // A mature session's kill() parks nothing, so this does not cover one
-    // killed without its exit awaited; every terminal transition awaits it.
-    // A Done move's suspend() waits for the exit only up to its grace plus
-    // 1.5 s, so a PTY slower than that to report its exit is still held here.
-    const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(validTasks.map((task) => task.id)));
-    if (parkedSessionIds.length > 0) {
-      const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
-      if (exited.includes(false)) {
-        console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
-      }
-    }
-    // The PTY's exit is the SHELL's. The agent it started gets the console's
-    // close and is often still exiting (its SessionEnd hooks, its transcript,
-    // its fullscreen boot record), and the reap below would terminate it as a
-    // tagged leftover. The host waits, bounded, for the agent each task's
-    // exited shells left running to go by itself (`host/exited-root-wait.ts`).
-    await this.awaitAgentExitOf(validTasks.map((task) => task.id), '[TASK-REAP]');
+    await this.awaitTaskExits(validTasks.map((task) => task.id));
     const killedPids: number[] = [];
     const entries: LeftoverProcessEntry[] = [];
     // A task with no usable directory can have nothing killed or reported, so
@@ -3279,6 +3262,72 @@ export class SessionManager extends EventEmitter {
     } catch (error) {
       console.warn(`[REAPER] worktree holder stop failed (pid=${pid}):`, error instanceof Error ? error.message : String(error));
       return 'failed';
+    }
+  }
+
+  /**
+   * Wait for what a reap or a probe would otherwise read as a leftover. A young
+   * session of an agent that is typed into, which kill() tore down moments ago,
+   * is still running: its PTY is parked for the exit grace before the force-kill
+   * (pty-teardown-grace.md). Until it exits the host protects it and everything
+   * under it, so a reap now would leave the agent's children running. That
+   * happens on a Done move whose session was stopped just before, where
+   * suspend() has no PTY left to wait for. A mature session's kill() parks
+   * nothing, so this does not cover one killed without its exit awaited; every
+   * terminal transition awaits it. A Done move's suspend() waits for the exit
+   * only up to its grace plus 1.5 s, so a PTY slower than that to report its exit
+   * is still held here.
+   *
+   * The PTY's exit is the SHELL's. The agent it started gets the console's close
+   * and is often still exiting (its SessionEnd hooks, its transcript, its
+   * fullscreen boot record), and a reap would terminate it as a tagged leftover,
+   * as a probe would read it as one. The host waits, bounded, for the agent each
+   * task's exited shells left running to go by itself (`host/exited-root-wait.ts`).
+   */
+  private async awaitTaskExits(taskIds: string[]): Promise<void> {
+    const parkedSessionIds = this.deferredKills.sessionsAwaitingExit(new Set(taskIds));
+    if (parkedSessionIds.length > 0) {
+      const exited = await Promise.all(parkedSessionIds.map((sessionId) => awaitSessionExit(this, sessionId, PARKED_EXIT_WAIT_MS)));
+      if (exited.includes(false)) {
+        console.warn('[TASK-REAP] a parked PTY did not exit within the wait; the host still protects it and what runs under it');
+      }
+    }
+    await this.awaitAgentExitOf(taskIds, '[TASK-REAP]');
+  }
+
+  /**
+   * What these tasks still have running in their folders, and with
+   * `connections`, whether anything outside a task's tree is connected to it.
+   * Signals nothing. Waits, as a reap does, for an agent still exiting, so it is
+   * never read as something left running. A WSL task's processes run inside its
+   * distro, out of the host's sight, so it reads as nothing running.
+   *
+   * Null when the host could not tell, which is never "nothing runs". Never
+   * throws.
+   */
+  async probeTaskProcesses(
+    projectPath: string | null,
+    tasks: ReadonlyArray<{ id: string; worktreePath: string | null }>,
+    options: { connections: boolean },
+  ): Promise<TaskProbeEntry[] | null> {
+    const validTasks = tasks.filter((task) => isValidTaskTagValue(task.id));
+    if (validTasks.length === 0) return [];
+    try {
+      await this.awaitTaskExits(validTasks.map((task) => task.id));
+      const probeTasks = (await Promise.all(validTasks.map(async (task) => ({
+        taskId: task.id,
+        directories: await resolveTaskDirectories(projectPath, task.worktreePath),
+        worktreePath: task.worktreePath ? await fsPromises.realpath(task.worktreePath).catch(() => task.worktreePath) : null,
+      })))).filter((task) => task.directories.length > 0);
+      if (probeTasks.length === 0) return [];
+      const result = await this.host.probeTaskProcesses(
+        { tasks: probeTasks, mainPid: process.pid, readConnections: options.connections },
+        TASK_PROBE_TIMEOUT_MS,
+      );
+      return result.failed ? null : result.entries;
+    } catch (error) {
+      console.warn('[STOP-SCRIPT] host probe failed (non-fatal):', error);
+      return null;
     }
   }
 

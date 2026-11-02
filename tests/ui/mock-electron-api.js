@@ -362,6 +362,7 @@
       defaultBaseBranch: 'main',
       copyFiles: [],
       initScript: null,
+      stopScript: null,
       linkNodeModules: true,
       holdPromptForInitScript: true,
       prAutoRefresh: true,
@@ -1706,6 +1707,23 @@
         // remount, HMR update or project switch.
         return function () {
           var listeners = window.__mockTaskSpawnBlockedListeners || [];
+          var index = listeners.indexOf(callback);
+          if (index !== -1) listeners.splice(index, 1);
+        };
+      },
+      onStopScriptFailed: function (callback) {
+        // Tests fire this via window.__mockFireStopScriptFailed(event).
+        if (!window.__mockStopScriptFailedListeners) window.__mockStopScriptFailedListeners = [];
+        window.__mockStopScriptFailedListeners.push(callback);
+        if (!window.__mockFireStopScriptFailed) {
+          window.__mockFireStopScriptFailed = function (event) {
+            var listeners = (window.__mockStopScriptFailedListeners || []).slice();
+            listeners.forEach(function (listener) { listener(event); });
+          };
+        }
+        // A REAL unsubscribe, for the same reason onSpawnBlocked returns one.
+        return function () {
+          var listeners = window.__mockStopScriptFailedListeners || [];
           var index = listeners.indexOf(callback);
           if (index !== -1) listeners.splice(index, 1);
         };
@@ -5263,6 +5281,14 @@
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
       setDefaultBaseBranch: async function (/* branch */) {},
+      setStopScript: async function (script) {
+        // Main writes kangentic.json alone and overlays it at config:get, so a
+        // spec reads what was saved from __mockStopScriptSaves, not config:set.
+        if (!window.__mockStopScriptSaves) window.__mockStopScriptSaves = [];
+        window.__mockStopScriptSaves.push(script);
+        if (window.__mockStopScriptSaveError) throw new Error(window.__mockStopScriptSaveError);
+        config.git.stopScript = script || null;
+      },
     },
 
     updater: {

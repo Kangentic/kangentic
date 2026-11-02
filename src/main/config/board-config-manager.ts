@@ -443,6 +443,55 @@ export class BoardConfigManager {
     }
   }
 
+  // --- Stop Script ---
+
+  /**
+   * The project's Stop script, team config merged with local overrides, or null
+   * when there is none. Takes a path because a pause and a recheck can be in a
+   * project that is not the active one. Both files come from JSON.parse, so
+   * anything that is not a non-empty string reads as none: an empty local value
+   * is how one machine turns a team's script off.
+   */
+  getStopScriptForPath(projectPath: string): string | null {
+    const script: unknown = this.getEffectiveConfigForPath(projectPath)?.stopScript;
+    if (typeof script !== 'string') return null;
+    const trimmed = script.trim();
+    return trimmed === '' ? null : trimmed;
+  }
+
+  /** Set the active project's Stop script in `kangentic.json`. Null or blank removes the key. */
+  setStopScript(script: string | null): void {
+    if (!this.activeProjectPath) return;
+    // As `setDefaultBaseBranch`: every exit path below serves fresh reads.
+    this.invalidateConfigCache();
+    this.assertWritable(this.activeProjectPath, TEAM_FILE, 'setStopScript');
+
+    const filePath = path.join(this.activeProjectPath, TEAM_FILE);
+    const existing = this.readExistingForWrite(this.activeProjectPath, TEAM_FILE, emptyTeamConfig());
+
+    const trimmed = script?.trim() ?? '';
+    if (trimmed === '') delete existing.stopScript;
+    else existing.stopScript = trimmed;
+    (existing as BoardConfig)._modifiedBy = this.fingerprint;
+
+    const fileCheck = contentMatchesFile(filePath, existing);
+    if (fileCheck.matches) {
+      this.lastTeamContentHash = fileCheck.contentHash;
+      return;
+    }
+
+    this.isWritingBack = true;
+    try {
+      this.lastTeamContentHash = atomicWriteJson(filePath, existing);
+    } catch (error) {
+      console.warn('[BOARD_CONFIG] setStopScript failed:', error);
+    } finally {
+      setTimeout(() => {
+        this.isWritingBack = false;
+      }, 1000);
+    }
+  }
+
   // --- Board Profiles ---
 
   /**

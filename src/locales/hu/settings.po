@@ -877,6 +877,10 @@ msgstr "Nem sikerült menteni az alapágat"
 msgid "Couldn't save shortcuts"
 msgstr "Nem sikerült menteni a parancsikonokat"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Count merge bypass as ready"
@@ -1438,6 +1442,10 @@ msgstr "A Módosítások panel így jeleníti meg a fájlok eltéréseit."
 msgid "How the relay works"
 msgstr "A továbbító működése"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "How to install and pair"
@@ -1608,6 +1616,12 @@ msgstr "Elrendezés"
 #, fuzzy
 msgid "Leave blank if the server does not require credentials"
 msgstr "Hagyja üresen, ha a kiszolgáló nem kér hitelesítő adatokat"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "Visszamaradt folyamatok"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2634,9 +2648,18 @@ msgid "Stop leftover processes"
 msgstr "Visszamaradt folyamatok leállítása"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Leállítja, amit az ügynök futva hagyott a mappájában, ha a feladata kész, visszakerül a Teendők közé, törlődik, vagy a parancsterminálja bezárul."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

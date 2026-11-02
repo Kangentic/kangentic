@@ -916,7 +916,7 @@ export async function handleTaskMove(
         // crashed" toast.
         context.sessionManager.killByTaskId(task.id);
         try {
-          await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath);
+          await cleanupTaskResources(context, task, tasks, resolvedProjectId, resolvedProjectPath, { signal });
         } finally {
           // The link went when the move committed. This second pass clears the
           // head_sha the cleanup just captured from the old checkout, which
@@ -1008,7 +1008,7 @@ export async function handleTaskMove(
         // removal below fail and leaves a husk with no git admin entry - the
         // failure that later hangs a fresh worktree creation. After the
         // suspend, so the session has exited; before deleteTaskWorktree.
-        await reapTaskLeftovers(context, resolvedProjectPath, [task]);
+        await reapTaskLeftovers(context, resolvedProjectPath, [task], { signal });
 
         // Capture git churn (fire-and-forget, best-effort). In the PR flow the
         // branch is usually already merged by the time a task reaches Done, so
