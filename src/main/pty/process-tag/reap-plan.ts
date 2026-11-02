@@ -154,8 +154,9 @@ export interface ReapPlanInput {
   keepIdentities?: ReadonlySet<string>;
   /**
    * The `keepIdentities` an earlier plan kept only as `outside`
-   * (`ReapPlan.keptOutsideIdentities`), which stay no evidence in this plan:
-   * a process that outlives its signal must still get the force kill.
+   * (`ReapPlan.keptOutsideIdentities`), which stay no evidence in this plan
+   * unless a real client reaches their tree: a process that outlives its
+   * signal must still get the force kill.
    */
   keptOutsideIdentities?: ReadonlySet<string>;
   /**
@@ -427,16 +428,16 @@ export interface ReapPlan {
   /**
    * The task's own processes the plan left running on purpose: tagged for a
    * reaped task, working in its directories, and a visible app, a tmux server,
-   * or a shared root. The top of each only, never what runs under one (a tmux
-   * pane or a pm2 app can be the user's own). Kangentic's tree and the held
-   * PTYs are never here.
+   * or a root spared as shared or `outside`. The top of each only, never what
+   * runs under one (a tmux pane or a pm2 app can be the user's own). Kangentic's
+   * tree and the held PTYs are never here.
    */
   kept: KeptProcess[];
   /**
    * Everything this plan left running on purpose, by `processIdentity`: what
-   * it spared as shared, with everything under it, and each process kept
-   * because all its children were. The next plan of the same reap takes it
-   * as `keepIdentities`.
+   * it spared, as shared or `outside`, with everything under it, and each
+   * process kept because all its children were. The next plan of the same
+   * reap takes it as `keepIdentities`.
    */
   keptIdentities: ReadonlySet<string>;
   /** The `keptIdentities` kept only as `outside`, which the next plan takes as `keptOutsideIdentities`. */
@@ -550,7 +551,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   const byPid = indexByPid(input.processes);
   const reapedTaskIds = new Set(input.tasks.keys());
   const roots: Array<{ scanned: ScannedProcess; scope: readonly string[]; taskId: string | null; ownerTaskId: string }> = [];
-  const sharedRoots: Array<ReportedProcess & { reason: KeptReason; because: KeptBecause }> = [];
+  const keptRoots: KeptProcess[] = [];
   // The task each kill root belongs to, shared or not, so a process under one
   // is reported under that task.
   const rootTaskByPid = new Map<number, string>();
@@ -558,19 +559,21 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
   // What an earlier plan of this reap left running stays running.
   const keptEarlier = new Set<number>();
   // Spared with no evidence of other work, so no evidence for a listener: each
-  // `outside` root with its subtree, and every pid only such a root spared.
-  const outsideRoots: Array<{ entry: (typeof sharedRoots)[number]; pids: Set<number> }> = [];
+  // `outside` root with its subtree (no entry when an earlier plan reported it),
+  // and every pid only such a root spared.
+  const outsideRoots: Array<{ entry: KeptProcess | null; pids: Set<number> }> = [];
   const outsideOnlyPids = new Set<number>();
   if (input.keepIdentities && input.keepIdentities.size > 0) {
     for (const scanned of input.processes) {
-      if (!protectedPids.has(scanned.pid) && input.keepIdentities.has(processIdentity(scanned))) {
-        collectSubtree(scanned, children, keptEarlier, protectedPids);
+      const identity = processIdentity(scanned);
+      if (protectedPids.has(scanned.pid) || !input.keepIdentities.has(identity)) continue;
+      const subtree = new Set<number>();
+      collectSubtree(scanned, children, subtree, protectedPids);
+      for (const pid of subtree) {
+        keptEarlier.add(pid);
+        sparedPids.add(pid);
       }
-    }
-    for (const pid of keptEarlier) {
-      sparedPids.add(pid);
-      const scanned = byPid.get(pid);
-      if (scanned && input.keptOutsideIdentities?.has(processIdentity(scanned))) outsideOnlyPids.add(pid);
+      if (input.keptOutsideIdentities?.has(identity)) outsideRoots.push({ entry: null, pids: subtree });
     }
   }
   // First: a shared root shields its whole subtree, including the task's own
@@ -589,16 +592,18 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
         sparedPids.add(pid);
         if (evidence.reason === 'shared') sparedAsShared.add(pid);
       }
-      const entry = { process: scanned, taskId: root.ownerTaskId, reason: evidence.reason, because: { basis: 'descendant' as const, evidencePid: evidence.process.pid } };
-      sharedRoots.push(entry);
+      const entry: KeptProcess = { process: scanned, taskId: root.ownerTaskId, reason: evidence.reason, because: { basis: 'descendant', evidencePid: evidence.process.pid } };
+      keptRoots.push(entry);
       if (evidence.reason === 'outside') outsideRoots.push({ entry, pids: subtree });
     } else {
       roots.push({ scanned, ...root });
     }
   }
   for (const { pids } of outsideRoots) {
-    for (const pid of pids) if (!sparedAsShared.has(pid)) outsideOnlyPids.add(pid);
+    for (const pid of pids) outsideOnlyPids.add(pid);
   }
+  // A shared root over the same pid outranks an `outside` one, kept earlier or not.
+  for (const pid of sparedAsShared) outsideOnlyPids.delete(pid);
   const owningTaskOf = (scanned: ScannedProcess): string | null => {
     const own = rootTaskByPid.get(scanned.pid);
     if (own !== undefined) return own;
@@ -656,10 +661,10 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
         if (isOutsideOnly) {
           // Other work reached the tree itself, so it is shared after all, and
           // from here on what it connects to is spared too.
-          outsideOnlyPids.delete(listener.pid);
           for (const { entry, pids } of outsideRoots) {
             if (!pids.has(listener.pid)) continue;
             for (const pid of pids) outsideOnlyPids.delete(pid);
+            if (!entry) continue;
             entry.reason = 'shared';
             entry.because = { basis: 'connection', evidencePid: client.pid };
           }
@@ -673,7 +678,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
           targetPids.delete(pid);
         }
         const taskId = owningTaskOf(listener);
-        if (taskId !== null) sharedRoots.push({ process: listener, taskId, reason: 'shared', because: { basis: 'connection', evidencePid: client.pid } });
+        if (taskId !== null) keptRoots.push({ process: listener, taskId, reason: 'shared', because: { basis: 'connection', evidencePid: client.pid } });
         changed = true;
       }
     }
@@ -719,7 +724,7 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     reportedRoots.push({ process: root.scanned, taskId: root.ownerTaskId });
   }
 
-  // Reported as left running: the task's own windows, tmux servers and shared
+  // Reported as left running: the task's own windows, tmux servers and kept
   // roots, never Kangentic's tree or a held PTY.
   const safetyPids = buildSafetyProtectedPids(input);
   const keptByPid = new Map<number, KeptProcess>();
@@ -735,9 +740,9 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
       because: { basis: 'role', evidencePid: null },
     });
   }
-  for (const shared of sharedRoots) {
-    if (safetyPids.has(shared.process.pid) || keptByPid.has(shared.process.pid)) continue;
-    keptByPid.set(shared.process.pid, shared);
+  for (const keptRoot of keptRoots) {
+    if (safetyPids.has(keptRoot.process.pid) || keptByPid.has(keptRoot.process.pid)) continue;
+    keptByPid.set(keptRoot.process.pid, keptRoot);
   }
   // A kept ancestor is reported with the reason of what it was kept for, so
   // the list names the launcher, and its Stop takes the window with it.
@@ -764,15 +769,19 @@ export function planReapDetailed(input: ReapPlanInput): ReapPlan {
     return true;
   });
 
-  const keptIdentities = new Set<string>();
-  for (const pid of [...sparedPids, ...keptAncestorPids]) {
-    const scanned = byPid.get(pid);
-    if (scanned) keptIdentities.add(processIdentity(scanned));
-  }
-  const keptOutsideIdentities = new Set<string>();
-  for (const pid of outsideOnlyPids) {
-    const scanned = byPid.get(pid);
-    if (scanned) keptOutsideIdentities.add(processIdentity(scanned));
-  }
-  return { targets, roots: reportedRoots, kept, keptIdentities, keptOutsideIdentities };
+  const identitiesOf = (pids: Iterable<number>): Set<string> => {
+    const identities = new Set<string>();
+    for (const pid of pids) {
+      const scanned = byPid.get(pid);
+      if (scanned) identities.add(processIdentity(scanned));
+    }
+    return identities;
+  };
+  return {
+    targets,
+    roots: reportedRoots,
+    kept,
+    keptIdentities: identitiesOf([...sparedPids, ...keptAncestorPids]),
+    keptOutsideIdentities: identitiesOf(outsideOnlyPids),
+  };
 }

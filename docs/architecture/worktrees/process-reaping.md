@@ -68,19 +68,21 @@ Those two kills are the right ones, on a measured mechanism. Aspire starts DCP w
 | Idle | 2 targets; 0 of 15 running 513 ms after the reap returned | The same, 508 ms. The DCP root reads `outside` |
 | Open in a browser | 0 targets, nothing killed; 15 of 16 running at 130 s | 2 targets; 0 of 16 running 516 ms after the reap returned |
 
+The plan read 14 processes both times. The watch also follows anything tagged that starts after the reap, here one or two `dcp.exe` from the cleanup, so it counts 15 and 16.
+
 DCP's own log took 1.2 s from "Monitor process exited" to "Shutdown complete." in every run. The real 45-process stack was planned, never torn down, and containers were not measured, so a larger stack takes longer by an unmeasured amount. A Done move's worktree removal can land inside that time: it fails while DCP exits and is retried at 10 s, and the kept row turning Ended retries it too.
 
 The second row is why `outside` is more than a word. A dashboard page makes the dashboard dial the AppHost's resource service (only then: `EnsureInitialized` is lazy, so an idle dashboard holds no such connection), and the dashboard was spared, and a client spared as shared is connection evidence. So one open tab spared the AppHost, the CLI was kept for its children, and the reap stopped nothing. A process in an `outside` tree is therefore no client. That removes a spare the rule used to give, so it stays narrow:
 
 - Anything stronger under the same root decides, whichever the walk reaches first: an untagged, cleared-tag or other task's descendant, or one working elsewhere whose environment cannot be read. The root is `shared`, and the plan behaves as it did.
 - A real client of a process in the tree (another task on its dashboard) makes the whole tree `shared` before anything is killed, and then the dashboard's connection spares the AppHost as it used to. A macOS withheld root is never `outside`, since nothing there shows the descendant is the task's own.
-- The second pass takes the distinction from the first (`keptOutsideIdentities`), so a dashboard the first pass spared does not save a host that outlived its signal from the force kill.
+- The second pass takes the distinction from the first (`keptOutsideIdentities`), so a dashboard the first pass spared does not save a host that outlived its signal from the force kill. A real client that arrives inside the grace makes the whole tree `shared` there too.
 
 No kill reaches further than the tag and the directory: the dashboard is never a target, and nothing above it dies that those two signals did not already name. Measured cases against the change:
 
 | Case | Reason before | Reason now | What is killed |
 |---|---|---|---|
-| Gradle daemon under a live in-project client | Client `shared` | Client `outside` | Unchanged: neither is. The daemon works in `~/.gradle/daemon` |
+| Gradle daemon under a live in-project client | Client `shared` | Client `outside` | Unchanged: neither the client nor the daemon. The daemon works in `~/.gradle/daemon` |
 | pm2, an app the user started later | `shared` (untagged child) | `shared` | Unchanged |
 | pm2, the task's own app working elsewhere | `shared` | `outside` | Unchanged for the daemon. A listener its app connects to is no longer spared by that connection |
 | adb server | `shared` by connection | `shared` by connection | Unchanged |
