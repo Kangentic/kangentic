@@ -2536,6 +2536,7 @@ test.describe('Command Terminal', () => {
           .toEqual({ 'slot-1': 'resumed-1' });
         // Main's markAgentReady already saw this agent, as a reload's sync hydrates it.
         await page.evaluate(() => {
+          (window as unknown as { __mockFirstOutputSessions: Record<string, boolean> }).__mockFirstOutputSessions = { 'resumed-1': true };
           const sessionStore = (window as unknown as {
             __zustandStores: {
               session: {
@@ -2546,6 +2547,14 @@ test.describe('Command Terminal', () => {
           }).__zustandStores.session;
           sessionStore.setState({ sessionFirstOutput: { ...sessionStore.getState().sessionFirstOutput, 'resumed-1': true } });
         });
+        // A sync that lands before the window mounts (a project switch, a focus catch-up) takes
+        // the keyset from main, so main has to report the same agent. Run one to prove it does.
+        await page.evaluate(() => (window as unknown as {
+          __zustandStores: { session: { getState: () => { syncSessions: () => Promise<boolean> } } };
+        }).__zustandStores.session.getState().syncSessions());
+        await expect.poll(() => page.evaluate(() => (window as unknown as {
+          __zustandStores: { session: { getState: () => { sessionFirstOutput: Record<string, boolean> } } };
+        }).__zustandStores.session.getState().sessionFirstOutput['resumed-1'] === true), { timeout: 5000 }).toBe(true);
 
         await page.keyboard.press('Control+Shift+P');
         const commandWindow = page.getByTestId('command-terminal-window');
