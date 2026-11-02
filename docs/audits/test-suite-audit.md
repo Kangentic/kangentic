@@ -238,6 +238,15 @@ than the fixes that addressed them. What was still open:
 Every pass here was on an unloaded Windows machine, which does not reproduce CI's load. Only CI's
 red rate over the next weeks shows whether these held.
 
+## What was removed
+
+Everything on the sign-off list, on its recommended option:
+
+- **Dev tooling.** `eval-docs-reads` and `measure-docs-structure`, and `scripts/review-eval/`, each
+  with its tests, 6,879 lines of test and script that nothing in `package.json`, a skill, a rule or a
+  workflow used. The fan-out audit's section 17 numbers can no longer be rerun from this tree;
+  git history holds the harness. The alternative was keeping `review-eval` for a future eval.
+
 ## Rejected options
 
 - **`--only-changed` and `--changed` on the PR gate.** See Research. A missed test is a miss on main.
