@@ -2644,7 +2644,9 @@
         return '';
       },
       getFirstOutput: async function () {
-        return {};
+        // A test that needs main to have seen an agent on screen seeds
+        // window.__mockFirstOutputSessions = { <sessionId>: true }, since a sync takes the keyset from here.
+        return Object.assign({}, window.__mockFirstOutputSessions || {});
       },
       getUsage: async function (/* projectId */) {
         return {};
