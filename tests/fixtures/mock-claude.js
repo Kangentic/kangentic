@@ -323,59 +323,85 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
   // a console window flashing up.
   //
   // Lifetime is bounded by MOCK_CLAUDE_BG_SHELL_LIFETIME_MS (default
-  // 10s) so CI never leaks more than ~10s of orphan node processes
-  // when Playwright kills the test suite with SIGKILL (which bypasses
-  // the killTick SIGTERM handler). The positive-control spec's
-  // observation window is 5s, so 10s leaves comfortable margin.
+  // 10s) so a hard-killed run never leaks an orphan for long (SIGKILL
+  // bypasses the killTick handlers). The watcher now ends the shell for
+  // real when the child dies (see below), so a spec that needs the shell
+  // alive across its whole run passes a lifetime longer than its worst case.
   const lifetimeMs = parseInt(process.env.MOCK_CLAUDE_BG_SHELL_LIFETIME_MS || '10000', 10);
-  try {
-    const tick = spawn(
-      process.execPath,
-      [
-        '-e',
-        `setTimeout(function(){process.exit(0)},${lifetimeMs})`,
-      ],
-      { detached: true, stdio: 'ignore', windowsHide: true },
-    );
-    tick.unref();
+  // The child is a SHELL (sh / cmd.exe) that runs the timer, because that is what a real
+  // background Bash is, and what Kangentic's background-shell watcher counts: it compares the
+  // number of shell-like processes under the session with the number of background shells the
+  // engine tracks, and drains an anonymous one after two polls (about 4 s) of a deficit. A bare
+  // node child is not shell-like, so the watcher saw "the shell is gone" while it was alive,
+  // ended the shell, and the session went idle about 4 s after it first read thinking. Whether
+  // that landed inside the spec's 5 s observation window depended on how the polls and the
+  // spec's waits fell on that run (3 of 6 and 4 of 4 failed locally, at a 10 s and a 60 s
+  // lifetime alike), which is the flake this replaced. The command after the timer keeps sh
+  // from exec-ing it away (sh would otherwise become the timer, and stop being a shell).
+  const timerCode = `setTimeout(function(){process.exit(0)},${lifetimeMs})`;
+  const isWindows = process.platform === 'win32';
+  // Started a beat after the events above, so the engine has counted the background shell before the
+  // watcher can see the child: a watcher poll that anchored on the child with the shell not yet counted
+  // would take it for one of the session's own helpers, then miss it.
+  const spawnBackgroundShell = () => {
+    try {
+      const tick = isWindows
+        ? spawn(
+          process.env.ComSpec || 'cmd.exe',
+          ['/d', '/s', '/c', `""${process.execPath}" -e "${timerCode}""`],
+          { detached: true, stdio: 'ignore', windowsHide: true, windowsVerbatimArguments: true },
+        )
+        : spawn(
+          'sh',
+          ['-c', '"$0" -e "$1"; true', process.execPath, timerCode],
+          { detached: true, stdio: 'ignore' },
+        );
+      tick.unref();
 
-    if (typeof tick.pid === 'number' && tick.pid > 0) {
-      fs.writeFileSync(pidPath, String(tick.pid));
-      console.log('MOCK_CLAUDE_BG_SHELL_PID:' + tick.pid);
-    } else {
-      // Spawn succeeded but returned no PID (extremely rare on Node).
-      // Write the sentinel so the spec's readBgShellPid can distinguish
-      // this case from "wrapper never invoked" or "spawn threw."
-      console.error('MOCK_CLAUDE_BG_SHELL_SPAWN_NO_PID');
+      if (typeof tick.pid === 'number' && tick.pid > 0) {
+        fs.writeFileSync(pidPath, String(tick.pid));
+        console.log('MOCK_CLAUDE_BG_SHELL_PID:' + tick.pid);
+      } else {
+        // Spawn succeeded but returned no PID (extremely rare on Node).
+        // Write the sentinel so the spec's readBgShellPid can distinguish
+        // this case from "wrapper never invoked" or "spawn threw."
+        console.error('MOCK_CLAUDE_BG_SHELL_SPAWN_NO_PID');
+        try {
+          fs.writeFileSync(pidPath, '-1');
+        } catch {
+          /* ignore */
+        }
+      }
+
+      const killTick = () => {
+        if (!tick.pid) return;
+        try {
+          // The shell and the timer under it both go: taskkill /T on Windows, the
+          // child's own process group (it is detached, so a group leader) elsewhere.
+          if (isWindows) {
+            require('node:child_process').spawnSync('taskkill', ['/PID', String(tick.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          } else {
+            process.kill(-tick.pid);
+          }
+        } catch {
+          /* ignore */
+        }
+      };
+      process.on('SIGTERM', killTick);
+      process.on('SIGINT', killTick);
+      process.on('exit', killTick);
+    } catch (error) {
+      console.error('MOCK_CLAUDE_BG_SHELL_SPAWN_ERROR:' + error.message);
+      // Write a sentinel PID so the harness can distinguish
+      // "spawn failed" from "wrapper not invoked" in post-mortem.
       try {
         fs.writeFileSync(pidPath, '-1');
       } catch {
         /* ignore */
       }
     }
-
-    const killTick = () => {
-      try {
-        // process.kill with a plain PID works on both POSIX and Windows.
-        // The negative-PID process-group form is POSIX-only.
-        if (tick.pid) process.kill(tick.pid);
-      } catch {
-        /* ignore */
-      }
-    };
-    process.on('SIGTERM', killTick);
-    process.on('SIGINT', killTick);
-    process.on('exit', killTick);
-  } catch (error) {
-    console.error('MOCK_CLAUDE_BG_SHELL_SPAWN_ERROR:' + error.message);
-    // Write a sentinel PID so the harness can distinguish
-    // "spawn failed" from "wrapper not invoked" in post-mortem.
-    try {
-      fs.writeFileSync(pidPath, '-1');
-    } catch {
-      /* ignore */
-    }
-  }
+  };
+  setTimeout(spawnBackgroundShell, parseInt(process.env.MOCK_CLAUDE_BG_SHELL_SPAWN_DELAY_MS || '1500', 10));
 }
 
 // Turn-end harness for the On agent turn end automation guard

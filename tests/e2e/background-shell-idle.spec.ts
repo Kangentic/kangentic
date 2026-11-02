@@ -52,7 +52,8 @@
  *   - Mock writes background_shell_start + tool_end + idle into the
  *     session's events.jsonl (the exact shape the real event-bridge
  *     would emit after remapping) AND spawns a detached node child
- *     bounded by MOCK_CLAUDE_BG_SHELL_LIFETIME_MS (default 10s).
+ *     bounded by MOCK_CLAUDE_BG_SHELL_LIFETIME_MS (default 10s; this spec
+ *     passes 60s so a slow runner cannot outlive the child).
  *   - Mock publishes the child's PID to bg-shell.pid so the spec
  *     proves the child is alive at the moment activity is observed.
  *
@@ -121,6 +122,7 @@ import {
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
+import { execFileSync } from 'node:child_process';
 
 // The two describe blocks each launch an isolated Electron app with unique
 // TEST_NAMEs ('bg-shell-idle-positive', 'bg-shell-idle-negative'). Running
@@ -207,10 +209,20 @@ async function readSessionActivity(page: Page, sessionId: string): Promise<strin
  * path), and non-occurrence cannot be polled for, so there is no condition to
  * wait on. It must outlast the engine's debounce and fs.watch latency, and it
  * must stay well under the mock's detached-child lifetime
- * (MOCK_CLAUDE_BG_SHELL_LIFETIME_MS, default 10s) so the child is still alive
- * when the liveness probe runs afterwards.
+ * (BG_SHELL_LIFETIME_MS below, which the positive control passes as
+ * MOCK_CLAUDE_BG_SHELL_LIFETIME_MS) so the child is still alive when the
+ * liveness probe runs afterwards.
  */
 const THINKING_OBSERVATION_WINDOW_MS = 5000;
+
+/**
+ * How long the positive control's detached child lives (MOCK_CLAUDE_BG_SHELL_LIFETIME_MS). The child is a
+ * real shell, so the app ends the background shell for real when it dies, and a child that died inside
+ * the test would turn a correct idle into a failure. The bound is the test's own worst case with room
+ * to spare: the marker wait (15 s), the PID read (10 s), the activity poll (10 s) and the observation
+ * window (5 s) add up to 40 s, and a 45 s test timeout is the most the test can ever spend.
+ */
+const BG_SHELL_LIFETIME_MS = 60_000;
 
 /** Cadence of the activity samples taken inside the observation window. A
  *  single read at the end of the window would miss a transient flip to idle. */
@@ -227,6 +239,50 @@ async function expectActivityStaysThinking(page: Page, sessionId: string): Promi
     ).toBe('thinking');
     // Intentional fixed wait: the sampling cadence of the negative window above.
     await page.waitForTimeout(THINKING_SAMPLE_INTERVAL_MS);
+  }
+}
+
+/**
+ * End every detached child the mock published a PID for under this project's sessions, and wait for
+ * each to be gone: the child runs in the project directory, and Windows will not delete a directory a
+ * live process stands in.
+ */
+async function killPublishedBgShells(projectDir: string): Promise<void> {
+  const sessionsDir = path.join(projectDir, '.kangentic', 'sessions');
+  let sessionIds: string[];
+  try {
+    sessionIds = fs.readdirSync(sessionsDir);
+  } catch {
+    return;
+  }
+  const pids: number[] = [];
+  for (const sessionId of sessionIds) {
+    try {
+      const pid = parseInt(fs.readFileSync(path.join(sessionsDir, sessionId, 'bg-shell.pid'), 'utf-8').trim(), 10);
+      if (Number.isFinite(pid) && pid > 0) pids.push(pid);
+    } catch {
+      // No PID file for this session.
+    }
+  }
+  for (const pid of pids) {
+    // The published PID is the child shell's; the timer runs under it, so end the tree: taskkill /T
+    // on Windows, the child's own process group (it was spawned detached) elsewhere.
+    try {
+      if (process.platform === 'win32') {
+        execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { stdio: 'ignore' });
+      } else {
+        process.kill(-pid);
+      }
+    } catch {
+      // Already exited.
+    }
+  }
+  // Only Windows needs the wait (a live process in a directory blocks its deletion), and it is
+  // best-effort: a hook that throws fails the shard, and a leftover only costs the cleanup below.
+  if (process.platform !== 'win32') return;
+  const deadline = Date.now() + 10_000;
+  while (pids.some((pid) => isProcessAlive(pid)) && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
   }
 }
 
@@ -282,13 +338,27 @@ test.describe('Background-shell idle bug -- positive control (bg Bash + live det
       }),
     );
 
-    const result = await launchApp({ dataDir });
+    // The detached child must outlive every wait in these tests, however slow the runner is: the
+    // mock makes it a real shell (see mock-claude.js), so the app tracks its real death, and a child
+    // that ended inside the test would be a genuine idle. This is NOT what caused the flake. That
+    // was the mock child being a bare node process that the watcher counted as an exited shell (it
+    // failed 3 of 6 and 4 of 4 locally at a 10 s lifetime and at 60 s alike), fixed in the mock.
+    // The orphan this could leave if the runner is killed hard is bounded by the lifetime, and the
+    // afterAll below ends the children in a normal run.
+    const result = await launchApp({
+      dataDir,
+      extraEnv: { MOCK_CLAUDE_BG_SHELL_LIFETIME_MS: String(BG_SHELL_LIFETIME_MS) },
+    });
     app = result.app;
     page = result.page;
     await createProject(page, PROJECT_NAME, tmpDir);
   });
 
   test.afterAll(async () => {
+    // The children outlive the tests on purpose (BG_SHELL_LIFETIME_MS), so end them here instead of
+    // leaving them to run out their clock. Before the app closes: closing it removes the session
+    // directories that hold the PID files.
+    if (tmpDir) await killPublishedBgShells(tmpDir);
     await closeApp(app);
     cleanupTempProject(TEST_NAME);
   });

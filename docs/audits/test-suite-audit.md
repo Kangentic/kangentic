@@ -218,6 +218,26 @@ real PR meets. A dispatch has no CLA check, which is one job fewer than a real P
 Removing tests is absent from this table on purpose. Unit, E2E and adapter trims change no job that
 sets a PR's time, and the UI trims save about 15 seconds of wall clock.
 
+## The flakes
+
+Reading the failing commits changed this picture. Several reds predate fixes already on main, so the
+stated rate overstates what is still open: the 15s drag timeouts in `task-detail-maximize.spec.ts`, and
+the `step 1` and `Expand and Restore` failures in `command-terminal.spec.ts`, all ran on commits older
+than the fixes that addressed them. What was still open:
+
+- **`background-shell-idle.spec.ts`.** The child's 10s lifetime was the suspected cause and it was
+  wrong: with a 60s lifetime the test failed just as often. The mock's detached child was a bare `node`
+  process, which the watcher does not count as a shell, so it drained the session about 4s in with the
+  child alive. The mock now starts a shell, as a real background Bash is.
+- **`terminal-input-second-renderer.spec.ts`.** One keystroke sent before the port attached was lost
+  for good. It now types until that window's own port echoes, which still proves the port.
+- **`task-detail-maximize.spec.ts`.** A starved compositor can paint no frame during a hold, so a
+  reading only such a frame can show is asked only of a run that sampled it. The hold itself is asserted
+  from the DOM, so a removed hold still fails. Each skip is annotated, so a CI log shows how often.
+
+Every pass here was on an unloaded Windows machine, which does not reproduce CI's load. Only CI's
+red rate over the next weeks shows whether these held.
+
 ## Rejected options
 
 - **`--only-changed` and `--changed` on the PR gate.** See Research. A missed test is a miss on main.
@@ -248,5 +268,6 @@ sets a PR's time, and the UI trims save about 15 seconds of wall clock.
 - **A UI shard passes 10 minutes,** or the demo job passes 10.
 - **The job budget test fails.** Give a slot up, or lift the cap with a support ticket or a paid plan.
 - **Median PR time to green passes 15 minutes again.**
-- **Flakes:** `command-terminal.spec.ts` and `task-detail-maximize.spec.ts` need the root-cause work
-  this audit scheduled. If they recur after it, read the shard's utilisation before the spec.
+- **The `hold-unsampled` annotation becomes common.** It means the runner is too starved for these
+  readings. Read the shard's utilisation before the spec.
+- **A flake recurs in the specs above.** Their fixes are unproven under CI's load.

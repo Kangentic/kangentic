@@ -84,12 +84,35 @@ async function collectedOutput(target: Page): Promise<string> {
   return target.evaluate(() => (window as unknown as { __collectedOutput?: string }).__collectedOutput ?? '');
 }
 
-/** Click the terminal inside the open task window and type into it. */
-async function typeIntoTaskTerminal(target: Page, text: string): Promise<void> {
+/**
+ * Type `text` into the terminal in the open task window until its echo comes back on THIS window's
+ * port.
+ *
+ * A keystroke typed once, the moment the xterm is visible, can be lost for good: the terminal's port
+ * to the pty host and its subscription to the session attach a beat after the element shows, and a
+ * key typed before that goes nowhere (and its echo goes to no subscriber). Nothing on the page says
+ * the terminal is attached, so the readiness is probed the way a user would: type, look for the echo,
+ * type again if it did not come. The echo is read from this window's own `sessions.onData`, which the
+ * preload serves off this window's port, so a match still proves the key went in on this window's
+ * port and came back on it. The mock echoes onto its input row, so a repeated probe only repeats
+ * the text.
+ */
+async function typeUntilEchoed(target: Page, text: string, message: string): Promise<void> {
   const terminal = target.locator('[data-testid="task-detail-dialog"] .xterm').first();
   await terminal.waitFor({ state: 'visible', timeout: 10000 });
-  await terminal.click();
-  await target.keyboard.type(text, { delay: 30 });
+  await expect
+    .poll(async () => {
+      await terminal.click();
+      await target.keyboard.type(text, { delay: 30 });
+      // Give this attempt's echo a beat to arrive before judging it.
+      const attemptEndsAt = Date.now() + 1000;
+      while (Date.now() < attemptEndsAt) {
+        if ((await collectedOutput(target)).includes(text)) return true;
+        await target.waitForTimeout(100);
+      }
+      return false;
+    }, { timeout: 25000, intervals: [0], message })
+    .toBe(true);
 }
 
 test.beforeAll(async () => {
@@ -142,10 +165,7 @@ test('a detached Agent Monitor types and reads on its own port, and closing it l
   await monitorCard.click();
 
   await collectOutput(monitorWindow, readySessionId);
-  await typeIntoTaskTerminal(monitorWindow, 'kq7');
-  await expect
-    .poll(() => collectedOutput(monitorWindow), { timeout: 10000, message: 'Expected the echo on the monitor window\'s own port' })
-    .toContain('kq7');
+  await typeUntilEchoed(monitorWindow, 'kq7', 'Expected the echo on the monitor window\'s own port');
 
   // Closing the monitor forgets its port and only its port.
   await page.evaluate(() => window.electronAPI.popOut.close('monitor', {}));
@@ -154,8 +174,5 @@ test('a detached Agent Monitor types and reads on its own port, and closing it l
   await collectOutput(page, readySessionId);
   await page.locator(`[data-task-id="${taskId}"]`).first().click();
   await page.locator('[data-testid="task-detail-dialog"]').first().waitFor({ state: 'visible', timeout: 10000 });
-  await typeIntoTaskTerminal(page, 'mz3');
-  await expect
-    .poll(() => collectedOutput(page), { timeout: 10000, message: 'Expected the echo on the main window\'s port after the monitor closed' })
-    .toContain('mz3');
+  await typeUntilEchoed(page, 'mz3', 'Expected the echo on the main window\'s port after the monitor closed');
 });

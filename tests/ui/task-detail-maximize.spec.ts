@@ -26,7 +26,7 @@ import path from 'node:path';
 import {
   waitForViteReady, gotoVite, recordLayoutChange, expectHoldThenDraw, expectNoFrameHold, expectNoFrameHoldRecovery,
   pictureStages, brightPixelsIn, markSessionFirstOutput, readTerminalTrace, settleFrames, isManagerResizeGateOpen,
-  TERMINAL_FRAME_HOLD_ATTRIBUTE, TERMINAL_FRAME_HOLD_SELECTOR,
+  TERMINAL_FRAME_HOLD_ATTRIBUTE, TERMINAL_FRAME_HOLD_SELECTOR, holdWasSampled, annotateUnsampledHold, describeHoldSampling,
 } from './helpers';
 import { launch as launchMonitorSeed, openMonitor, byTestId, sessionIdOf } from './monitor-writes-seed';
 
@@ -182,8 +182,16 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       (window as unknown as { __mockFireSessionData: (id: string, data: string) => void }).__mockFireSessionData(sessionId, `${screen}\x1b[?25l`);
       document.documentElement.classList.add('no-motion');
     }, SESSION_ID);
-    await ownPage.waitForTimeout(800);
+    // The screen is drawn (its last line is in xterm's buffer) and the startup fits have all reached
+    // the PTY: both polled, where a fixed 800 ms was a guess at how long a runner takes.
+    await expect.poll(async () => (await viewportRows(ownPage)).some((row) => row.startsWith('frame text line 23')), { timeout: 8000 }).toBe(true);
+    await settleResizeLog(ownPage);
   }
+
+  /** The terminal's rows as xterm holds them, top to bottom. */
+  const viewportRows = (ownPage: Page) => ownPage.evaluate((sessionId) => (window as unknown as {
+    __kangenticTerminalGridRows: (id: string) => Array<{ viewportRows: string[] }>;
+  }).__kangenticTerminalGridRows(sessionId)[0]?.viewportRows ?? [], SESSION_ID);
 
   /** The PTY resizes the renderer asked for since `since` (ms since epoch), by origin. */
   const resizeOrigins = (ownPage: Page, since: number) => ownPage.evaluate((from) => (window as unknown as {
@@ -259,7 +267,17 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       // agent's frame whole. Never ConPTY's early redraw, and never the old frame
       // reflowed onto the new grid before the agent's.
       expectHoldThenDraw(recording);
-      expect(pictureStages(recording).length).toBe(3);
+      const stageCount = pictureStages(recording).length;
+      // Never a fourth picture, ConPTY's early redraw or a reflowed old frame, whatever the runner did.
+      expect(stageCount, describeHoldSampling(recording)).toBeLessThanOrEqual(3);
+      if (holdWasSampled(recording)) {
+        // The kept frame is a stage of its own, but only a frame painted during the hold can show it,
+        // so three is asked only of a run that sampled the hold. A run that sampled it and still has two
+        // stages is a finding, and the message says so.
+        expect(stageCount, describeHoldSampling(recording)).toBe(3);
+      } else {
+        annotateUnsampledHold(recording, 'the kept frame as its own stage');
+      }
       expect(await resizeOrigins(ownPage, since)).toEqual(['frame-hold']);
       await expectNoFrameHoldRecovery(ownPage, since);
       // The fast path decided it: the wait settled on the agent's frame, not on
@@ -311,7 +329,12 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       const grid = holder.__kangenticTerminalGridRows(sessionId)[0];
       holder.__mockFireSessionData(sessionId, screenFor(grid.cols, grid.viewportRows.length));
     }, SESSION_ID);
-    await ownPage.waitForTimeout(500);
+    await expectAgentFrameOnBottomRow(ownPage);
+  }
+
+  /** The agent's frame is drawn at the terminal's grid: its last line, on the bottom row. */
+  async function expectAgentFrameOnBottomRow(ownPage: Page): Promise<void> {
+    await expect.poll(async () => (await viewportRows(ownPage)).at(-1)?.startsWith('>> accept edits on') ?? false, { timeout: 8000 }).toBe(true);
   }
 
   /**
@@ -354,7 +377,15 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       const summary = shown.join(' ');
       expect(finalText, summary).toBeGreaterThan(50);
       const firstDrawn = shown.findIndex((bright) => bright >= 10);
-      expect(firstDrawn, summary).toBeGreaterThan(0);
+      if (holdWasSampled(recording)) {
+        // Empty for at least a frame before the agent's: only a frame painted during the hold shows it.
+        expect(firstDrawn, `${summary} (${describeHoldSampling(recording)})`).toBeGreaterThan(0);
+      } else {
+        // The compositor painted nothing in the hold, so the first frame after the change may already
+        // be the agent's. Whatever is drawn is still the agent's whole frame, and nothing else.
+        annotateUnsampledHold(recording, 'the empty frame before the agent\'s');
+        expect(firstDrawn, summary).toBeGreaterThanOrEqual(0);
+      }
       expect(shown.slice(firstDrawn).every((bright) => Math.abs(bright - finalText) <= finalText * 0.1), summary).toBe(true);
     } finally {
       await own.browser.close();
@@ -373,7 +404,8 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       await fullScreenAgent(ownPage);
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
       await expectNoFrameHold(ownPage);
-      await ownPage.waitForTimeout(500);
+      // The agent's frame at the maximized grid is on screen, not just the hold over.
+      await expectAgentFrameOnBottomRow(ownPage);
       const recording = await recordLayoutChange(ownPage, '[data-testid="window-overlay"]', () =>
         ownPage.locator('[data-testid="task-detail-maximize"]').click());
       expectHoldThenDraw(recording);
@@ -413,8 +445,15 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       // stamps the swap on the page's, and on a starved CI runner the two disagreed by more than the
       // swap is wide (a 56 ms swap with its one blank frame stamped outside 100 ms of it).
       const firstFilled = shown.findIndex((frame) => frame.top >= 10);
-      // Held at least a frame, then filled for good.
-      expect(firstFilled, summary).toBeGreaterThan(0);
+      // Held at least a frame, then filled for good. The held frame can only be seen in a frame
+      // painted during the hold; a starved compositor paints none in a hold of 200 ms or more, and
+      // then the first frame after the change may already be the agent's.
+      if (holdWasSampled(recording)) {
+        expect(firstFilled, `${summary} (${describeHoldSampling(recording)})`).toBeGreaterThan(0);
+      } else {
+        annotateUnsampledHold(recording, 'the held frame with an empty top');
+        expect(firstFilled, summary).toBeGreaterThanOrEqual(0);
+      }
       expect(shown.slice(firstFilled).every((frame) => frame.top >= 10), summary).toBe(true);
       const blankIndexes = shown.flatMap((frame, index) => (frame.bottom <= 20 ? [index] : []));
       const blankAt = `blank frames at index ${blankIndexes.join(',') || 'none'} of ${shown.length}, the agent's frame from ${firstFilled}: ${summary}`;
@@ -476,7 +515,10 @@ test.describe('Task Detail: the terminal through a maximize', () => {
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
       expect(await onMaximize).toEqual([{ duration: 80, opacity: true }]);
       await expectNoFrameHold(ownPage);
-      await ownPage.waitForTimeout(300);
+      // The maximize's own fade (80 ms) is over, or it would read as the restore's.
+      await expect.poll(() => ownPage.evaluate(() => (
+        document.querySelector('[data-testid="task-detail-dialog"] .xterm-screen')?.getAnimations().length ?? 0
+      )), { timeout: 3000 }).toBe(0);
 
       const onRestore = animationsWhenHoldEnds();
       await ownPage.locator('[data-testid="task-detail-maximize"]').click();
