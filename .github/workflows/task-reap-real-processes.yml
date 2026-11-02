@@ -193,7 +193,10 @@ jobs:
           dotnet tool install --global Aspire.Cli --version 13.6.1
           "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
       - name: Report the Aspire version
-        run: aspire --version
+        shell: pwsh
+        run: |
+          (Get-Command aspire).Source
+          aspire --version
       - name: Measure a killed AppHost
         env:
           KANGENTIC_ASPIRE_PROBE: '1'
@@ -202,5 +205,5 @@ jobs:
         if: always()
         shell: pwsh
         run: |
-          Get-ChildItem -Path "$env:USERPROFILE\.nuget\packages", "$env:USERPROFILE\.aspire" -Filter dcp.exe -Recurse -ErrorAction SilentlyContinue |
+          Get-ChildItem -Path "$env:USERPROFILE\.dotnet\tools", "$env:USERPROFILE\.nuget\packages", "$env:USERPROFILE\.aspire" -Filter dcp.exe -Recurse -ErrorAction SilentlyContinue |
             ForEach-Object { Write-Output $_.FullName; & $_.FullName version }
