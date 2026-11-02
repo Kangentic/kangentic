@@ -1045,6 +1045,37 @@ export function pictureStages(recording: LayoutChangeRecording): LayoutChangeRec
 }
 
 /**
+ * Whether the screen sampled the hold: some delivered frame was painted while a terminal in the
+ * scope held its frame (the frame's own hold marker, so no clock is compared). A starved
+ * compositor can make no frame in a hold of 200 ms or more, and then what the hold looked like is
+ * unknowable on that run. A reading that only a sampled hold can show (the kept frame as a stage
+ * of its own, the frame held with nothing drawn in it) must be asserted only when this is true,
+ * and annotated with `annotateUnsampledHold` otherwise. A CI run failed an exact count of three
+ * stages with two (the kept frame between 'before' and the agent's frame not among them). Whether
+ * the hold was sampled on that run was not recorded, so the exact count is asked only of a
+ * sampled run and `describeHoldSampling` puts the evidence in its message.
+ */
+export function holdWasSampled(recording: LayoutChangeRecording): boolean {
+  return recording.frames.some((frame) => frame.at >= recording.actedAt && frame.holding);
+}
+
+/** What a failure message needs to tell a sampled hold from an unsampled one: frames, painted-in-hold frames, stage offsets. */
+export function describeHoldSampling(recording: LayoutChangeRecording): string {
+  const holdFrames = recording.frames.filter((frame) => frame.at >= recording.actedAt && frame.holding);
+  const stages = pictureStages(recording);
+  return `${recording.frames.length} frames, ${holdFrames.length} painted during the hold, `
+    + `stages at ${stages.map((stage) => `${Math.round((stage.at - recording.actedAt) * 1000)}ms${stage.holding ? ' (holding)' : ''}`).join(', ')}`;
+}
+
+/** Mark the run as one whose hold was not sampled, so a CI log shows how often readings are skipped. */
+export function annotateUnsampledHold(recording: LayoutChangeRecording, skipped: string): void {
+  test.info().annotations.push({
+    type: 'hold-unsampled',
+    description: `${skipped} not asserted: no frame was painted during the hold (${recording.frames.length} frames)`,
+  });
+}
+
+/**
  * The checks every user layout change must pass on screen. The scope shows its
  * picture from before the change, then the change at once with each terminal it
  * resized keeping its last frame as drawn, then each terminal's new frame in one

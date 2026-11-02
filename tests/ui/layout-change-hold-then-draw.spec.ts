@@ -6,7 +6,7 @@
  * was held back, and the ordinary ones.
  */
 import { test, expect } from '@playwright/test';
-import { expectHoldThenDraw, type LayoutChangeRecording } from './helpers';
+import { expectHoldThenDraw, holdWasSampled, type LayoutChangeRecording } from './helpers';
 
 const PICTURE_BYTES = 100;
 const picture = (bright: number, value: number) => {
@@ -86,5 +86,32 @@ test.describe('expectHoldThenDraw', () => {
       [-10, BEFORE, false],
       [300, BEFORE, false],
     ], 100, 200), 2)).toThrow();
+  });
+});
+
+test.describe('holdWasSampled', () => {
+  test('is true when a frame was painted during the hold', () => {
+    expect(holdWasSampled(recording([
+      [-20, BEFORE, false],
+      [300, HELD, true],
+      [900, DRAWN, false],
+    ], 100, 500))).toBe(true);
+  });
+
+  test('is false when the compositor painted no frame inside the hold, however the stamps fall', () => {
+    // The shape a loaded CI runner recorded for the maximize agent-frame test: the kept frame was never
+    // delivered, so a count of three pictures cannot be asked of that run.
+    expect(holdWasSampled(recording([
+      [-20, BEFORE, false],
+      [698, HELD, false],
+      [1032, DRAWN, false],
+    ], 259, 695))).toBe(false);
+  });
+
+  test('ignores a frame painted with the hold marker before the action', () => {
+    expect(holdWasSampled(recording([
+      [-20, BEFORE, true],
+      [900, DRAWN, false],
+    ], 100, 500))).toBe(false);
   });
 });
