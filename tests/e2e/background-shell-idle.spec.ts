@@ -77,7 +77,7 @@
  * task #503 captures.
  *
  * Event-bridge directive tests (remap-nested for run_in_background,
- * remap for KillBash) live in tests/e2e/claude-activity-detection.spec.ts
+ * remap for KillBash) live in tests/unit/event-bridge-remap.test.ts
  * so the remap itself is covered by a real-shape fixture without
  * needing to spin up Electron.
  *

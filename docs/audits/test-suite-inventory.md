@@ -11,8 +11,9 @@ The classification behind the [test suite audit](test-suite-audit.md). Times com
 52 days, as flake, then tests-only fix, then a change that touched `src/`. Rule names the
 `.claude/rules/` file that cites the test as enforcement, so removing it changes that rule.
 
-A verdict other than keep names the item on the sign-off list. Keep is the default: a test with no
-signal against it stays, because a rarely red test can still guard an expensive miss.
+Each row shows the file as it stood on that date, with what the audit then did to it, so a file later
+removed keeps its row. Keep is the default: a test with no signal against it stays, because a rarely
+red test can still guard an expensive miss.
 
 | File | Tests | CI seconds | Commits | Reds (flake/tests/product) | Rule | Verdict | Reason |
 |---|---:|---:|---:|---|---|---|---|
@@ -41,7 +42,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | e2e/background-shell-idle.spec.ts | 3 | 13 | 6 | 2/0/0 |  | keep | no signal against it |
 | e2e/browser-cdp-navigation.spec.ts | 1 | 13 | 3 | 0/0/0 |  | keep | no signal against it |
 | e2e/session-resume-expired.spec.ts | 2 | 13 | 2 | 0/0/0 |  | keep | no signal against it |
-| e2e/claude-activity-detection.spec.ts | 11 | 12 | 8 | 0/0/0 |  | trim: sign-off 7 | 4 event-bridge cases run no Electron |
+| e2e/claude-activity-detection.spec.ts | 11 | 12 | 8 | 0/0/0 |  | trimmed | 4 event-bridge cases run no Electron |
 | e2e/project-delete.spec.ts | 3 | 11 | 7 | 0/0/0 |  | keep | no signal against it |
 | e2e/session-queue.spec.ts | 2 | 11 | 9 | 1/0/0 |  | keep | no signal against it |
 | e2e/task-process-reap.spec.ts | 1 | 11 | 3 | 0/0/0 |  | keep | no signal against it |
@@ -70,31 +71,31 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | e2e/usage-history-survives-delete.spec.ts | 1 | 4 | 4 | 0/0/0 |  | keep | no signal against it |
 | e2e/devtools-inspection.spec.ts | 0 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | e2e/os-reduced-motion.spec.ts | 1 | 0 | 1 | 0/0/0 | activity-marks | keep | named as a rule enforcement |
-| ui/command-terminal.spec.ts | 135 | 943 | 64 | 7/1/2 | activity-marks command-terminal | trim: sign-off 1 | 4 removed, 2 folded |
-| ui/knowledge-graph.spec.ts | 112 | 458 | 12 | 1/1/0 |  | trim: sign-off 1, move down: sign-off 2 | 1 removed, 5 moved |
-| ui/agent-monitor.spec.ts | 61 | 353 | 20 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
-| ui/workflows-view.spec.ts | 58 | 339 | 15 | 0/0/0 |  | trim: sign-off 1 | 1 removed, 2 folded |
-| ui/completed-task-view.spec.ts | 57 | 292 | 16 | 0/1/0 |  | optional: sign-off 2B | 15 tests need an extraction first |
+| ui/command-terminal.spec.ts | 135 | 943 | 64 | 7/1/2 | activity-marks command-terminal | trimmed | 4 removed, 2 folded |
+| ui/knowledge-graph.spec.ts | 112 | 458 | 12 | 1/1/0 |  | moved down | 5 moved; the :2380 removal was dropped, since no unit test pins its gate |
+| ui/agent-monitor.spec.ts | 61 | 353 | 20 | 0/0/0 |  | trimmed | 1 removed |
+| ui/workflows-view.spec.ts | 58 | 339 | 15 | 0/0/0 |  | trimmed | 1 removed, 2 folded |
+| ui/completed-task-view.spec.ts | 57 | 292 | 16 | 0/1/0 |  | keep | 15 tests need an extraction first |
 | ui/workflows-board.spec.ts | 50 | 257 | 11 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-maximize.spec.ts | 28 | 234 | 27 | 8/1/1 | command-terminal | keep | named as a rule enforcement |
 | ui/workflow-agent-pane.spec.ts | 35 | 201 | 7 | 1/0/0 |  | keep | no signal against it |
-| ui/onboarding-walkthrough.spec.ts | 32 | 183 | 11 | 0/0/0 |  | optional: sign-off 2B | 2 tests need an extraction first |
+| ui/onboarding-walkthrough.spec.ts | 32 | 183 | 11 | 0/0/0 |  | keep | 2 tests need an extraction first |
 | ui/command-terminal-rail.spec.ts | 16 | 180 | 6 | 1/1/1 | command-terminal | keep | named as a rule enforcement |
-| ui/usage-dashboard.spec.ts | 30 | 170 | 25 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
-| ui/task-activity-indicators.spec.ts | 45 | 161 | 56 | 0/0/1 |  | optional: sign-off 2B | 7 tests need an extraction first |
+| ui/usage-dashboard.spec.ts | 30 | 170 | 25 | 0/0/0 |  | trimmed | 1 removed |
+| ui/task-activity-indicators.spec.ts | 45 | 161 | 56 | 0/0/1 |  | keep | 7 tests need an extraction first |
 | ui/project-groups.spec.ts | 26 | 150 | 8 | 0/0/0 |  | keep | no signal against it |
-| ui/task-automations-disabled.spec.ts | 25 | 133 | 5 | 0/0/0 |  | move down: sign-off 2 | 1 test, mock harness |
+| ui/task-automations-disabled.spec.ts | 25 | 133 | 5 | 0/0/0 |  | moved down | 1 test, mock harness |
 | ui/browser-pane-agent-input-focus.spec.ts | 24 | 119 | 7 | 0/0/0 | agent-driven-focus | keep | named as a rule enforcement |
-| ui/import-filter.spec.ts | 26 | 119 | 13 | 0/0/0 |  | optional: sign-off 2B | 7 tests need an extraction first |
-| ui/conversation-route-tabs.spec.ts | 24 | 115 | 4 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
-| ui/backlog.spec.ts | 23 | 112 | 12 | 0/0/0 |  | optional: sign-off 2B | 4 tests need an extraction first |
-| ui/sidebar-command-terminals.spec.ts | 30 | 111 | 11 | 0/0/0 | command-terminal | trim: sign-off 1, move down: sign-off 2 | 2 removed, 1 folded, 1 moved |
+| ui/import-filter.spec.ts | 26 | 119 | 13 | 0/0/0 |  | keep | 7 tests need an extraction first |
+| ui/conversation-route-tabs.spec.ts | 24 | 115 | 4 | 0/0/0 |  | trimmed | 1 removed |
+| ui/backlog.spec.ts | 23 | 112 | 12 | 0/0/0 |  | keep | 4 tests need an extraction first |
+| ui/sidebar-command-terminals.spec.ts | 30 | 111 | 11 | 0/0/0 | command-terminal | trimmed | 2 removed, 1 folded; :819 stays, its guard is inline in App.tsx |
 | ui/conversation-viewer.spec.ts | 21 | 110 | 8 | 0/0/0 |  | keep | no signal against it |
 | ui/completed-task-changes.spec.ts | 15 | 109 | 3 | 1/0/0 |  | keep | no signal against it |
 | ui/model-picker-aliases.spec.ts | 34 | 109 | 8 | 0/1/0 |  | keep | no signal against it |
-| ui/dictation-note-input.spec.ts | 28 | 108 | 6 | 0/0/0 | agent-driven-focus | trim: sign-off 1 | 1 removed |
+| ui/dictation-note-input.spec.ts | 28 | 108 | 6 | 0/0/0 | agent-driven-focus | trimmed | 1 removed |
 | ui/agent-driven-invalidation.spec.ts | 16 | 106 | 8 | 0/0/0 |  | keep | no signal against it |
-| ui/dictation-settings-models.spec.ts | 21 | 101 | 7 | 1/0/0 |  | trim: sign-off 1 | 1 folded, loop cut |
+| ui/dictation-settings-models.spec.ts | 21 | 101 | 7 | 1/0/0 |  | trimmed | 1 folded, loop cut |
 | ui/conversation-paging.spec.ts | 18 | 95 | 7 | 0/0/0 |  | keep | no signal against it |
 | ui/cycle-shortcuts.spec.ts | 17 | 95 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/dialog-save-hotkey.spec.ts | 20 | 95 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -144,11 +145,11 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/window-drag-free-move.spec.ts | 8 | 45 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/changes-diff-scroll-memory.spec.ts | 8 | 44 | 16 | 0/1/0 |  | keep | no signal against it |
 | ui/popover-clipping-promote-restore-shortcuts.spec.ts | 9 | 44 | 2 | 0/0/0 | popover-escapes-clipping | keep | named as a rule enforcement |
-| ui/idle-toast.spec.ts | 11 | 43 | 5 | 0/0/0 |  | trim: sign-off 1 | 2 loop cases cut |
+| ui/idle-toast.spec.ts | 11 | 43 | 5 | 0/0/0 |  | trimmed | 2 loop cases cut |
 | ui/plan-approval-controls.spec.ts | 8 | 43 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/workflow-planned-task-form.spec.ts | 7 | 43 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/project-sidebar-search.spec.ts | 6 | 42 | 3 | 1/0/0 |  | keep | no signal against it |
-| ui/move-to-done-completion-store.spec.ts | 8 | 40 | 6 | 0/0/0 |  | move down: sign-off 2 | 6 tests to a new slice test |
+| ui/move-to-done-completion-store.spec.ts | 8 | 40 | 6 | 0/0/0 |  | moved down | 6 tests to a new slice test |
 | ui/add-project-flow.spec.ts | 8 | 39 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/asana-auth.spec.ts | 7 | 39 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/browser-pane-active.spec.ts | 10 | 38 | 4 | 0/0/0 |  | keep | no signal against it |
@@ -165,15 +166,15 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/delete-task-optimistic.spec.ts | 7 | 34 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-changes-diffviewer-toolbar.spec.ts | 12 | 34 | 15 | 0/0/0 |  | keep | no signal against it |
 | ui/toast-behavior.spec.ts | 11 | 34 | 4 | 0/0/0 | toast-shape | keep | named as a rule enforcement |
-| ui/conversation-search.spec.ts | 7 | 33 | 2 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
-| ui/dictation-live-chip.spec.ts | 11 | 33 | 4 | 0/0/0 |  | trim: sign-off 1 | 1 removed, 1 folded |
+| ui/conversation-search.spec.ts | 7 | 33 | 2 | 0/0/0 |  | trimmed | 1 removed |
+| ui/dictation-live-chip.spec.ts | 11 | 33 | 4 | 0/0/0 |  | trimmed | 1 removed, 1 folded |
 | ui/settings-project-target.spec.ts | 8 | 33 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/combobox-portal-clipping.spec.ts | 6 | 32 | 4 | 0/0/0 | popover-escapes-clipping | keep | named as a rule enforcement |
 | ui/task-menu-session-toggle.spec.ts | 9 | 32 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/terminal-resize-echo-reassert.spec.ts | 7 | 32 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/toast-click-through.spec.ts | 10 | 32 | 5 | 0/0/0 | toast-shape | keep | named as a rule enforcement |
-| ui/board-manager-dialog-ext.spec.ts | 28 | 31 | 22 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
-| ui/board-manager-dialog.spec.ts | 19 | 31 | 13 | 0/0/0 |  | trim: sign-off 1 | 1 folded |
+| ui/board-manager-dialog-ext.spec.ts | 28 | 31 | 22 | 0/0/0 |  | trimmed | 1 removed |
+| ui/board-manager-dialog.spec.ts | 19 | 31 | 13 | 0/0/0 |  | trimmed | 1 folded |
 | ui/browser-pane-hold-on-hide.spec.ts | 7 | 31 | 2 | 0/0/0 | retained-pane-never-remounts | keep | named as a rule enforcement |
 | ui/combobox-current-row-check.spec.ts | 5 | 31 | 1 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-save-hotkey.spec.ts | 18 | 31 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -201,19 +202,19 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/browser-pane-park-on-close.spec.ts | 6 | 24 | 2 | 0/0/0 | retained-pane-never-remounts | keep | named as a rule enforcement |
 | ui/remember-active-task.spec.ts | 5 | 24 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-changes-markdown-links.spec.ts | 8 | 24 | 1 | 0/0/0 |  | keep | no signal against it |
-| ui/task-detail-changes-popout-close.spec.ts | 3 | 24 | 3 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
+| ui/task-detail-changes-popout-close.spec.ts | 3 | 24 | 3 | 0/0/0 |  | trimmed | 1 removed |
 | ui/workflow-agent-prompt-setting.spec.ts | 4 | 24 | 3 | 0/0/0 |  | keep | no signal against it |
-| ui/agent-tab-force-refresh.spec.ts | 4 | 23 | 7 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
+| ui/agent-tab-force-refresh.spec.ts | 4 | 23 | 7 | 0/0/0 |  | trimmed | 1 removed |
 | ui/agent-tab-wsl-status.spec.ts | 4 | 23 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/announcements.spec.ts | 18 | 23 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/task-prior-work.spec.ts | 7 | 23 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/workflow-stalled-toast.spec.ts | 5 | 23 | 1 | 0/0/0 |  | keep | no signal against it |
-| ui/app.spec.ts | 37 | 22 | 28 | 0/0/0 |  | move down: sign-off 2 | 1 test, mock harness |
+| ui/app.spec.ts | 37 | 22 | 28 | 0/0/0 |  | moved down | 1 test, mock harness |
 | ui/description-editor-file-mentions.spec.ts | 20 | 22 | 10 | 0/2/0 |  | keep | no signal against it |
 | ui/git-hold-prompt-setting.spec.ts | 5 | 22 | 1 | 0/0/0 |  | keep | no signal against it |
-| ui/task-detail-changes-markdown-document.spec.ts | 7 | 22 | 1 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
+| ui/task-detail-changes-markdown-document.spec.ts | 7 | 22 | 1 | 0/0/0 |  | trimmed | 1 removed |
 | ui/terminal-arrival-focus.spec.ts | 4 | 22 | 9 | 0/0/0 | agent-driven-focus terminal-arrival-focus | keep | named as a rule enforcement |
-| ui/update-blocked-toast.spec.ts | 4 | 22 | 4 | 0/1/0 |  | trim: sign-off 1 | 1 folded |
+| ui/update-blocked-toast.spec.ts | 4 | 22 | 4 | 0/1/0 |  | trimmed | 1 folded |
 | ui/window-light-dismiss-terminal-panel.spec.ts | 4 | 22 | 4 | 0/0/0 | light-dismiss-denylist | keep | named as a rule enforcement |
 | ui/board-config-save-refusals.spec.ts | 4 | 21 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/commit-graph-hash-link.spec.ts | 2 | 21 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -225,23 +226,23 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/theme-swatch-grid.spec.ts | 16 | 20 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/toggle-card.spec.ts | 23 | 20 | 18 | 0/0/1 | settings-card-design | keep | named as a rule enforcement |
 | ui/browser-pane-close.spec.ts | 5 | 19 | 4 | 0/0/0 |  | keep | no signal against it |
-| ui/changes-blame-gutter.spec.ts | 5 | 19 | 8 | 0/0/0 |  | trim: sign-off 1 | 1 folded |
+| ui/changes-blame-gutter.spec.ts | 5 | 19 | 8 | 0/0/0 |  | trimmed | 1 folded |
 | ui/command-terminal-branch.spec.ts | 3 | 19 | 3 | 0/0/0 | command-terminal | keep | named as a rule enforcement |
-| ui/conversation-expired-toast.spec.ts | 5 | 19 | 4 | 0/0/0 |  | trim: sign-off 1 | 4 removed |
+| ui/conversation-expired-toast.spec.ts | 5 | 19 | 4 | 0/0/0 |  | trimmed | 4 removed |
 | ui/segmented-control.spec.ts | 10 | 19 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-launch-overlay.spec.ts | 3 | 19 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/use-value-pulse-reset-key.spec.ts | 3 | 19 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/workflow-agent-setting-rows.spec.ts | 4 | 19 | 3 | 0/0/0 |  | keep | no signal against it |
-| ui/board-config.spec.ts | 4 | 18 | 4 | 0/0/0 |  | trim: sign-off 1 | 1 removed, 1 folded |
+| ui/board-config.spec.ts | 4 | 18 | 4 | 0/0/0 |  | trimmed | 1 removed, 1 folded |
 | ui/cursor-context-bar.spec.ts | 4 | 18 | 6 | 0/0/0 |  | keep | no signal against it |
-| ui/label-promotion.spec.ts | 5 | 18 | 3 | 0/0/0 |  | move down: sign-off 2 | 4 tests, mock harness |
-| ui/move-to-done-cross-project.spec.ts | 4 | 18 | 4 | 0/0/0 |  | trim: sign-off 1, move down: sign-off 2 | 1 removed, 2 moved |
+| ui/label-promotion.spec.ts | 5 | 18 | 3 | 0/0/0 |  | moved down | 4 tests, mock harness |
+| ui/move-to-done-cross-project.spec.ts | 4 | 18 | 4 | 0/0/0 |  | trimmed, moved down | 1 removed, 2 moved |
 | ui/pr-url.spec.ts | 4 | 18 | 8 | 0/0/0 |  | keep | no signal against it |
 | ui/rate-limits-pill-tick.spec.ts | 3 | 18 | 1 | 0/0/0 |  | keep | no signal against it |
 | ui/sidebar-divider.spec.ts | 6 | 18 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/task-card-context-window.spec.ts | 4 | 18 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-header-overflow.spec.ts | 4 | 18 | 4 | 0/0/0 |  | keep | no signal against it |
-| ui/board-manager-profiles.spec.ts | 10 | 17 | 2 | 0/0/0 |  | trim: sign-off 1 | 1 folded |
+| ui/board-manager-profiles.spec.ts | 10 | 17 | 2 | 0/0/0 |  | trimmed | 1 folded |
 | ui/browser-pill-gate.spec.ts | 3 | 17 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/command-terminal-launch-overlay.spec.ts | 3 | 17 | 1 | 0/0/0 | command-terminal | keep | named as a rule enforcement |
 | ui/dictation-settings-search.spec.ts | 4 | 17 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -259,7 +260,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/task-detail-view-state-persistence.spec.ts | 2 | 15 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/wait-for-settled.spec.ts | 11 | 15 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/changes-panel-file-list.spec.ts | 3 | 14 | 6 | 0/0/0 |  | keep | no signal against it |
-| ui/config-write-failed-toast.spec.ts | 3 | 14 | 4 | 0/0/0 |  | trim: sign-off 1 | 1 folded |
+| ui/config-write-failed-toast.spec.ts | 3 | 14 | 4 | 0/0/0 |  | trimmed | 1 folded |
 | ui/move-to-done-archives.spec.ts | 2 | 14 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/pr-link-resolve-toast.spec.ts | 10 | 14 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/browser-pane-request-bridge.spec.ts | 4 | 13 | 3 | 0/0/0 |  | keep | no signal against it |
@@ -288,7 +289,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/conversation-pill-disabled-state.spec.ts | 2 | 10 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/conversation-scrollbar.spec.ts | 2 | 10 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/host-memory-pressure.spec.ts | 3 | 10 | 8 | 0/0/0 |  | keep | no signal against it |
-| ui/move-to-done-worktree-rect-fallback.spec.ts | 2 | 10 | 4 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
+| ui/move-to-done-worktree-rect-fallback.spec.ts | 2 | 10 | 4 | 0/0/0 |  | trimmed | 1 removed |
 | ui/settings-panel-agent-gate.spec.ts | 2 | 10 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-isolated-badge.spec.ts | 2 | 10 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/terminal-tab-isolated-badge.spec.ts | 3 | 10 | 3 | 0/0/0 |  | keep | no signal against it |
@@ -330,12 +331,12 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/changes-panel-remote-refresh.spec.ts | 1 | 6 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/diff-view-mode-preference.spec.ts | 2 | 6 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/move-stale-reload-no-lane-flash.spec.ts | 1 | 6 | 2 | 0/0/0 | board-completing-task-chokepoint | keep | named as a rule enforcement |
-| ui/move-to-done-animations.spec.ts | 1 | 6 | 3 | 0/0/0 |  | trim: sign-off 1 | folds into no-snapback |
+| ui/move-to-done-animations.spec.ts | 1 | 6 | 3 | 0/0/0 |  | trimmed | folds into no-snapback |
 | ui/move-to-done-confirm-animation.spec.ts | 1 | 6 | 6 | 0/0/0 |  | keep | no signal against it |
 | ui/move-to-done-continuous-visibility.spec.ts | 1 | 6 | 3 | 0/0/0 | board-completing-task-chokepoint | keep | named as a rule enforcement |
 | ui/popover-viewport-flip.spec.ts | 1 | 6 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/root-boundary-releases-focus.spec.ts | 1 | 6 | 1 | 0/0/0 |  | keep | no signal against it |
-| ui/settings-failure-toast-per-setting.spec.ts | 1 | 6 | 3 | 0/0/0 |  | trim: sign-off 1 | folds into settings-write-failure-toast |
+| ui/settings-failure-toast-per-setting.spec.ts | 1 | 6 | 3 | 0/0/0 |  | trimmed | folds into settings-write-failure-toast |
 | ui/task-changes-dialog-lazy-retry.spec.ts | 1 | 6 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/terminal-webgl-retry.spec.ts | 1 | 6 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/window-hidden-on-backlog.spec.ts | 1 | 6 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -351,11 +352,11 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/session-fork-toast.spec.ts | 5 | 5 | 5 | 0/0/0 |  | keep | no signal against it |
 | ui/settings-panel-scroll.spec.ts | 1 | 5 | 1 | 0/0/0 |  | keep | no signal against it |
 | ui/task-detail-suspended-self-heal.spec.ts | 4 | 5 | 5 | 0/0/0 |  | keep | no signal against it |
-| ui/board-filter.spec.ts | 14 | 4 | 8 | 0/0/0 |  | trim: sign-off 1 | 2 removed |
+| ui/board-filter.spec.ts | 14 | 4 | 8 | 0/0/0 |  | trimmed | 1 removed; "title match" stays, nothing else asserts it |
 | ui/changes-panel-file-actions.spec.ts | 1 | 4 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/context-bar-stale-session-id.spec.ts | 1 | 4 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/dictation-stop-failure.spec.ts | 1 | 4 | 2 | 0/0/0 |  | keep | no signal against it |
-| ui/dictation-worker-unavailable.spec.ts | 6 | 4 | 5 | 0/0/0 |  | trim: sign-off 1 | 1 removed |
+| ui/dictation-worker-unavailable.spec.ts | 6 | 4 | 5 | 0/0/0 |  | trimmed | 1 removed |
 | ui/image-compression.spec.ts | 3 | 4 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/kebab-menu-escape-guard.spec.ts | 1 | 4 | 3 | 0/0/0 |  | keep | no signal against it |
 | ui/no-motion-tailwind-variant.spec.ts | 3 | 4 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -380,7 +381,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | ui/todo-reset-no-ghost-session.spec.ts | 1 | 3 | 3 | 0/0/0 | session-replica-contract | keep | named as a rule enforcement |
 | ui/unarchive-to-todo-no-paused-row.spec.ts | 1 | 3 | 2 | 0/0/0 |  | keep | no signal against it |
 | ui/drag-prefetch-remotes.spec.ts | 2 | 2 | 2 | 0/0/0 |  | keep | no signal against it |
-| ui/project-settings-seed-isolation.spec.ts | 2 | 2 | 3 | 0/0/0 |  | move down: sign-off 2 | 2 tests, mock harness |
+| ui/project-settings-seed-isolation.spec.ts | 2 | 2 | 3 | 0/0/0 |  | moved down | both tests, file removed |
 | ui/task-create-hotkey.spec.ts | 3 | 2 | 4 | 0/0/0 |  | keep | no signal against it |
 | ui/collect-page-errors.spec.ts | 3 | 1 | 1 | 0/0/0 |  | keep | no signal against it |
 | ui/diff-viewer-theme-preview.spec.ts | 2 | 1 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -595,7 +596,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/activity-engine-property.test.ts | 11 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/activity-engine-reason-reporting.test.ts | 2 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/activity-engine-replay.test.ts | 85 | 0 | 26 | 0/0/0 |  | keep | no signal against it |
-| unit/activity-engine-trace-replay.test.ts | 29 | 0 | 10 | 0/0/0 |  | trim: sign-off 7 | one describe.skip whose fixture is gone |
+| unit/activity-engine-trace-replay.test.ts | 29 | 0 | 10 | 0/0/0 |  | trimmed | one describe.skip whose fixture is gone |
 | unit/activity-engine-wait-kind.test.ts | 26 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/activity-engine.test.ts | 244 | 0 | 41 | 0/0/0 |  | keep | no signal against it |
 | unit/activity-interval-commands.test.ts | 5 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
@@ -674,7 +675,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/antigravity-answer-stream.test.ts | 15 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/antigravity-hooks-and-trust.test.ts | 52 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/antigravity-wsl.test.ts | 5 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/app-layout-render-scope.test.ts | 3 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/app-layout-render-scope.test.ts | 3 | 0 | 1 | 0/0/0 |  | keep | kept as a pin: a re-render claim needs a client renderer |
 | unit/app-relaunch.test.ts | 16 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/apply-config-column-delete.test.ts | 2 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/apply-runtime-config.test.ts | 6 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
@@ -764,7 +765,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/board-config-malformed-lists.test.ts | 20 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/board-config-manager-profiles.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/board-config-merge-guards.test.ts | 13 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
-| unit/board-config-on-applied.test.ts | 6 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/board-config-on-applied.test.ts | 6 | 0 | 1 | 0/0/0 |  | rewritten | pins one importable file's text |
 | unit/board-config-onfilechange.test.ts | 4 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/board-config-parity.test.ts | 23 | 0 | 11 | 0/0/0 | board-config-parity | keep | named as a rule enforcement |
 | unit/board-config-set-stop-script-handler.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -809,7 +810,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/browser-clear-storage-handler.test.ts | 48 | 0 | 10 | 0/0/0 |  | keep | no signal against it |
 | unit/browser-empty-state-utils.test.ts | 12 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/browser-guest-mouse-forward-wiring.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
-| unit/browser-handler-error-translation.test.ts | 5 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
+| unit/browser-handler-error-translation.test.ts | 5 | 0 | 1 | 0/0/0 |  | rewritten | asserts its own copy; extract and import the real logic |
 | unit/browser-input-focus-emulation.test.ts | 62 | 0 | 7 | 0/0/0 | agent-driven-focus | keep | named as a rule enforcement |
 | unit/browser-jar-ensure-handler.test.ts | 6 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/browser-keyboard-focus.test.ts | 14 | 0 | 2 | 0/0/0 | agent-driven-focus | keep | named as a rule enforcement |
@@ -866,7 +867,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/claude-background-task-output.test.ts | 9 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/claude-capability-discovery.test.ts | 25 | 0 | 8 | 0/0/0 |  | keep | no signal against it |
 | unit/claude-cli-run.test.ts | 23 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/claude-detector.test.ts | 4 | 0 | 4 | 0/0/0 |  | table: sign-off 5 | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
+| unit/claude-detector.test.ts | 4 | 0 | 4 | 0/0/0 |  | table | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
 | unit/claude-diff-panel.test.ts | 11 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/claude-exit-behavior.test.ts | 2 | 0 | 1 | 0/0/0 | pty-teardown-grace | keep | named as a rule enforcement |
 | unit/claude-json-lock.test.ts | 11 | 0 | 1 | 0/0/0 | pty-teardown-grace | keep | named as a rule enforcement |
@@ -918,7 +919,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/column-strategy.test.ts | 44 | 0 | 7 | 0/0/0 |  | keep | no signal against it |
 | unit/command-builder.test.ts | 210 | 0 | 55 | 0/0/0 | cross-platform-parity | keep | named as a rule enforcement |
 | unit/command-injection-real-capture-extractors.test.ts | 10 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/command-terminal-background-session-wiring.test.ts | 11 | 0 | 1 | 0/0/0 | command-terminal | rewrite: sign-off 6 | pins one importable file's text |
+| unit/command-terminal-background-session-wiring.test.ts | 11 | 0 | 1 | 0/0/0 | command-terminal | removed | replaced by a behavior test in register-all-idempotency |
 | unit/command-terminal-background-session.test.ts | 13 | 0 | 3 | 0/0/0 | command-terminal task-process-tag | keep | named as a rule enforcement |
 | unit/command-terminal-grid-fit.test.ts | 6 | 0 | 2 | 0/0/0 | command-terminal | keep | named as a rule enforcement |
 | unit/command-terminal-history-availability-memory.test.ts | 7 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -983,7 +984,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/copilot-capability-discovery.test.ts | 10 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/copilot-command-builder.test.ts | 43 | 0 | 8 | 0/0/0 |  | keep | no signal against it |
 | unit/copilot-command-injection-verifier.test.ts | 12 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
-| unit/copilot-detector.test.ts | 13 | 0 | 2 | 0/0/0 |  | table: sign-off 5 | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
+| unit/copilot-detector.test.ts | 13 | 0 | 2 | 0/0/0 |  | removed | its parse cases are rows in adapter-detectors |
 | unit/copilot-home.test.ts | 2 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/copilot-hook-bridge.test.ts | 10 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/copilot-hook-manager.test.ts | 45 | 0 | 7 | 0/0/0 |  | keep | no signal against it |
@@ -1124,7 +1125,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/dogfood-launcher-ascii.test.ts | 1 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/dogfood-launcher-gitignore-parity.test.ts | 2 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/dompurify-override.test.ts | 7 | 0 | 4 | 0/0/0 | dependency-block-parity | keep | named as a rule enforcement |
-| unit/done-move-bookkeeping.test.ts | 6 | 0 | 2 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/done-move-bookkeeping.test.ts | 6 | 0 | 2 | 0/0/0 |  | rewritten | pins one importable file's text |
 | unit/drain-auto-name-asked-ids.test.ts | 7 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
 | unit/drive-telemetry.test.ts | 6 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/droid-capability-discovery.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -1160,7 +1161,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/eval-answer-models.test.ts | 38 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/eval-ask-rollup.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/eval-condition-check.test.ts | 30 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
-| unit/eval-docs-reads.test.ts | 96 | 0 | 4 | 0/0/0 |  | remove: sign-off 4 | tests a one-off measurement; goes with its script |
+| unit/eval-docs-reads.test.ts | 96 | 0 | 4 | 0/0/0 |  | removed | tests a one-off measurement; goes with its script |
 | unit/event-bridge-error-log.test.ts | 5 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/event-bridge-prompt-capture.test.ts | 6 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/event-bridge-stop-plan-mode.test.ts | 4 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -1200,7 +1201,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/gemini-answer-stream.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/gemini-capability-discovery.test.ts | 8 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/gemini-command-builder.test.ts | 44 | 0 | 10 | 0/0/0 |  | keep | no signal against it |
-| unit/gemini-detector.test.ts | 5 | 0 | 4 | 0/0/0 |  | table: sign-off 5 | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
+| unit/gemini-detector.test.ts | 5 | 0 | 4 | 0/0/0 |  | table | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
 | unit/gemini-home.test.ts | 2 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/gemini-hook-manager.test.ts | 10 | 0 | 7 | 0/0/0 |  | keep | no signal against it |
 | unit/gemini-project-relocation.test.ts | 9 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -1422,7 +1423,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/mcp-update-task-description-edits.test.ts | 32 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/mcp-workflow-tools-caller.test.ts | 2 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/mcp-workflow-tools-task-cap.test.ts | 3 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/measure-docs-structure.test.ts | 54 | 0 | 3 | 0/0/0 |  | remove: sign-off 4 | tests a one-off measurement; goes with its script |
+| unit/measure-docs-structure.test.ts | 54 | 0 | 3 | 0/0/0 |  | removed | tests a one-off measurement; goes with its script |
 | unit/memory-chunks-indexes.test.ts | 12 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/memory-search-degradation.test.ts | 11 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/memory-search-mark-range.test.ts | 6 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -1551,7 +1552,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/opencode-project-relocation.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/opencode-remote-execution.test.ts | 40 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
 | unit/opencode-session-delete.test.ts | 11 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/opencode-session-history-parser.live.test.ts | 8 | 0 | 3 | 0/0/0 |  | move: sign-off 7 | needs local data; belongs in tests/integration |
+| unit/opencode-session-history-parser.live.test.ts | 8 | 0 | 3 | 0/0/0 |  | moved | needs local data; belongs in tests/integration |
 | unit/opencode-transcript-parser.test.ts | 11 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/opencode-wsl.test.ts | 12 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/opt-out-marker.test.ts | 35 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
@@ -1560,7 +1561,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/overlay-gate.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/overseer-mascot-frames.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/own-call-turn-wait.test.ts | 9 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/own-call-wiring.test.ts | 12 | 0 | 2 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/own-call-wiring.test.ts | 12 | 0 | 2 | 0/0/0 |  | rewritten | pins one importable file's text |
 | unit/package-smoke.test.ts | 15 | 0 | 4 | 0/0/0 | pty-host-out-of-process | keep | named as a rule enforcement |
 | unit/panel-error-boundary.test.ts | 15 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
 | unit/panel-sessions.test.ts | 14 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -1571,7 +1572,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/paused-for-memory.test.ts | 19 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/pcm-conversion.test.ts | 12 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/per-tool-stats.test.ts | 12 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
-| unit/permission-mode-guard.test.ts | 19 | 0 | 4 | 0/0/0 |  | remove: sign-off 3 | asserts its own copy, which contradicts task-move.ts |
+| unit/permission-mode-guard.test.ts | 19 | 0 | 4 | 0/0/0 |  | removed | asserts its own copy, which contradicts task-move.ts |
 | unit/permission-policy.test.ts | 6 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/pill-provenance.test.ts | 8 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/pill-text-trim.test.ts | 5 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -1616,7 +1617,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/pr-remote-gate-no-wipe.test.ts | 5 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/pr-state.test.ts | 42 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/pr-url.test.ts | 9 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/preload-track-renderer-error-context.test.ts | 1 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/preload-track-renderer-error-context.test.ts | 1 | 0 | 1 | 0/0/0 |  | rewritten | pins one importable file's text |
 | unit/preload-web-apis-only.test.ts | 2 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/prepare-agent-spawn.test.ts | 28 | 0 | 17 | 0/0/0 | task-process-tag | keep | named as a rule enforcement |
 | unit/prepare-spawn-cli-target-wiring.test.ts | 3 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
@@ -1706,11 +1707,11 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/qwen-capability-discovery.test.ts | 6 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-command-builder.test.ts | 67 | 0 | 12 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-command-injection-verifier.test.ts | 10 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/qwen-detector.test.ts | 5 | 0 | 1 | 0/0/0 |  | table: sign-off 5 | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
+| unit/qwen-detector.test.ts | 5 | 0 | 1 | 0/0/0 |  | table | 0 of 315 kills on agent-detector.ts are theirs; keep each parser as a row |
 | unit/qwen-home.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-hook-manager.test.ts | 18 | 0 | 7 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-integration.test.ts | 25 | 0 | 8 | 0/0/0 |  | keep | no signal against it |
-| unit/qwen-live-smoke.test.ts | 2 | 0 | 2 | 0/0/0 |  | move: sign-off 7 | needs a live CLI; belongs in tests/integration |
+| unit/qwen-live-smoke.test.ts | 2 | 0 | 2 | 0/0/0 |  | moved | needs a live CLI; belongs in tests/integration |
 | unit/qwen-project-relocation.test.ts | 12 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-status-parser.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/qwen-transcript-cleanup.test.ts | 17 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
@@ -1783,11 +1784,11 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/retrieval-worker-methods.test.ts | 4 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/retry-failed-done-cleanups.test.ts | 10 | 0 | 8 | 0/0/0 |  | keep | no signal against it |
 | unit/return-recap.test.ts | 47 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/review-eval-cli.test.ts | 10 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
-| unit/review-eval-decide.test.ts | 32 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
-| unit/review-eval-replay.test.ts | 23 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
-| unit/review-eval-tally.test.ts | 17 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
-| unit/review-eval-transcripts.test.ts | 34 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
+| unit/review-eval-cli.test.ts | 10 | 0 | 3 | 0/0/0 |  | removed | tested a one-off harness; went with scripts/review-eval |
+| unit/review-eval-decide.test.ts | 32 | 0 | 4 | 0/0/0 |  | removed | tested a one-off harness; went with scripts/review-eval |
+| unit/review-eval-replay.test.ts | 23 | 0 | 3 | 0/0/0 |  | removed | tested a one-off harness; went with scripts/review-eval |
+| unit/review-eval-tally.test.ts | 17 | 0 | 3 | 0/0/0 |  | removed | tested a one-off harness; went with scripts/review-eval |
+| unit/review-eval-transcripts.test.ts | 34 | 0 | 2 | 0/0/0 |  | removed | tested a one-off harness; went with scripts/review-eval |
 | unit/review-verdict.test.ts | 63 | 0 | 6 | 0/0/0 |  | keep | no signal against it |
 | unit/rm-with-retry.test.ts | 10 | 0 | 5 | 0/0/0 |  | keep | no signal against it |
 | unit/root-pid-gate.test.ts | 18 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
@@ -2022,7 +2023,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/swimlane-slice.test.ts | 5 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/tab-focus.test.ts | 10 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/task-archive-handler.test.ts | 41 | 0 | 21 | 0/0/0 |  | keep | no signal against it |
-| unit/task-card-resting-transform.test.ts | 3 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 6 | pins one importable file's text |
+| unit/task-card-resting-transform.test.ts | 3 | 0 | 1 | 0/0/0 |  | rewritten | pins one importable file's text |
 | unit/task-changes-panel-slice.test.ts | 57 | 0 | 14 | 0/0/0 |  | keep | no signal against it |
 | unit/task-cleanup-live-guard.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/task-commands-run-mode.test.ts | 6 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
@@ -2198,15 +2199,15 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/usage-stats-handler.test.ts | 9 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/usage-stats-service.test.ts | 45 | 0 | 16 | 0/2/0 |  | keep | no signal against it |
 | unit/use-branch-settings-placeholder.test.ts | 7 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/use-browser-url-logic.test.ts | 13 | 0 | 3 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
+| unit/use-browser-url-logic.test.ts | 13 | 0 | 3 | 0/0/0 |  | rewritten | asserts its own copy; extract and import the real logic |
 | unit/use-graph-view-sums.test.ts | 15 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/use-now.test.ts | 5 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/use-task-split-resize.test.ts | 8 | 0 | 2 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
-| unit/use-terminal-font-race.test.ts | 5 | 0 | 2 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
+| unit/use-task-split-resize.test.ts | 8 | 0 | 2 | 0/0/0 |  | rewritten | asserts its own copy; extract and import the real logic |
+| unit/use-terminal-font-race.test.ts | 5 | 0 | 2 | 0/0/0 |  | rewritten | asserts its own copy; extract and import the real logic |
 | unit/use-terminal-park-reveal.test.ts | 1 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/use-terminal-refit.test.ts | 16 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/use-terminal-refocus.test.ts | 5 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
-| unit/use-terminal-scrollback.test.ts | 35 | 0 | 4 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
+| unit/use-terminal-scrollback.test.ts | 35 | 0 | 4 | 0/0/0 |  | removed | asserted its own copy, which contradicted production; no safe extraction |
 | unit/user-interrupt-coordinator.test.ts | 13 | 0 | 3 | 0/0/0 |  | keep | no signal against it |
 | unit/utility-process-paths.test.ts | 4 | 0 | 1 | 0/0/0 |  | keep | no signal against it |
 | unit/utility-pty-host-transport.test.ts | 28 | 0 | 5 | 0/0/0 | pty-host-out-of-process task-process-tag | keep | named as a rule enforcement |
@@ -2288,7 +2289,7 @@ signal against it stays, because a rarely red test can still guard an expensive 
 | unit/worktree-folder.test.ts | 18 | 0 | 4 | 0/0/0 |  | keep | no signal against it |
 | unit/worktree-head.test.ts | 54 | 0 | 9 | 0/0/0 |  | keep | no signal against it |
 | unit/worktree-manager.test.ts | 116 | 0 | 46 | 0/0/0 |  | keep | no signal against it |
-| unit/worktree-move-revert.test.ts | 5 | 0 | 1 | 0/0/0 |  | rewrite: sign-off 3 | asserts its own copy; extract and import the real logic |
+| unit/worktree-move-revert.test.ts | 5 | 0 | 1 | 0/0/0 |  | rewritten | asserts its own copy; extract and import the real logic |
 | unit/worktree-placement.test.ts | 11 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/worktree-preview-env.test.ts | 13 | 0 | 2 | 0/0/0 |  | keep | no signal against it |
 | unit/worktree-preview-node-modules.test.ts | 9 | 0 | 2 | 0/0/0 |  | keep | no signal against it |

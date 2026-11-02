@@ -552,28 +552,22 @@ test.describe('Project Reorder', () => {
     expect(names[2]).toBe('Alpha');
   });
 
-  test('reorder API updates position values', async () => {
-    // Call reorder directly to reverse the order: Alpha, Beta, Gamma
-    const positions = await page.evaluate(async () => {
-      const projects = await window.electronAPI.projects.list();
-      const reversed = [...projects].reverse();
-      await window.electronAPI.projects.reorder(reversed.map((p: any) => p.id));
-      const updated = await window.electronAPI.projects.list();
-      return updated.map((p: any) => ({ name: p.name, position: p.position }));
-    });
-
-    expect(positions[0].name).toBe('Alpha');
-    expect(positions[0].position).toBe(0);
-    expect(positions[1].name).toBe('Beta');
-    expect(positions[1].position).toBe(1);
-    expect(positions[2].name).toBe('Gamma');
-    expect(positions[2].position).toBe(2);
-  });
-
   test('drag project down reorders sidebar', async () => {
-    // Current order after previous test: Alpha, Beta, Gamma
-    // Drag Alpha (top) down past Beta to get: Beta, Alpha, Gamma
+    // Start from Alpha, Beta, Gamma: the earlier tests leave Gamma, Beta, Alpha. The mock's
+    // reorder is covered in tests/unit/mock-electron-api-projects.test.ts; here it only sets up
+    // the order, which the project store then re-reads into the sidebar.
+    await page.evaluate(async () => {
+      const projects = await window.electronAPI.projects.list();
+      await window.electronAPI.projects.reorder([...projects].reverse().map((project: { id: string }) => project.id));
+      const stores = (window as unknown as {
+        __zustandStores: { project: { getState: () => { loadProjects: () => Promise<void> } } };
+      }).__zustandStores;
+      await stores.project.getState().loadProjects();
+    });
     const projectItems = page.locator('[role="button"]:has(.truncate.font-medium)');
+    await expect(projectItems.locator('.truncate.font-medium')).toHaveText(['Alpha', 'Beta', 'Gamma']);
+
+    // Drag Alpha (top) down past Beta to get: Beta, Alpha, Gamma
     const firstItem = projectItems.nth(0);
     const secondItem = projectItems.nth(1);
 

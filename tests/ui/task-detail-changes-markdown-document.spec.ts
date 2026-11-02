@@ -241,16 +241,10 @@ test.describe('Changes panel markdown preview renders a repository file like Git
     await closeTaskWindow();
   });
 
-  test('a link to a listed file opens it in the panel, still on its preview', async () => {
-    const preview = await openReadmePreview();
-    await preview.getByRole('link', { name: 'Deutsch' }).click();
-
-    await expect(page.locator('[data-testid="changes-file-row"][data-path="README.de.md"]')).toHaveAttribute('data-selected', 'true');
-    await expect(page.locator('[data-testid="diff-markdown-preview"]')).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.locator('[data-testid="diff-markdown-preview-content"] h1')).toHaveText('Deutsche Fassung');
-
-    await closeTaskWindow();
-  });
+  // Trimmed (test-suite audit): "a link to a listed file opens it in the panel,
+  // still on its preview" is task-detail-changes-markdown-links.spec.ts 'a link
+  // to another listed file with an anchor opens its preview', which asserts the
+  // same row, toggle and heading plus the scroll.
 
   test('a link to a file the panel does not list is inert and says why', async () => {
     const preview = await openReadmePreview();

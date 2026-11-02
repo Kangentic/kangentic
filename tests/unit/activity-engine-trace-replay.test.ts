@@ -2,7 +2,7 @@
  * Trace-bundle replay tests: drive captured 4-stream traces (events,
  * status deltas, PTY chunks, recent-transitions snapshot) through the
  * activity engine in fixture-time and assert the resulting transition
- * log against a golden file.
+ * log.
  *
  * Bundles are produced by the `kangentic_devtools_capture_trace` MCP
  * tool. The bundle layout under `tests/fixtures/replay/<name>/`:
@@ -12,9 +12,6 @@
  *   pty-chunks.jsonl      - {ts, length}[]
  *   transitions.json      - ActivityStatsSnapshot at capture time
  *   meta.json             - {capturedAt, sessionId, kangenticVersion, ...}
- *   expected-transitions.json - golden TransitionRecord[] (regenerable)
- *
- * Regenerate the golden file by setting `UPDATE_GOLDENS=1` in the env.
  *
  * The harness mirrors SessionTelemetry's heartbeat-recovery logic
  * inline so we exercise the engine WITHOUT pulling in the full session
@@ -226,28 +223,6 @@ export function replayBundle(bundle: TraceBundle, engineOptions: ActivityEngineO
     : { staleThinking: 0, bgShellHatch: 0, stuckPendingTools: 0, forceThinking: 0, forceIdle: 0, unmatchedBgShellEnd: 0 };
   engine.dispose();
   return { transitions, finalActivity, compensationCounters };
-}
-
-function assertGoldenTransitions(directory: string, transitions: TransitionRecord[]): void {
-  const goldenPath = path.join(directory, 'expected-transitions.json');
-  const portable = transitions.map(({ from, to, trigger, reasonKind, counterDelta }) => ({
-    from,
-    to,
-    trigger,
-    reasonKind,
-    ...(counterDelta ? { counterDelta } : {}),
-  }));
-  if (process.env.UPDATE_GOLDENS === '1') {
-    fs.writeFileSync(goldenPath, JSON.stringify(portable, null, 2));
-    return;
-  }
-  if (!fs.existsSync(goldenPath)) {
-    throw new Error(
-      `Golden file not found: ${goldenPath}. Run with UPDATE_GOLDENS=1 to create it.`,
-    );
-  }
-  const golden = JSON.parse(fs.readFileSync(goldenPath, 'utf-8')) as unknown[];
-  expect(portable).toEqual(golden);
 }
 
 describe('ActivityEngine trace-bundle replay', () => {
@@ -662,32 +637,6 @@ describe('ActivityEngine trace-bundle replay', () => {
       it('stays pinned thinking past the fast-heal grace (proving the grace, not something else, healed the enabled leg)', () => {
         expect(result.finalActivity).toBe('thinking');
       });
-    });
-  });
-
-  // Concrete regression fixture for Task #121 (plan-composition gap).
-  // Skipped until the bundle has been captured via
-  // `kangentic_devtools_capture_trace`. Drop the .skip when the fixture
-  // is populated (see tests/fixtures/replay/task-121-plan-composition/).
-  describe.skip('task-121-plan-composition', () => {
-    let result: ReplayResult;
-    beforeEach(() => {
-      const bundle = loadTraceBundle(path.join(FIXTURES_DIR, 'task-121-plan-composition'));
-      result = replayBundle(bundle);
-    });
-
-    it('does not fire timer:stale-thinking across the 189s thinking window', () => {
-      const staleThinking = result.transitions.filter(
-        (transition) => transition.trigger === 'timer:stale-thinking',
-      );
-      expect(staleThinking).toEqual([]);
-    });
-
-    it('matches the golden transition log', () => {
-      assertGoldenTransitions(
-        path.join(FIXTURES_DIR, 'task-121-plan-composition'),
-        result.transitions,
-      );
     });
   });
 });

@@ -69,15 +69,9 @@ test.describe('DictationTab: worker-unavailable banner', () => {
     await setDictationInfoOverride(null);
   });
 
-  test('is absent when the worker is available (the negative case)', async () => {
-    await setDictationInfoOverride(null);
-    await openDictationTab();
-    // A settled sibling control proves the tab actually mounted and fetched
-    // info, so an absent banner here is not just an unmounted tab.
-    await expect(page.getByTestId('dictation-language-select')).toBeVisible();
-    await expect(page.locator('[data-testid="dictation-worker-unavailable"]')).toHaveCount(0);
-    await closeSettings();
-  });
+  // The banner's absence while the worker is available is asserted by 'is shown
+  // when the worker is available and a model is picked' in the model list block
+  // below (test-suite audit trim).
 
   test('shows the crash message with the worker error in parentheses', async () => {
     await setDictationInfoOverride({

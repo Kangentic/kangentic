@@ -131,34 +131,26 @@ test.describe('BoardManagerDialog Board Profiles', () => {
     await closeManager();
   });
 
-  test('a duplicate profile name cannot be created', async () => {
+  test('a duplicate profile name cannot be created, whatever its case or surrounding whitespace', async () => {
     await openManager('Planning');
-    await createProfile('Simple');
+    await createProfile('Heavy');
 
     // Back to Default so the New action is available again.
     await page.locator('[data-testid="board-manager-profile-select"]').selectOption('');
     await page.locator('[data-testid="board-manager-profile-new"]').click();
 
     const input = page.locator('[data-testid="profile-name-input"]');
-    await input.fill('Simple');
-
-    await expect(page.locator('[data-testid="profile-name-error"]')).toBeVisible();
-    await expect(page.locator('[data-testid="profile-name-confirm"]')).toBeDisabled();
-
-    await closeManager();
-  });
-
-  test('the duplicate-name check ignores case and surrounding whitespace', async () => {
-    await openManager('Planning');
-    await createProfile('Heavy');
-
-    await page.locator('[data-testid="board-manager-profile-select"]').selectOption('');
-    await page.locator('[data-testid="board-manager-profile-new"]').click();
-
-    const input = page.locator('[data-testid="profile-name-input"]');
     const confirm = page.locator('[data-testid="profile-name-confirm"]');
+    const error = page.locator('[data-testid="profile-name-error"]');
 
+    await input.fill('Heavy');
+    await expect(error).toBeVisible();
+    await expect(error).toHaveText('A profile named "Heavy" already exists.');
+    await expect(confirm).toBeDisabled();
+
+    // The error names the trimmed name the check compared.
     await input.fill('  heavy  ');
+    await expect(error).toHaveText('A profile named "heavy" already exists.');
     await expect(confirm).toBeDisabled();
 
     await input.fill('HEAVY');
@@ -166,6 +158,7 @@ test.describe('BoardManagerDialog Board Profiles', () => {
 
     // A genuinely different name clears the block.
     await input.fill('Heavyweight');
+    await expect(error).toHaveCount(0);
     await expect(confirm).toBeEnabled();
 
     await closeManager();

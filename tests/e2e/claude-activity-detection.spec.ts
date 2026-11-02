@@ -2,7 +2,6 @@
  * E2E tests for Claude Code activity detection (thinking vs idle).
  *
  * Verifies:
- * - Event bridge script writes correct JSONL when invoked
  * - Merged settings file contains hooks for tool_start, prompt, and idle events
  * - Events JSONL file watcher emits state changes to the renderer
  * - Task card shows Loader2 spinner when thinking, static dot when idle
@@ -24,8 +23,6 @@ import {
 import type { ElectronApplication, Page } from '@playwright/test';
 import path from 'node:path';
 import fs from 'node:fs';
-import { execSync } from 'node:child_process';
-import { extractTool, extractDetail } from '../../src/main/agent/shared/directive-builders';
 
 const TEST_NAME = 'activity-detection';
 const runId = Date.now();
@@ -206,101 +203,15 @@ async function eventsPathForTask(taskTitle: string, timeoutMs = 10000): Promise<
   throw new Error(`No session found for task "${taskTitle}" after ${timeoutMs}ms (${lastError})`);
 }
 
-test.describe('Claude Agent -- Event Bridge Script', () => {
-  test('event-bridge.js writes correct JSONL for tool_start event', async () => {
-    const bridgePath = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'event-bridge.js');
-    const outFile = path.join(tmpDir, 'test-tool-start.jsonl');
-
-    const stdinData = JSON.stringify({ tool_name: 'Read', tool_input: { file_path: '/src/main.ts' } });
-    const stdinFile = path.join(tmpDir, 'test-tool-start-input.json');
-    fs.writeFileSync(stdinFile, stdinData);
-
-    // event-bridge.js is directive-based: each adapter's hook-manager passes
-    // field-extraction directives on the command line. Mirror the directives
-    // that claude/hook-manager.ts uses for the PreToolUse hook, built via the
-    // typed builders (their base64 wire form is a single shell-safe token).
-    const directives = [
-      extractTool('tool_name'),
-      extractDetail(['file_path', 'command', 'query', 'pattern', 'url', 'description'], { nested: 'tool_input' }),
-    ].join(' ');
-    execSync(`node "${bridgePath}" "${outFile}" tool_start ${directives} < "${stdinFile}"`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-    });
-
-    const lines = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
-    expect(lines).toHaveLength(1);
-    const event = JSON.parse(lines[0]);
-    expect(event.type).toBe('tool_start');
-    expect(event.tool).toBe('Read');
-    expect(event.detail).toBe('/src/main.ts');
-    expect(event.ts).toBeGreaterThan(0);
-
-    fs.unlinkSync(outFile);
-    fs.unlinkSync(stdinFile);
-  });
-
-  test('event-bridge.js writes correct JSONL for idle event', async () => {
-    const bridgePath = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'event-bridge.js');
-    const outFile = path.join(tmpDir, 'test-idle.jsonl');
-
-    execSync(`echo {} | node "${bridgePath}" "${outFile}" idle`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-    });
-
-    const lines = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
-    expect(lines).toHaveLength(1);
-    const event = JSON.parse(lines[0]);
-    expect(event.type).toBe('idle');
-    expect(event.ts).toBeGreaterThan(0);
-
-    fs.unlinkSync(outFile);
-  });
-
-  test('event-bridge.js writes correct JSONL for prompt event', async () => {
-    const bridgePath = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'event-bridge.js');
-    const outFile = path.join(tmpDir, 'test-prompt.jsonl');
-
-    execSync(`echo {} | node "${bridgePath}" "${outFile}" prompt`, {
-      encoding: 'utf-8',
-      timeout: 5000,
-    });
-
-    const lines = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
-    expect(lines).toHaveLength(1);
-    const event = JSON.parse(lines[0]);
-    expect(event.type).toBe('prompt');
-
-    fs.unlinkSync(outFile);
-  });
-
-  test('event-bridge.js appends multiple events (JSONL format)', async () => {
-    const bridgePath = path.join(__dirname, '..', '..', 'src', 'main', 'agent', 'event-bridge.js');
-    const outFile = path.join(tmpDir, 'test-multi.jsonl');
-
-    // Write two events to the same file
-    execSync(`echo {} | node "${bridgePath}" "${outFile}" prompt`, { encoding: 'utf-8', timeout: 5000 });
-    execSync(`echo {} | node "${bridgePath}" "${outFile}" idle`, { encoding: 'utf-8', timeout: 5000 });
-
-    const lines = fs.readFileSync(outFile, 'utf-8').trim().split('\n');
-    expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]).type).toBe('prompt');
-    expect(JSON.parse(lines[1]).type).toBe('idle');
-
-    fs.unlinkSync(outFile);
-  });
-
-  // NOTE: The three remap-nested / remap directive tests (background_shell_start,
-  // foreground-Bash no-retype, KillBash -> background_shell_end) were moved to
-  // tests/unit/event-bridge-remap.test.ts on 2026-04-19.
-  //
-  // Reason: event-bridge.js is a standalone Node script with no Electron
-  // dependency. Keeping those tests in the E2E tier paid a ~3-5s Electron launch
-  // cost for every run and required a full build. The unit tier runs them in
-  // ~100ms each. Coverage is identical -- the same directive argv strings and
-  // real Claude PreToolUse payload shapes are used in the unit tests.
-});
+// The four event-bridge.js script tests (tool_start, idle, prompt, append) lived
+// here until 2026-11. They ran the script through execSync with no Electron,
+// so they paid an app launch to prove what tests/unit/event-bridge.test.ts
+// already asserts ("writes event with type and timestamp", "appends to existing
+// file", "prompt event with no directives", "tool + nested detail combined
+// (Claude PreToolUse pattern)", and the shell-form round trips). The remap
+// directive tests moved to tests/unit/event-bridge-remap.test.ts on 2026-04-19
+// for the same reason. The real hook-command path is covered end to end by
+// claude-hook-path.spec.ts.
 
 test.describe('Claude Agent -- Merged Settings Hooks', () => {
   test.beforeEach(async () => {

@@ -360,27 +360,8 @@ test.describe('BoardManagerDialog extended', () => {
   // (c) An untitled new draft (empty string trimmed to '') renders as
   //     "Untitled column".
 
-  test('discard confirm shows exactly 1 bullet when 1 column is dirty', async () => {
-    await openManagerByHeader('Code Review');
-
-    await page.locator('[data-testid="board-manager-name"]').fill('OneDirtyColumn');
-
-    // Trigger discard confirm via Cancel
-    await page.locator('[data-testid="board-manager-dialog"]').getByRole('button', { name: 'Cancel' }).click();
-    await expect(page.locator('h3', { hasText: 'Discard unsaved changes?' })).toBeVisible({ timeout: 1500 });
-
-    // ConfirmDialog renders the bullet list in a separate modal; scope to all
-    // visible <li>s in the confirm dialog. The ConfirmDialog is a sibling of
-    // the manager's <> fragment in the DOM, so we locate it broadly.
-    const allItems = page.locator('ul li');
-    await expect.poll(async () => allItems.count(), { timeout: 2000 }).toBe(1);
-    await expect(allItems.first()).toContainText('OneDirtyColumn');
-
-    // Dismiss without saving
-    await page.locator('button', { hasText: 'Discard' }).click();
-    await page.locator('[data-testid="board-manager-dialog"]').waitFor({ state: 'detached', timeout: 2000 });
-  });
-
+  // The 1-dirty-column case is the same list at N=1; the 3-column test below
+  // asserts the count and every name (test-suite audit trim).
   test('discard confirm shows 3 bullets when 3 columns are dirty', async () => {
     await openManagerByHeader('Code Review');
     const dialog = page.locator('[data-testid="board-manager-dialog"]');

@@ -170,6 +170,45 @@ async function readBoardSettleState(page: Page): Promise<BoardSettleState> {
   });
 }
 
+interface AnimationProbeReadout {
+  completingTaskSetCount: number;
+  seenRecentlyArchivedIds: string[];
+}
+
+/** Records, from the board store, every completingTask set and every recentlyArchivedId. */
+async function installAnimationProbe(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const stores = (window as unknown as {
+      __zustandStores?: {
+        board: { subscribe: (listener: (state: unknown) => void) => () => void };
+      };
+    }).__zustandStores;
+    if (!stores) throw new Error('window.__zustandStores not exposed');
+    const probe: AnimationProbeReadout = { completingTaskSetCount: 0, seenRecentlyArchivedIds: [] };
+    (window as unknown as { __animationProbe: AnimationProbeReadout }).__animationProbe = probe;
+    stores.board.subscribe((state) => {
+      const typed = state as { completingTask: unknown; recentlyArchivedId: string | null };
+      if (typed.completingTask !== null && typed.completingTask !== undefined) {
+        probe.completingTaskSetCount += 1;
+      }
+      if (typed.recentlyArchivedId && !probe.seenRecentlyArchivedIds.includes(typed.recentlyArchivedId)) {
+        probe.seenRecentlyArchivedIds.push(typed.recentlyArchivedId);
+      }
+    });
+  });
+}
+
+async function readAnimationProbe(page: Page): Promise<AnimationProbeReadout> {
+  return page.evaluate(() => {
+    const probe = (window as unknown as { __animationProbe?: AnimationProbeReadout }).__animationProbe;
+    if (!probe) throw new Error('__animationProbe was not installed');
+    return {
+      completingTaskSetCount: probe.completingTaskSetCount,
+      seenRecentlyArchivedIds: [...probe.seenRecentlyArchivedIds],
+    };
+  });
+}
+
 interface FlySnapshot {
   flyingCount: number;
   overlayCount: number;
@@ -184,6 +223,8 @@ test.describe('Move to Done - single coordinated drop (no snap-back)', () => {
     try {
       await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 15000 });
       await expect(page.locator('[data-swimlane-name="Executing"]').locator('text=No Snapback')).toBeVisible();
+
+      await installAnimationProbe(page);
 
       await dragTaskToColumn(page, 'No Snapback', 'Done');
 
@@ -230,6 +271,16 @@ test.describe('Move to Done - single coordinated drop (no snap-back)', () => {
           && state.archivedIds.includes(TASK_ID);
       }, { timeout: 3000 }).toBe(true);
       await expect(page.locator('.flying-card')).toHaveCount(0);
+
+      // The animated entry path was taken, not the rect-bypass path that calls
+      // moveTask directly: setCompletingTask ran, and recentlyArchivedId reached
+      // the dragged task's id (finalizeCompletion's success path, which drives
+      // the Completed card's `.grow-in`). Both animations vanish silently if
+      // handleDragEnd skips setCompletingTask, with the move still succeeding.
+      await expect
+        .poll(async () => (await readAnimationProbe(page)).seenRecentlyArchivedIds, { timeout: 3000 })
+        .toContain(TASK_ID);
+      expect((await readAnimationProbe(page)).completingTaskSetCount).toBeGreaterThanOrEqual(1);
     } finally {
       await browser.close();
     }

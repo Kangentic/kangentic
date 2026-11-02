@@ -36,7 +36,10 @@
  *  - a read for the old project that was still in flight across the close is
  *    dropped when it lands after an open on another project, so it neither
  *    points the map back at the old project nor ends the new project's chat, and
- *  - a read in flight when the graph closes asks for no rebuild when it lands.
+ *  - a read in flight when the graph closes asks for no rebuild when it lands, and
+ *  - on a map that is already drawn, a stale one asks for a rebuild and a fresh one
+ *    does not, a completion push re-reads for the open project only, and a push asks
+ *    for a rebuild only to carry on one this surface asked for.
  *
  * The first build's progress figure is pinned the same way:
  *  - a read or a refresh reply is merged against the store as it is when the
@@ -79,6 +82,7 @@ interface PendingRead {
 let pendingReads: PendingRead[] = [];
 let streamListeners: Array<(event: KnowledgeGraphAnswerStreamPush) => void> = [];
 let progressListeners: Array<(projectId: string, progress: KnowledgeGraphBuildProgress) => void> = [];
+let graphChangedListeners: Array<(projectId: string) => void> = [];
 
 const graphSnapshotMock = vi.fn<(projectId?: string | null, knownProjectionKey?: string | null) => Promise<KnowledgeGraphSnapshot | null>>();
 const refreshGraphMock = vi.fn<(projectId?: string | null) => Promise<KnowledgeGraphBuildProgress | null | undefined>>();
@@ -96,7 +100,10 @@ function installWindowStub(): void {
         graphSnapshot: graphSnapshotMock,
         refreshGraph: refreshGraphMock,
         graphProjects: vi.fn(async () => []),
-        onGraphChanged: vi.fn(() => () => undefined),
+        onGraphChanged: vi.fn((callback: (projectId: string) => void) => {
+          graphChangedListeners.push(callback);
+          return () => undefined;
+        }),
         onGraphBuildProgress: vi.fn((callback: (projectId: string, progress: KnowledgeGraphBuildProgress) => void) => {
           progressListeners.push(callback);
           return unsubscribeProgressMock;
@@ -146,6 +153,9 @@ function makeSnapshot(projectId: string, overrides: Partial<KnowledgeGraphSnapsh
   };
 }
 
+/** A map that is drawn, as the shipped snapshot carries one. Only its presence is read here. */
+const DRAWN_PROJECTION = { signature: 'sig-1', nodes: [], edges: [], clusterings: [] } as unknown as NonNullable<KnowledgeGraphSnapshot['projection']>;
+
 /** Hold the next answer open, so the turn stays in flight until the test
  *  settles it. */
 function holdNextAnswer(): (result: KnowledgeGraphAnswerResult) => void {
@@ -194,6 +204,11 @@ function fireProgress(projectId: string, progress: KnowledgeGraphBuildProgress):
   for (const listener of progressListeners.slice()) listener(projectId, progress);
 }
 
+/** Main announcing that a project's map pass finished. */
+function fireGraphChanged(projectId: string): void {
+  for (const listener of graphChangedListeners.slice()) listener(projectId);
+}
+
 function progressAt(pass: number, percent: number): KnowledgeGraphBuildProgress {
   return { pass, stage: 'reading', percent };
 }
@@ -237,6 +252,7 @@ beforeEach(async () => {
   pendingReads = [];
   streamListeners = [];
   progressListeners = [];
+  graphChangedListeners = [];
   graphSnapshotMock.mockImplementation((projectId) => new Promise((resolve, reject) => {
     pendingReads.push({ projectId: projectId ?? null, resolve, reject });
   }));
@@ -1251,6 +1267,85 @@ describe('knowledge-graph-store loadSnapshot when the graph closes mid-read', ()
     await reread;
     expect(refreshGraphMock).toHaveBeenCalledTimes(1);
     expect(refreshGraphMock).toHaveBeenCalledWith('A');
+  });
+});
+
+describe('knowledge-graph-store rebuild requests on a map that is drawn', () => {
+  // These reach `rebuildIfStale` and not the first-build path: `makeSnapshot` has no
+  // projection, which takes `needsFirstBuild` instead and never asks the question these
+  // cases are about (a stale map that already has something to draw).
+  const drawn = (projectId: string, overrides: Partial<KnowledgeGraphSnapshot> = {}): KnowledgeGraphSnapshot =>
+    makeSnapshot(projectId, { projection: DRAWN_PROJECTION, ...overrides });
+
+  it('asks main for a rebuild when the map it opens on is stale', async () => {
+    store.getState().open('A');
+    resolveRead('A', drawn('A', { stale: true }));
+    await flush();
+
+    // The drawn map is what the store holds, so this was not a first build.
+    expect(store.getState().snapshot?.projection).toBe(DRAWN_PROJECTION);
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+    expect(refreshGraphMock).toHaveBeenCalledWith('A');
+  });
+
+  it('asks for none when the map it opens on is fresh', async () => {
+    // Firing the paced pass on every open would re-enter a minutes-long scan for no reason.
+    store.getState().open('A');
+    resolveRead('A', drawn('A', { stale: false }));
+    await flush();
+
+    expect(store.getState().snapshot?.projection).toBe(DRAWN_PROJECTION);
+    expect(store.getState().loaded).toBe(true);
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+  });
+
+  it('reads again on a completion push for the open project, and ignores one for another project', async () => {
+    store.getState().open('A');
+    resolveRead('A', drawn('A'));
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    fireGraphChanged('B');
+    await flush();
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(1);
+
+    fireGraphChanged('A');
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(graphSnapshotMock).toHaveBeenLastCalledWith('A', null);
+  });
+
+  // Record sweeps and finished embedding drains push too, and an agent's turn makes the map
+  // stale. Rebuilding on such a push started a pass on every turn of an open graph and moved
+  // its nodes under the reader.
+  it('a push over a map that was fresh when opened re-reads it without asking for a rebuild', async () => {
+    store.getState().open('A');
+    resolveRead('A', drawn('A', { stale: false }));
+    await flush();
+
+    fireGraphChanged('A');
+    // The re-read finds the map stale now.
+    resolveRead('A', drawn('A', { stale: true }));
+    await flush();
+
+    expect(graphSnapshotMock).toHaveBeenCalledTimes(2);
+    expect(store.getState().snapshot?.stale).toBe(true);
+    expect(refreshGraphMock).not.toHaveBeenCalled();
+  });
+
+  // A pass that finishes while the index kept growing leaves the map stale again, and the
+  // map fills in pass by pass, as on a first build.
+  it('a push that finds a requested rebuild still stale asks for the next one', async () => {
+    store.getState().open('A');
+    resolveRead('A', drawn('A', { stale: true }));
+    await flush();
+    expect(refreshGraphMock).toHaveBeenCalledTimes(1);
+
+    fireGraphChanged('A');
+    resolveRead('A', drawn('A', { stale: true }));
+    await flush();
+
+    expect(refreshGraphMock).toHaveBeenCalledTimes(2);
+    expect(refreshGraphMock).toHaveBeenLastCalledWith('A');
   });
 });
 

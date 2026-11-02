@@ -364,34 +364,29 @@ async function savedDictation(page: Page): Promise<Record<string, unknown>> {
 
 // Picking a language in a preset mode saves the language and NO model ids: main
 // resolves the preset for the new language each session. Before, the tab wrote
-// the preset's ids for that language, which pinned them into the config.
-const PRESET_LANGUAGE_CASES = [
-  { preset: 'accurate', label: 'Best' },
-  { preset: 'balanced', label: 'Balanced' },
-  { preset: 'fast', label: 'Light' },
-] as const;
+// the preset's ids for that language, which pinned them into the config. The
+// three presets share one code path, so one of them (Balanced, a non-default)
+// stands for all (test-suite audit trim).
+test('Balanced mode: picking a language saves the language and no model ids', async () => {
+  const preset = 'balanced';
+  const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
+  try {
+    // Starts as it would after a preset pick: the mode saved, no model ids.
+    await seedDictation(page, { enabled: true, mode: preset });
+    await openDictationTab(page);
+    await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
 
-for (const { preset, label } of PRESET_LANGUAGE_CASES) {
-  test(`${label} mode: picking a language saves the language and no model ids`, async () => {
-    const { browser, page } = await launchWithInfo(LANGUAGE_SELECTION);
-    try {
-      // Starts as it would after a preset pick: the mode saved, no model ids.
-      await seedDictation(page, { enabled: true, mode: preset });
-      await openDictationTab(page);
-      await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
+    await page.getByTestId('dictation-language-select').selectOption('de');
 
-      await page.getByTestId('dictation-language-select').selectOption('de');
-
-      await expect
-        .poll(() => savedDictation(page))
-        .toEqual({ language: 'de', mode: preset, engineMode: 'auto', liveModelId: null, modelId: null });
-      // The mode is untouched, so the preset still reads as selected.
-      await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
-    } finally {
-      await browser.close();
-    }
-  });
-}
+    await expect
+      .poll(() => savedDictation(page))
+      .toEqual({ language: 'de', mode: preset, engineMode: 'auto', liveModelId: null, modelId: null });
+    // The mode is untouched, so the preset still reads as selected.
+    await expect(page.getByTestId(`dictation-preset-${preset}`)).toHaveAttribute('aria-checked', 'true');
+  } finally {
+    await browser.close();
+  }
+});
 
 // Custom keeps its models when they already cover the new language, so a language
 // change does not throw away a pick the user made on purpose.
@@ -528,7 +523,7 @@ async function lastWarmedConfig(page: Page): Promise<Record<string, unknown> | n
 // Main resolves a Balanced or Light user's models from the saved Mode. If the
 // renderer stopped sending it, main would fall back to the machine's default
 // preset for them.
-test('the saved Mode rides the prewarm request once dictation is on', async () => {
+test('the saved Mode rides the prewarm request, and changing it warms the engine again', async () => {
   const { browser, page } = await launchWithInfo(BEST_SELECTION);
   try {
     await seedDictation(page, { enabled: true, mode: 'balanced' });
@@ -536,16 +531,6 @@ test('the saved Mode rides the prewarm request once dictation is on', async () =
     await expect
       .poll(() => lastWarmedConfig(page))
       .toMatchObject({ mode: 'balanced', engineMode: 'auto', language: 'en' });
-  } finally {
-    await browser.close();
-  }
-});
-
-test('changing the saved Mode warms the engine again with the new Mode', async () => {
-  const { browser, page } = await launchWithInfo(BEST_SELECTION);
-  try {
-    await seedDictation(page, { enabled: true, mode: 'balanced' });
-    await expect.poll(() => lastWarmedConfig(page)).toMatchObject({ mode: 'balanced' });
 
     await seedDictation(page, { mode: 'fast' });
     await expect.poll(() => lastWarmedConfig(page)).toMatchObject({ mode: 'fast' });

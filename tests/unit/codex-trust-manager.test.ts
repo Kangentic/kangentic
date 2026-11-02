@@ -179,32 +179,30 @@ describe('removeCodexWorktreeTrust', () => {
   // Trust is keyed per directory and cannot be inherited, so Kangentic writes
   // one entry per task worktree. Without removal on cleanup the file grows by
   // one dead table per task, forever - one machine had accumulated 473.
-  it('drops the entry for a removed worktree', async () => {
-    await ensureCodexWorktreeTrust(WORKTREE);
-    expect(trustOf(WORKTREE)).toBe('trusted');
-
-    await removeCodexWorktreeTrust(WORKTREE);
-    expect(trustOf(WORKTREE)).toBeNull();
-    expect(readConfig()).not.toContain('worktrees');
-  });
-
-  it('does not grow the file across repeated create/remove cycles', async () => {
+  //
+  // The shared remove contract (drops the entry, no growth over cycles, other
+  // projects untouched, quiet no-op) is the table in
+  // adapter-trust-removal.test.ts. What stays here is TOML-specific.
+  it('gives back a config that had no trailing newline byte for byte after repeated create/remove cycles', async () => {
+    // Ensure writes one blank separator line ahead of each table it appends, and
+    // remove takes that line back out with the table. A file that ended without
+    // a newline is the one whose original form is recoverable from the result.
+    const original = 'model = "gpt-5.5"\n\n[projects.\'/other/project\']\ntrust_level = "trusted"';
+    writeConfig(original);
     for (let taskIndex = 0; taskIndex < 25; taskIndex += 1) {
       const worktree = path.join(PROJECT, '.kangentic', 'worktrees', String(taskIndex));
       await ensureCodexWorktreeTrust(worktree);
       await removeCodexWorktreeTrust(worktree);
     }
-    expect(readConfig().match(/\[projects\./g) ?? []).toHaveLength(0);
-    // And no blank-line drift accumulates from the repeated splices.
-    expect(readConfig()).not.toMatch(/\n{3}/);
+    expect(readConfig()).toBe(original);
   });
 
-  it('leaves other projects untouched', async () => {
+  it('removes the whole table, leaving no stray worktree path behind', async () => {
     await ensureCodexWorktreeTrust(PROJECT);
     await ensureCodexWorktreeTrust(WORKTREE);
     await removeCodexWorktreeTrust(WORKTREE);
+    expect(readConfig()).not.toContain('worktrees');
     expect(trustOf(PROJECT)).toBe('trusted');
-    expect(trustOf(WORKTREE)).toBeNull();
   });
 
   it('preserves a table that carries more than trust_level', async () => {
@@ -215,8 +213,9 @@ describe('removeCodexWorktreeTrust', () => {
     expect(trustOf(WORKTREE)).toBe('trusted');
   });
 
-  it('is a no-op when there is no config or no matching entry', async () => {
-    await expect(removeCodexWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
+  it('leaves a config with no project tables untouched', async () => {
+    // The table in adapter-trust-removal.test.ts covers no file and another
+    // project's table; a file of plain settings is the TOML-shaped case it cannot see.
     writeConfig('model = "gpt-5.5"\n');
     await removeCodexWorktreeTrust(WORKTREE);
     expect(readConfig()).toContain('model = "gpt-5.5"');

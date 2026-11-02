@@ -105,7 +105,6 @@ async function beginRecording(
  */
 const TERMINAL_TARGET_SUBMITS = { sessionId: 'sess-target-1', kind: 'terminal' as const, willSubmit: true };
 const TERMINAL_TARGET_INSERTS = { sessionId: 'sess-target-1', kind: 'terminal' as const, willSubmit: false };
-const INPUT_TARGET_SUBMITS = { sessionId: null, kind: 'input' as const, willSubmit: true };
 const NO_TARGET = { sessionId: null, kind: null, willSubmit: false };
 
 async function setFinalizing(page: Page): Promise<void> {
@@ -125,6 +124,12 @@ test.describe('LiveDictationChip: autoSubmit-driven copy', () => {
       await expect(chip).toBeVisible();
       await expect(chip.getByText('Listening', { exact: true })).toBeVisible();
       await expect(chip.getByText('Release to send', { exact: true })).toBeVisible();
+
+      // The contrast case for the noTarget dot below: a target gets the active tone.
+      const dot = chip.locator('[data-testid="dictation-recording-dot"]');
+      await expect(dot).toHaveAttribute('data-tone', 'active');
+      await expect(dot).toHaveClass(/bg-active/);
+      await expect(dot).not.toHaveClass(/bg-attention/);
     } finally {
       await browser.close();
     }
@@ -195,39 +200,11 @@ test.describe('LiveDictationChip: no focused target', () => {
     }
   });
 
-  test('recording with a target: active-toned dot (the contrast case for the noTarget dot above)', async () => {
-    const { browser, page } = await launch(true);
-    try {
-      await beginRecording(page, TERMINAL_TARGET_SUBMITS);
-      const chip = page.locator('[data-testid="dictation-live-chip"]');
-      const dot = chip.locator('[data-testid="dictation-recording-dot"]');
-      await expect(dot).toHaveAttribute('data-tone', 'active');
-      await expect(dot).toHaveClass(/bg-active/);
-      await expect(dot).not.toHaveClass(/bg-attention/);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('an INPUT target reads as a live target, not as "no target"', async () => {
-    // The regression this guards: `noTarget` used to be `!targetSessionId`, and
-    // an input target has no session behind it (the renderer writes to the DOM
-    // node directly). Under that test the chip would say "nothing focused" while
-    // the user's words were visibly landing in the field.
-    const { browser, page } = await launch(true);
-    try {
-      await beginRecording(page, INPUT_TARGET_SUBMITS);
-      const chip = page.locator('[data-testid="dictation-live-chip"]');
-      await expect(chip.getByText('Listening', { exact: true })).toBeVisible();
-      await expect(chip.getByText('Release to send', { exact: true })).toBeVisible();
-      await expect(chip.getByText('No terminal or input focused', { exact: true })).toHaveCount(0);
-
-      const dot = chip.locator('[data-testid="dictation-recording-dot"]');
-      await expect(dot).toHaveAttribute('data-tone', 'active');
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): "an INPUT target reads as a live target, not as
+  // no target" (the `noTarget` used to be `!targetSessionId` regression) is
+  // asserted against the real note input by dictation-note-input.spec.ts "the
+  // chip reports an input target as a real target". The active-toned dot of a
+  // focused target is asserted in the first test of this file.
 });
 
 /**

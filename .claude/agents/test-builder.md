@@ -90,7 +90,7 @@ These are project rules learned from production incidents. Violating any of them
 
 6. **Always use mock CLIs.** `tests/fixtures/mock-claude.{js,cmd}`, `mock-codex.*`, `mock-gemini.*`. Never invoke real Claude/Codex/Gemini binaries from tests. Use `mockAgentPath(agent)` from helpers.ts to resolve the platform-correct path.
 
-   **Corollary: never `npm install -g` an agent CLI.** Do not run `npm install -g @google/gemini-cli`, `npm install -g @anthropic-ai/claude-code`, or any equivalent for the agents Kangentic supports (claude, codex, gemini, qwen, opencode, aider, kimi, droid, copilot, warp). When npm runs from a worktree with a misconfigured prefix, this drops `gemini` / `gemini.cmd` / `gemini.ps1` shim trios at the worktree root and pollutes `git status`. Live-CLI smoke tests (`tests/unit/*-live-smoke.test.ts`) rely on the user's pre-existing global install and skip cleanly when the binary is absent. Follow that pattern.
+   **Corollary: never `npm install -g` an agent CLI.** Do not run `npm install -g @google/gemini-cli`, `npm install -g @anthropic-ai/claude-code`, or any equivalent for the agents Kangentic supports (claude, codex, gemini, qwen, opencode, aider, kimi, droid, copilot, warp). When npm runs from a worktree with a misconfigured prefix, this drops `gemini` / `gemini.cmd` / `gemini.ps1` shim trios at the worktree root and pollutes `git status`. Live-CLI smoke tests (`tests/integration/*-live-smoke.test.ts`) rely on the user's pre-existing global install and skip cleanly when the binary is absent. Follow that pattern.
 
 7. **No personal info in tests.** Never hardcode a real home-directory path (`C:\Users\<real name>`), real usernames, or real emails. Use generic placeholders like `C:\Users\dev`. The repo is or will be public.
 

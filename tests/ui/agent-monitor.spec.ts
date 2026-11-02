@@ -799,40 +799,9 @@ test.describe('agent monitor', () => {
     }
   });
 
-  test('a paused row keeps its trail in the store but the card falls back to its description', async () => {
-    // The monitor half of the board card's live gate. A trail outlives its
-    // session, so without this a paused card printed agent prose with no
-    // activity mark and no filling bar to say so.
-    const { browser, page } = await launchWithState(monitorPreConfig());
-    try {
-      await openMonitor(page);
-
-      await page.evaluate(() => window.__mockFireMonitorChanged?.((window.__mockMonitorRows ?? []).map((row) => (
-        row.sessionId === 'sess-paused'
-          ? Object.assign({}, row, { description: 'Paused: an Obsidian-like graph over the memory index.' })
-          : row
-      ))));
-      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-paused', [
-        { uuid: 'p1', ts: 1, text: 'Parking this until the retrieval index lands.' },
-      ]));
-
-      const card = page.locator('[data-session-id="sess-paused"]');
-      await expect(card.locator('[data-testid="monitor-card-description"]')).toContainText('Obsidian-like graph');
-      await expect(card.locator('[data-testid="monitor-card-trail"]')).toHaveCount(0);
-      await expect(card).not.toContainText('Parking this until');
-
-      // The same trail on a RUNNING row does show, so this is the live gate and
-      // not the trail simply failing to arrive.
-      await page.evaluate(() => window.__mockFireMessageTrail?.('sess-working', [
-        { uuid: 'w1', ts: 1, text: 'Parking this until the retrieval index lands.' },
-      ]));
-      await expect(
-        page.locator('[data-session-id="sess-working"] [data-testid="monitor-card-trail"]'),
-      ).toContainText('Parking this until');
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): a stopped row falling back to its description even
+  // while it holds a trail is tests/unit/monitor-view-model.test.ts monitorSlotKind
+  // ('gives a live row its trail', 'sends a stopped row back to its description').
 
   test('a suspended row with no description keeps its peek sampled after it gains a trail', async () => {
     // The other half of the live gate, at the wanted-list level rather than the

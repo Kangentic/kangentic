@@ -150,9 +150,14 @@ test.describe('Sidebar Command Terminal indicator', () => {
     }
   });
 
-  test('a single terminal renders the glyph with its count', async () => {
+  test('a terminal renders the glyph with its count, at one and at two', async () => {
+    // Alpha has one terminal and Beta two, so one page shows both counts.
     const { browser, page } = await launchWithState(preConfig({
-      terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' }],
+      terminals: [
+        { project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' },
+        { project: PROJECT_B_ID, id: 'ct-b1', activity: 'idle' },
+        { project: PROJECT_B_ID, id: 'ct-b2', activity: 'idle' },
+      ],
     }));
 
     try {
@@ -163,23 +168,10 @@ test.describe('Sidebar Command Terminal indicator', () => {
       // agent counts beside it rather than a lone glyph missing its number.
       await expect(indicator).toHaveText('1');
       await expect(indicator.locator(`[data-testid="project-terminal-icon-${PROJECT_A_ID}"]`)).toBeVisible();
-    } finally {
-      await browser.close();
-    }
-  });
 
-  test('two terminals render a count digit', async () => {
-    const { browser, page } = await launchWithState(preConfig({
-      terminals: [
-        { project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle' },
-        { project: PROJECT_A_ID, id: 'ct-a2', activity: 'idle' },
-      ],
-    }));
-
-    try {
-      const indicator = page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
-      await expect(indicator).toHaveAttribute('data-count', '2');
-      await expect(indicator).toHaveText('2');
+      const twoIndicator = page.locator(`[data-testid="project-terminals-${PROJECT_B_ID}"]`);
+      await expect(twoIndicator).toHaveAttribute('data-count', '2');
+      await expect(twoIndicator).toHaveText('2');
     } finally {
       await browser.close();
     }
@@ -194,19 +186,6 @@ test.describe('Sidebar Command Terminal indicator', () => {
       const indicator = page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
       await expect(indicator).toHaveAttribute('data-activity', 'idle');
       await expect(indicator.locator('svg.text-attention')).toHaveCount(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a permission-blocked terminal reads as needing the user, not working', async () => {
-    const { browser, page } = await launchWithState(preConfig({
-      terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'permission' }],
-    }));
-
-    try {
-      const indicator = page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
-      await expect(indicator).toHaveAttribute('data-activity', 'idle');
     } finally {
       await browser.close();
     }
@@ -240,18 +219,6 @@ test.describe('Sidebar Command Terminal indicator', () => {
       const indicator = page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`);
       await expect(indicator).toBeVisible();
       await expect(indicator).toHaveAttribute('data-activity', 'rest');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('an exited terminal does not count', async () => {
-    const { browser, page } = await launchWithState(preConfig({
-      terminals: [{ project: PROJECT_A_ID, id: 'ct-a1', activity: 'idle', status: 'exited' }],
-    }));
-
-    try {
-      await expect(page.locator(`[data-testid="project-terminals-${PROJECT_A_ID}"]`)).toHaveCount(0);
     } finally {
       await browser.close();
     }

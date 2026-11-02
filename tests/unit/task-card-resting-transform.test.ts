@@ -10,16 +10,23 @@
  * frame that first draws the overlay at 90 workflow cards in To Do). Spelling
  * the resting value exactly as dnd-kit spells its zero starts none.
  *
- * Nothing here renders a card: the claim is that two strings are equal, and that
- * is a unit-sized fact. The second oracle is the library's own sortable strategy,
- * so the pin follows dnd-kit if it ever changes how it writes a zero.
+ * The first two tests compare strings, a unit-sized fact. The second oracle is
+ * the library's own sortable strategy, so the pin follows dnd-kit if it ever
+ * changes how it writes a zero. The third renders the real card to markup, with
+ * react-dom/server and no DOM, and reads the transform it painted.
  */
 import { describe, it, expect } from 'vitest';
 import { CSS } from '@dnd-kit/utilities';
 import { verticalListSortingStrategy } from '@dnd-kit/sortable';
-import fs from 'node:fs';
-import path from 'node:path';
+import { createElement } from 'react';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { i18n } from '@lingui/core';
+import { I18nProvider } from '@lingui/react';
+import { DndContext } from '@dnd-kit/core';
+import { SortableContext } from '@dnd-kit/sortable';
 import { RESTING_TRANSFORM } from '../../src/renderer/components/board/resting-transform';
+import { TaskCard } from '../../src/renderer/components/board/TaskCard';
+import type { Task } from '../../src/shared/types';
 
 function rect(top: number): { top: number; left: number; bottom: number; right: number; width: number; height: number } {
   return { top, left: 0, bottom: top + 80, right: 300, width: 300, height: 80 };
@@ -46,11 +53,26 @@ describe('RESTING_TRANSFORM', () => {
     expect(RESTING_TRANSFORM).toBe(CSS.Transform.toString(bystander));
   });
 
-  it('is what the board card falls back to at rest', () => {
-    // Read as text: TaskCard is a component module, kept free of value exports
-    // so it stays a Fast Refresh boundary.
-    const source = fs.readFileSync(path.join(__dirname, '../../src/renderer/components/board/TaskCard.tsx'), 'utf8');
-    expect(source).toContain('CSS.Transform.toString(transform) ?? RESTING_TRANSFORM');
-    expect(source).not.toMatch(/translate3d\(0,\s*0,\s*0\)/);
+  it('is what the board card draws at rest', () => {
+    // The real card, server-rendered under a real DndContext with no drag in
+    // progress: useSortable hands it no transform, so the style it paints is
+    // the fallback. react-dom/server needs no DOM.
+    const task = {
+      id: 'task-resting', display_id: 1, title: 'Resting card', description: '', swimlane_id: 'lane-1', position: 0,
+      agent: 'claude', session_id: null, worktree_path: null, branch_name: null, pr_number: null, pr_url: null,
+      base_branch: null, use_worktree: null, labels: [], priority: 0, attachment_count: 0, archived_at: null,
+      created_at: '2025-01-01T00:00:00.000Z', updated_at: '2025-01-01T00:00:00.000Z',
+    } as unknown as Task;
+
+    const markup = renderToStaticMarkup(
+      createElement(I18nProvider, { i18n },
+        createElement(DndContext, null,
+          createElement(SortableContext, { items: [task.id] }, createElement(TaskCard, { task })))),
+    );
+
+    const cardRoot = markup.match(/^<div style="([^"]*)"[^>]*data-task-id="task-resting"/);
+    expect(cardRoot, 'the card root with its style was not found at the start of the markup').not.toBeNull();
+    const restingStyle = cardRoot![1].split(';').find((declaration) => declaration.startsWith('transform:'));
+    expect(restingStyle).toBe(`transform:${RESTING_TRANSFORM}`);
   });
 });
