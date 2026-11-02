@@ -17,13 +17,15 @@
  *
  * It never throws and never blocks anything: a failure is an outcome, and the
  * caller logs it and goes on. One run per task at a time, so a move to Done
- * during a pause's stop waits for that stop, within its own bound, and does not
- * start a second one.
+ * during a pause's stop waits for that stop and does not start a second one. When
+ * that move's bound or signal ends the wait it ends the run too: the reap and the
+ * worktree removal come next, and the script has no tag for the reap to find.
  *
  * A Stop script runs a third-party tool that can reach past its own tree. Test
  * with a stub, never a real stack on the machine running Kangentic.
  */
 
+import fsPromises from 'node:fs/promises';
 import { spawnWithAbort } from '../git/spawn-with-abort';
 import { childProcessEnv } from '../shared/child-env';
 import { TASK_PROCESS_TAG_ENV } from '../pty/process-tag/task-process-tag';
@@ -57,11 +59,23 @@ export interface RunStopScriptInput {
   signal?: AbortSignal;
 }
 
+interface StopScriptRun {
+  outcome: Promise<StopScriptOutcome>;
+  /** Ends the script's tree, for a caller that joined this run. */
+  stop: AbortController;
+}
+
 /** Runs in flight, by task. Exported state is `isStopScriptRunning`. */
-const runs = new Map<string, Promise<StopScriptOutcome>>();
+const runs = new Map<string, StopScriptRun>();
 
 export function isStopScriptRunning(taskId: string): boolean {
   return runs.has(taskId);
+}
+
+/** Where a task's script runs: its worktree while that exists, else the project folder. */
+export async function stopScriptFolder(worktreePath: string | null, projectPath: string): Promise<string> {
+  if (!worktreePath) return projectPath;
+  return fsPromises.access(worktreePath).then(() => worktreePath, () => projectPath);
 }
 
 /** The last non-empty line of what the script printed, for a one-line toast. */
@@ -80,22 +94,25 @@ export function classifyStopScriptError(error: unknown, timeoutMs: number, signa
   return { status: 'failed', failure: { kind: 'error', detail: message.slice(0, MAX_FAILURE_DETAIL_CHARS) } };
 }
 
-/** Wait for a run another caller started, for no longer than this caller may. */
-function joinRun(run: Promise<StopScriptOutcome>, timeoutMs: number, signal: AbortSignal | undefined): Promise<StopScriptOutcome> {
+/** Wait for a run another caller started, and end it when this caller can wait no longer. */
+function joinRun(run: StopScriptRun, timeoutMs: number, signal: AbortSignal | undefined): Promise<StopScriptOutcome> {
   return new Promise((resolve) => {
     const settle = (outcome: StopScriptOutcome): void => {
       clearTimeout(timer);
       signal?.removeEventListener('abort', onAbort);
       resolve(outcome);
     };
-    const onAbort = (): void => settle({ status: 'aborted' });
+    const onAbort = (): void => {
+      run.stop.abort();
+      settle({ status: 'aborted' });
+    };
     const timer = setTimeout(onAbort, timeoutMs);
     if (signal?.aborted) {
       onAbort();
       return;
     }
     signal?.addEventListener('abort', onAbort, { once: true });
-    void run.then(settle);
+    void run.outcome.then(settle);
   });
 }
 
@@ -103,11 +120,13 @@ export function runStopScript(input: RunStopScriptInput): Promise<StopScriptOutc
   const inFlight = runs.get(input.taskId);
   if (inFlight) return joinRun(inFlight, input.timeoutMs, input.signal);
   const startedAt = Date.now();
-  const run = spawnWithAbort(
+  const stop = new AbortController();
+  const signal = input.signal ? AbortSignal.any([input.signal, stop.signal]) : stop.signal;
+  const outcome = spawnWithAbort(
     { command: input.script, cwd: input.cwd, label: LABEL, signalKillAssertsTimeout: false },
     {
       timeoutMs: input.timeoutMs,
-      signal: input.signal,
+      signal,
       env: childProcessEnv({ [TASK_PROCESS_TAG_ENV]: undefined }),
     },
   ).then(
@@ -116,22 +135,17 @@ export function runStopScript(input: RunStopScriptInput): Promise<StopScriptOutc
       return { status: 'ok' };
     },
     (error: unknown): StopScriptOutcome => {
-      const outcome = classifyStopScriptError(error, input.timeoutMs, input.signal);
-      if (outcome.status === 'failed') {
-        console.warn(`[STOP-SCRIPT] task ${input.taskId.slice(0, 8)}: failed after ${Date.now() - startedAt} ms:`, outcome.failure);
+      const classified = classifyStopScriptError(error, input.timeoutMs, signal);
+      if (classified.status === 'failed') {
+        console.warn(`[STOP-SCRIPT] task ${input.taskId.slice(0, 8)}: failed after ${Date.now() - startedAt} ms:`, classified.failure);
       } else {
         console.log(`[STOP-SCRIPT] task ${input.taskId.slice(0, 8)}: cancelled after ${Date.now() - startedAt} ms`);
       }
-      return outcome;
+      return classified;
     },
   ).finally(() => {
     runs.delete(input.taskId);
   });
-  runs.set(input.taskId, run);
-  return run;
-}
-
-/** Test-only: forget every run. */
-export function resetStopScriptRunsForTests(): void {
-  runs.clear();
+  runs.set(input.taskId, { outcome, stop });
+  return outcome;
 }

@@ -627,8 +627,8 @@ describe('the project Stop script before the reap (real reapTaskLeftovers)', () 
     sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s11', processes: RUNNING, connected: false }]);
     const controller = new AbortController();
     mockSpawnWithAbort.mockImplementation(async (_target, options) => {
-      expect((options as { signal?: AbortSignal }).signal).toBe(controller.signal);
       controller.abort();
+      expect((options as { signal?: AbortSignal }).signal?.aborted).toBe(true);
       throw new Error('stop script aborted (external abort) (child process killed)');
     });
 
@@ -647,6 +647,80 @@ describe('the project Stop script before the reap (real reapTaskLeftovers)', () 
 
     expect(callOrder).toEqual(['reap']);
     warn.mockRestore();
+  });
+
+  it('carries a superseding move\'s signal from cleanupTaskResources (a move to To Do) to the script', async () => {
+    const { context, sessionManager } = makeStopContext();
+    sessionManager.probeTaskProcesses.mockResolvedValue([{ taskId: 'task-s13', processes: RUNNING, connected: false }]);
+    const controller = new AbortController();
+    let signalAbortedInsideScript: boolean | undefined;
+    mockSpawnWithAbort.mockImplementation(async (_target, options) => {
+      controller.abort();
+      signalAbortedInsideScript = (options as { signal?: AbortSignal }).signal?.aborted;
+      throw new Error('stop script aborted (external abort) (child process killed)');
+    });
+    const task = { id: 'task-s13', session_id: null, worktree_path: null, branch_name: null };
+    const tasks = { getById: vi.fn(() => task), update: vi.fn(), setWorktreeSkipReason: vi.fn() } as unknown as TaskRepository;
+
+    await cleanupTaskResources(context, task, tasks, null, PROJECT_PATH, { signal: controller.signal });
+
+    // A signal dropped on the way would leave the script's own signal un-aborted.
+    expect(signalAbortedInsideScript).toBe(true);
+    expect(callOrder).toContain('reap');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Section 1a-bis: source scans for the Stop script's two wiring points that no
+// unit can drive cheaply: the Command Terminal's reaper opts out, and the host
+// memory sampler's tick drives the held-off recheck.
+// ---------------------------------------------------------------------------
+
+describe('Stop script wiring (static scans)', () => {
+  const readSource = (relativePath: string): string => fs.readFileSync(path.join(__dirname, '../../', relativePath), 'utf8');
+
+  it('the Command Terminal\'s leftover reaper passes skipStopScript, so a terminal runs no project script', () => {
+    const registerAll = readSource('src/main/ipc/register-all.ts');
+    const start = registerAll.indexOf('new CommandTerminalLeftoverReaper(');
+    expect(start).toBeGreaterThan(-1);
+    const reaperRegion = registerAll.slice(start, registerAll.indexOf('.start()', start));
+
+    expect(reaperRegion).toContain('reapTaskLeftovers(');
+    expect(reaperRegion).toMatch(/reapTaskLeftovers\([\s\S]*skipStopScript: true/);
+    // The one opt-out: every other caller of the reap runs the script.
+    expect(registerAll.match(/skipStopScript/g)).toHaveLength(1);
+  });
+
+  it('a move to To Do hands its signal to cleanupTaskResources, which reaches the reap and the script', () => {
+    const moveSource = readSource('src/main/ipc/handlers/task-move.ts');
+    const calls = moveSource.match(/await cleanupTaskResources\([^;]*\);/g) ?? [];
+
+    expect(calls.length).toBeGreaterThan(0);
+    for (const call of calls) expect(call).toMatch(/\{ signal \}\)/);
+    // And the Done move's own reap carries it too.
+    const doneReaps = moveSource.match(/await reapTaskLeftovers\([^;]*\);/g) ?? [];
+    expect(doneReaps.length).toBeGreaterThan(0);
+    for (const call of doneReaps) expect(call).toMatch(/\{ signal \}\)/);
+  });
+
+  /** Whether the sampler callback in index.ts ticks the held-off stops inside its own try. */
+  function samplerTicksHeldOffStops(source: string): boolean {
+    const start = source.indexOf('onSample: (sample) => {');
+    if (start === -1) return false;
+    const end = source.indexOf('resumeMemoryPausedWorkflowTasks(', start);
+    const callback = source.slice(start, end === -1 ? undefined : end);
+    return /try \{[^}]*tickHeldOffStops\(stopContext\)/.test(callback);
+  }
+
+  it('the host memory sampler\'s onSample drives tickHeldOffStops, which is the recheck\'s only timer', () => {
+    const indexSource = readSource('src/main/index.ts');
+
+    expect(indexSource).toContain("import { tickHeldOffStops } from './stop-script/parked-stop-service';");
+    expect(samplerTicksHeldOffStops(indexSource)).toBe(true);
+    // Positive control: with the call taken out, the same check reads false.
+    expect(samplerTicksHeldOffStops(indexSource.replace('tickHeldOffStops(stopContext)', 'void stopContext'))).toBe(false);
+    // Nothing else in main ticks it, so no second timer was added.
+    expect(indexSource.match(/tickHeldOffStops\(/g)).toHaveLength(1);
   });
 });
 

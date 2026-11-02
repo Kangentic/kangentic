@@ -18,11 +18,10 @@
  * leaves the reap to go on.
  */
 
-import fsPromises from 'node:fs/promises';
 import PQueue from 'p-queue';
 import type { IpcContext } from '../ipc/ipc-context';
 import { isShuttingDown } from '../shutdown-state';
-import { runStopScript, STOP_SCRIPT_TERMINAL_TIMEOUT_MS } from './run-stop-script';
+import { runStopScript, STOP_SCRIPT_TERMINAL_TIMEOUT_MS, stopScriptFolder } from './run-stop-script';
 import { reportStopScriptFailure } from './stop-script-failure';
 
 /** Scripts at once in one call. A project delete can name many folders. */
@@ -32,16 +31,6 @@ interface TerminalStopTask {
   id: string;
   worktree_path: string | null;
   title?: string;
-}
-
-async function existingFolder(folder: string | null): Promise<string | null> {
-  if (!folder) return null;
-  try {
-    await fsPromises.access(folder);
-    return folder;
-  } catch {
-    return null;
-  }
 }
 
 export async function stopBeforeReap(
@@ -65,7 +54,7 @@ export async function stopBeforeReap(
     const taskByFolder = new Map<string, TerminalStopTask>();
     for (const task of tasks) {
       if (!running.has(task.id)) continue;
-      const folder = (await existingFolder(task.worktree_path)) ?? projectPath;
+      const folder = await stopScriptFolder(task.worktree_path, projectPath);
       if (!taskByFolder.has(folder)) taskByFolder.set(folder, task);
     }
     if (taskByFolder.size === 0) return;

@@ -2658,7 +2658,7 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "작업이 완료되거나, To Do로 돌아가거나, 삭제되거나, Command Terminal이 종료되면 에이전트가 폴더에서 실행 중으로 남겨 둔 항목을 중지합니다."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts

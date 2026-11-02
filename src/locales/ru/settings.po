@@ -2658,7 +2658,7 @@ msgid "Stop what an agent left running in its folder when its task is done, back
 msgstr "Останавливать то, что агент оставил запущенным в своей папке, когда задача выполнена, возвращена в To Do или удалена либо когда завершается её командный терминал."
 
 #: src/renderer/components/settings/settings-registry.ts
-msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
 msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts

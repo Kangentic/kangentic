@@ -6,7 +6,7 @@
  * ever in here, and each check drops a task the moment it stops, resumes, moves
  * or has nothing left. The tick is the host memory sampler's existing 60 s one,
  * so this adds no timer, and a recheck costs one scan (about 45 ms) and one
- * connection read (about 3 ms) every five minutes while something is held off.
+ * connection read (about 3 ms) per held-off task every five minutes.
  *
  * A restart forgets the set. That is a miss and no harm: a low-memory pass reads
  * the paused tasks from the database, and the task's terminal reap still comes.
@@ -29,6 +29,10 @@ export class HeldOffStops {
 
   get size(): number {
     return this.targets.size;
+  }
+
+  has(taskId: string): boolean {
+    return this.targets.has(taskId);
   }
 
   add(target: ParkedStopTarget): void {

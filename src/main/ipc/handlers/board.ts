@@ -269,7 +269,9 @@ export function registerBoardHandlers(context: IpcContext): void {
     context.boardConfigManager.setDefaultBaseBranch(branch);
   });
 
-  ipcMain.handle(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, (_, script: string | null) => {
-    context.boardConfigManager.setStopScript(script);
+  ipcMain.handle(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, (_, projectId: string, script: string | null) => {
+    const project = context.projectRepo.getById(projectId);
+    if (!project) throw new Error('Unknown project');
+    context.boardConfigManager.setStopScript(project.path, script);
   });
 }

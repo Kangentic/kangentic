@@ -25,7 +25,6 @@
  */
 
 import {
-  buildProtectedPids,
   isInsideDirectory,
   type ReapPlanInput,
   type ReapTaskScope,
@@ -33,11 +32,6 @@ import {
 import { seedsAndDescendants, type LocalConnectionRead, type ScannedProcess } from './process-scan';
 
 export type TaskTreeProbeInput = Pick<ReapPlanInput, 'processes' | 'mainPid' | 'liveRootPids' | 'caseInsensitivePaths'>;
-
-/** The pids nothing here reads as the task's: `buildProtectedPids` over this scan. */
-export function protectedPidsOfProbe(input: TaskTreeProbeInput): Set<number> {
-  return buildProtectedPids(input);
-}
 
 /** What the task still has running in its folders, in scan order. */
 export function runningInTaskFolders(
@@ -68,6 +62,7 @@ export function treeConnectionQueryOf(
   taskId: string,
 ): { treePids: Set<number>; listeners: ScannedProcess[]; clients: ScannedProcess[] } {
   const reached = seedsAndDescendants(input.processes, (scanned) => scanned.tagValue === taskId && !protectedPids.has(scanned.pid));
+  // The walk can reach a protected process under an unprotected seed, so filter again.
   const listeners = [...reached].filter((scanned) => !protectedPids.has(scanned.pid));
   const treePids = new Set(listeners.map((scanned) => scanned.pid));
   const clients = input.processes.filter((scanned) => !treePids.has(scanned.pid) && !scanned.exited);

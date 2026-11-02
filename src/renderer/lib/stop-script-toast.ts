@@ -24,8 +24,10 @@ export function stopScriptFailureBody({ taskTitle, failure }: Pick<StopScriptFai
       const minutes = Math.round(seconds / 60);
       return i18n._(msg`"${{ taskTitle }}": timed out after ${plural({ minutes }, { one: '# minute', other: '# minutes' })}.`);
     }
-    case 'error':
-      return `"${taskTitle}": ${asSentence(failure.detail)}`;
+    case 'error': {
+      const detail = asSentence(failure.detail);
+      return i18n._(msg`"${{ taskTitle }}": ${{ detail }}`);
+    }
     default: {
       const unknownFailure: never = failure;
       throw new Error(`unknown Stop script failure: ${JSON.stringify(unknownFailure)}`);

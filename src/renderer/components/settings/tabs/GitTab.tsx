@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react';
 import { CircleStop, GitBranch, GitFork, GitPullRequest } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
@@ -5,9 +6,65 @@ import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
-import { useConfigStore } from '../../../stores/config-store';
+import { useSettingsProject } from '../use-settings-project';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
+
+/**
+ * The Stop script lives in the project's board config files, not in the project
+ * overrides `config` carries, so the row reads and writes by project id. The panel's
+ * switcher can name a project whose board is not open, and a write that followed the
+ * open board would land on the wrong repository. `key` gives each project its own
+ * field, so an unsaved edit flushes to the project it was typed for.
+ */
+function StopScriptRow() {
+  const { t } = useLingui();
+  const projectId = useSettingsProject()?.id ?? null;
+  const [script, setScript] = useState('');
+
+  useEffect(() => {
+    if (!projectId) return;
+    let stale = false;
+    window.electronAPI.config.get(projectId).then(
+      (projectConfig) => {
+        if (!stale) setScript(projectConfig.git.stopScript ?? '');
+      },
+      (error: unknown) => console.warn('[SETTINGS] Could not read the Stop script:', error),
+    );
+    return () => {
+      stale = true;
+    };
+  }, [projectId]);
+
+  return (
+    <CardRow {...settingProps('git.stopScript')}>
+      <SettingTextInput
+        key={projectId}
+        value={script}
+        disabled={!projectId}
+        onCommit={(nextStopScript) => {
+          if (!projectId) return;
+          window.electronAPI.boardConfig.setStopScript(projectId, nextStopScript || null)
+            .then(() => window.electronAPI.config.get(projectId))
+            .then(
+              (projectConfig) => setScript(projectConfig.git.stopScript ?? ''),
+              (error: unknown) => {
+                useToastStore.getState().addToast({
+                  title: t`Couldn't save Stop script`,
+                  message: asSentence(describeIpcError(error)),
+                  variant: 'error',
+                });
+              },
+            );
+        }}
+        // i18n-ok: an example shell command
+        placeholder="npm run stop"
+        ariaLabel={t`Stop script`}
+        className="placeholder-fg-faint"
+      />
+    </CardRow>
+  );
+}
 
 /**
  * Four cards: Branches (where work starts and how current it stays), Worktrees
@@ -118,28 +175,7 @@ export function GitTab({ config }: { config: AppConfig }) {
         description={t`How this project stops what a task leaves running.`}
         searchIds={['git.stopScript']}
       >
-        <CardRow {...settingProps('git.stopScript')}>
-          <SettingTextInput
-            value={config.git.stopScript || ''}
-            onCommit={(nextStopScript) => {
-              // Saved in kangentic.json alone, so the row reads it back from there.
-              window.electronAPI.boardConfig.setStopScript(nextStopScript || null).then(
-                () => useConfigStore.getState().loadConfig(),
-                (error: unknown) => {
-                  useToastStore.getState().addToast({
-                    title: t`Couldn't save Stop script`,
-                    message: asSentence(describeIpcError(error)),
-                    variant: 'error',
-                  });
-                },
-              );
-            }}
-            // i18n-ok: an example shell command
-            placeholder="npm run stop"
-            ariaLabel={t`Stop script`}
-            className="placeholder-fg-faint"
-          />
-        </CardRow>
+        <StopScriptRow />
       </SettingsCard>
 
       <SettingsCard

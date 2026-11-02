@@ -61,7 +61,7 @@ export type ParkedStopResult =
   | 'held-off'
   /** The script ended something. */
   | 'stopped'
-  /** The script exited clean and everything it found still runs. */
+  /** The script exited clean and nothing shows it ended anything. */
   | 'no-effect'
   | 'failed';
 
@@ -79,7 +79,7 @@ export interface ParkedStopDeps {
   runScript: (taskId: string, script: string, cwd: string) => Promise<StopScriptOutcome>;
   holdMessage: (target: ParkedStopTarget, message: string) => void;
   reportFailure: (target: ParkedStopTarget, taskTitle: string, failure: StopScriptFailure) => void;
-  wait: (ms: number) => Promise<void>;
+  wait: (milliseconds: number) => Promise<void>;
 }
 
 /**
@@ -125,10 +125,11 @@ export async function stopParkedTask(
   }
   if (found.connected) return 'held-off';
 
-  // The probe waited on the host, and a Resume does not wait on this.
+  const cwd = await deps.folderOf(target, parked.worktreePath);
+  // The probe and the folder read both waited, and a Resume does not wait on this.
+  // Past this point the script runs to its end, and its message reaches a resumed agent.
   if (!deps.parkedTask(target)) return 'not-paused';
   if (deps.isShuttingDown()) return 'skipped';
-  const cwd = await deps.folderOf(target, parked.worktreePath);
   options.onScriptStart?.();
   const outcome = await deps.runScript(target.taskId, script, cwd);
   if (outcome.status === 'failed') {
@@ -139,11 +140,15 @@ export async function stopParkedTask(
 
   await deps.wait(STOP_SETTLE_MS);
   const after = await deps.probe(target, parked.worktreePath, false);
-  const ended = after ? found.processes.filter((process) => !after.processes.some((still) => sameProcess(process, still))) : [];
+  if (!after) {
+    console.warn(`[STOP-SCRIPT] task ${target.taskId.slice(0, 8)}: the script exited clean and the host could not say what it stopped`);
+    return 'no-effect';
+  }
+  const ended = found.processes.filter((probed) => !after.processes.some((still) => sameProcess(probed, still)));
   if (ended.length === 0) {
     console.warn(`[STOP-SCRIPT] task ${target.taskId.slice(0, 8)}: the script exited clean and stopped nothing it could see`);
     return 'no-effect';
   }
-  deps.holdMessage(target, stoppedProcessesMessage(ended.map((process) => process.label)));
+  deps.holdMessage(target, stoppedProcessesMessage(ended.map((probed) => probed.label)));
   return 'stopped';
 }

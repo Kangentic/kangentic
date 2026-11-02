@@ -203,4 +203,4 @@ Replaced the `action:*` and `transition:*` channels, which had no renderer calle
 | `boardConfig:setShortcuts` | invoke | Update task detail dialog shortcuts |
 | `boardConfig:shortcutsChanged` | on | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | invoke | Set the team-shared default base branch in `kangentic.json` |
-| `boardConfig:setStopScript` | invoke | Set the project's Stop script in `kangentic.json`, the setting's one store. Null or blank removes the key. Rejects when the file exists but cannot be read |
+| `boardConfig:setStopScript` | invoke | Set a project's Stop script, named by project id, in `kangentic.json`, or in `kangentic.local.json` when that holds the key. Null or blank removes the team key or leaves an empty local value. Rejects on an unknown project, a file that exists but cannot be read, and a failed write |

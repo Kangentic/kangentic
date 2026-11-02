@@ -42,6 +42,7 @@ vi.mock('../../src/main/stop-script/run-stop-script', () => ({
   STOP_SCRIPT_PAUSE_TIMEOUT_MS: 120_000,
   isStopScriptRunning: vi.fn(() => false),
   runStopScript: (input: unknown) => mockRunStopScript(input),
+  stopScriptFolder: async (worktreePath: string | null, projectPath: string) => worktreePath ?? projectPath,
 }));
 
 import {
@@ -238,6 +239,67 @@ describe('stopParkedTask', () => {
     finish();
     await stop;
   });
+
+  it('starts nothing, and asks the host nothing, while this task\'s script is already running', async () => {
+    const deps = makeDeps({ isScriptRunning: () => true });
+    const onScriptStart = vi.fn();
+
+    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('already-running');
+    expect(deps.probe).not.toHaveBeenCalled();
+    expect(deps.runScript).not.toHaveBeenCalled();
+    expect(onScriptStart).not.toHaveBeenCalled();
+  });
+
+  it('runs no script when the app began to quit between the probe and the run', async () => {
+    // True at the first look, which is why the probe happens at all.
+    const isShuttingDown = vi.fn().mockReturnValueOnce(false).mockReturnValue(true);
+    const deps = makeDeps({ isShuttingDown });
+    const onScriptStart = vi.fn();
+
+    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('skipped');
+    expect(deps.probe).toHaveBeenCalledTimes(1);
+    expect(deps.runScript).not.toHaveBeenCalled();
+    expect(onScriptStart).not.toHaveBeenCalled();
+  });
+
+  it('runs no script when the pause was lifted while the folder was being found', async () => {
+    // `folderOf` is the last await before the script, so the pause is read again after it.
+    let lifted = false;
+    const deps = makeDeps({
+      parkedTask: () => (lifted ? null : { title: 'Fix login', worktreePath: null }),
+      folderOf: async () => {
+        lifted = true;
+        return PROJECT_PATH;
+      },
+    });
+    const onScriptStart = vi.fn();
+
+    expect(await stopParkedTask(deps, TARGET, { onScriptStart })).toBe('not-paused');
+    expect(deps.runScript).not.toHaveBeenCalled();
+    expect(onScriptStart).not.toHaveBeenCalled();
+  });
+
+  it('reads a cancelled run as a failure to stop: no report, no second probe, no message', async () => {
+    const deps = makeDeps({ runScript: vi.fn(async () => ({ status: 'aborted' as const })) });
+
+    expect(await stopParkedTask(deps, TARGET)).toBe('failed');
+    expect(deps.reportFailure).not.toHaveBeenCalled();
+    expect(deps.holdMessage).not.toHaveBeenCalled();
+    expect(deps.probe).toHaveBeenCalledTimes(1);
+  });
+
+  it('holds no message when the host cannot say, after the script, what is left', async () => {
+    const probe = vi.fn()
+      .mockResolvedValueOnce(entry())
+      .mockResolvedValue(null);
+    const deps = makeDeps({ probe });
+    vi.spyOn(console, 'warn').mockImplementationOnce(() => {});
+
+    expect(await stopParkedTask(deps, TARGET)).toBe('no-effect');
+    expect(deps.runScript).toHaveBeenCalledTimes(1);
+    expect(probe).toHaveBeenCalledTimes(2);
+    expect(deps.holdMessage).not.toHaveBeenCalled();
+  });
 });
 
 describe('stoppedProcessesMessage', () => {
@@ -291,6 +353,22 @@ describe('HeldOffStops', () => {
     await vi.waitFor(() => expect(stops.size).toBe(0));
   });
 
+  it('keeps a task whose script is still running from an earlier attempt, and checks it again', async () => {
+    const stops = new HeldOffStops();
+    stops.add(TARGET);
+    const attempt = vi.fn(async (): Promise<'already-running'> => 'already-running');
+
+    for (let tick = 0; tick < HELD_OFF_RECHECK_TICKS; tick += 1) stops.onTick(attempt);
+    await vi.waitFor(() => expect(attempt).toHaveBeenCalledTimes(1));
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+    expect(stops.size).toBe(1);
+
+    // A dropped task would return on the first line of the next cycle, with nothing to ask.
+    for (let tick = 0; tick < HELD_OFF_RECHECK_TICKS; tick += 1) stops.onTick(attempt);
+    await vi.waitFor(() => expect(attempt).toHaveBeenCalledTimes(2));
+    expect(stops.size).toBe(1);
+  });
+
   it('keeps a task the host could not read, and survives an attempt that throws', async () => {
     const stops = new HeldOffStops();
     stops.add(TARGET);
@@ -337,6 +415,7 @@ describe('the parked stop against the app', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
     vi.restoreAllMocks();
   });
 
@@ -377,14 +456,19 @@ describe('the parked stop against the app', () => {
 
   it('after a pause, runs the script on its own budget and holds what it stopped for the next agent', async () => {
     pausedBy('auto');
+    // Fake timers for the one-second settle after the script, which is the real
+    // `wait` of `createParkedStopDeps`. They end in `afterEach`.
+    vi.useFakeTimers();
     const context = makeContext();
     context.sessionManager.probeTaskProcesses
       .mockResolvedValueOnce([entry()])
       .mockResolvedValue([entry({ processes: [] })]);
 
     startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
+    await vi.waitFor(() => expect(mockRunStopScript).toHaveBeenCalledTimes(1));
+    await vi.advanceTimersByTimeAsync(1_000);
 
-    await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
     expect(mockRunStopScript).toHaveBeenCalledWith({ taskId: TASK_ID, script: 'npm run stop', cwd: PROJECT_PATH, timeoutMs: 120_000 });
     const [, held] = mockHoldTaskMessage.mock.calls[0] as [unknown, { projectId: string; taskId: string; message: string }];
     expect(held).toMatchObject({ projectId: PROJECT_ID, taskId: TASK_ID });
@@ -430,10 +514,13 @@ describe('the parked stop against the app', () => {
       .mockReset()
       .mockResolvedValueOnce([entry()])
       .mockResolvedValue([entry({ processes: [] })]);
+    // The recheck's script is followed by the one-second settle of the real `wait`.
+    vi.useFakeTimers();
     for (let tick = 0; tick < HELD_OFF_RECHECK_TICKS; tick += 1) tickHeldOffStops(context as unknown as IpcContext);
 
     await vi.waitFor(() => expect(mockRunStopScript).toHaveBeenCalledTimes(1));
-    await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1), { timeout: 3000 });
+    await vi.advanceTimersByTimeAsync(1_000);
+    await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
   });
 
   it('polls nothing while no stop is held off', () => {
@@ -445,16 +532,170 @@ describe('the parked stop against the app', () => {
     expect(mockGetLatestForTask).not.toHaveBeenCalled();
   });
 
+  it('does nothing, and throws nothing, for a project that is not registered', async () => {
+    pausedBy('auto');
+    const context = makeContext();
+    context.projectRepo.getById.mockReturnValue(undefined as never);
+
+    expect(() => startParkedStop(context as unknown as IpcContext, 'proj-gone', TASK_ID)).not.toThrow();
+    await new Promise((resolve) => { setTimeout(resolve, 0); });
+
+    expect(context.sessionManager.probeTaskProcesses).not.toHaveBeenCalled();
+    expect(mockRunStopScript).not.toHaveBeenCalled();
+  });
+
+  it('throws nothing when the project lookup itself fails', () => {
+    const context = makeContext();
+    context.projectRepo.getById.mockImplementation(() => { throw new Error('database closed'); });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    expect(() => startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID)).not.toThrow();
+  });
+
+  describe('one attempt at a time for a task', () => {
+    /** Probes see what is running until the script has run, then see it gone. */
+    function stackStoppedByTheScript() {
+      const context = makeContext();
+      context.sessionManager.probeTaskProcesses.mockImplementation(async () => (
+        [mockRunStopScript.mock.calls.length > 0 ? entry({ processes: [] }) : entry()]
+      ));
+      return context;
+    }
+
+    it('runs one probe sequence and holds one message for two pauses of one task', async () => {
+      pausedBy('auto');
+      vi.useFakeTimers();
+      const context = stackStoppedByTheScript();
+
+      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
+      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
+      await vi.waitFor(() => expect(mockRunStopScript).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
+
+      expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
+      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
+    });
+
+    it('runs one for a pause that lands while a low-memory pass has the task', async () => {
+      pausedBy('auto');
+      vi.useFakeTimers();
+      mockListEligible.mockReturnValue([TASK_ID]);
+      const context = stackStoppedByTheScript();
+
+      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
+      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
+
+      expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
+      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
+    });
+
+    it('has a low-memory pass that finds a pause\'s attempt under way answer none and add nothing', async () => {
+      pausedBy('auto');
+      vi.useFakeTimers();
+      mockListEligible.mockReturnValue([TASK_ID]);
+      const context = stackStoppedByTheScript();
+
+      startParkedStop(context as unknown as IpcContext, PROJECT_ID, TASK_ID);
+      expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
+      await vi.waitFor(() => expect(mockRunStopScript).toHaveBeenCalledTimes(1));
+      await vi.advanceTimersByTimeAsync(1_000);
+      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
+
+      expect(context.sessionManager.probeTaskProcesses).toHaveBeenCalledTimes(2);
+      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe('a low-memory pass', () => {
+    // Only the clock is faked: the pass reads `Date.now()` and the scripts here
+    // end without the one-second settle, so no timer is waited on.
+    afterEach(() => {
+      vi.useRealTimers();
+    });
+
+    const THIRTY_MINUTES = 30 * 60_000;
+
+    it('tries a task whose script ran again once 30 minutes have passed, and not before', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      pausedBy('auto');
+      mockListEligible.mockReturnValue([TASK_ID]);
+      mockRunStopScript.mockResolvedValue({ status: 'failed', failure: { kind: 'exit-code', exitCode: 1, detail: '' } });
+      const context = makeContext({ probe: [entry()] });
+      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
+      const firstPassAt = Date.now();
+
+      expect(await pass()).toBe('started');
+      // `waitFor` moves the faked clock a little, so the checks below set it absolutely.
+      await vi.waitFor(() => expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1));
+
+      vi.setSystemTime(firstPassAt + THIRTY_MINUTES - 1);
+      expect(await pass()).toBe('none');
+      expect(mockRunStopScript).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(firstPassAt + THIRTY_MINUTES);
+      expect(await pass()).toBe('started');
+      expect(mockRunStopScript).toHaveBeenCalledTimes(2);
+    });
+
+    it('does not probe a task again that had nothing running, until 30 minutes have passed', async () => {
+      vi.useFakeTimers({ toFake: ['Date'] });
+      pausedBy('auto');
+      mockListEligible.mockReturnValue([TASK_ID]);
+      const context = makeContext({ probe: [entry({ processes: [] })] });
+      const probe = context.sessionManager.probeTaskProcesses;
+      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
+      const firstPassAt = Date.now();
+
+      expect(await pass()).toBe('none');
+      expect(probe).toHaveBeenCalledTimes(1);
+
+      expect(await pass()).toBe('none');
+      expect(probe).toHaveBeenCalledTimes(1);
+
+      vi.setSystemTime(firstPassAt + THIRTY_MINUTES);
+      expect(await pass()).toBe('none');
+      expect(probe).toHaveBeenCalledTimes(2);
+      expect(mockRunStopScript).not.toHaveBeenCalled();
+    });
+
+    it('leaves a held-off task to its five-minute recheck: no probe, and the pass still answers held', async () => {
+      pausedBy('auto');
+      mockListEligible.mockReturnValue([TASK_ID]);
+      const context = makeContext({ probe: [entry({ connected: true })] });
+      const probe = context.sessionManager.probeTaskProcesses;
+      const pass = () => relieveParkedTasks(context as unknown as IpcContext);
+
+      expect(await pass()).toBe('held');
+      expect(probe).toHaveBeenCalledTimes(1);
+
+      expect(await pass()).toBe('held');
+      expect(probe).toHaveBeenCalledTimes(1);
+      expect(mockRunStopScript).not.toHaveBeenCalled();
+    });
+
     it('starts a parked task\'s stop and answers before the script ends', async () => {
       pausedBy('auto');
       mockListEligible.mockReturnValue([TASK_ID]);
       let finish!: (outcome: unknown) => void;
       mockRunStopScript.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
-      const context = makeContext({ probe: [entry()] });
+      // The attempt goes on after the pass answers, through the real one-second settle.
+      vi.useFakeTimers();
+      const context = makeContext();
+      context.sessionManager.probeTaskProcesses
+        .mockResolvedValueOnce([entry()])
+        .mockResolvedValue([entry({ processes: [] })]);
 
       expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
+      // Positive control: the script is still open, so the attempt has held nothing.
+      expect(mockHoldTaskMessage).not.toHaveBeenCalled();
+
       finish({ status: 'ok' });
+      await vi.advanceTimersByTimeAsync(1_000);
+      // The tail is awaited, so nothing of it runs after this test.
+      await vi.waitFor(() => expect(mockHoldTaskMessage).toHaveBeenCalledTimes(1));
     });
 
     it('answers none when nothing is parked, and for a project with no script reads no session', async () => {
@@ -490,6 +731,8 @@ describe('the parked stop against the app', () => {
       const context = makeContext({ probe: [entry()] });
 
       expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('started');
+      // The failed run's report is the end of its attempt, so none is left running.
+      await vi.waitFor(() => expect(context.mainWindow.webContents.send).toHaveBeenCalledTimes(1));
       expect(await relieveParkedTasks(context as unknown as IpcContext)).toBe('none');
       expect(mockRunStopScript).toHaveBeenCalledTimes(1);
     });

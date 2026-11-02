@@ -10,9 +10,9 @@
  */
 import { describe, it, expect, vi } from 'vitest';
 import { probeTaskTrees, type TaskProbeRequest } from '../../src/main/pty/process-tag/tagged-reap';
+import { buildProtectedPids } from '../../src/main/pty/process-tag/reap-plan';
 import {
   hasOutsideClient,
-  protectedPidsOfProbe,
   runningInTaskFolders,
   topOfRunning,
   treeConnectionQueryOf,
@@ -83,12 +83,12 @@ function request(readConnections = true, taskId = TASK): TaskProbeRequest {
 describe('what a task has running in its folders', () => {
   it('counts a tagged process inside the task\'s folders and not a tagged one working elsewhere', () => {
     const scan = input([HOST, DASHBOARD]);
-    expect(runningInTaskFolders(scan, protectedPidsOfProbe(scan), TASK, SCOPE).map((one) => one.pid)).toEqual([HOST_PID]);
+    expect(runningInTaskFolders(scan, buildProtectedPids(scan), TASK, SCOPE).map((one) => one.pid)).toEqual([HOST_PID]);
   });
 
   it('counts nothing when the only tagged process works outside them', () => {
     const scan = input([DASHBOARD]);
-    expect(runningInTaskFolders(scan, protectedPidsOfProbe(scan), TASK, SCOPE)).toEqual([]);
+    expect(runningInTaskFolders(scan, buildProtectedPids(scan), TASK, SCOPE)).toEqual([]);
   });
 
   it('leaves out another task, an exited process and one with no readable folder', () => {
@@ -97,7 +97,7 @@ describe('what a task has running in its folders', () => {
       process_(2101, { tagValue: TASK, workingDirectory: WORKTREE, exited: true }),
       process_(2102, { tagValue: TASK, workingDirectory: null }),
     ]);
-    expect(runningInTaskFolders(scan, protectedPidsOfProbe(scan), TASK, SCOPE)).toEqual([]);
+    expect(runningInTaskFolders(scan, buildProtectedPids(scan), TASK, SCOPE)).toEqual([]);
   });
 
   it('leaves out what a held PTY, a visible app or a tmux server protects', () => {
@@ -107,7 +107,7 @@ describe('what a task has running in its folders', () => {
       process_(2202, { tagValue: TASK, workingDirectory: WORKTREE, role: 'visible-app' }),
       process_(2203, { tagValue: TASK, workingDirectory: WORKTREE, role: 'multiplexer' }),
     ], [2200]);
-    expect(runningInTaskFolders(scan, protectedPidsOfProbe(scan), TASK, SCOPE)).toEqual([]);
+    expect(runningInTaskFolders(scan, buildProtectedPids(scan), TASK, SCOPE)).toEqual([]);
   });
 
   it('names the top of each subtree, so one server is one name', () => {
@@ -119,7 +119,7 @@ describe('what a task has running in its folders', () => {
 describe('who counts as a client of the task\'s tree', () => {
   it('takes the tree from the tag alone, so a stack\'s tagged dashboard working elsewhere is inside it', () => {
     const scan = input([HOST, DASHBOARD, BROWSER]);
-    const query = treeConnectionQueryOf(scan, protectedPidsOfProbe(scan), TASK);
+    const query = treeConnectionQueryOf(scan, buildProtectedPids(scan), TASK);
 
     expect([...query.treePids].sort()).toEqual([HOST_PID, DASHBOARD_PID]);
     expect(query.clients.map((one) => one.pid)).toEqual([MAIN_PID, BROWSER_PID]);
@@ -127,7 +127,7 @@ describe('who counts as a client of the task\'s tree', () => {
 
   it('keeps an untagged child of the tree inside it, so it is never its own stack\'s client', () => {
     const scan = input([HOST, CHILD, BROWSER]);
-    const query = treeConnectionQueryOf(scan, protectedPidsOfProbe(scan), TASK);
+    const query = treeConnectionQueryOf(scan, buildProtectedPids(scan), TASK);
 
     expect(query.treePids.has(CHILD_PID)).toBe(true);
     expect(query.clients.map((one) => one.pid)).not.toContain(CHILD_PID);
@@ -143,7 +143,7 @@ describe('who counts as a client of the task\'s tree', () => {
 
   it('never reads an exited process as a client', () => {
     const scan = input([HOST, process_(2400, { exited: true })]);
-    const query = treeConnectionQueryOf(scan, protectedPidsOfProbe(scan), TASK);
+    const query = treeConnectionQueryOf(scan, buildProtectedPids(scan), TASK);
 
     expect(query.clients.map((one) => one.pid)).toEqual([MAIN_PID]);
   });

@@ -47,6 +47,7 @@ import {
   connectionQueryOf,
   isInsideDirectory,
   planReapDetailed,
+  buildProtectedPids,
   processIdentity,
   subtreeOf,
   type KeptBecause,
@@ -66,7 +67,6 @@ import {
 } from './process-scan';
 import {
   hasOutsideClient,
-  protectedPidsOfProbe,
   runningInTaskFolders,
   topOfRunning,
   treeConnectionQueryOf,
@@ -419,7 +419,7 @@ export async function probeTaskTrees(request: TaskProbeRequest, deps: TaggedReap
       liveRootPids: deps.liveRootPids(),
       caseInsensitivePaths: deps.caseInsensitivePaths ?? process.platform !== 'linux',
     };
-    const protectedPids = protectedPidsOfProbe(input);
+    const protectedPids = buildProtectedPids(input);
     const entries: TaskProbeEntry[] = [];
     for (const [taskId, scope] of scopes) {
       const running = runningInTaskFolders(input, protectedPids, taskId, scope);

@@ -11,13 +11,15 @@
  */
 import { test, expect } from '@playwright/test';
 import type { Browser, Page } from '@playwright/test';
-import { launchPage, createProject } from './helpers';
+import { launchPage, createProject, createTask } from './helpers';
 
 const ROW_TEST_ID = 'setting-row-git.stopScript';
 const INIT_SCRIPT_ROW_TEST_ID = 'setting-row-git.initScript';
 
 interface StopScriptWindow {
   __mockStopScriptSaves?: Array<string | null>;
+  __mockStopScriptSaveProjects?: string[];
+  __mockStopScriptByProject?: Record<string, string | null>;
   __mockStopScriptSaveError?: string;
   __mockFireStopScriptFailed?: (event: unknown) => void;
 }
@@ -108,21 +110,92 @@ test.describe('Git tab: Stop script row', () => {
   });
 });
 
+test.describe('Git tab: Stop script row, per project', () => {
+  interface ProjectHandle {
+    id: string;
+    name: string;
+    path: string;
+  }
+
+  async function listProjects(): Promise<ProjectHandle[]> {
+    return page.evaluate(async () => {
+      const projects = await (window as unknown as {
+        electronAPI: { projects: { list: () => Promise<ProjectHandle[]> } };
+      }).electronAPI.projects.list();
+      return projects.map((project) => ({ id: project.id, name: project.name, path: project.path }));
+    });
+  }
+
+  async function targetSettingsAt(project: ProjectHandle): Promise<void> {
+    await page.evaluate((target) => {
+      const stores = (window as unknown as {
+        __zustandStores: { config: { getState: () => { openProjectSettings: (path: string, name: string, tab?: string) => void } } };
+      }).__zustandStores;
+      stores.config.getState().openProjectSettings(target.path, target.name, 'git');
+    }, project);
+  }
+
+  async function savedProjects(): Promise<string[]> {
+    return page.evaluate(() => (window as unknown as StopScriptWindow).__mockStopScriptSaveProjects ?? []);
+  }
+
+  test('edits the project the panel targets, not the open board', async () => {
+    const openProjectName = `stop-script-second-${Date.now()}`;
+    await createProject(page, openProjectName);
+    const projects = await listProjects();
+    const openProject = projects.find((project) => project.name === openProjectName);
+    const otherProject = projects.find((project) => project.name !== openProjectName);
+    expect(openProject).toBeDefined();
+    expect(otherProject).toBeDefined();
+    if (!openProject || !otherProject) return;
+
+    // Each project keeps its own script, as main's per-project board config does.
+    await page.evaluate(([otherId, openId]) => {
+      (window as unknown as StopScriptWindow).__mockStopScriptByProject = {
+        [otherId]: 'npm run other:stop',
+        [openId]: 'npm run open:stop',
+      };
+    }, [otherProject.id, openProject.id] as const);
+
+    // The board stays on the second project while the panel is pointed at the first.
+    await targetSettingsAt(otherProject);
+    const input = page.getByTestId(ROW_TEST_ID).locator('input');
+    await expect(input).toHaveValue('npm run other:stop');
+
+    await commitStopScript('npm run other:edited');
+    await expect.poll(savedScripts).toEqual(['npm run other:edited']);
+    expect(await savedProjects()).toEqual([otherProject.id]);
+    await expect(input).toHaveValue('npm run other:edited');
+
+    // Back on the open project: its own value, and no write for the switch.
+    await targetSettingsAt(openProject);
+    await expect(input).toHaveValue('npm run open:stop');
+    expect(await savedProjects()).toEqual([otherProject.id]);
+    expect(await savedScripts()).toEqual(['npm run other:edited']);
+  });
+});
+
 test.describe('Stop script failed toast', () => {
-  async function fireFailure(failure: unknown, projectId?: string): Promise<void> {
-    await page.evaluate(([failedWith, explicitProjectId]) => {
+  interface FailureOverrides {
+    projectId?: string;
+    taskId?: string;
+    taskTitle?: string;
+  }
+
+  async function fireFailure(failure: unknown, overrides: FailureOverrides = {}): Promise<void> {
+    await page.evaluate(([failedWith, fixedValues]) => {
       const scoped = window as unknown as StopScriptWindow & {
         electronAPI: { projects: { getCurrent: () => Promise<{ id: string } | null> } };
       };
       return scoped.electronAPI.projects.getCurrent().then((project) => {
         scoped.__mockFireStopScriptFailed?.({
-          projectId: explicitProjectId ?? project?.id,
-          taskId: 'task-1',
-          taskTitle: 'Fix login',
+          projectId: fixedValues.projectId ?? project?.id,
+          taskId: fixedValues.taskId ?? 'task-1',
+          taskTitle: fixedValues.taskTitle ?? 'Fix login',
           failure: failedWith,
         });
       });
-    }, [failure, projectId] as const);
+    }, [failure, overrides] as const);
   }
 
   test('reads as a timed warning naming the task, the exit code and the script\'s last line', async () => {
@@ -145,10 +218,51 @@ test.describe('Stop script failed toast', () => {
     await expect(toast.getByTestId('toast-body')).toHaveText('"Fix login": timed out after 2 minutes.');
   });
 
-  test('stays out of a project the user is not looking at', async () => {
-    await fireFailure({ kind: 'timeout', timeoutMs: 30000 }, 'another-project');
+  test('says how long a script that timed out was given, in seconds under a minute', async () => {
+    await fireFailure({ kind: 'timeout', timeoutMs: 30000 });
 
-    // Fired synchronously inside the evaluate above, so nothing is on its way.
-    await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Stop script failed' })).toHaveCount(0);
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Stop script failed' });
+    await expect(toast.getByTestId('toast-body')).toHaveText('"Fix login": timed out after 30 seconds.');
+  });
+
+  test('shows a script that could not run as the raw detail, in a sentence', async () => {
+    await fireFailure({ kind: 'error', detail: 'the shell could not be started' });
+
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Stop script failed' });
+    await expect(toast.getByTestId('toast-body')).toHaveText('"Fix login": The shell could not be started.');
+  });
+
+  test('stays out of a project the user is not looking at', async () => {
+    // A toast cannot be polled for non-occurrence. The foreign event goes first,
+    // then one for the open project: the toasts render in order, so once the
+    // matching one is up, a foreign one that had been let through would be too.
+    await fireFailure({ kind: 'timeout', timeoutMs: 30000 }, { projectId: 'another-project', taskTitle: 'Foreign task' });
+    await fireFailure({ kind: 'timeout', timeoutMs: 30000 }, { taskTitle: 'Matching task' });
+
+    const toasts = page.locator('[data-testid="toast"]').filter({ hasText: 'Stop script failed' });
+    await expect(toasts.getByTestId('toast-body').filter({ hasText: 'Matching task' })).toBeVisible({ timeout: 5000 });
+    await expect(toasts).toHaveCount(1);
+    await expect(toasts.getByTestId('toast-body')).toHaveText('"Matching task": timed out after 30 seconds.');
+  });
+
+  test('a click on the toast opens the task', async () => {
+    await createTask(page, 'Fix login');
+    const taskId = await page.evaluate(async () => {
+      const tasks = await (window as unknown as {
+        electronAPI: { tasks: { list: () => Promise<Array<{ id: string; title: string }>> } };
+      }).electronAPI.tasks.list();
+      return tasks.find((task) => task.title === 'Fix login')?.id ?? null;
+    });
+    expect(taskId).not.toBeNull();
+
+    await fireFailure({ kind: 'exit-code', exitCode: 1 }, { taskId: taskId ?? undefined });
+    const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Stop script failed' });
+    await expect(toast).toBeVisible({ timeout: 5000 });
+
+    await toast.getByTestId('toast-body').click();
+
+    await expect.poll(() => page.evaluate(() => (window as unknown as {
+      __zustandStores: { session: { getState: () => { detailTaskId: string | null } } };
+    }).__zustandStores.session.getState().detailTaskId)).toBe(taskId);
   });
 });
