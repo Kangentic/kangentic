@@ -163,10 +163,18 @@ was refused with Cursor's "ask mode" wording. The `@AGENTS.md` line in `CLAUDE.m
 The contributor's subagent list showed no model and no read-only mark beside a name. The model
 showed on the run.
 
+A path-scoped rule attaches. With no renderer file in context the session held only the always-on
+rules, and `hmr-patterns` was not among them. Reading `src/renderer/utils/hmr-generation.ts`
+attached it with 11 other rules, under the generated `description`, `globs: src/renderer/**` and
+`alwaysApply: false`. Reading `src/renderer/App.tsx`, which matches 13 rules, attached 12 and left
+`hmr-patterns` out.
+
 Still open:
 
-- Whether a path-scoped rule (one with `globs`) attaches when a matching file is in context. Only
-  an always-on rule was observed.
+- Whether Cursor limits how many path-scoped rules attach at once. Its docs give no limit, and the
+  `App.tsx` run attached 12 of 13. Several renderer files match more than 12 rules, such as the
+  board card and the session store slice, and Claude Code loads every match. Reading one of those
+  and counting would show whether 12 is a cap.
 - Whether the Cursor CLI behaves the same as the editor for the setting above and for `CLAUDE.md`.
 - Whether Cursor picks up a rule generated after its session started, as when an agent runs
   `npm install` in a fresh worktree mid-session.
