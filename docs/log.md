@@ -1,5 +1,12 @@
 # Log
 
+## 2026-11-02
+
+**New audit:** `audits/ssh-remote-phase-0-audit.md`, the Phase 0 measurements for running agent CLIs
+on a Linux host over SSH, with the `scripts/probe-ssh-*` probes and `scripts/probe-ssh-rig/` behind
+its numbers. It covers two of five spikes so far, the helper daemon's survival and the read mirror,
+and names the three still to report.
+
 ## 2026-10-31
 
 **New audit:** `audits/spare-worktree-audit.md`, the measured decision on keeping a pre-installed
