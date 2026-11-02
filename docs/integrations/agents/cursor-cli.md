@@ -48,7 +48,7 @@ Selected when `permissionMode === 'acceptEdits'`. The session screen stays open.
 agent --trust -p "prompt text" --output-format stream-json
 ```
 
-Selected when `permissionMode === 'bypassPermissions'` or `nonInteractive` is set. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A non-interactive resume keeps `--trust` for the same reason.
+Selected when `nonInteractive` is set, and for every permission mode but `default` and `acceptEdits`. That is `bypassPermissions`, the one such mode Cursor's list offers, and `plan`, `dontAsk` and `auto`, which it does not. They stay on this path because the init event is the only documented place the model and session id arrive together. Has full write access. A directory Cursor has not seen prints "Workspace Trust Required" and exits. `--trust` skips that prompt. The NDJSON `init` event carries `session_id`, which `runtime.sessionId.fromOutput` captures for resume. A non-interactive resume keeps `--trust` for the same reason.
 
 ### Resumed Session
 

@@ -183,7 +183,7 @@ Anchors are enumerable source-code structures that must be exhaustively listed i
 | Anchor | Source file | Target doc |
 |--------|-----------|------------|
 | Template variables | `src/shared/template-vars.ts` | settings/board-config.md (canonical, the Shortcuts section), user-guide/settings.md and integrations/agents/adapter-interface.md (cross-reference only) |
-| Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | architecture/automations/transition-engine.md (canonical, "Template Variables"), architecture/system-overview.md (cross-reference only) |
+| Task template variables (auto_command / promptTemplate) | `src/shared/task-template-vars.ts` | architecture/automations/transition-engine.md (canonical, "Template Variables"), architecture/system-overview.md (the same list on purpose, because `tests/unit/task-template-vars-parity.test.ts` fails unless every chip is in both) |
 
 ### Integration Anchors
 
