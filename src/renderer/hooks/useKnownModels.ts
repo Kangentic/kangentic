@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { useConfigStore } from '../stores/config-store';
 import type { ModelAliasOption } from '../../shared/types';
+import { hasModelIdShape } from '../../shared/model-id';
 
 /**
  * Single source of truth for "what models can this agent run".
@@ -42,7 +43,11 @@ export function unionKnownModels(
   const union = new Set<string>();
   if (capabilityModels) for (const value of capabilityModels) union.add(value);
   if (discoveredModels) for (const value of discoveredModels) union.add(value);
-  return Array.from(union).sort((first, second) => first.localeCompare(second));
+  // Drop a display name learned as an id rather than offer a row `--model`
+  // will reject.
+  return Array.from(union)
+    .filter(hasModelIdShape)
+    .sort((first, second) => first.localeCompare(second));
 }
 
 const EMPTY_WINDOWS: Record<string, number> = {};

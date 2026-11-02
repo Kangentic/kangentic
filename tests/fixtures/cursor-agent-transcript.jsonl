@@ -1,0 +1,5 @@
+{"role":"user","message":{"content":[{"type":"text","text":"<timestamp>Thursday, Jan 1, 2026, 9:00 AM (UTC+0)</timestamp>\n<user_query>\nCall the kangentic_search tool once with mode \"hybrid\" and query \"release checklist\". Then reply in one sentence.\n</user_query>"}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"I'll look up the search tool's schema, then run that query once."},{"type":"tool_use","name":"GetDynamicTools","input":{"namespace":"kangentic","toolName":"kangentic_search"}}]}}
+{"role":"assistant","message":{"content":[{"type":"tool_use","name":"CallDynamicTool","input":{"namespace":"kangentic","toolName":"kangentic_search","mcpDetails":{"description":"Hybrid search for release checklist"},"arguments":{"query":"release checklist","mode":"hybrid"}}}]}}
+{"role":"assistant","message":{"content":[{"type":"text","text":"The search found no task matching release checklist."}]}}
+{"type":"turn_ended","status":"success"}

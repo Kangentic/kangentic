@@ -28,7 +28,7 @@ import path from 'node:path';
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
 const SCAN_DIRS = ['src', 'scripts', 'docs', 'demo', '.claude/rules', '.claude/skills', '.claude/agents'];
-const SCAN_ROOT_FILES = ['README.md', 'CLAUDE.md'];
+const SCAN_ROOT_FILES = ['README.md', 'AGENTS.md', 'CLAUDE.md'];
 // .mts and .cts are here because demo/vite.config.mts is the largest config file in a scanned
 // tree and is comment-dense; without them the extension list would silently skip it. .po is the
 // English i18n catalog.

@@ -1,9 +1,39 @@
+import { stripAnsiControlCodes } from '../../../../shared/ansi-strip';
 import {
   EventType,
   type SessionEvent,
   type SessionUsage,
+  type SessionUsagePatch,
   type StreamOutputParser,
 } from '../../../../shared/types';
+import { resolveCachedCursorModel } from './capability-discovery';
+
+/**
+ * Cursor's interactive TUI paints the live model and occupancy on the status
+ * bar as `Composer 2.5 · 7.8%` (recorded: `Auto · 9.2% · 1 file edited`, in
+ * tests/captures/fixtures/demo/contoso-web-cursor-integration.json).
+ * Interactive Skip Approvals (`--trust --force`) prints no stream-json, so
+ * this is the only live percent and the only live model the card can read.
+ * The separator is the middle dot (U+00B7), written as an escape so a re-save
+ * in another code page cannot change it. `7.8s` tool timings and
+ * `12 output lines hidden · ctrl+o` do not match, and neither does a `•` list
+ * bullet in the agent's own answer (`• 50% of tests pass`).
+ */
+const TUI_OCCUPANCY = /·\s*(\d+(?:\.\d+)?)\s*%/g;
+
+/** Tail of stripped TUI text kept across chunks so `Composer 2.5 · 7.8%` can straddle a flush. */
+const TUI_TAIL = 64;
+
+/** Cap on a TUI model name. Display names are short (`Grok 4.6 High`). */
+const TUI_MODEL_MAX_CHARS = 48;
+
+/** Cap on tokens collected walking left from `· 7.8%`. */
+const TUI_MODEL_MAX_TOKENS = 5;
+
+interface TuiStatus {
+  percent: number;
+  model: string | null;
+}
 
 /**
  * Parses Cursor CLI's `--output-format stream-json` NDJSON stream as it
@@ -13,7 +43,7 @@ import {
  * Event shapes are documented at:
  * https://cursor.com/docs/cli/reference/output-format
  *
- * Init event (the only line we strictly need to populate the model pill):
+ * Init event (non-interactive stream-json model + session id):
  *   {"type":"system","subtype":"init","session_id":"<uuid>",
  *    "model":"<display name>","permissionMode":"default",...}
  *
@@ -25,8 +55,9 @@ import {
  *   {"type":"result","subtype":"success","duration_ms":5234,...}
  *
  * Cursor uses a single `model` string (e.g. "Claude 4 Sonnet") with no
- * separate id/displayName split, so we mirror it into both fields of
- * `SessionUsage.model`.
+ * separate id/displayName split. The pill shows that display name. The stored
+ * id is resolved against `--list-models` when a catalog is cached, so a
+ * later spawn does not pass the display spelling to `--model`.
  */
 export class CursorStreamParser implements StreamOutputParser {
   /**
@@ -45,9 +76,17 @@ export class CursorStreamParser implements StreamOutputParser {
    * any point and a buffered carry-over keeps us safe.
    */
   private carry = '';
+  /** Last occupancy percent emitted from the TUI path, to skip identical redraws. */
+  private lastTuiPercent: number | null = null;
+  /** Last TUI model emitted with occupancy, to skip identical redraws and to catch a mid-session switch. */
+  private lastTuiModel: string | null = null;
+  /** Trailing stripped TUI text, so occupancy can straddle a ConPTY flush. */
+  private tuiTail = '';
+  /** True once `tuiTail` was cut to its cap, so its first token may be a word's end. */
+  private tuiTailCut = false;
 
   parseTelemetry(data: string): {
-    usage?: Partial<SessionUsage>;
+    usage?: SessionUsagePatch;
     events?: SessionEvent[];
   } | null {
     const combined = this.carry + data;
@@ -59,7 +98,7 @@ export class CursorStreamParser implements StreamOutputParser {
       ? tail.slice(tail.length - CursorStreamParser.MAX_CARRY)
       : tail;
 
-    let usage: Partial<SessionUsage> | undefined;
+    let usage: SessionUsagePatch | undefined;
     let events: SessionEvent[] | undefined;
 
     for (const rawLine of lines) {
@@ -87,7 +126,7 @@ export class CursorStreamParser implements StreamOutputParser {
       if (type === 'system' && subtype === 'init') {
         const model = entry.model;
         if (typeof model === 'string' && model.length > 0) {
-          usage = { ...usage, model: { id: model, displayName: model } };
+          usage = { ...usage, model: reportedCursorModel(model) };
         }
       } else if (type === 'tool_call' && subtype === 'started') {
         const toolName = extractToolName(entry.tool_call);
@@ -118,9 +157,112 @@ export class CursorStreamParser implements StreamOutputParser {
       }
     }
 
+    const tuiStatus = this.readTuiStatus(data);
+    if (tuiStatus) {
+      // The percent alone: the bar paints no window and no token counts, and
+      // the merge keeps the rest of the session's window.
+      usage = {
+        ...usage,
+        contextWindow: { usedPercentage: tuiStatus.percent },
+        ...(tuiStatus.model ? { model: reportedCursorModel(tuiStatus.model) } : {}),
+      };
+    }
+
     if (!usage && !events) return null;
     return { usage, events };
   }
+
+  /**
+   * Occupancy and live model from the interactive status bar. Returns null
+   * when this chunk has no new status (nothing matched, or the same percent
+   * and model as last time). Uses the LAST occupancy match so a tail that
+   * still holds the previous `· 7.8%` cannot hide a later `· 9.1%` on the
+   * same scan.
+   *
+   * A match wholly inside the carried tail was read on the scan that brought
+   * it, with more of its line in front. It is skipped: read again, with each
+   * later chunk cutting the tail further, its model came back cut from the
+   * left (`poser 2.5`) and replaced the real one.
+   *
+   * Escapes are stripped with whitespace kept. `stripAnsiEscapes` trims each
+   * line's trailing spaces, and a chunk's end counts as a line end, so a flush
+   * between `Composer ` and `2.5 · 7.8%` read as `Composer2.5`: a name with no
+   * space, which the picker then kept as a model id `--model` rejects.
+   */
+  private readTuiStatus(data: string): TuiStatus | null {
+    const carried = this.tuiTail;
+    const carriedWasCut = this.tuiTailCut;
+    const scan = carried + stripAnsiControlCodes(data);
+    if (scan.length > TUI_TAIL) {
+      this.tuiTail = scan.slice(scan.length - TUI_TAIL);
+      this.tuiTailCut = true;
+    } else {
+      this.tuiTail = scan;
+    }
+    let latestPercent: number | null = null;
+    let latestMatchStart = 0;
+    for (const match of scan.matchAll(TUI_OCCUPANCY)) {
+      const matchStart = match.index ?? 0;
+      if (matchStart + match[0].length <= carried.length) continue;
+      const percent = Number.parseFloat(match[1]);
+      if (!Number.isFinite(percent) || percent < 0) continue;
+      latestPercent = Math.min(100, percent);
+      latestMatchStart = matchStart;
+    }
+    if (latestPercent === null) return null;
+    const model = readTuiModelName(scan, latestMatchStart, carriedWasCut);
+    if (latestPercent === this.lastTuiPercent && model === this.lastTuiModel) return null;
+    this.lastTuiPercent = latestPercent;
+    this.lastTuiModel = model;
+    return { percent: latestPercent, model };
+  }
+}
+
+/** The usage model block for a name Cursor itself reported (init event or status bar). */
+function reportedCursorModel(displayName: string): SessionUsage['model'] {
+  return { id: resolveCachedCursorModel(displayName), displayName, reportedByAgent: true };
+}
+
+/**
+ * Display name immediately before `· 7.8%` (at `matchStart` in `scan`) on the
+ * same line. Walks left at most five tokens so `done. Composer 2.5 · 7.8%`
+ * keeps `Composer 2.5` and a glued conversation line does not become the
+ * whole prefix. No model table: a token is letters, digits, dots, plus,
+ * parens, or hyphens, or a version number (`2.5`). The leftmost token must
+ * start with a letter. When the walk takes every token back to the start of
+ * a scan that begins at a cut (`scanStartCut`), the first token may be the end
+ * of a word, so no name is read.
+ */
+function readTuiModelName(scan: string, matchStart: number, scanStartCut: boolean): string | null {
+  // A carriage return starts a line too: the escapes were stripped without
+  // the line-ending normalization.
+  const lineStart = Math.max(scan.lastIndexOf('\n', matchStart - 1), scan.lastIndexOf('\r', matchStart - 1)) + 1;
+  const lastLine = scan.slice(lineStart, matchStart);
+  const tokens = lastLine.trim().split(/\s+/).filter((token) => token.length > 0);
+  if (tokens.length === 0) return null;
+  const collected: string[] = [];
+  for (
+    let tokenIndex = tokens.length - 1;
+    tokenIndex >= 0 && collected.length < TUI_MODEL_MAX_TOKENS;
+    tokenIndex--
+  ) {
+    const token = tokens[tokenIndex];
+    if (!isTuiModelToken(token)) break;
+    collected.unshift(token);
+  }
+  if (collected.length === 0 || !/^[A-Za-z]/.test(collected[0])) return null;
+  if (scanStartCut && lineStart === 0 && collected.length === tokens.length) return null;
+  const name = collected.join(' ');
+  if (name.length > TUI_MODEL_MAX_CHARS) return null;
+  return name;
+}
+
+function isTuiModelToken(token: string): boolean {
+  if (/^\d+(?:\.\d+)?$/.test(token)) return true;
+  // A trailing `.` is sentence punctuation (`done.`), not part of a name.
+  // Dots inside a token stay (`GPT-5.4`).
+  if (token.endsWith('.')) return false;
+  return /^[A-Za-z][A-Za-z0-9.+()-]*$/.test(token);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

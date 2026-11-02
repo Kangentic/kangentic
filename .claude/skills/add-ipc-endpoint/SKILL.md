@@ -1,4 +1,5 @@
 ---
+name: add-ipc-endpoint
 description: Scaffold a new IPC endpoint across all 7 layers
 allowed-tools: Read, Glob, Grep, Edit, Bash(npm:*), Agent
 argument-hint: <channel-name> <description>

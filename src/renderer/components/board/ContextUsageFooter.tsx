@@ -14,21 +14,21 @@ import { getProgressColor } from '../../utils/progress-color';
  * carries the same clamped value), so this component stays presentational.
  */
 export function ContextUsageFooter({
-  modelName, percent, windowKnown = true, unknownLabel, testId = 'usage-bar', className = '', divider = true,
+  modelName, percent, occupancyKnown = true, unknownLabel, testId = 'usage-bar', className = '', divider = true,
 }: {
   /** Human model name (e.g. "Opus 5"). Never the raw model id - users don't read those. */
   modelName: string;
   percent: number;
-  /** False when the agent has not reported a usable context window; the track sits at 0. */
-  windowKnown?: boolean;
+  /** False when the agent has not reported occupancy; the track sits at 0. */
+  occupancyKnown?: boolean;
   /**
-   * Replaces the percent label with this text when `windowKnown` is false. Omit
+   * Replaces the percent label with this text when `occupancyKnown` is false. Omit
    * to keep printing `{percent}%` regardless, which is the board's behavior:
-   * TaskCard deliberately holds the track at 0% until a known window arrives
-   * (see the comment above its call site), so the label reads as the value of
-   * the track it labels rather than contradicting it. The monitor card has no
-   * such track-matching intent and passes `"-"`, the unknown state
-   * `MonitorTable` already renders for the same null `contextPercent`.
+   * TaskCard holds the track at 0% until occupancy arrives (a known window, or
+   * a percentage-only TUI report), so the label reads as the value of the track
+   * it labels rather than contradicting it. The monitor card has no such
+   * track-matching intent and passes `"-"`, the unknown state `MonitorTable`
+   * already renders for the same null `contextPercent`.
    */
   unknownLabel?: string;
   testId?: string;
@@ -47,7 +47,7 @@ export function ContextUsageFooter({
   divider?: boolean;
 }) {
   const clamped = Math.min(Math.max(percent, 0), 100);
-  const percentLabel = !windowKnown && unknownLabel != null ? unknownLabel : `${clamped}%`;
+  const percentLabel = !occupancyKnown && unknownLabel != null ? unknownLabel : `${clamped}%`;
   // `pt-2` exists to clear the RULE, so it goes with it. Left in, a divider-less
   // footer sat 16px below the content above it while every other gap on the card
   // is 6-8px, which read as a missing element rather than as breathing room.
@@ -56,7 +56,7 @@ export function ContextUsageFooter({
     <div
       className={`${spacing} ${className}`}
       data-testid={testId}
-      data-context-window={windowKnown ? undefined : 'unknown'}
+      data-context-window={occupancyKnown ? undefined : 'unknown'}
     >
       {/* Both halves carry their own testid. The model name and the unknown-window
           label can render the SAME text ("-"), so an assertion scoped to the whole

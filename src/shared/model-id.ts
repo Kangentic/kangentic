@@ -174,6 +174,16 @@ export function resolveSpacedModelName(input: string): string {
 }
 
 /**
+ * True when `value` can be a model id an agent CLI takes: no raw id has a
+ * space (the rule `resolveSpacedModelName` rests on). A name with one is a
+ * display name (Cursor's init event and `agent about` report "Grok 4.6 High"),
+ * and the model picker must not offer it as an id `--model` would reject.
+ */
+export function hasModelIdShape(value: string): boolean {
+  return !/\s/.test(value);
+}
+
+/**
  * Best-effort normalization for a friendly effort/reasoning level (MCP
  * tools): case-insensitive, trimmed. Effort values are stored and displayed
  * verbatim (there is no id<->display mapping like models), so this only

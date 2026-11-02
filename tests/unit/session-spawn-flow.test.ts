@@ -953,6 +953,44 @@ describe('performSpawn - caller-owned session ID wiring', () => {
   });
 });
 
+describe('performSpawn - the agent session id on the registered row', () => {
+  // A spawn that already knows its conversation (an id Kangentic chose, or a
+  // chat created before launch) registers the row with it, so a reader that
+  // looks before the agent reports anything (the Command Terminal's history,
+  // the monitor) finds it. The capture pathways still overwrite it when the
+  // agent reports another; none of them runs here (sessionIdManager is a stub).
+  //
+  // Red-green: dropping the `agentSessionId` spread from the row in
+  // performSpawn leaves the first case's row without the id. Nothing else in
+  // this file reads the registered row's id: the caller-owned wiring cases
+  // above assert on sessionIdManager.init and sessionHistoryReader.attach,
+  // which are fed from the input.
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('registers the row with the id the spawn was given, before any capture', async () => {
+    const context = makeContext();
+
+    const session = await performSpawn(makeInput({ agentSessionId: 'known-agent-session-id' }), context);
+
+    expect(context.registry.get(session.id)?.agentSessionId).toBe('known-agent-session-id');
+  });
+
+  it.each([
+    ['omitted', undefined],
+    ['null', null],
+  ])('leaves the id unset on the row when the spawn gave none (%s)', async (_name, agentSessionId) => {
+    const context = makeContext();
+
+    const session = await performSpawn(makeInput({ agentSessionId }), context);
+
+    const row = context.registry.get(session.id);
+    expect(row).toBeDefined();
+    expect(row?.agentSessionId).toBeUndefined();
+  });
+});
+
 describe('performSpawn - Windows cwd fixup write order', () => {
   // When resolveSpawnCwd returns a cwdFixupCommand (cmd.exe UNC pushd or
   // PowerShell bracket Set-Location), performSpawn must write the fixup RAW

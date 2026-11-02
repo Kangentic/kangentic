@@ -127,6 +127,7 @@ vi.mock('node:child_process', async (importOriginal) => {
 
 // Import after mocks are set up
 const { CursorAdapter } = await import('../../src/main/agent/adapters/cursor');
+const { resetCursorCapabilityCacheForTests } = await import('../../src/main/agent/adapters/cursor/capability-discovery');
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,6 +149,7 @@ describe('CursorAdapter', () => {
 
   beforeEach(() => {
     adapter = new CursorAdapter();
+    resetCursorCapabilityCacheForTests();
     mockWhichResult = '/usr/local/bin/agent';
     mockExecVersionStdout = '0.50.3\n';
     mockExecVersionShouldFail = false;
@@ -181,12 +183,19 @@ describe('CursorAdapter', () => {
 
   // ── A conversation created before launch ─────────────────────────────────
   //
-  // An interactive Cursor session prints no session id, so a workflow's agent
-  // on Cursor would lose its conversation at every Pause. `create-chat` makes
-  // an empty chat and prints its id (measured: a bare UUID line), and the launch
+  // An interactive Cursor session prints no session id. `create-chat` makes an
+  // empty chat and prints its id (measured: a bare UUID line), and the launch
   // opens it with `--resume=<id>`, so Kangentic knows the id from the start.
+  // The print path reports its own id and does not create a chat first.
   describe('a conversation created before launch', () => {
     const CHAT_ID = '997bca3d-4c50-43e2-a038-9a99860f4e7c';
+
+    it('reports its own session id only on the print path', () => {
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'default' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits' })).toBe(false);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'acceptEdits', nonInteractive: true })).toBe(true);
+      expect(adapter.reportsLaunchSessionId({ permissionMode: 'bypassPermissions' })).toBe(true);
+    });
 
     it('creates a chat and reads its id', async () => {
       mockAboutStdout = `${CHAT_ID}\n`;
@@ -546,6 +555,7 @@ describe('CursorAdapter', () => {
       const command = adapter.buildCommand(makeOptions({ prompt: 'Fix the bug' }));
       expect(command).not.toContain('-p');
       expect(command).not.toContain('--output-format');
+      expect(command).not.toContain('--trust');
       expect(command).toContain('Fix the bug');
     });
 
@@ -558,21 +568,23 @@ describe('CursorAdapter', () => {
 
     // ── Non-interactive mode (bypassPermissions) ────────────────────────
 
-    it('adds -p and --output-format stream-json for bypassPermissions', () => {
+    it('adds --trust, -p and --output-format stream-json for bypassPermissions', () => {
       const command = adapter.buildCommand(makeOptions({
         permissionMode: 'bypassPermissions',
         prompt: 'Fix the bug',
       }));
+      expect(command).toContain('--trust');
       expect(command).toContain('-p');
       expect(command).toContain('--output-format');
       expect(command).toContain('stream-json');
     });
 
-    it('adds -p and --output-format stream-json for nonInteractive flag', () => {
+    it('adds --trust, -p and --output-format stream-json for nonInteractive flag', () => {
       const command = adapter.buildCommand(makeOptions({
         nonInteractive: true,
         prompt: 'Fix the bug',
       }));
+      expect(command).toContain('--trust');
       expect(command).toContain('-p');
       expect(command).toContain('--output-format');
       expect(command).toContain('stream-json');
@@ -587,6 +599,7 @@ describe('CursorAdapter', () => {
       }));
       expect(command).toContain('--resume=');
       expect(command).toContain('chat-abc-123');
+      expect(command).not.toContain('--trust');
     });
 
     it('resume command does not include prompt or -p', () => {
@@ -599,26 +612,38 @@ describe('CursorAdapter', () => {
       expect(command).not.toContain('This should be ignored');
     });
 
+    it('trusts a non-interactive resume so a new worktree does not exit on Workspace Trust', () => {
+      const command = adapter.buildCommand(makeOptions({
+        permissionMode: 'bypassPermissions',
+        sessionId: 'chat-abc-123',
+        resume: true,
+      }));
+      expect(command).toContain('--trust');
+      expect(command).toContain('--resume=');
+      expect(command).not.toContain('-p');
+    });
+
     // ── Permission mode mapping ─────────────────────────────────────────
 
     describe('permission mode mapping', () => {
-      // Only `default` explicitly means "interactive TUI, user confirms".
-      // Every other mode (bypassPermissions + any Kangentic-level mode
-      // like project-settings, plan, acceptEdits, ...) must emit
-      // `--output-format stream-json`. Cursor's docs say stream-json
-      // only works with --print, so without this the init event never
-      // lands and ContextBar is stuck on "Starting agent..." forever.
+      // `default` is the confirm-changes screen. `acceptEdits` is the same
+      // screen with --force, so commands run unless one is explicitly denied.
+      // Every other mode must emit `--output-format stream-json`. Cursor's
+      // docs say stream-json only works with --print, so without this the
+      // init event never lands and ContextBar is stuck on "Starting agent..."
+      // forever.
       const streamJsonModes: PermissionMode[] = [
-        'bypassPermissions', 'plan', 'dontAsk', 'acceptEdits', 'auto',
+        'bypassPermissions', 'plan', 'dontAsk', 'auto',
       ];
       const interactiveModes: PermissionMode[] = ['default'];
 
       for (const mode of streamJsonModes) {
-        it(`emits -p and --output-format stream-json for ${mode}`, () => {
+        it(`emits --trust, -p and --output-format stream-json for ${mode}`, () => {
           const command = adapter.buildCommand(makeOptions({
             permissionMode: mode,
             prompt: 'test',
           }));
+          expect(command).toContain('--trust');
           expect(command).toContain('-p');
           expect(command).toContain('--output-format');
           expect(command).toContain('stream-json');
@@ -633,8 +658,49 @@ describe('CursorAdapter', () => {
           }));
           expect(command).not.toContain('-p');
           expect(command).not.toContain('--output-format');
+          expect(command).not.toContain('--trust');
+          expect(command).not.toContain('--force');
         });
       }
+
+      it('keeps the session screen and skips approvals for acceptEdits', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          prompt: 'test',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('--force');
+        expect(command).toContain('test');
+        expect(command).not.toContain('-p');
+        expect(command).not.toContain('--output-format');
+        expect(command).not.toContain('stream-json');
+      });
+
+      it('keeps --force on a resumed skip-approvals session', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          sessionId: 'chat-abc-123',
+          resume: true,
+          prompt: 'This should be ignored',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('--force');
+        expect(command).toContain('--resume=');
+        expect(command).not.toContain('-p');
+        expect(command).not.toContain('This should be ignored');
+      });
+
+      it('prints stream-json when skip-approvals is asked to run non-interactive', () => {
+        const command = adapter.buildCommand(makeOptions({
+          permissionMode: 'acceptEdits',
+          nonInteractive: true,
+          prompt: 'test',
+        }));
+        expect(command).toContain('--trust');
+        expect(command).toContain('-p');
+        expect(command).toContain('stream-json');
+        expect(command).not.toContain('--force');
+      });
 
       it('uses stream-json when nonInteractive is explicitly requested', () => {
         const command = adapter.buildCommand(makeOptions({
@@ -642,6 +708,7 @@ describe('CursorAdapter', () => {
           nonInteractive: true,
           prompt: 'test',
         }));
+        expect(command).toContain('--trust');
         expect(command).toContain('-p');
         expect(command).toContain('stream-json');
       });
@@ -746,16 +813,16 @@ describe('CursorAdapter', () => {
       const { context, applied } = makeContext();
       adapter.attachSession!(context);
       await flushPromises();
-      expect(applied).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+      expect(applied).toEqual([{ model: { id: 'Auto', displayName: 'Auto' } }]);
     });
 
-    it('lowercases the id but preserves the displayName casing', async () => {
+    it('keeps the about display name when no --list-models catalog is cached', async () => {
       mockAboutStdout = JSON.stringify({ model: 'Claude 4.6 Sonnet' });
       const { context, applied } = makeContext();
       adapter.attachSession!(context);
       await flushPromises();
       expect(applied).toEqual([
-        { model: { id: 'claude 4.6 sonnet', displayName: 'Claude 4.6 Sonnet' } },
+        { model: { id: 'Claude 4.6 Sonnet', displayName: 'Claude 4.6 Sonnet' } },
       ]);
     });
 
@@ -865,7 +932,7 @@ describe('CursorAdapter', () => {
       expect(appliedA).toHaveLength(0);
 
       // Second: untouched, so the model should resolve normally
-      expect(appliedB).toEqual([{ model: { id: 'auto', displayName: 'Auto' } }]);
+      expect(appliedB).toEqual([{ model: { id: 'Auto', displayName: 'Auto' } }]);
 
       // Dispose the second cleanly
       if (attachmentB) attachmentB.dispose();
@@ -950,7 +1017,7 @@ describe('CursorAdapter', () => {
       expect(() => adapter.removeHooks('/some/dir')).not.toThrow();
     });
 
-    it('locateSessionHistoryFile returns null', async () => {
+    it('locateSessionHistoryFile returns null when the transcript file is not on disk', async () => {
       const result = await adapter.locateSessionHistoryFile('session-1', '/some/dir');
       expect(result).toBeNull();
     });
@@ -1001,6 +1068,7 @@ describe('CursorAdapter - getInjectionSequence', () => {
 
   beforeEach(() => {
     adapter = new CursorAdapter();
+    resetCursorCapabilityCacheForTests();
   });
 
   it('emits /model <name> when modelChanged is true', () => {

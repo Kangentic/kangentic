@@ -24,6 +24,7 @@ description: |
   -> Spawn hmr-integrity to verify the App.tsx handler references the new name.
   </example>
 model: haiku
+effort: medium
 tools: Read, Glob, Grep
 ---
 

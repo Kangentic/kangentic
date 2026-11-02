@@ -417,7 +417,7 @@ function MonitorCardFooter({ row, divider }: { row: MonitorSessionRow; divider: 
     <ContextUsageFooter
       modelName={row.modelDisplayName ?? '-'}
       percent={row.contextPercent ?? 0}
-      windowKnown={row.contextPercent !== null}
+      occupancyKnown={row.contextPercent !== null}
       unknownLabel="-"
       testId="monitor-card-usage"
       divider={divider}

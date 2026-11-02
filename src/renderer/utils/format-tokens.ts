@@ -1,6 +1,7 @@
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/runtime-macro';
 import { parseModelId, type ModelDisplayGroup } from '../../shared/model-id';
+import { isContextOccupancyKnown, isContextWindowKnown } from '../../shared/context-occupancy';
 import type { ModelAliasOption } from '../../shared/types';
 
 /** Compact token units, smallest first. A cache-read total passes a billion on
@@ -172,16 +173,9 @@ export function modelAliasTitle(
   return i18n._(msg`Latest ${{ modelFamily }}, currently ${{ currentModel }}`);
 }
 
-/**
- * A context window is known (has a real denominator to draw a bar against)
- * only when the reported size is positive - 0 is the "unknown size" sentinel
- * used before any window has been learned for a session's model. TaskCard and
- * ContextBar both gate their fraction/bar/percent render on this predicate so
- * the two board surfaces cannot drift on what counts as renderable.
- */
-export function isContextWindowKnown(contextWindowSize: number): boolean {
-  return contextWindowSize > 0;
-}
+// The occupancy predicates live in shared/ so the Agent Monitor's aggregator
+// in main reads the same rule. Re-exported for the renderer's call sites.
+export { isContextWindowKnown, isContextOccupancyKnown };
 
 /**
  * True when usedTokens exceeds a known window - occupancy at or past
@@ -204,8 +198,11 @@ export function isContextWindowOverBudget(contextWindowSize: number, usedTokens:
  * The clamped context-window percentage to DISPLAY, shared by TaskCard and
  * ContextBar so the two board surfaces cannot drift on the number they paint
  * (the same reason the predicates above are shared). Returns:
- *   - 0 for an unknown window (size 0, no denominator - callers render a
- *     reserved 0% bar or hide the segment entirely via isContextWindowKnown),
+ *   - 0 for an unknown window with no percentage-only occupancy (size 0, no
+ *     denominator - callers render a reserved 0% bar or hide the segment
+ *     via isContextOccupancyKnown),
+ *   - the reported percentage, rounded and capped at 100, when occupancy is
+ *     percentage-only (Cursor interactive TUI: no window, no token counts),
  *   - 100 for an over-budget window (the near-full/auto-compaction critical
  *     state - a full bar rather than a hidden one),
  *   - otherwise the reported percentage rounded and capped at 100. Claude's
@@ -213,9 +210,9 @@ export function isContextWindowOverBudget(contextWindowSize: number, usedTokens:
  *     auto-compact-adjusted denominator even while usedTokens still fits the
  *     window, so the cap is load-bearing, not decorative.
  * This computes the NUMBER only; callers still gate the render on
- * isContextWindowKnown. Feeding both the value-pulse baseline and the rendered
- * label through this one function keeps the pulse inert while the displayed
- * percent holds at a clamped 100 during sustained over-budget growth.
+ * isContextOccupancyKnown. Feeding both the value-pulse baseline and the
+ * rendered label through this one function keeps the pulse inert while the
+ * displayed percent holds at a clamped 100 during sustained over-budget growth.
  */
 export function contextWindowDisplayPercent(
   contextWindowSize: number,
@@ -223,6 +220,9 @@ export function contextWindowDisplayPercent(
   usedPercentage: number,
 ): number {
   if (!isContextWindowKnown(contextWindowSize)) {
+    if (isContextOccupancyKnown(contextWindowSize, usedTokens, usedPercentage)) {
+      return Math.min(100, Math.round(usedPercentage));
+    }
     return 0;
   }
   if (isContextWindowOverBudget(contextWindowSize, usedTokens)) {

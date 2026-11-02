@@ -1,4 +1,5 @@
 ---
+name: add-migration
 description: Add a new database migration
 allowed-tools: Read, Glob, Grep, Edit, Bash(npm:*), Agent
 argument-hint: <description>

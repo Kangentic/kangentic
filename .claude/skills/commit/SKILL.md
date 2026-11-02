@@ -1,4 +1,5 @@
 ---
+name: commit
 description: Create a LOCAL commit only - stage and commit on the current branch with no push and no rebase. Use for "commit" / "commit changes" / "commit current changes" / "save my work". NOT for pushing, landing, or merging back (use /pull-request or /merge-back for that).
 allowed-tools: Read, Glob, Grep, Bash(git:*), Write
 argument-hint: [commit message]

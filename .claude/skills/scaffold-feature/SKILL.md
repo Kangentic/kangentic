@@ -1,4 +1,5 @@
 ---
+name: scaffold-feature
 description: Plan and implement a full-stack feature
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(npm:*), Bash(npx:*)
 argument-hint: <feature-name> <description>

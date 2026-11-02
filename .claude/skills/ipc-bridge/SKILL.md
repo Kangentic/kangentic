@@ -1,4 +1,5 @@
 ---
+name: ipc-bridge
 description: IPC bridge checklist for adding or modifying endpoints across all 7 layers
 ---
 

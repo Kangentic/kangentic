@@ -351,7 +351,7 @@ describe('onTurnEnded', () => {
   // A dev server the agent leaves running in the background (`npm run
   // demo:serve`) is alive for hours. Untagged, it held a task's turn open
   // through every Stop, so the column's turn-end automations never ran.
-  // CLAUDE.md tells the agent to tag it, as a trailing shell comment when the
+  // AGENTS.md tells the agent to tag it, as a trailing shell comment when the
   // program rejects unknown flags, so that exact form is pinned here.
   function startBackgroundServer(harness: Harness, command: string): void {
     // PreToolUse carries the command; PostToolUse carries the assigned shell id.

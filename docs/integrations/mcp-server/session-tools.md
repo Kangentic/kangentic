@@ -68,9 +68,9 @@ Structured-format support by agent:
 
 | Agent | Structured | Raw |
 |-------|------------|-----|
-| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity | native parser | yes |
+| Claude, Droid, Codex, Gemini, Qwen, Kimi, OpenCode, Grok, Antigravity, Cursor | native parser | yes |
 | Aider | no (no per-session native history) | yes |
-| Warp, Cursor, Copilot | no (history location unknown) | yes |
+| Warp, Copilot | no (history location unknown) | yes |
 | Ollama | no (no per-session history for `ollama run`) | yes |
 | Goose | no (adapter parses no transcript) | yes |
 

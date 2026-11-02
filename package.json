@@ -40,7 +40,8 @@
     "demo:serve": "node demo/measure.mjs --serve",
     "demo:posters": "node demo/posters.mjs",
     "validate:kimi-mcp": "node scripts/kimi-validate-mcp.mjs",
-    "prepare": "husky"
+    "cursor:rules": "node scripts/cursor-rules.js",
+    "prepare": "husky && node scripts/cursor-rules.js"
   },
   "keywords": [
     "kangentic",

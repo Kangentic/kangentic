@@ -1,4 +1,5 @@
 ---
+name: test
 description: Run tests, audit coverage, or write missing tests
 allowed-tools: Read, Glob, Grep, Task, Bash(npm:*), Bash(npx:*), Bash(git:*)
 argument-hint: [quick|unit|ui|e2e|audit|write]

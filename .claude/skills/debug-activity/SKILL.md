@@ -1,4 +1,5 @@
 ---
+name: debug-activity
 description: Diagnose activity-engine issues - a task shows active or idle wrongly, the board indicator is stuck, false thinking or false idle, activity engine debugging playbook
 ---
 

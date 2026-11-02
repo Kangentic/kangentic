@@ -1,4 +1,5 @@
 ---
+name: merge-back
 description: Direct quick-push escape hatch - commit, rebase, and push straight to the source branch, bypassing the PR gate. Use only when the user explicitly asks to push, land, or merge back a quick change. The normal flow is the board (Testing -> /pull-request, Merge -> /merge-pull-request). NOT for a plain local commit (use /commit for that).
 allowed-tools: Read, Glob, Grep, Edit, Write, Bash(git:*), Bash(npm:*), Agent
 argument-hint: [commit message]

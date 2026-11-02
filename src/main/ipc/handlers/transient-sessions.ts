@@ -20,6 +20,7 @@ import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
+import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import type {
@@ -335,6 +336,32 @@ export async function startCommandTerminal(
     // (shim-launch.ts). No prompt here, but the head must match what task
     // spawns use, so a Command Terminal never runs a different process shape.
     const launch = await resolveShimLaunch({ agentPath: detection.path, shell, prompt: undefined });
+    // A fresh session screen that prints no id (Cursor's) gets a chat created
+    // first, which the launch opens. A resume already has one. The caller-id
+    // check is deliberate: the helper would mint an id for such a CLI, and a
+    // Command Terminal lets that CLI report its own after launch, as before.
+    const createdAgentSessionId = resume || adapter.supportsCallerSessionId
+      ? null
+      : await resolveFreshAgentSessionId(adapter, {
+          cliPath: detection.path,
+          workingDirectory: projectRoot,
+          permissionMode,
+        });
+    // The conversation the command opens and the session record carries: the
+    // resumed one through the CLI's own resume, or the empty chat just created.
+    // A resume names the id settled above, which is the one a `--resume` reaches
+    // when the conversation was moved into the CLI's own background session.
+    let conversationCommandOptions: { sessionId: string; resume: boolean } | null = null;
+    let conversationSessionFields: { agentSessionId: string; resuming?: true; hasUserInput?: true } | null = null;
+    if (resumeAgentSessionId) {
+      conversationCommandOptions = { sessionId: resumeAgentSessionId, resume: true };
+      // A resumed terminal holds a conversation from its first frame, so it is
+      // used already: another Earlier click never replaces it.
+      conversationSessionFields = { agentSessionId: resumeAgentSessionId, resuming: true, hasUserInput: true };
+    } else if (createdAgentSessionId) {
+      conversationCommandOptions = { sessionId: createdAgentSessionId, resume: false };
+      conversationSessionFields = { agentSessionId: createdAgentSessionId };
+    }
     const commandOptions = {
       agentPath: launch.agentPath,
       taskId: transientTaskId,
@@ -362,8 +389,9 @@ export async function startCommandTerminal(
       // instead of the CLI's own default.
       model: project.default_model ?? undefined,
       effort: project.default_effort ?? undefined,
-      // The conversation to pick up, through the CLI's own resume.
-      ...(resumeAgentSessionId ? { sessionId: resumeAgentSessionId, resume: true } : {}),
+      // The conversation to pick up through the CLI's own resume, or the chat
+      // created for a fresh start that prints no id.
+      ...(conversationCommandOptions ?? {}),
       cliTarget,
     };
     const command = adapter.buildCommand(commandOptions);
@@ -397,9 +425,7 @@ export async function startCommandTerminal(
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
       cols: input.cols,
       rows: input.rows,
-      // A resumed terminal holds a conversation from its first frame, so it is
-      // used already: another Earlier click never replaces it.
-      ...(resumeAgentSessionId ? { agentSessionId: resumeAgentSessionId, resuming: true, hasUserInput: true } : {}),
+      ...(conversationSessionFields ?? {}),
       // The shell the command was built for, and where its CLI runs.
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
@@ -425,6 +451,12 @@ export async function startCommandTerminal(
     // when the row holds no name.
     if (resume?.namedByUser) context.sessionManager.renameCommandTerminal(session.id, resume.label);
     else if (resume?.label) context.sessionManager.setCommandTerminalLabel(session.id, resume.label);
+    // Earlier conversations are recorded when a session reports its id. A chat
+    // created before launch already has one, and the print stream will not
+    // report it again, so say so now. The session row is in the registry.
+    if (createdAgentSessionId) {
+      context.sessionManager.emit('agent-session-id', session.id, transientTaskId, input.projectId, createdAgentSessionId);
+    }
 
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a

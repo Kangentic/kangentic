@@ -5,6 +5,7 @@ description: |
 
   Use this agent when running /sync-docs, /pull-request, /merge-pull-request, or /merge-back (if anchor source files changed), or /release (full verification).
 model: haiku
+effort: medium
 tools: Read, Glob, Grep
 ---
 

@@ -2,10 +2,13 @@
  * Unit tests for CursorStreamParser - parses Cursor's
  * `--output-format stream-json` NDJSON over the PTY into model + events.
  *
- * Pure logic; no Electron, no IPC, no filesystem.
+ * Pure logic; no Electron and no IPC. One case reads a committed recording.
  */
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
+import fs from 'node:fs';
+import path from 'node:path';
 import { CursorStreamParser } from '../../src/main/agent/adapters/cursor/stream-parser';
+import { resetCursorCapabilityCacheForTests } from '../../src/main/agent/adapters/cursor/capability-discovery';
 import { EventType } from '../../src/shared/types';
 
 // Documented example sequence from
@@ -50,12 +53,19 @@ const resultLine = JSON.stringify({
 });
 
 describe('CursorStreamParser', () => {
+  beforeEach(() => {
+    resetCursorCapabilityCacheForTests();
+  });
+
   it('extracts model from the init event', () => {
     const parser = new CursorStreamParser();
     const result = parser.parseTelemetry(`${initLine}\n`);
+    // No `--list-models` catalog is cached in this file, so the display
+    // name is kept as the id rather than inventing a lowercase slug.
     expect(result?.usage?.model).toEqual({
       id: 'Claude 4 Sonnet',
       displayName: 'Claude 4 Sonnet',
+      reportedByAgent: true,
     });
   });
 
@@ -164,5 +174,127 @@ describe('CursorStreamParser', () => {
     const odd = JSON.stringify({ type: 'tool_call', subtype: 'started', tool_call: null });
     const result = parser.parseTelemetry(`${odd}\n`);
     expect(result?.events?.[0].tool).toBe('tool');
+  });
+
+  it('reads occupancy and the live model from the interactive TUI status bar', () => {
+    const parser = new CursorStreamParser();
+    const result = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(result?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(result?.usage?.model).toEqual({
+      id: 'Composer 2.5',
+      displayName: 'Composer 2.5',
+      reportedByAgent: true,
+    });
+  });
+
+  it('reads occupancy and model through ANSI wrapping and extra status segments', () => {
+    const parser = new CursorStreamParser();
+    const framed =
+      '\x1b[6;1H\x1b[2mAuto\x1b[0m \u00b7 8.3% \u00b7 1 file edited\x1b[?25l';
+    const result = parser.parseTelemetry(framed);
+    expect(result?.usage?.contextWindow?.usedPercentage).toBe(8.3);
+    expect(result?.usage?.model).toEqual({
+      id: 'Auto',
+      displayName: 'Auto',
+      reportedByAgent: true,
+    });
+  });
+
+  it('keeps the model name after trailing punctuation on the same line', () => {
+    const parser = new CursorStreamParser();
+    const result = parser.parseTelemetry('done. Composer 2.5 · 7.8%\n');
+    expect(result?.usage?.model?.displayName).toBe('Composer 2.5');
+  });
+
+  it('does not treat a tool duration or a hidden-output hint as occupancy', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('\x1b[2m7.8s\x1b[22m\n')).toBeNull();
+    expect(parser.parseTelemetry('12 output lines hidden · ctrl+o to expand\n')).toBeNull();
+    expect(parser.parseTelemetry('Claude 4 Sonnet · ready\x1b[?25l')).toBeNull();
+  });
+
+  it('skips identical TUI redraws and emits again when the percent changes', () => {
+    const parser = new CursorStreamParser();
+    const first = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(first?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(parser.parseTelemetry('Composer 2.5 · 7.8%\n')).toBeNull();
+    const next = parser.parseTelemetry('Composer 2.5 · 9.1%\n');
+    expect(next?.usage?.contextWindow?.usedPercentage).toBe(9.1);
+    expect(next?.usage?.model?.displayName).toBe('Composer 2.5');
+  });
+
+  it('emits again when the TUI model changes at the same percent', () => {
+    const parser = new CursorStreamParser();
+    const first = parser.parseTelemetry('Composer 2.5 · 7.8%\n');
+    expect(first?.usage?.model?.displayName).toBe('Composer 2.5');
+    const switched = parser.parseTelemetry('Auto · 7.8%\n');
+    expect(switched?.usage?.model?.displayName).toBe('Auto');
+    expect(switched?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+  });
+
+  it('reassembles occupancy split across a ConPTY flush', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('Composer 2.5 · 7.')).toBeNull();
+    const second = parser.parseTelemetry('8%\n');
+    expect(second?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(second?.usage?.model?.displayName).toBe('Composer 2.5');
+  });
+
+  it('keeps the space when a ConPTY flush lands between two words of the model name', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('Composer ')).toBeNull();
+    const second = parser.parseTelemetry('2.5 · 7.8%');
+    expect(second?.usage?.model?.displayName).toBe('Composer 2.5');
+  });
+
+  it('does not read a status the carried tail already reported once later chunks cut its line', () => {
+    const parser = new CursorStreamParser();
+    const first = parser.parseTelemetry(`${'x'.repeat(50)}\nComposer 2.5 · 7.8%`);
+    expect(first?.usage?.model?.displayName).toBe('Composer 2.5');
+    // Each chunk below carries no status. The tail keeps the last 64
+    // characters, so these push `Composer 2.5 · 7.8%` left until the tail
+    // starts mid-word at `ser 2.5 · 7.8%`.
+    expect(parser.parseTelemetry('y'.repeat(30))).toBeNull();
+    expect(parser.parseTelemetry('z'.repeat(20))).toBeNull();
+    expect(parser.parseTelemetry('w')).toBeNull();
+  });
+
+  it('reads no model when the walk reaches the start of a tail that was cut', () => {
+    const parser = new CursorStreamParser();
+    // 70 characters with no line break: the tail keeps `er` and the spaces.
+    expect(parser.parseTelemetry(`Composer${' '.repeat(62)}`)).toBeNull();
+    const result = parser.parseTelemetry('Auto · 7.8%');
+    expect(result?.usage?.contextWindow?.usedPercentage).toBe(7.8);
+    expect(result?.usage?.model).toBeUndefined();
+  });
+
+  it('does not read a bulleted percent in the answer as occupancy', () => {
+    const parser = new CursorStreamParser();
+    expect(parser.parseTelemetry('• 50% of tests pass\n')).toBeNull();
+    expect(parser.parseTelemetry('∙ 12% smaller bundle\n')).toBeNull();
+  });
+
+  it('replays a recorded interactive Cursor session to its status bar', () => {
+    // A real Cursor CLI session in a PTY (scripts/capture-agent-scrollback.js),
+    // sanitized at record time: its status bar reads `Auto · 9.2%` at the end.
+    const recordingPath = path.join(__dirname, '..', 'captures', 'fixtures', 'demo', 'contoso-web-cursor-integration.json');
+    const recording = JSON.parse(fs.readFileSync(recordingPath, 'utf-8')) as { stream: Array<{ data: string }> };
+    const parser = new CursorStreamParser();
+    const percents: number[] = [];
+    const models = new Set<string>();
+    for (const window of recording.stream) {
+      const result = parser.parseTelemetry(window.data);
+      const percent = result?.usage?.contextWindow?.usedPercentage;
+      if (typeof percent === 'number') percents.push(percent);
+      if (result?.usage?.model) models.add(result.usage.model.displayName);
+    }
+    expect(percents.length).toBeGreaterThan(1);
+    expect(percents[percents.length - 1]).toBe(9.2);
+    // Occupancy only grows across one conversation, so a step down is a
+    // misread (a percent in the answer, or a stale match).
+    for (let index = 1; index < percents.length; index++) {
+      expect(percents[index]).toBeGreaterThanOrEqual(percents[index - 1]);
+    }
+    expect([...models]).toEqual(['Auto']);
   });
 });

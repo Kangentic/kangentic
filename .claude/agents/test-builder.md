@@ -72,7 +72,7 @@ Before writing or modifying any test, read the testing skill and the current pla
 - `.claude/skills/test/SKILL.md` (if it exists - has tier classification rules)
 - `playwright.config.ts` (workers, retries, timeouts, projects)
 - `tests/e2e/helpers.ts` (the canonical helpers - reuse these, don't reinvent)
-- `docs/contributing/developer-guide.md` (test tiers, setup, commands) and the "When to test" scoped-run discipline in `CLAUDE.md`
+- `docs/contributing/developer-guide.md` (test tiers, setup, commands) and the "When to test" scoped-run discipline in `AGENTS.md`
 
 ## Critical Constraints (Non-Negotiable)
 

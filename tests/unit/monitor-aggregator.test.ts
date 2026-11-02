@@ -786,6 +786,26 @@ describe('buildMonitorSnapshot', () => {
       expect(snapshot.rows[0].contextPercent).toBeNull();
     });
 
+    it('rounds a percentage-only report when the window size is unknown', async () => {
+      // Cursor interactive TUI: occupancy as a percent, no window, no tokens.
+      // The board card shows this through contextWindowDisplayPercent; the
+      // monitor row must not stay on "-" while the card shows 8%.
+      registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
+      const context = makeContext(
+        [makeManagedSummary({ id: 'session-a', projectId: 'project-a', taskId: 'task-a' })],
+        {},
+        {
+          'session-a': makeSessionUsage({
+            contextWindow: { contextWindowSize: 0, usedTokens: 0, usedPercentage: 7.8 },
+          }),
+        },
+      );
+
+      const snapshot = await buildMonitorSnapshot(context, makeSources());
+
+      expect(snapshot.rows[0].contextPercent).toBe(8);
+    });
+
     it('is null when the window size is unknown (the transcript-fallback sentinel)', async () => {
       registerHealthyProject('project-a', { tasksById: new Map([['task-a', makeTask('task-a')]]) });
       const context = makeContext(

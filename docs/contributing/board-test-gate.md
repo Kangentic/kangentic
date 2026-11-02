@@ -20,6 +20,13 @@ checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back`
 quick-push escape hatch for admins. `/test` is for **manual local runs** only and is not wired to a
 column.
 
+A contributor's PR from a fork goes through the same two columns with three differences, each spelled
+out in the two skills. Main is merged in rather than rebased onto, so the contributor's history
+stays. Every push is a bare `git push` to the fork, after checking that the contributor has not
+pushed since, because `git push origin` would create a branch on this repository that the PR never
+sees. The merge is a squash with an English subject and body, and the contributor's branch is not
+deleted.
+
 ## The Code Review column
 
 Upstream of both, the **Code Review** column runs `/code-review` as an isolated column agent in the
