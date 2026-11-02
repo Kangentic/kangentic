@@ -1,0 +1,56 @@
+# The systemd sshd host for the #913 KillUserProcesses probe, built from the same base as
+# the plain rig. Not shipped and not used by CI. logind owns each ssh session here, which
+# the plain rig cannot show: pam_systemd needs libpam-systemd, dbus and UsePAM.
+#
+#   docker build -t kangentic-ssh-rig-systemd -f scripts/probe-ssh-rig/Dockerfile.systemd scripts/probe-ssh-rig
+#   docker run -d --name kangentic-ssh-rig-daemon-systemd --privileged --cgroupns=host \
+#     -v /sys/fs/cgroup:/sys/fs/cgroup:rw --tmpfs /run --tmpfs /run/lock \
+#     -p 127.0.0.1:2331:22 -e AUTHORIZED_KEY="<public key>" kangentic-ssh-rig-systemd
+#
+# `--privileged` is for this container only. systemd needs to write its cgroup tree.
+FROM ubuntu:24.04
+
+ENV container=docker
+
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends \
+    systemd systemd-sysv dbus libpam-systemd polkitd openssh-server \
+    iproute2 procps ca-certificates curl xz-utils python3 tmux \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN useradd --create-home --shell /bin/bash dev \
+  && mkdir -p /home/dev/.ssh \
+  && chmod 700 /home/dev/.ssh \
+  && chown -R dev:dev /home/dev/.ssh \
+  && systemctl mask getty.target console-getty.service systemd-firstboot.service \
+    systemd-udevd.service systemd-modules-load.service \
+  && systemctl enable ssh.service
+
+COPY <<'EOF' /etc/ssh/sshd_config.d/10-rig.conf
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+UsePAM yes
+EOF
+
+COPY <<'EOF' /usr/local/bin/rig-entry-systemd.sh
+#!/bin/sh
+# Installs the scratch public key the run named, then hands the container to systemd.
+# rig-entry.sh carries the same key install, so change the two together.
+set -eu
+if [ -z "${AUTHORIZED_KEY:-}" ]; then
+  echo "rig-entry-systemd: AUTHORIZED_KEY is not set" >&2
+  exit 1
+fi
+printf '%s\n' "$AUTHORIZED_KEY" > /home/dev/.ssh/authorized_keys
+chmod 600 /home/dev/.ssh/authorized_keys
+chown dev:dev /home/dev/.ssh/authorized_keys
+ssh-keygen -A
+exec /usr/lib/systemd/systemd
+EOF
+
+RUN chmod +x /usr/local/bin/rig-entry-systemd.sh
+
+STOPSIGNAL SIGRTMIN+3
+EXPOSE 22
+ENTRYPOINT ["/usr/local/bin/rig-entry-systemd.sh"]

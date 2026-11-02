@@ -1,0 +1,7 @@
+{
+  "name": "kangentic-probe-quit",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal Electron app for scripts/probe-ssh-quit.mjs. Not shipped.",
+  "main": "main.js"
+}
