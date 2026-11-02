@@ -60,16 +60,11 @@ test.describe('Update-blocked toast', () => {
     // Verbatim: the renderer must not reformat, truncate, or prefix the body.
     // main owns the wording so the two halves cannot drift into two sentences.
     await expect(toast.getByTestId('toast-body')).toHaveText(READ_ONLY_VOLUME_MESSAGE);
-  });
-
-  test('uses the warning variant, not error', async () => {
-    await fireUpdateBlocked(page, READ_ONLY_VOLUME_MESSAGE);
-
-    // Deliberately different from the config write-failure toast next to it in
-    // App.tsx: nothing is broken and nothing was lost, the app simply cannot
-    // update itself from where it was launched.
-    await expect(page.getByTestId('toast')).toHaveAttribute('data-variant', 'warning');
-    await expect(page.getByTestId('toast')).toHaveClass(/border-yellow-500\/50/);
+    // The warning variant, not error. Deliberately different from the config
+    // write-failure toast next to it in App.tsx: nothing is broken and nothing
+    // was lost, the app simply cannot update itself from where it was launched.
+    await expect(toast).toHaveAttribute('data-variant', 'warning');
+    await expect(toast).toHaveClass(/border-yellow-500\/50/);
   });
 
   test('persists past the default toast lifetime instead of auto-dismissing', async () => {

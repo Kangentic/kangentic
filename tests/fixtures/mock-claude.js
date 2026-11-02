@@ -206,7 +206,7 @@ if (process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER && settingsPath && !args.includes(
 // The mock bypasses the real hook pipeline and writes these lines
 // directly to the session's events.jsonl. Coverage of the event-bridge
 // remap itself (real stdin payload -> correct retyping) lives in
-// tests/e2e/claude-activity-detection.spec.ts so the two concerns stay
+// tests/unit/event-bridge-remap.test.ts so the two concerns stay
 // separate: the bridge tests prove the remap directive works, this
 // harness proves the state-machine side (Guard 3) handles the remapped
 // stream correctly end-to-end.
@@ -402,6 +402,138 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
     }
   };
   setTimeout(spawnBackgroundShell, parseInt(process.env.MOCK_CLAUDE_BG_SHELL_SPAWN_DELAY_MS || '1500', 10));
+}
+
+// Real hook path harness (tests/e2e/claude-hook-path.spec.ts).
+//
+// Every other branch of this mock either writes events.jsonl itself or writes
+// nothing, so the hook commands in the session's settings.json never run and
+// nothing proves that what Kangentic wrote there works. When
+// MOCK_CLAUDE_RUN_HOOKS=1 is set, a FRESH session start reads the hooks from the
+// `--settings` file the real command builder wrote and runs each command the way
+// Claude Code does, with a Claude-shaped payload on stdin:
+//
+//   SessionStart, UserPromptSubmit, PreToolUse(Read), PostToolUse(Read), Stop
+//
+// so the real event-bridge.js writes events.jsonl. The commands run in the shell
+// Claude hands a hook to (docs/integrations/agents/claude-code.md, "Paths in hook
+// commands"): `/bin/sh -c` on macOS and Linux; on Windows Git Bash `bash.exe -c`,
+// or PowerShell `-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command`
+// when Git Bash is absent. Never cmd.exe, which is not Claude's shell.
+//
+// The events land after MOCK_CLAUDE_RUN_HOOKS_DELAY_MS (default 1500): the events
+// reader skips bytes written before it attached (stale-replay protection), a
+// window the real CLI never hits. A breadcrumb, hook-run.jsonl in the session
+// directory, records each hook's event, shell, exit status and stderr, so a
+// failure can tell "the hook never ran" from "it ran and wrote nothing". Nothing
+// is printed to the PTY except the final MOCK_CLAUDE_HOOKS_DONE marker.
+//
+// The payloads carry no `agent_id` (the tool hooks treat that as an internal
+// agent's) and a PostToolUse `tool_response` with no shell id field (any of those
+// retypes the event to background_shell_start and holds the session active).
+if (process.env.MOCK_CLAUDE_RUN_HOOKS === '1' && sessionId && !resumed && settingsPath && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const pathMod = require('node:path');
+  const { spawnSync } = require('node:child_process');
+  const sessionDir = pathMod.dirname(settingsPath);
+  const breadcrumbPath = pathMod.join(sessionDir, 'hook-run.jsonl');
+  const startDelayMs = parseInt(process.env.MOCK_CLAUDE_RUN_HOOKS_DELAY_MS || '1500', 10);
+  const toolHoldMs = parseInt(process.env.MOCK_CLAUDE_RUN_HOOKS_TOOL_MS || '1000', 10);
+
+  const hookShell = () => {
+    if (process.platform !== 'win32') return { name: 'sh', file: 'sh', args: (command) => ['-c', command] };
+    const gitBash = pathMod.join(process.env.ProgramFiles || 'C:\\Program Files', 'Git', 'bin', 'bash.exe');
+    if (fs.existsSync(gitBash)) return { name: 'git-bash', file: gitBash, args: (command) => ['-c', command] };
+    return {
+      name: 'powershell',
+      file: 'powershell.exe',
+      args: (command) => ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', command],
+    };
+  };
+
+  const record = (entry) => {
+    try {
+      fs.appendFileSync(breadcrumbPath, JSON.stringify(entry) + '\n');
+    } catch {
+      /* a breadcrumb must not kill the session */
+    }
+  };
+
+  // Claude runs an entry when its matcher is empty or matches the tool name (an
+  // anchored regex). Non-tool events carry no tool name, so only '' applies.
+  const matcherApplies = (matcher, toolName) => {
+    if (!matcher) return true;
+    if (!toolName) return false;
+    try {
+      return new RegExp('^(?:' + matcher + ')$').test(toolName);
+    } catch {
+      return false;
+    }
+  };
+
+  const runHookCommands = (hooks, eventName, payload) => {
+    const shell = hookShell();
+    const toolName = payload.tool_name;
+    const entries = hooks && Array.isArray(hooks[eventName]) ? hooks[eventName] : [];
+    for (const entry of entries) {
+      if (!entry || !Array.isArray(entry.hooks) || !matcherApplies(entry.matcher, toolName)) continue;
+      for (const hook of entry.hooks) {
+        if (!hook || hook.type !== 'command' || typeof hook.command !== 'string') continue;
+        // Only Kangentic's own bridge commands: the plan approval and background
+        // shell hint hooks answer on stdout and are not part of this path.
+        if (!hook.command.includes('event-bridge')) continue;
+        const result = spawnSync(shell.file, shell.args(hook.command), {
+          input: JSON.stringify(payload),
+          encoding: 'utf8',
+          timeout: 15000,
+          windowsHide: true,
+        });
+        record({
+          event: eventName,
+          shell: shell.name,
+          status: result.status,
+          error: result.error ? result.error.message : null,
+          stderr: String(result.stderr || '').slice(0, 500),
+          command: hook.command,
+        });
+      }
+    }
+  };
+
+  const playHooks = () => {
+    let hooks = null;
+    try {
+      hooks = JSON.parse(fs.readFileSync(settingsPath, 'utf-8')).hooks;
+    } catch (error) {
+      record({ event: 'settings-read', error: error.message });
+      return;
+    }
+    const common = {
+      session_id: sessionId,
+      transcript_path: pathMod.join(sessionDir, 'mock-transcript.jsonl'),
+      cwd: process.cwd(),
+      permission_mode: 'default',
+    };
+    const toolUseId = 'toolu_mock_hook_path_1';
+    const toolInput = { file_path: 'hello.txt' };
+    runHookCommands(hooks, 'SessionStart', { ...common, hook_event_name: 'SessionStart', source: 'startup' });
+    runHookCommands(hooks, 'UserPromptSubmit', { ...common, hook_event_name: 'UserPromptSubmit', prompt: 'mock hook path turn' });
+    runHookCommands(hooks, 'PreToolUse', {
+      ...common, hook_event_name: 'PreToolUse', tool_name: 'Read', tool_input: toolInput, tool_use_id: toolUseId,
+    });
+    // The tool runs for a beat, so the session is observably mid-tool before the
+    // PostToolUse and the Stop close the turn.
+    setTimeout(() => {
+      runHookCommands(hooks, 'PostToolUse', {
+        ...common, hook_event_name: 'PostToolUse', tool_name: 'Read', tool_input: toolInput, tool_use_id: toolUseId,
+        tool_response: { type: 'text', file: { filePath: 'hello.txt', content: 'mock file contents' } },
+      });
+      runHookCommands(hooks, 'Stop', { ...common, hook_event_name: 'Stop', stop_hook_active: false });
+      console.log('MOCK_CLAUDE_HOOKS_DONE:' + sessionId);
+    }, toolHoldMs);
+  };
+
+  setTimeout(playHooks, startDelayMs);
 }
 
 // Turn-end harness for the On agent turn end automation guard

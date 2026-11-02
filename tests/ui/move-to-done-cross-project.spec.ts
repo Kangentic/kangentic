@@ -1,25 +1,14 @@
 /**
- * Cross-project Done-drop race regression tests, run in the UI tier so the
- * Zustand stores have their real browser environment (import.meta.hot,
- * window.electronAPI mock).
+ * Cross-project Done-drop race regression test, run in the UI tier because it reads the
+ * error toast from the DOM (see .claude/rules/project-scoped-ipc.md).
  *
- * Covers the three composing defects fixed for the cross-project Done-drop race
- * (see .claude/rules/project-scoped-ipc.md):
+ * A failed move surfaces the failure and does NOT fire the false "Task completed" success
+ * (recentlyArchivedId stays null). The rest of the race's cases (the move routes to the
+ * projectId captured on drop, a success while switched away does not flag the foreign board,
+ * a same-project completion does) live in `tests/unit/task-completion-slice.test.ts`.
  *
- *   A. The projectId captured on drop (CompletingTask.projectId) is the one the
- *      move IPC routes to, even if the user switches projects before the gated
- *      persist runs. Proves the fix for the ambient-projectId root cause.
- *   B. A failed move surfaces failure and does NOT fire the false
- *      "Task completed" success (recentlyArchivedId stays null).
- *   C. A move that succeeds while the user has switched away does NOT set the
- *      board-global recentlyArchivedId (which would mis-highlight a foreign
- *      board), but still routes to the correct source project.
- *   D. Same-project happy path still sets recentlyArchivedId (no regression).
- *
- * All assertions are made via page.evaluate against the exposed Zustand stores;
- * the gated completion is driven through the store (setCompletingTask gated +
- * finalizeCompletion) so the move fires deterministically after the simulated
- * project switch, with no real drag needed.
+ * The gated completion is driven through the store (setCompletingTask gated +
+ * finalizeCompletion) with no real drag needed.
  */
 import { test, expect } from '@playwright/test';
 import { chromium, type Browser, type Page } from '@playwright/test';
@@ -154,27 +143,6 @@ async function startGatedCompletion(page: Page, projectId: string): Promise<void
   }, { taskIdentifier: TASK_ID, stampedProjectId: projectId });
 }
 
-/** Simulate switching the active project by setting the project store directly. */
-async function switchToProject(page: Page, projectId: string): Promise<void> {
-  await page.evaluate((targetId) => {
-    const stores = (window as unknown as {
-      __zustandStores?: {
-        project: {
-          getState: () => {
-            projects: Array<{ id: string }>;
-            setState?: unknown;
-          };
-          setState: (partial: object) => void;
-        };
-      };
-    }).__zustandStores;
-    if (!stores) throw new Error('window.__zustandStores not exposed');
-    const target = stores.project.getState().projects.find((p) => p.id === targetId);
-    if (!target) throw new Error('Project not found in store: ' + targetId);
-    stores.project.setState({ currentProject: target });
-  }, projectId);
-}
-
 /** Force the gated completion to persist now (joins animationDone + approved). */
 async function finalizeCompletion(page: Page): Promise<void> {
   await page.evaluate(() => {
@@ -214,27 +182,7 @@ async function waitForCompletionSettled(page: Page): Promise<void> {
 }
 
 test.describe('cross-project Done-drop race', () => {
-  // A. The drop-time projectId wins over the (switched) current project.
-  test('the move routes to the projectId captured on drop, not the current project', async () => {
-    const { browser, page } = await launch();
-    try {
-      await startGatedCompletion(page, PROJECT_A_ID);
-      // User clicks over to another project while the card is "in flight".
-      await switchToProject(page, PROJECT_B_ID);
-      // Now persist. The gate stashed projectId = A; the move must use A.
-      await finalizeCompletion(page);
-      await waitForCompletionSettled(page);
-
-      const lastMoveProjectId = await page.evaluate(
-        () => (window as unknown as { __mockLastMoveProjectId?: string | null }).__mockLastMoveProjectId,
-      );
-      expect(lastMoveProjectId).toBe(PROJECT_A_ID);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  // B. A failed move must not report success.
+  // A failed move must not report success.
   test('a failed move fires no false "Task completed" success', async () => {
     const { browser, page } = await launch();
     try {
@@ -256,43 +204,6 @@ test.describe('cross-project Done-drop race', () => {
       // persistCompletion decides on the success toast in the same await chain
       // that raised the error toast above, so one immediate read is enough.
       expect(await toastCountRightNow(page, 'Task completed')).toBe(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  // C. Success while switched away must not set the board-global recentlyArchivedId.
-  test('a success while switched away does not flag recentlyArchivedId on the foreign board', async () => {
-    const { browser, page } = await launch();
-    try {
-      await startGatedCompletion(page, PROJECT_A_ID);
-      await switchToProject(page, PROJECT_B_ID);
-      await finalizeCompletion(page);
-      await waitForCompletionSettled(page);
-
-      const board = await readBoard(page);
-      // Move targeted A (correct), but the user is now viewing B, so the global
-      // recentlyArchivedId must not be set for A's task.
-      expect(board.recentlyArchivedId).toBeNull();
-      const lastMoveProjectId = await page.evaluate(
-        () => (window as unknown as { __mockLastMoveProjectId?: string | null }).__mockLastMoveProjectId,
-      );
-      expect(lastMoveProjectId).toBe(PROJECT_A_ID);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  // D. Same-project happy path still flags recentlyArchivedId (no regression).
-  test('a same-project completion still sets recentlyArchivedId', async () => {
-    const { browser, page } = await launch();
-    try {
-      await startGatedCompletion(page, PROJECT_A_ID);
-      await finalizeCompletion(page);
-      await waitForCompletionSettled(page);
-
-      const board = await readBoard(page);
-      expect(board.recentlyArchivedId).toBe(TASK_ID);
     } finally {
       await browser.close();
     }

@@ -5,6 +5,11 @@
  * icon fires `activate` → `createWindow()` → `registerAllIpc()` again.
  * The idempotency guard must update the window reference without
  * re-registering ipcMain.handle handlers (which throws on duplicates).
+ *
+ * Also the home of what `registerAllIpc` wires, driven by registering under a
+ * mocked electron: the pty host loss recovery, the worktree reaper's identity
+ * stop, the board config queue drain, the notifier's own-call guard and the
+ * Command Terminal reaper's background-session stop.
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
@@ -12,6 +17,9 @@ import { IPC } from '../../src/shared/ipc-channels';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 import type { RendererErrorContext, Session } from '../../src/shared/types';
 import type { IdentityTreeStop } from '../../src/main/git/zombie-reaper';
+import type { DesktopNotifierOptions } from '../../src/main/notifications/desktop-notifier';
+import type { CommandTerminalLeftoverReaper } from '../../src/main/ipc/helpers/command-terminal-leftovers';
+import type { EndedCommandTerminal } from '../../src/main/ipc/helpers/command-terminal-background-session';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
 
@@ -91,6 +99,44 @@ const setIdentityTreeStopSpy = vi.fn();
 vi.mock('../../src/main/git/zombie-reaper', async (importOriginal) => ({
   ...(await importOriginal<typeof import('../../src/main/git/zombie-reaper')>()),
   setIdentityTreeStop: setIdentityTreeStopSpy,
+}));
+// The notifier and the Command Terminal leftover reaper stay REAL, so the
+// listener counts below still hold. These subclasses only record the options
+// registerAllIpc hands each constructor, so the wiring describe reads what
+// production wired in instead of the source text that wires it.
+const wired = vi.hoisted(() => ({
+  desktopNotifierOptions: [] as unknown[],
+  leftoverReaperDeps: [] as unknown[],
+  stopEndedBackgroundSession: vi.fn(async (_context: unknown, _ended: unknown): Promise<void> => undefined),
+}));
+vi.mock('../../src/main/notifications/desktop-notifier', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/notifications/desktop-notifier')>();
+  return {
+    ...actual,
+    DesktopNotifier: class extends actual.DesktopNotifier {
+      constructor(options: ConstructorParameters<typeof actual.DesktopNotifier>[0]) {
+        super(options);
+        wired.desktopNotifierOptions.push(options);
+      }
+    },
+  };
+});
+vi.mock('../../src/main/ipc/helpers/command-terminal-leftovers', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../src/main/ipc/helpers/command-terminal-leftovers')>();
+  return {
+    ...actual,
+    CommandTerminalLeftoverReaper: class extends actual.CommandTerminalLeftoverReaper {
+      constructor(deps: ConstructorParameters<typeof actual.CommandTerminalLeftoverReaper>[0]) {
+        super(deps);
+        wired.leftoverReaperDeps.push(deps);
+      }
+    },
+  };
+});
+// Only the stop is replaced: the real one resolves an adapter and runs its CLI.
+vi.mock('../../src/main/ipc/helpers/command-terminal-background-session', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../src/main/ipc/helpers/command-terminal-background-session')>()),
+  stopEndedCommandTerminalBackgroundSession: wired.stopEndedBackgroundSession,
 }));
 // The real transport forks the pty host utility process.
 vi.mock('../../src/main/pty/host/utility-pty-host-transport', () => ({
@@ -287,6 +333,8 @@ describe('registerAllIpc idempotency', () => {
     mobileBridgeReconcileSpy.mockClear();
     mobileBridgeDisposeSpy.mockClear();
     getEffectiveConfigMock.mockClear();
+    wired.desktopNotifierOptions.length = 0;
+    wired.leftoverReaperDeps.length = 0;
     // Reset the module-level `context` singleton between tests
     vi.resetModules();
   });
@@ -933,6 +981,83 @@ describe('registerAllIpc idempotency', () => {
 
       expect(await registeredStop({ pid: 11, startedAtMs: 1_000 })).toBe('failed');
       expect(await registeredStop({ pid: 12, startedAtMs: 2_000 })).toBe('ended');
+    }, 30000);
+  });
+
+  describe('links registerAllIpc hands to services built before the context exists', () => {
+    // Each consumer of these is tested alone with its dependency handed in
+    // directly, and the dependency is optional or a callback, so a call site
+    // that stops handing it over breaks none of those suites. Registering for
+    // real and then using what was handed over is the only check that sees it.
+    // Red-green: delete the `setOnConfigApplied(...)` line, the
+    // `isSessionInOwnCall` option or the `stopBackgroundSession` property in
+    // register-all.ts and the matching test fails; point any of them at a stub
+    // and the behavior assertion fails.
+
+    it('drains the agent queue when a board config is applied', async () => {
+      // A teammate raising a column's agent limit in kangentic.json ends no
+      // session, so this is the only thing that starts what the old limit queued.
+      const { registerAllIpc, getSessionManager, getBoardConfigManager } = await import('../../src/main/ipc/register-all');
+      registerAllIpc(makeMockWindow(1));
+
+      const registrations = vi.mocked(getBoardConfigManager().setOnConfigApplied).mock.calls;
+      expect(registrations).toHaveLength(1);
+      const onConfigApplied = registrations[0][0];
+      expect(getSessionManager().drainQueue).not.toHaveBeenCalled();
+
+      onConfigApplied();
+
+      expect(getSessionManager().drainQueue).toHaveBeenCalledTimes(1);
+    }, 30000);
+
+    it('hands the desktop notifier the real own-call mark, set by a call and dropped on release', async () => {
+      // Dropping the option (the notifier reads it with `?.`) silently turns the
+      // guard off, and every own-call idle raises a notification for a session
+      // that is about to end.
+      const { registerAllIpc } = await import('../../src/main/ipc/register-all');
+      // Imported after register-all in the same module registry, so this is the
+      // instance register-all's import resolved to.
+      const { markOwnCallSession } = await import('../../src/main/ipc/handlers/own-call-turn-wait');
+      registerAllIpc(makeMockWindow(1));
+
+      expect(wired.desktopNotifierOptions).toHaveLength(1);
+      const options = wired.desktopNotifierOptions[0] as DesktopNotifierOptions;
+      expect(options.isSessionInOwnCall).toBeTypeOf('function');
+      const sessionId = 'session-own-call-wiring';
+      expect(options.isSessionInOwnCall?.(sessionId)).toBe(false);
+
+      const release = markOwnCallSession(sessionId);
+      expect(options.isSessionInOwnCall?.(sessionId)).toBe(true);
+      expect(options.isSessionInOwnCall?.('another-session')).toBe(false);
+
+      release();
+      expect(options.isSessionInOwnCall?.(sessionId)).toBe(false);
+    }, 30000);
+
+    it('stops a Command Terminal\'s background session through the live context when the terminal ends', async () => {
+      // `stopBackgroundSession` is optional on the reaper and its own tests hand
+      // it a spy, so dropping this line leaves them green while an ended terminal
+      // stops stopping the background session and the reap kills it with no exit.
+      const { registerAllIpc, getOptionalIpcContext } = await import('../../src/main/ipc/register-all');
+      registerAllIpc(makeMockWindow(1));
+
+      expect(wired.leftoverReaperDeps).toHaveLength(1);
+      const deps = wired.leftoverReaperDeps[0] as ConstructorParameters<typeof CommandTerminalLeftoverReaper>[0];
+      expect(deps.stopBackgroundSession).toBeTypeOf('function');
+      const ended: EndedCommandTerminal = {
+        agentName: 'claude',
+        agentSessionId: 'agent-session-1',
+        cwd: '/mock/project',
+        cliTarget: null,
+      };
+
+      await deps.stopBackgroundSession?.(ended);
+
+      expect(wired.stopEndedBackgroundSession).toHaveBeenCalledTimes(1);
+      const [context, stoppedTerminal] = wired.stopEndedBackgroundSession.mock.calls[0];
+      // The context itself, read when the stop runs, and the terminal as the reaper snapshotted it.
+      expect(context === getOptionalIpcContext()).toBe(true);
+      expect(stoppedTerminal).toBe(ended);
     }, 30000);
   });
 });

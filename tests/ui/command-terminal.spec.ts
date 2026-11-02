@@ -1025,20 +1025,9 @@ test.describe('Command Terminal', () => {
       // "close this window" confusion with the task-detail X). Hiding the layer is
       // covered by the Ctrl+Shift+W and backdrop tests below; Stop destroys a terminal.
 
-      test('stop button terminates the session and closes overlay', async () => {
-        // Open overlay
-        await sharedPage.keyboard.press('Control+Shift+P');
-        await expect(sharedPage.getByTestId('command-terminal-window')).toBeVisible();
-
-        // Click the stop button
-        await sharedPage.getByTestId('command-bar-terminate-button').click();
-        await expect(sharedPage.getByTestId('command-terminal-window')).not.toBeVisible({ timeout: 5000 });
-
-        // Session was killed: icon should revert to 'rest' (no current-project transient sessions remain).
-        // Poll because the store cleanup is async after killTransient resolves.
-        const icon = sharedPage.getByTestId('quick-session-icon');
-        await expect(icon).toHaveAttribute('data-activity', 'rest', { timeout: 5000 });
-      });
+      // Trimmed (test-suite audit): 'stop button terminates the session and closes
+      // overlay' is 'stopping the last terminal hides the whole layer' in the Multiple
+      // terminals group, which also asserts the icon returns to 'rest'.
 
       test('kebab menu renders with expected items', async () => {
         // Open overlay
@@ -1362,35 +1351,8 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('New terminal spawns a second terminal', async () => {
-      // With the layer open, the rail's Add terminal button calls
-      // spawnAdditionalCommandTerminal, which opens a new window in the next
-      // free slot and tiles them side by side.
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        // Open the layer (creates first window)
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-
-        // Wait for one window to be present
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
-
-        // Click Add terminal to spawn a second terminal
-        await page.getByTestId('command-terminal-new').click();
-
-        // Second window should appear; total count goes 1 -> 2
-        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 5000 });
-
-        // Both windows are visible (tiled)
-        const windows = page.getByTestId('command-terminal-window');
-        await expect(windows.nth(0)).toBeVisible();
-        await expect(windows.nth(1)).toBeVisible();
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): 'New terminal spawns a second terminal' (count 1 -> 2
+    // from the rail's Add terminal) is the first half of the next test.
 
     test('two terminals carry distinct, slot-numbered titles', async () => {
       // The defect this fixes: two tiled Command Terminals had byte-identical
@@ -1496,6 +1458,17 @@ test.describe('Command Terminal', () => {
         await page.keyboard.press('Control+Shift+P');
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
 
+        // A freshly spawned mock terminal has no activity, so the icon starts at 'rest'.
+        // Give it one, so the revert to 'rest' below is a real transition.
+        await expect.poll(async () => (await transientEntriesFor(page, MULTI_PROJECT_ID)).length).toBe(1);
+        const [liveEntry] = await transientEntriesFor(page, MULTI_PROJECT_ID);
+        await page.evaluate((sessionId) => {
+          (window as unknown as {
+            __zustandStores: { session: { getState: () => { updateActivity: (id: string, state: string) => void } } };
+          }).__zustandStores.session.getState().updateActivity(sessionId, 'idle');
+        }, liveEntry.sessionId);
+        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-activity', 'idle', { timeout: 5000 });
+
         // Stop the only terminal
         await page.getByTestId('command-bar-terminate-button').click();
 
@@ -1505,6 +1478,10 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-window-backdrop')).not.toBeVisible({ timeout: 3000 });
         // "New terminal" is gone too (it only exists while the layer is open)
         await expect(page.getByTestId('command-terminal-new')).toHaveCount(0);
+        // The session was killed: the title-bar icon reverts to 'rest' (no current-project
+        // transient sessions remain). Poll because the store cleanup is async after
+        // killTransient resolves.
+        await expect(page.getByTestId('quick-session-icon')).toHaveAttribute('data-activity', 'rest', { timeout: 5000 });
       } finally {
         await browser.close();
       }
@@ -1760,39 +1737,10 @@ test.describe('Command Terminal', () => {
 
   });
 
-  // ---------------------------------------------------------------------------
-  // Launch overlay - CommandTerminalWindow.tsx and CommandTerminalPane.tsx
-  // render LaunchOverlay, which paints the resolved terminal background (no
-  // flash when the overlay lifts and the real terminal is revealed). These are
-  // SEPARATE call sites from TerminalTab.tsx (covered by
-  // launch-overlay-terminal-surface.spec.ts), so an overlay swapped for another
-  // cover here alone would go undetected by that spec.
-  // ---------------------------------------------------------------------------
-  test.describe('Launch overlay', () => {
-    test('a cold command-terminal spawn paints the launch overlay with the resolved terminal background', async () => {
-      // multiTerminalPreConfig's spawnTransient never fires onFirstOutput, so
-      // `terminalReady` (CommandTerminalWindow.tsx) stays false and the pane's
-      // launch overlay stays mounted after the window opens - mirrors the
-      // cold-session setup in launch-overlay-terminal-surface.spec.ts.
-      const { browser, page } = await launchWithState(multiTerminalPreConfig());
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.getByTestId('quick-session-button').click();
-        const commandWindow = page.getByTestId('command-terminal-window');
-        await expect(commandWindow).toBeVisible();
-
-        const overlay = commandWindow.locator('[data-testid="launch-overlay"]');
-        await expect(overlay).toBeVisible();
-
-        // Resolved default (#0c0c0c), not the theme-tracking bg-surface color.
-        const overlayBackground = await overlay.evaluate((element) => getComputedStyle(element).backgroundColor);
-        expect(overlayBackground).toBe('rgb(12, 12, 12)');
-      } finally {
-        await browser.close();
-      }
-    });
-  });
+  // Trimmed (test-suite audit): the Launch overlay describe held one test, a cold spawn
+  // painting the overlay in the resolved terminal background (rgb(12, 12, 12)). That assertion
+  // now lives in command-terminal-launch-overlay.spec.ts, which covers the same two call sites
+  // (the window and the pane) with the spawn parked.
 
   // ---------------------------------------------------------------------------
   // Window population reconciliation (per project) - the headline bug fix: the
@@ -5006,20 +4954,9 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('the window opening hides a panel that was showing', async () => {
-      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
-      try {
-        await openPanelWithOneTerminal(page);
-        await firePopOutChanged(page, [WINDOW_KEY]);
-        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0, { timeout: 3000 });
-        // Its open flag is what asks main for the terminals' output; it is down.
-        await expect.poll(() => page.evaluate(() => (window as unknown as {
-          __zustandStores: { session: { getState: () => { commandBarVisible: boolean } } };
-        }).__zustandStores.session.getState().commandBarVisible), { timeout: 3000 }).toBe(false);
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): 'the window opening hides a panel that was showing'
+    // (commandBarVisible goes false) is tests/unit/pop-out-changed.test.ts 'hides the
+    // in-app panel when its project's window opens'.
 
     test('closing the window brings the panel back with the running terminal, and starts nothing', async () => {
       const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
@@ -5036,29 +4973,9 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('a window closed by stopping its last terminal leaves the panel closed', async () => {
-      const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: true }));
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-        await firePopOutChanged(page, [WINDOW_KEY]);
-        // The window's Stop ends the terminal in main, which announces the removal.
-        await page.evaluate((sessionId) => window.electronAPI.sessions.killTransient(sessionId), LIVE_TERMINAL_ID);
-        await expect.poll(() => page.evaluate((sessionId) => (window as unknown as {
-          __zustandStores: { session: { getState: () => { sessions: Array<{ id: string }> } } };
-        }).__zustandStores.session.getState().sessions.some((session) => session.id === sessionId), LIVE_TERMINAL_ID), { timeout: 3000 }).toBe(false);
-        await firePopOutChanged(page, []);
-
-        // The push decides the reopen as it lands, by arming the pending-open
-        // flag or not, so reading the flag right after it is the whole answer.
-        expect(await page.evaluate(() => (window as unknown as {
-          __zustandStores: { session: { getState: () => { _pendingOpenCommandTerminal: boolean } } };
-        }).__zustandStores.session.getState()._pendingOpenCommandTerminal)).toBe(false);
-        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
-        expect(await spawnCount(page)).toBe(0);
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): 'a window closed by stopping its last terminal leaves
+    // the panel closed' is tests/unit/pop-out-changed.test.ts 'does not reopen the panel
+    // once the last terminal stopped'.
 
     test('the window shows its project\'s running terminal once the sessions have synced, and starts no second one', async () => {
       const { browser, page } = await launchDetachedWindow(detachedPreConfig({ liveTerminal: true }));
@@ -5457,69 +5374,8 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('version pill shows "Agent" when project has no default_agent set', async () => {
-      // Baseline: if projectAgent is null, agentFallback is null, and the board
-      // store finds no task row, then agentDisplayName(null) returns "Agent".
-      // This confirms the test above is not a false positive - the component
-      // actually reads agentFallback and uses it when the project agent is null.
-      const TRANSIENT_ID = 'transient-overlay-test-3';
-      const preConfigWithNullAgent = twoProjectPreConfig() + `
-        window.__mockPreConfigure(function (state) {
-          var project = state.projects.find(function (p) { return p.id === '${PROJECT_A_ID}'; });
-          if (project) project.default_agent = null;
-        });
-
-        window.electronAPI.sessions.spawnTransient = async function (input) {
-          var session = {
-            id: '${TRANSIENT_ID}',
-            taskId: '${TRANSIENT_ID}',
-            projectId: input.projectId,
-            pid: null,
-            status: 'running',
-            shell: '/bin/bash',
-            cwd: '/mock/project',
-            startedAt: new Date().toISOString(),
-            exitCode: null,
-            resuming: false,
-            transient: true,
-          };
-          return { session: session, branch: 'main' };
-        };
-      `;
-
-      const { browser, page } = await launchWithState(preConfigWithNullAgent);
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await page.keyboard.press('Control+Shift+P');
-        await expect(page.getByTestId('command-terminal-window')).toBeVisible();
-
-        const overlayContextBar = page.getByTestId('command-terminal-window').locator('[data-testid="usage-bar"]');
-        await expect(overlayContextBar).toBeVisible({ timeout: 5000 });
-
-        // Push usage so the version pill renders.
-        await page.evaluate((sessionId) => {
-          const stores = (window as unknown as { __zustandStores?: { session?: { getState: () => { updateUsage: (id: string, data: object) => void } } } }).__zustandStores;
-          stores?.session?.getState().updateUsage(sessionId, {
-            model: { id: 'claude-opus', displayName: 'Claude Opus' },
-            contextWindow: {
-              usedPercentage: 5,
-              usedTokens: 200,
-              cacheTokens: 0,
-              totalInputTokens: 150,
-              totalOutputTokens: 50,
-              contextWindowSize: 200000,
-            },
-            cost: { totalCostUsd: 0.001, totalDurationMs: 500 },
-          });
-        }, TRANSIENT_ID);
-
-        // null agentFallback -> agentDisplayName(null) -> "Agent"
-        await expect(overlayContextBar).toContainText('Agent', { timeout: 3000 });
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): the null-agent fallback to "Agent" is agentDisplayName(null)
+    // in tests/unit/copilot-adapter.test.ts; the test above proves the pill reads agentFallback.
 
     test('transient ContextBar picker injects model/effort via session-keyed IPC (no task override)', async () => {
       // Command Terminal sessions are transient (no task row). The ContextBar
@@ -5908,44 +5764,9 @@ test.describe('Command Terminal', () => {
       }
     });
 
-    test('permission activity shows static attention ring (same as idle)', async () => {
-      // requiresUserInteraction('permission') = true (ACTIVITY_DISPOSITION maps
-      // 'permission' -> 'idle'). The ring is identical to the idle ring.
-      // This pins the activity-state-classification contract in the UI layer:
-      // 'permission' must be treated as "needs user" (attention) not "working" (active).
-      const { browser, page } = await launchWithState(
-        ringBasePreConfig() + deterministicSpawn
-      );
-      try {
-        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
-
-        await openOverlayAndMarkSessionReady(page);
-
-        // Push 'permission' activity
-        await page.evaluate((sessionId) => {
-          const stores = (window as unknown as {
-            __zustandStores?: {
-              session?: { getState: () => { updateActivity: (id: string, state: string) => void } };
-            };
-          }).__zustandStores;
-          stores?.session?.getState().updateActivity(sessionId, 'permission');
-        }, RING_SESSION_ID);
-
-        const stopButton = page.getByTestId('command-bar-terminate-button');
-
-        // Static attention ring - permission maps to the idle disposition, so it renders the
-        // SAME mark as idle, not the animated one.
-        const ring = stopButton.locator('[data-mark="control-stop-idle"]');
-        await expect(ring).toBeVisible({ timeout: 3000 });
-        await expect(ring).toHaveClass(/text-attention/);
-        await expect(stopButton.locator('[data-mark="control-stop-working"]')).toHaveCount(0);
-
-        // No plain CircleStop for permission state
-        await expect(stopButton.locator('.lucide-circle-stop')).toHaveCount(0);
-      } finally {
-        await browser.close();
-      }
-    });
+    // Trimmed (test-suite audit): 'permission' drawing the same static attention ring as
+    // 'idle' is requiresUserInteraction('permission') in tests/unit/activity-state.test.ts;
+    // the idle test above proves the ring is drawn from that classifier.
 
     test('no active session shows plain CircleStop (no activity mark at all)', async () => {
       // When the session has not yet started (terminalReady=false, so sessionRunning=false),

@@ -1,14 +1,7 @@
 import { useState, useCallback, useRef, type RefObject } from 'react';
 import { useSessionStore } from '../stores/session-store';
 import { startPanelDrag } from './panel-drag';
-
-const MIN_RATIO = 0.25;
-const MAX_RATIO = 0.75;
-export const DEFAULT_SPLIT_RATIO = 0.5;
-
-function clampRatio(value: number): number {
-  return Math.max(MIN_RATIO, Math.min(MAX_RATIO, value));
-}
+import { DEFAULT_SPLIT_RATIO, displayedSplitRatio, splitRatioFromPointer } from './task-split-ratio';
 
 export interface TaskSplitResizeState {
   /** Fraction of horizontal space for the left (terminal) pane, clamped to [0.25, 0.75]. */
@@ -43,7 +36,7 @@ export function useTaskSplitResize(
   const [liveRatio, setLiveRatio] = useState(storedRatio);
   const [isResizing, setIsResizing] = useState(false);
   const latestRatioRef = useRef(storedRatio);
-  const ratio = isResizing ? liveRatio : storedRatio;
+  const ratio = displayedSplitRatio(isResizing, liveRatio, storedRatio);
 
   const onResizeStart = useCallback((event: React.MouseEvent) => {
     const container = containerRef.current;
@@ -60,8 +53,8 @@ export function useTaskSplitResize(
       cursor: 'col-resize',
       onMove: (moveEvent) => {
         const rect = container.getBoundingClientRect();
-        if (rect.width === 0) return;
-        const nextRatio = clampRatio((moveEvent.clientX - rect.left) / rect.width);
+        const nextRatio = splitRatioFromPointer(moveEvent.clientX, rect.left, rect.width);
+        if (nextRatio === null) return;
         setLiveRatio(nextRatio);
         latestRatioRef.current = nextRatio;
       },

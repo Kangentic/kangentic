@@ -68,32 +68,22 @@ test.describe('config:writeFailed push', () => {
     }
   });
 
-  test('still appears when a project is open (the push is not project-filtered)', async () => {
+  test('a second push renders as its own toast, with a project open (the latch policy lives in main, not the renderer)', async () => {
     const { browser, page } = await launch();
     try {
+      // With a project open: the push is not project-filtered.
       await createProject(page, `config-write-failed-project-${Date.now()}`);
 
-      await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
-
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: WRITE_FAILED_MESSAGE });
-      await expect(toast).toBeVisible({ timeout: 5000 });
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a second push renders as its own toast (the latch policy lives in main, not the renderer)', async () => {
-    const { browser, page } = await launch();
-    try {
       // The renderer has no cooldown of its own - it toasts whatever main
       // sends. write-failure-notice.ts's per-source latch is what keeps main
       // from re-sending on every failure of an already-failing source; this
       // spec only proves the renderer does not ALSO suppress on its side.
+      const toasts = page.locator('[data-testid="toast"]').filter({ hasText: WRITE_FAILED_MESSAGE });
       await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
-      await expect(page.locator('[data-testid="toast"]')).toHaveCount(1, { timeout: 5000 });
+      await expect(toasts).toHaveCount(1, { timeout: 5000 });
 
       await fireConfigWriteFailed(page, WRITE_FAILED_MESSAGE);
-      await expect(page.locator('[data-testid="toast"]')).toHaveCount(2, { timeout: 5000 });
+      await expect(toasts).toHaveCount(2, { timeout: 5000 });
     } finally {
       await browser.close();
     }

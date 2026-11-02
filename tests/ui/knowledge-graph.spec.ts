@@ -825,34 +825,11 @@ test.describe('knowledge graph', () => {
     }
   });
 
-  test('requests a refresh when the cached projection is stale', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: true }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect
-        .poll(async () => page.evaluate(() => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0))
-        .toBeGreaterThan(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('does NOT request a refresh when the projection is fresh', async () => {
-    // Firing the paced pass on every open would re-enter a minutes-long scan
-    // for no reason.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: false }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect(page.locator('[data-testid="knowledge-graph-canvas"]')).toBeVisible();
-      const calls = await page.evaluate(
-        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
-      );
-      expect(calls).toBe(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
+  // The rebuild requests (a stale drawn map asks for one, a fresh one does not, a completion
+  // push re-reads, and a push asks only to carry on a rebuild this surface asked for) were five
+  // cases here that read the mock's call logs and drew nothing. They moved to the store's own
+  // unit tests: tests/unit/knowledge-graph-store.test.ts, "rebuild requests on a map that is
+  // drawn". The config-change re-read below stays: it is the Off card clearing on screen.
   test('re-reads the snapshot when settings change, without being reopened', async () => {
     // Turning semantic search on changes what this surface renders (the
     // Knowledge Graph's Off card comes from the snapshot) but starts no
@@ -882,75 +859,6 @@ test.describe('knowledge graph', () => {
 
       // No reopen, no reload: the card clears on its own.
       await expect(offCard).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('reloads on a completion push for the current project', async () => {
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10) }));
-    try {
-      await openKnowledgeGraph(page);
-      const before = await page.evaluate(
-        () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
-      );
-      await page.evaluate(() => (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1'));
-      await expect
-        .poll(async () => page.evaluate(
-          () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
-        ))
-        .toBeGreaterThan(before);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a push over a map that was fresh when opened re-reads it without asking for a rebuild', async () => {
-    // Record sweeps and finished embedding drains push too, and an agent's turn
-    // makes the map stale. Rebuilding on such a push started a pass on every
-    // turn of an open graph and moved its nodes under the reader.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: false }));
-    try {
-      await openKnowledgeGraph(page);
-      await expect(page.locator('[data-testid="knowledge-graph-canvas"]')).toBeVisible();
-      const readsBefore = await page.evaluate(
-        () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
-      );
-      await page.evaluate(() => {
-        const api = (window as unknown as { electronAPI: { knowledgeGraph: { graphSnapshot: () => Promise<unknown> } } }).electronAPI;
-        const previous = api.knowledgeGraph.graphSnapshot.bind(api.knowledgeGraph);
-        api.knowledgeGraph.graphSnapshot = async () => {
-          const snapshot = await previous() as { stale: boolean } | null;
-          return snapshot ? { ...snapshot, stale: true } : snapshot;
-        };
-        (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1');
-      });
-      await expect
-        .poll(async () => page.evaluate(
-          () => (window as unknown as { __mockGraphSnapshotCalls?: unknown[] }).__mockGraphSnapshotCalls?.length ?? 0,
-        ))
-        .toBeGreaterThan(readsBefore);
-      const refreshes = await page.evaluate(
-        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
-      );
-      expect(refreshes).toBe(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('a push that finds a requested rebuild still stale asks for the next one', async () => {
-    // A pass that finishes while the index kept growing leaves the map stale
-    // again, and the map fills in pass by pass, as on a first build.
-    const { browser, page } = await launchWithState(snapshotScript({ projection: projectionLiteral(10), stale: true }));
-    try {
-      await openKnowledgeGraph(page);
-      const refreshCount = () => page.evaluate(
-        () => (window as unknown as { __mockRefreshGraphCalls?: unknown[] }).__mockRefreshGraphCalls?.length ?? 0,
-      );
-      await expect.poll(refreshCount).toBe(1);
-      await page.evaluate(() => (window as unknown as { __mockFireGraphChanged: (id: string) => void }).__mockFireGraphChanged('project-1'));
-      await expect.poll(refreshCount).toBe(2);
     } finally {
       await browser.close();
     }

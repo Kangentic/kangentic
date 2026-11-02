@@ -85,48 +85,13 @@ function fireConversationExpired(page: Page, notice: {
 }
 
 test.describe('task:conversationExpired push', () => {
-  test('shows one sentence naming the task and when its old conversation last ran', async () => {
-    const { browser, page } = await launch();
-    try {
-      await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID,
-        taskTitle: 'Fix login redirect',
-        lastActiveAt: '2026-08-16T14:00:00.000Z',
-      });
-
-      const toast = page.locator('[data-testid="toast"]').filter({ hasText: 'Fix login redirect' });
-      await expect(toast).toBeVisible({ timeout: 5000 });
-      await expect(toast.getByTestId('toast-title')).toHaveText('New conversation');
-      // The date is formatted for the runner's locale and zone, so only the
-      // fixed parts of the sentence are pinned.
-      const body = toast.getByTestId('toast-body');
-      await expect(body).toContainText('"Fix login redirect" started fresh because its conversation from ');
-      await expect(body).toContainText(' expired.');
-      await expect(toast).not.toContainText('pending message');
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('stays silent for a background project', async () => {
-    const { browser, page } = await launch();
-    try {
-      await fireConversationExpired(page, {
-        projectId: OTHER_PROJECT_ID, taskTitle: 'Background Task', lastActiveAt: null,
-      });
-      // Both pushes cross the same channel in order, so once the second has
-      // rendered the first has definitively been handled and held.
-      await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'Foreground Task', lastActiveAt: null,
-      });
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Foreground Task' }))
-        .toBeVisible({ timeout: 5000 });
-      expect(await toastCountRightNow(page, 'Background Task')).toBe(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
+  // Trimmed (test-suite audit): the sentence and its date are asserted in
+  // tests/unit/conversation-expired-copy.test.ts and the toast shape in
+  // tests/unit/conversation-expired-toast.test.ts; "several held notices, one
+  // toast each" is conversation-expired-toast.test.ts "toasts each of several
+  // notices on its own"; "not shown again" is the queue's take-once in
+  // tests/unit/notify-conversation-expired.test.ts; "stays silent for a
+  // background project" is the first half of the held-notice test below.
   test('shows a held notice once its project becomes current', async () => {
     const { browser, page } = await launch();
     try {
@@ -146,55 +111,6 @@ test.describe('task:conversationExpired push', () => {
 
       await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'Held Task' }))
         .toBeVisible({ timeout: 5000 });
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('does not show a notice again when its project becomes current again', async () => {
-    const { browser, page } = await launch();
-    try {
-      await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'Shown Once Task', lastActiveAt: null,
-      });
-      const shownOnce = page.locator('[data-testid="toast"]').filter({ hasText: 'Shown Once Task' });
-      await expect(shownOnce).toBeVisible({ timeout: 5000 });
-
-      await openProjectProgrammatically(page, OTHER_PROJECT_ID);
-      await openProjectProgrammatically(page, CURRENT_PROJECT_ID);
-      // A take that would repeat the first notice runs no later than this
-      // one's, so once this toast is up a repeat would be too.
-      await fireConversationExpired(page, {
-        projectId: CURRENT_PROJECT_ID, taskTitle: 'After Return Task', lastActiveAt: null,
-      });
-      await expect(page.locator('[data-testid="toast"]').filter({ hasText: 'After Return Task' }))
-        .toBeVisible({ timeout: 5000 });
-
-      await expect(shownOnce).toHaveCount(1);
-    } finally {
-      await browser.close();
-    }
-  });
-
-  test('shows several held notices as one toast each, with no summary', async () => {
-    const { browser, page } = await launch();
-    try {
-      const taskTitles = ['First Held', 'Second Held', 'Third Held'];
-      for (const taskTitle of taskTitles) {
-        await fireConversationExpired(page, {
-          projectId: OTHER_PROJECT_ID, taskTitle, lastActiveAt: null,
-        });
-      }
-
-      await openProjectProgrammatically(page, OTHER_PROJECT_ID);
-
-      for (const taskTitle of taskTitles) {
-        await expect(page.locator('[data-testid="toast"]').filter({ hasText: taskTitle }))
-          .toHaveCount(1, { timeout: 5000 });
-      }
-      await expect(page.locator('[data-testid="toast"]')).toHaveCount(3);
-      // No summary card: all three are the per-task toast.
-      await expect(page.getByTestId('toast-title')).toHaveText(['New conversation', 'New conversation', 'New conversation']);
     } finally {
       await browser.close();
     }

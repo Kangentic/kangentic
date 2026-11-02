@@ -70,9 +70,10 @@ function projectRootForWorktree(resolvedPath: string): string | null {
  * project accumulates one dead `[projects.'...']` table per task, forever.
  * (One developer machine had 473 such entries before this existed.)
  *
- * Only a table whose sole key is `trust_level` is removed: anything else in
- * there was put there by the user or a future Codex, and is left alone even
- * though the directory is gone.
+ * Only the table `ensureWorktreeTrust` writes is removed, a sole
+ * `trust_level = "trusted"`. A deliberate `"untrusted"` stays, and so does anything
+ * else in there: the user or a future Codex put it there, and it is left alone
+ * even though the directory is gone.
  *
  * For a Codex in a WSL distro (`place`), the table is the one
  * `ensureWorktreeTrust` wrote in the distro's config.toml, keyed by the
@@ -116,8 +117,8 @@ function removeWorktreeTrustSync(worktreePath: string, place: CliPlace | null): 
     }
 
     const meaningful = body.filter((line) => line.trim().length > 0);
-    const trustOnly = meaningful.length === 1 && /^\s*trust_level\s*=/.test(meaningful[0]);
-    if (!trustOnly) {
+    const ourTable = meaningful.length === 1 && /^\s*trust_level\s*=\s*"trusted"\s*(#.*)?$/.test(meaningful[0]);
+    if (!ourTable) {
       kept.push(lines[index], ...body);
     } else {
       removed = true;

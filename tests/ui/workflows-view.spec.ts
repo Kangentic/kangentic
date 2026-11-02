@@ -61,7 +61,7 @@ const MISSING_PROJECT_ID = 'workflows-view-missing';
  * `many-drafts`: twelve unstarted workflows and none running, so the count on the
  * Workflows segment runs to two digits.
  */
-type Seed = 'none' | 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards' | 'all-done' | 'two-running' | 'many-drafts';
+type Seed = 'running' | 'draft' | 'empty-draft' | 'one-task-draft' | 'two' | 'paused' | 'across-boards' | 'all-done' | 'two-running' | 'many-drafts';
 
 /** What a test adds to a seed beyond its workflows; each is off unless asked for. */
 interface SeedExtras {
@@ -100,9 +100,7 @@ function seedScript(seed: Seed, sidebarWidth: number, iconlessColumn: string | n
     workflow: { ...draft.workflow, id: `wf-draft-${index + 1}`, title: `Theme tokens ${index + 1}` },
   }));
   const hasRunning = seed === 'running' || seed === 'two' || seed === 'paused' || seed === 'across-boards' || seed === 'all-done' || seed === 'two-running';
-  const workflows = seed === 'none'
-    ? []
-    : seed === 'many-drafts'
+  const workflows = seed === 'many-drafts'
     ? manyDrafts
     : seed === 'two-running'
     ? [running, secondRunning]
@@ -250,18 +248,6 @@ test.describe('Workflows header', () => {
     }
   });
 
-  test('a workflow not started yet shows the count on the Workflows segment, and no mark', async () => {
-    const { browser, page } = await launch('draft');
-    try {
-      await expect(byTestId(page, 'workflow-start')).toBeVisible();
-      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
-      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveText('1');
-      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows, 1 workflow');
-    } finally {
-      await browser.close();
-    }
-  });
-
   test('the count covers every unfinished workflow, and the mark shows while any one runs', async () => {
     const { browser, page } = await launch('two');
     try {
@@ -355,21 +341,10 @@ test.describe('Workflows header', () => {
     }
   });
 
-  test('a project with no workflows puts neither a count nor a mark on the Workflows segment', async () => {
-    const { browser, page } = await launch('none');
-    try {
-      // The empty view also paints before the list loads, so wait for the list itself:
-      // otherwise "no pill" would hold for a list that never arrived.
-      await expect.poll(() => page.evaluate(() => (window as unknown as {
-        __zustandStores: { workflow: { getState: () => { projectId: string | null } } };
-      }).__zustandStores.workflow.getState().projectId)).toBe(PROJECT_ID);
-      await expect(byTestId(page, 'view-toggle-workflows-count')).toHaveCount(0);
-      await expect(byTestId(page, 'view-toggle-workflows-running')).toHaveCount(0);
-      await expect(byTestId(page, 'view-toggle-workflows')).toHaveAttribute('aria-label', 'Workflows');
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): "a project with no workflows puts neither a count
+  // nor a mark" moved into workflows-canvas.spec.ts 'a project with no workflows
+  // shows the empty state'; "a workflow not started yet shows the count and no
+  // mark" is asserted by workflows-canvas.spec.ts 'draws a workflow's cards'.
 
   test('a running workflow shows Running, its progress, and pauses and resumes in place', async () => {
     const { browser, page } = await launch('running');
@@ -1472,27 +1447,9 @@ test.describe('Workflows across boards', () => {
 });
 
 test.describe('Workflows canvas tools and search', () => {
-  test('Add task opens New Task with the board form\'s project, base branch and run rows, and the card lands selected', async () => {
-    const { browser, page } = await launch('draft');
-    try {
-      await byTestId(page, 'workflow-add-task').click();
-      const dialog = byTestId(page, 'new-task-dialog');
-      await expect(dialog).toBeVisible();
-      // The board's own rows (sign-offs 9 and 25), less the branch name and
-      // attachments, which a task gets once Start creates it.
-      await expect(dialog.locator('input[data-testid="workflow-task-project"]')).toHaveValue('kangentic');
-      await expect(dialog.locator('[data-testid="task-branch-row"]')).toBeVisible();
-      await expect(dialog.locator('[data-testid="task-run-mode"]')).toBeVisible();
-      await expect(dialog.locator('[data-testid="custom-branch-name-input"]')).toHaveCount(0);
-      await dialog.getByPlaceholder('Task title').fill('Token contrast check');
-      await dialog.getByRole('button', { name: 'Create' }).click();
-      await expect(dialog).toHaveCount(0);
-      await expect(page.locator('[data-testid="workflow-canvas-card"]')).toHaveCount(4);
-      await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toContainText('Token contrast check');
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): "Add task opens New Task with the board form's
+  // rows, and the card lands selected" moved into
+  // workflow-planned-task-form.spec.ts 'Add task shows the same rows...'.
 
   test('a planned task opens in the task form, and Save writes into the workflow', async () => {
     const { browser, page } = await launch('draft');

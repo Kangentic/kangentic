@@ -178,10 +178,9 @@ describe('reloadScrollback re-issues a width mismatch with a real resize', () =>
   // A source scan, not a behavioral test, because there is no algorithm left to
   // exercise here: `resolveReplayWidthAction` (the decision) is covered
   // exhaustively above, and everything past the decision is a single call
-  // site's argument literal, not logic - a mirror re-implementation (the
-  // pattern tests/unit/use-terminal-scrollback.test.ts uses for the rest of
-  // reloadScrollback's orchestration) would just be a second copy of that
-  // literal, which stays green even if the real one regresses.
+  // site's argument literal, not logic - a mirror re-implementation would just
+  // be a second copy of that literal, which stays green even if the real one
+  // regresses.
   //
   // Of the three wiring facts this call site carries, only one has a divergent
   // failure mode worth pinning: a `skipResize: true` reissue sends no SIGWINCH,
