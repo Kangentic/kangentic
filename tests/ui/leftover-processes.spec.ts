@@ -123,6 +123,22 @@ test.describe('Leftover processes', () => {
     }
   });
 
+  test('a tree only this task uses, part of which runs elsewhere, says so and names no other work', async () => {
+    const { browser, page } = await launchPage();
+    try {
+      await fireReport(page, {
+        id: 'report-outside',
+        stoppingEnabled: true,
+        processes: [leftover('kept-dcp', { pid: 6796, label: 'dcp', outcome: 'kept', reason: 'outside' })],
+      });
+      await openReview(page, '1 process from "Fix login" is still running.');
+      await expect(row(page, 'dcp')).toContainText('Part of it runs outside this task\'s folders. Stopping it stops that too.');
+      await expect(row(page, 'dcp')).not.toContainText('Other work uses it too.');
+    } finally {
+      await browser.close();
+    }
+  });
+
   test('Stop stops one row in place, by its report id', async () => {
     const { browser, page } = await launchPage();
     try {

@@ -1359,6 +1359,10 @@ msgstr "任意"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "他の作業でも使用されています。停止するとその作業に影響する可能性があります。"
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"

@@ -1094,6 +1094,10 @@ msgstr "Optional"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Other work uses it too. Stopping it can break that work."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr "Part of it runs outside this task's folders. Stopping it stops that too."
+
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Paste or drop files here"
 msgstr "Paste or drop files here"

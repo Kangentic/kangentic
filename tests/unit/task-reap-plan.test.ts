@@ -14,6 +14,7 @@ import {
   planReap,
   planReapDetailed,
   subtreeOf,
+  type ReapPlanInput,
   type ReapTaskScope,
 } from '../../src/main/pty/process-tag/reap-plan';
 import type { LocalConnectionRead, ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
@@ -631,7 +632,8 @@ describe('planReapDetailed: what each kept process rests on, for the log', () =>
     const exitedDevServer = scanned(2002, 2001, { tag: null, environmentUnreadable: true, workingDirectory: null, startedAtMs: 200 });
     const trashDeleter = scanned(2003, 2002, { tag: TASK, workingDirectory: '/tmp', startedAtMs: 300 });
 
-    expect(becauseOf(detailed([main, tabShell, exitedDevServer, trashDeleter]))).toEqual([[2001, 'shared', 'descendant', 2003]]);
+    // The deleter is the task's own process in the temp folder: nothing here shows other work.
+    expect(becauseOf(detailed([main, tabShell, exitedDevServer, trashDeleter]))).toEqual([[2001, 'outside', 'descendant', 2003]]);
     // Without the deleter (a stop that says the worktree is being removed), the
     // exited dev.js is no evidence and the shell is the task's to stop.
     const withoutDeleter = detailed([main, tabShell, exitedDevServer]);
@@ -1047,4 +1049,194 @@ describe('connectionQueryOf', () => {
     // The held PTY's tree is another session's work, so it is evidence, and the windows (the task's own) are not.
     expect(pidsOf(query.clients)).toEqual([2001, 3000, 3001]);
   });
+});
+
+describe('planReapDetailed: a .NET Aspire stack only this task uses', () => {
+  // A real stack, measured with the real reader and planner. Its paths are
+  // placeholders. That run recorded no parents, so the links follow what a
+  // runner measured on a smaller stack (tests/unit/aspire-host-death.test.ts):
+  // the CLI above the AppHost; the DCP root, whose parent is the launcher that
+  // exited after `--detach`; the controller under the root; and under it each
+  // resource and its `dcp monitor-process`, with `docker events` watchers.
+  const STACK_PROJECT = 'C:\\Users\\dev\\project';
+  const STACK_WORKTREE = `${STACK_PROJECT}\\.kangentic\\worktrees\\1`;
+  const app = (name: string) => `${STACK_WORKTREE}\\apps\\${name}\\`;
+  const APP_HOST = app('apphost');
+  const WINDOWS = 'C:\\Windows\\';
+  const DASHBOARD_FOLDER = 'C:\\Users\\dev\\.nuget\\packages\\aspire.cli.win-x64\\13.6.1\\tools\\net10.0\\win-x64\\dashboard\\';
+  const GONE_CLI_PARENT = 61001;
+  const GONE_DCP_LAUNCHER = 61002;
+
+  const CLI = 38780;
+  const CONSOLE_OF_CLI = 50000;
+  const APP_HOST_PID = 69916;
+  const CONSOLE_OF_APP_HOST = 15684;
+  const DCP_ROOT = 43952;
+  const DCP_CONTROLLER = 82004;
+  const DASHBOARD = 71340;
+  const API = 54224;
+  const WORKER = 85344;
+
+  const ROWS: Array<[pid: number, ppid: number, directory: string]> = [
+    [CLI, GONE_CLI_PARENT, `${STACK_WORKTREE}\\`],
+    [CONSOLE_OF_CLI, CLI, WINDOWS],
+    [APP_HOST_PID, CLI, APP_HOST],
+    [CONSOLE_OF_APP_HOST, APP_HOST_PID, WINDOWS],
+    [DCP_ROOT, GONE_DCP_LAUNCHER, APP_HOST],
+    [78128, DCP_ROOT, WINDOWS],
+    [DCP_CONTROLLER, DCP_ROOT, APP_HOST],
+    [82592, DCP_CONTROLLER, WINDOWS],
+    [73184, DCP_CONTROLLER, APP_HOST],
+    [40664, DCP_CONTROLLER, APP_HOST],
+    [42488, DCP_CONTROLLER, APP_HOST],
+    [78048, DCP_CONTROLLER, app('marketing')],
+    [60084, DCP_CONTROLLER, APP_HOST],
+    [DASHBOARD, DCP_CONTROLLER, DASHBOARD_FOLDER],
+    [68024, DASHBOARD, WINDOWS],
+    [69892, DCP_CONTROLLER, APP_HOST],
+    [63648, DCP_CONTROLLER, APP_HOST],
+    [49704, 78048, WINDOWS],
+    [972, 78048, app('marketing')],
+    [81456, 972, app('marketing')],
+    [72160, 81456, app('marketing')],
+    [80364, DCP_CONTROLLER, APP_HOST],
+    [58512, DCP_CONTROLLER, APP_HOST],
+    [50852, DCP_CONTROLLER, APP_HOST],
+    [71564, DCP_CONTROLLER, APP_HOST],
+    [86296, DCP_CONTROLLER, app('api')],
+    [72244, 86296, WINDOWS],
+    [37492, DCP_CONTROLLER, APP_HOST],
+    [API, 86296, app('api')],
+    [14256, DCP_CONTROLLER, app('dashboard')],
+    [29672, DCP_CONTROLLER, app('careers')],
+    [72376, DCP_CONTROLLER, app('worker')],
+    [49996, 14256, WINDOWS],
+    [32120, 29672, WINDOWS],
+    [36372, 72376, WINDOWS],
+    [83864, DCP_CONTROLLER, APP_HOST],
+    [51024, DCP_CONTROLLER, APP_HOST],
+    [46616, DCP_CONTROLLER, APP_HOST],
+    [76236, 14256, app('dashboard')],
+    [81280, 29672, app('careers')],
+    [78344, 76236, app('dashboard')],
+    [40796, 81280, app('careers')],
+    [40016, 78344, app('dashboard')],
+    [66012, 40796, app('careers')],
+    [WORKER, 72376, app('worker')],
+  ];
+
+  const stack: ScannedProcess[] = ROWS.map(([pid, ppid, directory], order) => scanned(pid, ppid, {
+    tag: TASK,
+    workingDirectory: directory,
+    startedAtMs: 1000 + order * 10,
+    ...(directory === WINDOWS ? { role: 'console-host' as const } : {}),
+  }));
+
+  /** Every connection the real stack held, all among its own processes, and its listeners. */
+  const IDLE_PAIRS: Array<[listenerPid: number, clientPid: number]> = [
+    [DCP_ROOT, DCP_CONTROLLER],
+    [DCP_ROOT, APP_HOST_PID],
+    [DCP_CONTROLLER, API],
+    [DASHBOARD, DCP_CONTROLLER],
+    [API, DCP_CONTROLLER],
+    [DCP_CONTROLLER, APP_HOST_PID],
+    [DCP_CONTROLLER, WORKER],
+  ];
+  const LISTENERS = [DASHBOARD, API, APP_HOST_PID, DCP_ROOT, DCP_CONTROLLER, 40016, 72160, 66012];
+  /** Measured on a runner: an open dashboard page makes the dashboard a client of the AppHost. */
+  const DASHBOARD_OPEN_PAIR: [number, number] = [APP_HOST_PID, DASHBOARD];
+
+  function planStack(
+    pairs: Array<[number, number]>,
+    extra: ScannedProcess[] = [],
+    earlier: Pick<ReapPlanInput, 'keepIdentities' | 'keptOutsideIdentities' | 'signalledIdentities'> = {},
+  ) {
+    return planReapDetailed({
+      processes: [main, ...stack, ...extra],
+      tasks: tasks([[TASK, { directories: [STACK_PROJECT], worktreePath: STACK_WORKTREE }]]),
+      mainPid: MAIN_PID,
+      liveRootPids: [],
+      caseInsensitivePaths: true,
+      connections: connected(pairs, LISTENERS),
+      ...earlier,
+    });
+  }
+  const keptRows = (plan: ReturnType<typeof planStack>) => plan.kept.map((kept) => [kept.process.pid, kept.reason, kept.because.basis, kept.because.evidencePid]);
+
+  it('has the measured shape: 45 processes, 34 inside the project', () => {
+    expect(stack).toHaveLength(45);
+    expect(stack.filter((process) => process.workingDirectory?.startsWith(STACK_PROJECT))).toHaveLength(34);
+  });
+
+  it('stops the CLI and the AppHost, and reports the DCP root as running outside the task, never as shared', () => {
+    const plan = planStack(IDLE_PAIRS);
+    expect(targetPidsOf(plan)).toEqual([CLI, APP_HOST_PID].sort((left, right) => left - right));
+    expect(plan.roots.map((root) => root.process.pid)).toEqual([CLI]);
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'outside', 'descendant', DASHBOARD]]);
+    expect(plan.keptIdentities.size).toBe(41);
+    expect(plan.keptOutsideIdentities).toEqual(plan.keptIdentities);
+  });
+
+  it('leaves the rest of the stack to DCP: nothing it spares is a target, the dashboard included', () => {
+    const targets = targetPidsOf(planStack(IDLE_PAIRS));
+    for (const pid of [DCP_ROOT, DCP_CONTROLLER, DASHBOARD, API, WORKER]) expect(targets).not.toContain(pid);
+  });
+
+  it('still stops the AppHost with the dashboard open: a process of the task\'s own spared tree is no client', () => {
+    const plan = planStack([DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS]);
+    expect(targetPidsOf(plan)).toEqual([CLI, APP_HOST_PID].sort((left, right) => left - right));
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'outside', 'descendant', DASHBOARD]]);
+  });
+
+  it('keeps the whole stack when another task is connected to the dashboard, whichever pair is read first', () => {
+    const otherTaskClient = scanned(3001, 1, { tag: OTHER_TASK, workingDirectory: OTHER_PROJECT });
+    for (const pairs of [
+      [DASHBOARD_OPEN_PAIR, [DASHBOARD, 3001] as [number, number], ...IDLE_PAIRS],
+      [[DASHBOARD, 3001] as [number, number], DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS],
+    ]) {
+      const plan = planStack(pairs, [otherTaskClient]);
+      expect(targetPidsOf(plan)).toEqual([]);
+      expect(plan.keptOutsideIdentities.size).toBe(0);
+      // The root rests on the client, and the CLI and AppHost go with their kept tree.
+      expect(keptRows(plan)).toContainEqual([DCP_ROOT, 'shared', 'connection', 3001]);
+      expect(keptRows(plan)).toContainEqual([CLI, 'shared', 'children', null]);
+    }
+  });
+
+  it.each([
+    ['an untagged process', { tag: null }],
+    ['another task\'s process', { tag: OTHER_TASK }],
+    ['a cleared-tag process', { tag: '' }],
+    ['an untagged process elsewhere', { tag: null, workingDirectory: 'C:\\elsewhere\\' }],
+    ['an unreadable process elsewhere', { tag: null, environmentUnreadable: true, workingDirectory: 'C:\\elsewhere\\' }],
+  ])('reads as shared with %s under DCP, though the walk reaches the dashboard first', (_name, options) => {
+    const visitor = scanned(90001, DCP_CONTROLLER, { workingDirectory: APP_HOST, startedAtMs: 9000, ...options });
+    const plan = planStack(IDLE_PAIRS, [visitor]);
+    expect(keptRows(plan)).toEqual([[DCP_ROOT, 'shared', 'descendant', 90001]]);
+    expect(plan.keptOutsideIdentities.size).toBe(0);
+    expect(targetPidsOf(plan)).toEqual([CLI, APP_HOST_PID].sort((left, right) => left - right));
+  });
+
+  it('never lets a dashboard kept by the first pass save an AppHost that outlived its signal from the force pass', () => {
+    const pairs = [DASHBOARD_OPEN_PAIR, ...IDLE_PAIRS];
+    const first = planStack(pairs);
+    const signalledIdentities = new Set(first.targets.map((target) => `${target.pid}:${target.startKey}`));
+    const second = planStack(pairs, [], { keepIdentities: first.keptIdentities, keptOutsideIdentities: first.keptOutsideIdentities, signalledIdentities });
+    expect(targetPidsOf(second)).toEqual([CLI, APP_HOST_PID].sort((left, right) => left - right));
+    // Read as plain kept identities, the same scan would spare it: what the field is for.
+    expect(targetPidsOf(planStack(pairs, [], { keepIdentities: first.keptIdentities, signalledIdentities }))).not.toContain(APP_HOST_PID);
+  });
+
+  it('keeps a macOS withheld root shared: with no tag to compare, nothing says the descendant is the task\'s own', () => {
+    const plan = detailedWithheld();
+    expect(plan.kept.map((kept) => [kept.process.pid, kept.reason])).toEqual([[2001, 'shared']]);
+  });
+
+  function detailedWithheld() {
+    return withConnections([
+      main,
+      scanned(2001, 1, { environmentWithheld: true }),
+      scanned(2002, 2001, { tag: TASK, workingDirectory: '/srv' }),
+    ], connected([], []));
+  }
 });

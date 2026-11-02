@@ -1359,6 +1359,10 @@ msgstr "선택 사항"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "다른 작업에서도 사용 중입니다. 중지하면 해당 작업이 중단될 수 있습니다."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"

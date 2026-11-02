@@ -4130,12 +4130,13 @@ export interface MonitorView {
 
 /**
  * Why a task's own process was left running when the task ended: it has an
- * open window, it is a tmux server, or other work uses it too (something under
- * it is not the task's, or other Kangentic work is connected to it). A launcher
- * kept because every child is kept takes its children's reason. See
+ * open window, it is a tmux server, other work uses it too (something under it
+ * is not the task's, or other Kangentic work is connected to it), or part of it
+ * runs outside the task's folders with nothing showing other work uses it. A
+ * launcher kept because every child is kept takes its children's reason. See
  * `src/main/pty/process-tag/reap-plan.ts`.
  */
-export type LeftoverKeptReason = 'window' | 'multiplexer' | 'shared';
+export type LeftoverKeptReason = 'window' | 'multiplexer' | 'shared' | 'outside';
 
 /** One process a task left running, as the toast and the list show it. */
 export interface LeftoverProcess {

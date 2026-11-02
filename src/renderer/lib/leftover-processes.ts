@@ -262,6 +262,7 @@ export function rowDetailOf(entry: LeftoverProcess, state: LeftoverRowState): { 
   if (entry.reason === 'window') return { text: i18n._(msg`Has an open window.`), failure: false };
   if (entry.reason === 'multiplexer') return { text: i18n._(msg`A tmux server. Stopping it ends all your tmux sessions.`), failure: false };
   if (entry.reason === 'shared') return { text: i18n._(msg`Other work uses it too. Stopping it can break that work.`), failure: false };
+  if (entry.reason === 'outside') return { text: i18n._(msg`Part of it runs outside this task's folders. Stopping it stops that too.`), failure: false };
   return { text: inWorktree ? i18n._(msg`Runs in the worktree.`) : i18n._(msg`Runs in the project folder.`), failure: false };
 }
 

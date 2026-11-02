@@ -168,7 +168,9 @@ function keptWhyOf(reason: KeptReason, because: KeptExplanation | null): string 
   if (!because) return reason;
   switch (because.basis) {
     case 'descendant':
-      return `shared, by descendant ${evidenceOf(because)}, which works outside the task's directories or does not carry its tag`;
+      return reason === 'outside'
+        ? `its descendant ${evidenceOf(because)} carries the task's tag and works outside the task's directories`
+        : `shared, by descendant ${evidenceOf(because)}, which works outside the task's directories or does not carry its tag`;
     case 'connection':
       return `shared, by a connection from ${evidenceOf(because)}`;
     case 'children':
@@ -549,6 +551,7 @@ export async function reapTaggedOnce(
     const secondPlan = await planWithConnections(deps.reader, {
       ...planInput(secondScan.processes),
       keepIdentities: firstPlan.keptIdentities,
+      keptOutsideIdentities: firstPlan.keptOutsideIdentities,
       signalledIdentities: new Set(firstPlan.targets.map(processIdentity)),
     });
     for (const pid of await killAll(deps.reader, secondPlan.targets, 'force')) killed.add(pid);
