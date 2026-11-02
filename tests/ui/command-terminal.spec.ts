@@ -2156,6 +2156,7 @@ test.describe('Command Terminal', () => {
         // The press is answered: the toggle says the panel is on its way.
         await expect(page.getByTestId('quick-session-opening')).toBeVisible({ timeout: 5000 });
         await expect(page.getByTestId('quick-session-button')).toHaveAttribute('aria-busy', 'true');
+        await expect(page.getByTestId('quick-session-button')).toHaveAccessibleDescription('Resuming terminals...');
 
         await injectRunningTerminal(page, { id: 'restored-1', projectId: RESTORE_PROJECT_ID, slot: 'slot-1' });
         await page.evaluate(() => (window as unknown as { __releaseRestore: () => void }).__releaseRestore());
@@ -2440,6 +2441,64 @@ test.describe('Command Terminal', () => {
         await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
         await expect(page.getByTestId('quick-session-opening')).toHaveCount(0);
         expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a detached window opening while an open waits on the restore drops the open, and the answer shows no panel', async () => {
+      const { browser, page } = await launchWithState(heldTwoProjectPreConfig());
+      try {
+        await pressAndWaitForOpening(page);
+
+        await page.evaluate((windowKey) => (window as unknown as {
+          __mockFirePopOutChanged: (keys: string[]) => void;
+        }).__mockFirePopOutChanged([windowKey]), `command-terminal:${PROJECT_A_ID}`);
+        await releaseRestore(page);
+        await settleFrames(page, 20);
+
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        expect(await commandBarVisible(page)).toBe(false);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0);
+        expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // A restart's reopen paints flat. If the open it armed is dropped before the
+    // panel mounts, nothing clears that, so the NEXT open (a user's) would paint
+    // flat too unless the drop clears it (useCommandBar's dropWaitingOpen).
+    test('a reopen dropped before the panel mounts leaves the next open to fade in', async () => {
+      const { browser, page } = await launchWithState(`${restartRestorePreConfig({
+        reopen: true,
+        sessions: [{ id: 'restored-1', slot: 'slot-1', status: 'running' }],
+      })}
+        (function () {
+          var waitCalls = 0;
+          // 1st: the reopen's own wait. 2nd: the open it arms, held so a hide can drop it.
+          // Later ones (the user's press) answer at once. In the main window only those two
+          // callers ask (the detached window's root is its own page), and the reopen awaits
+          // its wait before it arms the open, so the order cannot shift.
+          window.electronAPI.sessions.waitForCommandTerminalRestore = function () {
+            waitCalls += 1;
+            return waitCalls === 2 ? new Promise(function () {}) : Promise.resolve();
+          };
+        })();
+      `);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        // The armed open is the one waiting: the toggle says so, and no panel mounted.
+        await expect(page.getByTestId('quick-session-opening')).toBeVisible({ timeout: 8000 });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+
+        await hideRequestedByStore(page);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0, { timeout: 3000 });
+
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect(page.getByTestId('command-window-backdrop')).toHaveClass(/overlay-backdrop-in/);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
       } finally {
         await browser.close();
       }
