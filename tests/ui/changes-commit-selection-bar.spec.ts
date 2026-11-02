@@ -13,8 +13,10 @@ import { chromium, type Browser, type Locator, type Page } from '@playwright/tes
 import path from 'node:path';
 import { waitForViteReady, gotoVite } from './helpers';
 
-// Each test launches its own browser, so the file fans out across UI workers safely.
-test.describe.configure({ mode: 'parallel' });
+// Each test launches its own browser, so the file fans out across UI workers safely. Each also opens
+// the Changes panel, whose Monaco load a shard's first run transforms cold, and the first test of a
+// shard ran out of the UI project's 15s with no step pending.
+test.describe.configure({ mode: 'parallel', timeout: 30_000 });
 
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;

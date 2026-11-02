@@ -123,7 +123,7 @@ describe('the shared glyph atlas is cleared only where every terminal re-renders
     // left a held terminal's own size untouched, garbling every sibling
     // conformed to the same size.
     expect(hookSource).toContain('const applied = conformedFontRef.current ?? fontSize;');
-    expect(hookSource).toContain('previousFont.size !== applied');
+    expect(hookSource).toContain('terminalFontMoved(previousFont, fontFamily, applied)');
     expect(hookSource).toContain('lastAppliedFontRef.current = { family: fontFamily, size: applied };');
   });
 });
