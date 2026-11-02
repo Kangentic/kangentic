@@ -1,7 +1,7 @@
 ---
 type: Audit
 title: SSH remote agents, Phase 0 audit
-description: "Phase 0 measurements for running agent CLIs on a Linux host over SSH (2026-11-02): a helper daemon's PTYs survive every drop except KillUserProcesses=yes, a read mirror serves status in 60 ms but must never prove a file absent, and System32 ssh.exe lost bytes mid-stream, so every frame carries a CRC."
+description: "Phase 0 measurements for running agent CLIs on a Linux host over SSH (2026-11-02): a helper daemon's PTYs survive every drop except KillUserProcesses=yes, a read mirror serves status in 60 ms but must never prove a file absent, and System32 ssh.exe lost bytes mid-stream so every frame carries a CRC, and ssh2 is out."
 tags: [audit, ssh, remote, pty-host, mirror]
 sources:
   - resource: src/main/pty/host/pty-host-core.ts
@@ -25,22 +25,24 @@ The feature: a project whose repo and agent CLIs live on a Linux host, with this
 the UI. A helper on the host owns the PTYs, and Kangentic reaches it over SSH. Phase 0 measures the
 design before any product code exists, against throwaway sshd containers.
 
-**Verdict so far.** Two of five spikes are written up. `PtyHostCore` runs unchanged under plain Node
+**Verdict.** All five spikes have reported, the quit and flood spikes only in part. `PtyHostCore` runs unchanged under plain Node
 as a socket daemon, and its PTYs survive every way the connection can die on a default host. A local
 read mirror of the CLI's session folders passes its latency and sync bars, and passes the
-false-verdict bar only when the helper, never the mirror, proves a file absent. The result that
-changes the design most is not about either: Windows `ssh.exe` 9.5p2 lost bytes mid-stream, so
-every frame needs a CRC and a framing error must end the connection.
+false-verdict bar only when the helper, never the mirror, proves a file absent. System `ssh` stays:
+`ssh2` reads no ssh config and has no ProxyJump, certificate or FIDO support. Two results change the
+design most. Windows `ssh.exe` 9.5p2 lost bytes mid-stream, so every frame needs a CRC and a framing
+error must end the connection. And `BatchMode=yes` does not reach a jump hop, so a hop can prompt and
+hang forever unless the app also sets an askpass environment.
 
 | Spike | State |
 | --- | --- |
 | Helper daemon survival | Done, below |
 | Read mirror against remote reads | Done, below |
-| Sign-in matrix, `ssh` against `ssh2`, jump hops, multiplexing | Probe committed, results not written yet |
-| One stream under flood, with a byte-integrity check on every transport | Probe committed, results not written yet |
-| Quit delivery through a separate link process | Probe committed, results not written yet |
+| Sign-in matrix, `ssh` against `ssh2`, jump hops, multiplexing | Done, below |
+| One stream under flood, with a byte-integrity check on every transport | Partial, below. Latency measured, integrity not cleared |
+| Quit delivery through a separate link process | Partial, below. Some rows are small-n or not run |
 
-The last three sections of this file are added to this pull request as each spike reports.
+What each partial spike did not reach is listed at the end under "Still open after Phase 0".
 
 ## Rig and method
 
@@ -251,11 +253,186 @@ missing. Line 196 returns `expired` from a `cli_target` mismatch with no disk re
 9. Apply the host's mtime to each mirrored file, since `modifiedAt`, `scanProjectFolders` and Codex's
    capture read it. Read from code, not measured.
 
-## Added to this pull request as each spike reports
+## Sign-in, jump hops and multiplexing
 
-- The sign-in matrix: whether `BatchMode` reaches a jump hop, the connect-timeout tree kill, `ssh`
-  against `ssh2` on config aliases, ProxyJump, the Windows agent pipe, FIDO keys and certificate host
-  keys, and whether Win32-OpenSSH multiplexing works.
-- The flood comparison, `ssh.exe` stdio against `ssh2`, with a sequence number and a CRC on every
-  frame, which is also where the byte loss above is tested against terminal traffic.
-- Quit delivery: whether one suspend-all frame reaches the host through a separate utility process.
+Question: can the app make sure no ssh hop prompts or opens a window, is the `ssh2` library a
+replacement for system `ssh`, and can a running connection take more forwards?
+
+Method. Windows OpenSSH 9.5p2 and `ssh2` 1.17.0 against a target and a jump host on a private Docker
+network, with scratch keys and certificate authorities. Every config pins its own `known_hosts`,
+`IdentitiesOnly` and no agent, so no ssh child read the developer's `~/.ssh`.
+
+### BatchMode does not reach a jump hop
+
+`-J` builds the hop's command from `-F` and `-W` only, so the hop gets none of the parent's `-o`
+options, and a ProxyCommand child is the same. All 18 cells run with no treatment or with
+`-o BatchMode=yes` hung until killed at 8 s, for an unknown hop host key and for a hop key that
+needs a passphrase. With no hop, `BatchMode=yes` failed in 51 ms, so it works on the outer
+connection and is lost at the hop.
+
+| Treatment | Result |
+| --- | --- |
+| `SSH_ASKPASS` as a program that exits 1, with `SSH_ASKPASS_REQUIRE=force` | Fails in 176 to 396 ms on every transport, including a user's own ProxyCommand |
+| An app-built `-o ProxyCommand=ssh -o BatchMode=yes -W %h:%p <jump>` in place of `-J` | Fails in 77 to 195 ms |
+| A wrapper config that sets `BatchMode yes` and then includes the user's file | Fails in 74 to 214 ms for `-J` and ProxyJump, hangs for a user ProxyCommand, and depends on the included file's permissions |
+| `BatchMode=yes` plus `ConnectTimeout=5` | Fails at 5 s. A floor, since the hop was already stuck |
+
+The failure reads `Host key verification failed.` or `Permission denied (publickey).`, which is the raw
+error to show. Resolving a chain with `ssh -G` for the app-built form was not run, and a user's real
+config permissions for the wrapper were not tested.
+
+### A stuck hop opened a window only when detached
+
+A visible Windows Terminal tab appeared during this spike, and it was reproduced. It came from
+`detached: true`, which starts the outer ssh with no console, so the hop's ssh creates one and the
+default terminal shows it (the mechanism is inferred, the outcome is measured). From a windowless
+Electron utility process with `windowsHide: true` and no `detached`, a hung hop opened 0 windows in 4
+cases. A run without `windowsHide` opened none either, so the absence of `detached` is what matters.
+Pass both. A hidden ConPTY parent was not tested, and the relay uses piped stdio.
+
+### Timeout and tree kill
+
+`ConnectTimeout` ends a stuck connect at its limit (5.04 to 5.07 s with `Connection timed out during
+banner exchange`). After a natural timeout, or `taskkill /T /F` on the live root pid (480 to 583 ms),
+0 processes were left in 5 shapes. A plain `child.kill()` left 2 in 4 of 4 hop shapes, the hop's ssh
+and a `conhost`, and a later tree kill on the dead root did not find them.
+
+### ssh2 is out
+
+| Path | `ssh` 9.5p2 | `ssh2` 1.17.0 |
+| --- | --- | --- |
+| Host alias from an ssh config | Signs in | Fails. It reads no ssh config |
+| ProxyJump | `-J`, config and ProxyCommand all sign in | No such option. The app would chain two clients by hand and resolve the chain itself |
+| CA host keys | Signs in, and a wrong CA fails | Never offers a certificate host key algorithm |
+| User certificates | Signs in | Rejects a certificate as a key |
+| FIDO `sk-*` keys | Lists both types, no hardware to run | Parser supports rsa, dss, ecdsa and ed25519 only |
+| Windows agent pipe | Signs in | Supported in source, run only against a stand-in pipe |
+
+The real agent service was stopped and was not started, so that row is source review on the `ssh2`
+side. To keep what `ssh` does, the app would have to reimplement an ssh config parser, `known_hosts`
+handling with certificate authorities, ProxyCommand, certificate authentication and FIDO, which is a
+whole client. System `ssh` stays.
+
+### Multiplexing
+
+`ControlMaster` does not work on Win32-OpenSSH: every form fails with `getsockname failed: Not a
+socket`, and with no master `-O forward` cannot reach one. `~C` adds a forward to a running
+connection only when ssh runs on a PTY with `EnableEscapeCommandline=yes` (22 ms), and a PTY would
+corrupt a framed binary relay. The fallback is a separate `ssh -N -L` started on demand: spawn to
+first byte p50 131 ms direct, 464 ms through a jump host and 612 ms at 50 ms RTT, with 0 failures in
+60 runs.
+
+### What the design changes
+
+1. Every ssh start spawns with `windowsHide: true`, never `detached`, and piped stdin. It passes
+   `-o BatchMode=yes`, `ConnectTimeout`, `ServerAliveInterval` and `ForwardAgent=no`, and sets
+   `SSH_ASKPASS` to a program that exits 1 with `SSH_ASKPASS_REQUIRE=force`. The option alone leaves a
+   hop free to prompt invisibly and forever. The shipped askpass program is still to be chosen.
+2. The link keeps a tree kill keyed by the live root pid and a recorded list of child pids, never
+   `child.kill()` alone.
+3. `ssh2` is dropped, and the flood comparison no longer needs it as a candidate.
+4. Reserved ports ride a separate `ssh -N -L` or the helper's framed tunnel. `ControlMaster` is not
+   available.
+
+## Quit delivery through a separate link process
+
+Question: when the app quits, does one suspend-all frame reach the host through a separate Electron
+utility process, given that Electron tears utility processes down at quit?
+
+Method. A minimal Electron app on this repo's Electron (`scripts/probe-ssh-rig/quit-app/`). Main forks
+a utility process as the link, the link spawns `ssh.exe` to a stand-in host that timestamps and acks
+every frame, and on `before-quit` main posts the frame and runs a bounded drain on the link's pid. The
+run is partial: the full sequence was stopped from outside after the undelivered cases, so a few rows
+are small-n or not run, and each says so.
+
+| Bar | Result |
+| --- | --- |
+| Delivery with the link up, bar 99.9% | Pass. 200 of 200 at each of 0, 50 and 200 ms RTT and 1,000 of 1,000 at 50 ms, 3,000 of 3,000 pooled. A run of 200 cannot show 99.9%, since its bound is 98.5% |
+| Added quit time with nothing remote open, bar 5 ms | Pass. The handler costs 5.3 microseconds p50 and 63 microseconds at most, and no drain runs |
+| Undelivered, then a reconnect suspends within 10 s | Pass, modelled. 200 of 200, 361 ms p50 and 1.35 s at most after the network was restored. The reconnect is a second launch against the stand-in, with no real lease or reconcile |
+| A dead link's drain is bounded | Pass. The longest drain was 1.51 s and the longest whole quit 1.92 s, under the 6 s failsafe |
+
+- The drain earns its place only when the link is busy. With an idle link, 600 of 600 frames arrived
+  with no drain, so the failure was not reproduced there. With the link's loop held for 100 ms, 0 of
+  200 arrived without the drain and 200 of 200 with it.
+- `app.quit()`, a window close and `taskkill` without `/F` each ran `before-quit` and delivered 200 of
+  200. A real SIGTERM on Windows is `TerminateProcess` and ran nothing, so a killed app looks like a
+  dropped connection and the helper's own drop rule decides. A POSIX signal and a Windows session end
+  were not run.
+- With remote sessions open the drain adds about the round trip plus 158 ms (p50 160, 194 and 349 ms at
+  0, 50 and 200 ms RTT), 100 ms of it settle ticks.
+- Main saw the link's `exit` event 7 ms after a kill (n=6 and 8, not 200). A frame the link wrote just
+  before exiting arrived in 6 of 6 runs of each variant, which is indicative only and no reason to
+  shorten the ack wait.
+- In blackholed quits the original frame arrived late in 177 of 200 runs, up to 333 s after a
+  reconnect had already suspended the session.
+- Not run: how long an orphaned `ssh` lives in a blackhole, and 200-run crash and flush cases. The
+  netem here shapes only the host's replies, so the frame's own path to the host was never delayed.
+
+### What the design changes
+
+1. Keep the 1500 ms drain deadline and a 1300 ms link wait (the deadline less `HOST_EXIT_MARGIN_MS`). A
+   link that gives up at 1300 ms settles near 1437 ms, and one that waited longer hit the deadline in 2
+   of 200.
+2. The link's pid joins `report.pids` and `killedCount` like `hostPid`. A quit with only remote
+   sessions must count as a kill, or no drain runs.
+3. `suspendAll` carries the owner epoch, so a late frame cannot suspend a session a reconnect has
+   already taken over.
+
+## One stream under a terminal flood
+
+Question: can one SSH connection carry every terminal for a host, and what does it cost in echo
+latency?
+
+Method. A host program multiplexes logical sessions over framed stdio, each session either an echo or
+a flood, with per-session flow control modelled on `backpressure-controller.ts`. A client on this
+machine sends a keystroke frame every 100 ms for 60 s and records the echo latency. 82 runs of 60 s,
+one run per cell, over System32 `ssh.exe` 9.5p2 and `ssh2`, at 50 ms RTT unless noted. The bars are
+latency only.
+
+| Bar, echo p99 | `ssh` | `ssh2` |
+| --- | --- | --- |
+| Idle, limit 100 ms | 53.6 ms, pass | 52.3 ms, pass |
+| 4 floods at 20 Mbit/s, stock window (1 MiB per session, 256 KiB acks), limit 200 ms | 948 ms, fail | 937 ms, fail |
+| 4 floods at 100 Mbit/s, stock window | 190 ms, pass by 10 ms | 187 ms, pass |
+| 4 floods, 64 KiB window per session, 20 Mbit/s | 111 ms, pass | 109 ms, pass |
+| 4 floods, 64 KiB window per session, 100 Mbit/s | 57 ms, pass | 58 ms, pass |
+
+A 128 KiB window missed the bar at 20 Mbit/s (212 ms). The 64 KiB window costs nothing at 20 Mbit/s and
+about 8.8 Mbit/s per session at 100 Mbit/s, 35 Mbit/s in total against 95.
+
+- Reading ssh's stdio on a worker thread and posting each chunk to the framing thread made no
+  consistent latency difference and cost 1.6 to 2.1 times the client CPU.
+- `ssh2` tied on latency and used 24% of a core on the framing thread against 5% for `ssh`, so it
+  does not beat system `ssh` here either. The plain client used 5% of a core at 4 floods and
+  100 Mbit/s, plus 36% for `ssh.exe` itself.
+- Not run: main at most 1% busy (an Electron harness starts, and was only smoke tested), the 1% loss
+  runs, `ssh2` at 0 added RTT, repeats, and a second connection for bulk. The queue is the link's, so a
+  second connection cannot remove it, and the 64 KiB window passes the bar on one connection. The case
+  for a second connection is integrity only, which is the mirror spike's finding.
+
+**Integrity is not cleared.** The runs saw 0 framing errors and 0 lost keystrokes in 81 runs, about
+28 GB. Payload bytes were never compared, no CRC or sequence was verified, Git's `ssh.exe` was not run,
+and this traffic differs from the mirror's loss case, so none of it clears the byte loss. Every pass
+above is a latency pass.
+
+### What the design changes
+
+1. The ssh leg gets its own small credit window, 64 KiB per session, acked by the link process. The
+   renderer's 1 MiB and 256 KiB window fails the bar at 20 Mbit/s.
+2. Prefer one in-flight budget per connection to a rate cap per session. A cap is blind to the link and
+   leaves 84% of a fast one idle.
+3. Read ssh's stdio on the framing thread, with no worker hop.
+4. Stay on system `ssh`.
+5. Keep the magic, offset and CRC frames from the mirror spike. Terminal traffic is the case that still
+   has to be run with payload comparison before Phase 1 trusts it.
+
+## Still open after Phase 0
+
+- Whether terminal traffic can hit the byte loss. The first Phase 1 test streams terminal output with a
+  CRC and a sequence on every frame, over System32 `ssh.exe` and Git's `ssh.exe`, and compares payloads.
+- A newer Win32-OpenSSH build, which the mirror spike could not run.
+- Main's busy share under a flood, in the real Electron host.
+- The real Windows agent pipe and a FIDO key, which need a machine with the service and the hardware.
+- A real `exit` during a drop, a real denying polkit policy, and a POSIX signal or a Windows session
+  end at quit.

@@ -4,8 +4,9 @@
 
 **New audit:** `audits/ssh-remote-phase-0-audit.md`, the Phase 0 measurements for running agent CLIs
 on a Linux host over SSH, with the `scripts/probe-ssh-*` probes and `scripts/probe-ssh-rig/` behind
-its numbers. It covers two of five spikes so far, the helper daemon's survival and the read mirror,
-and names the three still to report.
+its numbers. It covers all five spikes: the helper daemon's survival, the read mirror, sign-in and
+jump hops (which rule out `ssh2`), quit delivery and one stream under a flood. The last two are
+partial, and the audit lists what they did not reach.
 
 ## 2026-10-31
 
