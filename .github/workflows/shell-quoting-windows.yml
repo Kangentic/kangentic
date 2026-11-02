@@ -13,8 +13,8 @@ name: Shell quoting against real Windows shells
 # long as it existed and never worked under cmd /d /s /c.
 #
 # Path-filtered, and deliberately NOT a required check, like
-# task-reap-real-processes.yml: ci.yml runs at its 21-job concurrency ceiling
-# (see the note at the top of that file), and this only has something to say
+# task-reap-real-processes.yml: ci.yml runs at the job cap (see the note at the
+# top of that file), and this only has something to say
 # when the escapes, the code that builds the quoted line, or these tests change.
 # The Claude command builder, the hook managers and the Aider adapter are in the
 # filter because the round trips run their real output.
@@ -46,6 +46,7 @@ on:
       - 'tests/unit/auto-name-clean.test.ts'
       - 'tests/unit/shell-quote.test.ts'
       - 'tests/unit/aider-adapter.test.ts'
+      - 'tests/unit/windows-cmd-shim-multiline-prompt.test.ts'
       - 'tests/unit/event-bridge.test.ts'
       - 'tests/unit/event-bridge-prompt-capture.test.ts'
       - 'tests/unit/event-bridge-stop-plan-mode.test.ts'
@@ -83,6 +84,7 @@ on:
       - 'tests/unit/auto-name-clean.test.ts'
       - 'tests/unit/shell-quote.test.ts'
       - 'tests/unit/aider-adapter.test.ts'
+      - 'tests/unit/windows-cmd-shim-multiline-prompt.test.ts'
       - 'tests/unit/event-bridge.test.ts'
       - 'tests/unit/event-bridge-prompt-capture.test.ts'
       - 'tests/unit/event-bridge-stop-plan-mode.test.ts'
@@ -110,8 +112,29 @@ env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
+  # Skips the run below on a push whose tree its PR already tested. See the note at the top of ci.yml.
+  tested-tree:
+    name: Tree already tested
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check the pushed tree against its PR
+        id: tree
+        uses: ./.github/actions/tested-tree
+
   windows-shells:
     name: shell quoting against real Windows shells
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: windows-latest
     timeout-minutes: 20
     steps:
@@ -142,6 +165,7 @@ jobs:
           tests/unit/auto-name-clean.test.ts
           tests/unit/shell-quote.test.ts
           tests/unit/aider-adapter.test.ts
+          tests/unit/windows-cmd-shim-multiline-prompt.test.ts
           tests/unit/event-bridge.test.ts
           tests/unit/event-bridge-prompt-capture.test.ts
           tests/unit/event-bridge-stop-plan-mode.test.ts
