@@ -96,6 +96,38 @@ test.describe('Git tab: Stop script row', () => {
     await expect.poll(savedScripts).toEqual(['npm run stop', null]);
   });
 
+  test('stays disabled until its value has loaded, so a blur cannot clear the script', async () => {
+    await openGitTab();
+    await commitStopScript('npm run stop');
+    await expect.poll(savedScripts).toEqual(['npm run stop']);
+    await page.keyboard.press('Escape');
+    await page.getByTestId('settings-panel').waitFor({ state: 'hidden', timeout: 5000 });
+
+    await page.evaluate(() => {
+      const scoped = window as unknown as {
+        electronAPI: { config: { get: (...args: unknown[]) => Promise<unknown> } };
+        __releaseConfigRead?: () => void;
+      };
+      const readConfig = scoped.electronAPI.config.get;
+      const released = new Promise<void>((resolve) => { scoped.__releaseConfigRead = resolve; });
+      scoped.electronAPI.config.get = async (...args: unknown[]) => {
+        await released;
+        return readConfig(...args);
+      };
+    });
+    await openGitTab();
+
+    const input = page.getByTestId(ROW_TEST_ID).locator('input');
+    await expect(input).toBeDisabled();
+    await expect(input).toHaveValue('');
+
+    await page.evaluate(() => (window as unknown as { __releaseConfigRead: () => void }).__releaseConfigRead());
+
+    await expect(input).toBeEnabled();
+    await expect(input).toHaveValue('npm run stop');
+    expect(await savedScripts()).toEqual(['npm run stop']);
+  });
+
   test('a refused save tells the user', async () => {
     await openGitTab();
     await page.evaluate(() => {
