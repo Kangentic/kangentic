@@ -343,6 +343,7 @@ src/renderer/components/browser/
   captureComposite.ts                       PNG compositor
   useDrawingOverlay.ts                      stroke capture
   useBrowserUrl.ts                          URL resolution hook
+  browser-url-resolution.ts                 the pure half: which tier supplies the URL, and which note-field hint shows
   inspectScript.ts                          element-picker + persistent overlay
   webview-types.ts                          structural types for <webview>
 
