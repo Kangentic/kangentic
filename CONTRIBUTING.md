@@ -56,7 +56,10 @@ import in `CLAUDE.md`), and both load the skills in `.claude/skills/`. Cursor ca
 `.claude/rules/` or `.claude/agents/` as written, so `npm run cursor:rules` writes a copy of each
 rule to `.cursor/rules/` and of each subagent to `.cursor/agents/`. `npm install` and `npm start` run
 it too, so the copies stay current without a manual step. They are gitignored: edit the file in
-`.claude/`, never the copy. How it fits together:
+`.claude/`, never the copy. In Cursor, the skills load through Cursor Settings, Agents, Third-Party
+Imports, "Include Third-Party Plugins, Skills, and Other Configs", which is on by default. If you
+install with scripts turned off, run `npm run cursor:rules` yourself. How it fits together, and what
+to check when Cursor does not load something:
 [docs/contributing/agent-instructions.md](docs/contributing/agent-instructions.md).
 
 ### Project Structure

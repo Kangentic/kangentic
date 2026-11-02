@@ -1,7 +1,7 @@
 ---
 type: Guide
 title: Shared agent instructions
-description: "How Claude Code and Cursor read one set of instructions in this repo: AGENTS.md imported by CLAUDE.md, the skills both load from .claude/, the Cursor rules and subagents generated from .claude/ and why they are gitignored, and what is still unverified in Cursor."
+description: "How Claude Code and Cursor read one set of instructions in this repo: AGENTS.md imported by CLAUDE.md, the skills both load from .claude/, the Cursor rules and subagents generated from .claude/ and why they are gitignored, what to check when Cursor does not load something, and what is still unverified in Cursor."
 tags: [contributing, agents, claude-code, cursor, rules]
 sources:
   - resource: scripts/cursor-rules.js
@@ -122,18 +122,51 @@ one floor.
 file while a Cursor session runs in the folder, so a committed copy would show as changed for the
 whole session. A file the adapter creates itself, it keeps out of `git status`.
 
-## Not yet verified in Cursor
+## When Cursor does not load something
 
-Checked by a contributor on Cursor with a non-Claude session model, against the first version of
-this setup (`.claude/agents/` loaded as written): `readonly: true` blocked a `Write` from
-`doc-auditor`, with Cursor's own "ask mode" wording. The shared instructions, the generated rules
-and the skills loaded as described.
+- **No skills and no subagents.** Cursor Settings, Agents, Third-Party Imports, "Include
+  Third-Party Plugins, Skills, and Other Configs" must be on. It is on by default, and a
+  contributor's was off: Cursor then listed none of the 18 skills and none of the subagents, and
+  deleting `.cursor/` did not switch it over to `.claude/`. The setting is the only way the skills
+  reach Cursor, since they are not copied. With it off, the generated rules and subagents still
+  load. A forum thread says it applies to the editor and not the CLI, which always loads them, and
+  that it brings in personal `~/.claude/skills` and `~/.claude/agents` as well.
+- **No rules or subagents under `.cursor/`.** Run `npm run cursor:rules`. An install with scripts
+  turned off (`npm ci --ignore-scripts`) skips `prepare`, which is what writes them. Expect one
+  `.mdc` in `.cursor/rules/` for each rule except `bash-single-command.md`, and one file in
+  `.cursor/agents/` for each agent.
+- **Files that are there but unused.** `.cursor/rules/` and `.cursor/agents/` are gitignored, and
+  Cursor's ignore doc says it ignores `.gitignore`d files, without saying whether rules or
+  subagents are exempt. A contributor's current Cursor loaded both. Forum reports describe
+  gitignored rule files skipped on some versions (one regression around 2.1.50 on macOS, for
+  rules listed in `.git/info/exclude`), so check the Cursor version first. `.cursorignore` blocks
+  access and does not re-include anything, so it is no fix.
+- **Cloud agents and Bugbot.** They work from a clone, which has no gitignored files. They get
+  `AGENTS.md`, `CLAUDE.md` and `.claude/` as pushed, and the generated rules and subagents exist
+  only if the environment's install step runs `npm install` or `npm run cursor:rules`. Without
+  that, their subagents load as written, `model: haiku` included. This follows from how Cursor
+  describes the install step and has not been run.
+- **A `globs` value.** The generator writes it the way Cursor documents it, comma-separated, and
+  quotes it when a plain scalar would not parse (a leading `*` is a YAML alias). Forum posts
+  disagree on whether a YAML list works better, so the documented form is the one used. Every
+  generated rule parses as strict YAML.
 
-Still to confirm against the generated subagents:
+## Verified in Cursor, and still open
 
-- That the subagent list shows each agent's description and model, and that an agent with no model
-  chosen runs on the session's model.
-- Whether the Cursor editor, not only its CLI, reads the root `CLAUDE.md`, and whether it expands
-  the `@AGENTS.md` line. Its docs state the CLI behavior only.
+A contributor checked the generated setup on a Grok 4.7 session. The 18 skills each loaded once,
+all from `.claude/skills/`. The 10 subagents each loaded once from `.cursor/agents/`, which
+replaced `.claude/agents/` for the same name, each with a full-sentence description. `doc-auditor`
+with no model chosen ran on the session's model and did not start Claude Haiku 4.5, and a write
+was refused with Cursor's "ask mode" wording. The `@AGENTS.md` line in `CLAUDE.md` stayed literal,
+`AGENTS.md` loaded once, and the generated `writing-style` rule was in effect.
+
+The contributor's subagent list showed no model and no read-only mark beside a name. The model
+showed on the run.
+
+Still open:
+
+- Whether a path-scoped rule (one with `globs`) attaches when a matching file is in context. Only
+  an always-on rule was observed.
+- Whether the Cursor CLI behaves the same as the editor for the setting above and for `CLAUDE.md`.
 - Whether Cursor picks up a rule generated after its session started, as when an agent runs
   `npm install` in a fresh worktree mid-session.

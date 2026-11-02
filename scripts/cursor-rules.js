@@ -58,6 +58,21 @@ function generatedMarker(prefix, relativePath) {
 }
 
 /**
+ * `text` as a YAML scalar: left as written when a plain scalar would read back the same, quoted
+ * (as JSON, which is valid YAML) when it would not. Cursor's docs write globs unquoted, so the
+ * ordinary case stays that way, but a value starting with `*` (`**` + `/*.test.ts`) is a YAML alias
+ * and a strict parser rejects it, and the same goes for a leading `!`, `{`, `[`, `#` or `&`, a
+ * `: ` inside, or a ` #` comment marker.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function toYamlScalar(text) {
+  const needsQuotes = /^[\s*&!|>%@`'"#{}[\],?:-]/.test(text) || /:\s|\s#|[:\s]$/.test(text);
+  return needsQuotes ? JSON.stringify(text) : text;
+}
+
+/**
  * Translates one rule into Cursor's `.mdc` form. `paths:` becomes `globs:` (one comma-separated
  * string, the form Cursor documents) with `alwaysApply: false`; a rule with no `paths:` loads every
  * session in Claude Code, so it becomes `alwaysApply: true`. The description is the rule's
@@ -88,7 +103,7 @@ function translateRuleToCursor(source, relativePath) {
   const lineEnding = body.includes('\r\n') ? '\r\n' : '\n';
   const header = ['---', `description: ${JSON.stringify(titleMatch[1].trim())}`];
   if (globs.length > 0) {
-    header.push(`globs: ${globs.join(', ')}`, 'alwaysApply: false');
+    header.push(`globs: ${toYamlScalar(globs.join(', '))}`, 'alwaysApply: false');
   } else {
     header.push('alwaysApply: true');
   }
@@ -323,6 +338,7 @@ if (require.main === module) {
 module.exports = {
   CLAUDE_CODE_ONLY_RULES,
   READ_ONLY_TOOLS,
+  toYamlScalar,
   translateRuleToCursor,
   translateAgentToCursor,
   writeCursorRules,

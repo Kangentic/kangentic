@@ -5,6 +5,7 @@ import path from 'node:path';
 import {
   CLAUDE_CODE_ONLY_RULES,
   READ_ONLY_TOOLS,
+  toYamlScalar,
   translateAgentToCursor,
   translateRuleToCursor,
   writeCursorRules,
@@ -112,6 +113,23 @@ describe('translateRuleToCursor', () => {
   it('quotes a description that YAML would otherwise misread', () => {
     const translated = translateRuleToCursor('# Rule: a "quoted": title\n\nBody.\n', 'quoted.md');
     expect(translated).toContain('description: "a \\"quoted\\": title"');
+  });
+
+  it('quotes a globs value that a strict YAML parser would reject, and only then', () => {
+    const leadingStar = PATH_SCOPED_RULE.replace('src/renderer/**', '**/*.test.ts');
+    expect(translateRuleToCursor(leadingStar, 'star.md')).toContain('\nglobs: "**/*.test.ts, tests/ui/**, scripts/dev.js"\n');
+    expect(translateRuleToCursor(PATH_SCOPED_RULE, 'plain.md')).toContain('\nglobs: src/renderer/**, tests/ui/**, scripts/dev.js\n');
+  });
+
+  it('leaves a plain scalar alone and quotes each indicator, a colon-space and a comment marker', () => {
+    for (const plain of ['src/**', '.claude/**', 'package.json', 'a/b/**, c.ts', '/abs/path/**']) {
+      expect(toYamlScalar(plain), plain).toBe(plain);
+    }
+    for (const risky of ['**/*.ts', '*.ts', '!src/**', '{a}/**', '[a]/**', '#x', '&x', 'a: b', 'a #b', '- x', 'trailing:']) {
+      const quoted = toYamlScalar(risky);
+      expect(quoted, risky).toBe(JSON.stringify(risky));
+      expect(JSON.parse(quoted), risky).toBe(risky);
+    }
   });
 
   it('refuses a rule with no "# Rule:" heading, naming the file', () => {
@@ -261,7 +279,7 @@ describe('the live .claude/rules/ corpus', () => {
       const translated = translateRuleToCursor(rule.source, rule.relativePath);
       const globs = parsePathGlobs(rule.source);
       if (globs.length > 0) {
-        expect(translated, rule.relativePath).toContain(`\nglobs: ${globs.join(', ')}\nalwaysApply: false\n`);
+        expect(translated, rule.relativePath).toContain(`\nglobs: ${toYamlScalar(globs.join(', '))}\nalwaysApply: false\n`);
       } else {
         expect(translated, rule.relativePath).toContain('\nalwaysApply: true\n');
       }
