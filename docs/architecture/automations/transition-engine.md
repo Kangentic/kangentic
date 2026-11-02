@@ -73,7 +73,7 @@ A column that cannot meet a need shows the row switched off with its switch disa
 
 Six types, five of them offered for a new automation. Each declares its fields, its per-field escaping, its timeout and its retry policy in `AUTOMATION_MANIFEST`, which the renderer reads for the picker, the Edit automation dialog and the row sentence. A type may also declare the triggers it runs on (`triggers`, with `triggerUnavailableReason`) and that a row of it ends its group (`endsGroup`). A field may declare one trigger where it does nothing (`unavailableOn: { trigger, reason }`): the Edit automation dialog keeps it there, disabled, with the reason on each option, leaves its stored value alone, and the row earns no mark for it. Consumers read it through `automationFieldUnavailableReason`, never by the field's key. `tests/unit/automation-adapter-parity.test.ts` fails if the registry and the manifest disagree, and `tests/unit/automation-manifest-reserved-keys.test.ts` fails an `unavailableOn` on a field that cannot show it or on a trigger the type never runs on.
 
-### `send_message` -- Send message to agent
+### `send_message`: Send message to agent
 
 Delivers an interpolated message to the task's agent. This is what the retired `Swimlane.auto_command` became: the migration moved every column's message into one of these.
 
@@ -90,7 +90,7 @@ Keystrokes turn line breaks into spaces, so every path that hands a message to a
 - **On task enter, Run again, and the warm move's column message:** in the background, once the agent's turn has ended and the scheduler has no keystrokes left for the task, whatever the mode. A task's pastes run one at a time, in order, on every trigger, so two of them never write into the terminal at once. On a fresh spawn that is the end of the agent's first turn. A move to another column cancels a paste still waiting (`supersedeMessageDeliveries`), and its outcome is reported like a keystroke burst's (`cancelled` is silent, `failed` raises a notice). A message the spawn already took as its opening prompt is not pasted again.
 - **On agent turn end:** awaited, after the turn's last paint.
 
-### `run_script` -- Run script
+### `run_script`: Run script
 
 Runs a script as an ordinary child process, in the task's worktree when it has one and the project checkout when it does not. There is no working-directory setting; the legacy `workingDir` key is ignored and dropped on save.
 
@@ -103,7 +103,7 @@ Not a PTY. An interactive shell runs the script and then returns to its prompt a
 
 Every variable also arrives as a `KANGENTIC_*` environment variable, which is the lossless path: `"$KANGENTIC_TITLE"` gets the exact value on a POSIX shell or PowerShell, where substituted text is stripped of shell metacharacters (including the curly double quotes, which PowerShell ends a string at). Not on cmd.exe, which expands `%KANGENTIC_TITLE%` and then re-parses the value for metacharacters.
 
-### `webhook` -- Call webhook
+### `webhook`: Call webhook
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -114,7 +114,7 @@ Every variable also arrives as a `KANGENTIC_*` environment variable, which is th
 
 30 second timeout via `AbortSignal.timeout`, a `response.ok` check, and 3 attempts on a transport error, 408, 429 or 5xx through the runner's retry loop (`delayBeforeRetry` in `src/main/automations/automation-runner.ts`), honoring `Retry-After`. Every attempt sends an `Idempotency-Key` built from the run id, so a retry cannot double-create downstream. `attempts` is written to the run row.
 
-### `notify` -- Notify me
+### `notify`: Notify me
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -132,7 +132,7 @@ One desktop notification through the same `showDesktopNotification` path `Deskto
 
 Offered on `turn_end` only: on enter or exit its move would run inside the move that fired it, under that move's own task lock. It moves through `context.moveTask`, which runs `handleTaskMove` with origin `'automation'` (a quiet push, `TASK_MOVED_BY_AUTOMATION`, and the row's name as the move's `task_moves` reason), so the source column's exit rows and the destination's enter rows run as they do for a drag. A row that runs ends its group (`endsGroup`). The message is handed on in the background (`deliverMessageAfterMove`), so the run row reads "Moved to Executing, with a message." as soon as the move commits rather than waiting out the destination agent's first turn. No timeout of its own and no retry: the move owns its deadlines.
 
-### `spawn_agent` -- Start agent (legacy)
+### `spawn_agent`: Start agent (legacy)
 
 The one legacy adapter, kept because a row carrying a custom `promptTemplate` is not a duplicate of anything and has no other home. It is never offered for a new automation, appears as a disabled option in the dialog's Type select, and shows a lint on its row: "This is handled by the column's settings now. Remove it to use them." Its one field, `promptTemplate`, has escaping `none`.
 
@@ -299,7 +299,7 @@ When a task moves to a column whose On enter group holds a `send_message` automa
 - `TerminalSubmitScheduler.scheduleKeystrokes` schedules the message for deferred PTY injection
 - Interpolates the message with task variables
 - Waits for the CLI's first `'thinking'` activity event, then delivers via `TerminalSubmit.submitKeystrokes` as a handshake chain (drain + output-settle between keystrokes) rather than fixed sleeps
-- A message with more than one line, or over 1,000 characters, is pasted instead, once the agent's first turn ends, unless it opens with a slash command (see [`send_message`](#send_message----send-message-to-agent))
+- A message with more than one line, or over 1,000 characters, is pasted instead, once the agent's first turn ends, unless it opens with a slash command (see [`send_message`](#send_message-send-message-to-agent))
 
 If keystroke delivery cannot be confirmed in the agent's transcript, it escalates to a session restart that passes the command as the CLI's prompt argument - the same guarantee the resumed path has. Only an adapter whose resume carries a prompt escalates; on any other, the restart would only type the command again, so an unconfirmed command ends `failed`. Every injection ends in a recorded outcome on the task, and a failure raises a notice instead of a console warning. The full contract, including the delivery ladder, the prompt-state policy, and the measured before/after delivery rate, is in [Command Injection](command-injection.md).
 

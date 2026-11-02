@@ -29,10 +29,12 @@ Detection follows the standard pattern: check `config.agent.cliPaths.qwen`, fall
 ### New Session
 
 ```
-qwen --approval-mode <mode> --session-id <uuid> "prompt text"
+qwen --approval-mode <mode> --session-id <uuid> -i "prompt text"
 ```
 
 Kangentic generates a UUID up front and passes it via `--session-id`, mirroring Claude. Qwen 0.15.3+ honors caller-owned UUIDs and writes its session JSONL at exactly `<our-uuid>.jsonl`.
+
+The prompt rides `-i` (`--prompt-interactive`), which opens the TUI with it loaded, or `-p` in a non-interactive run. Qwen treats a bare positional prompt as a one-shot run that exits after one response, so the builder never sends one.
 
 ### Resumed Session
 
