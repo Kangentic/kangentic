@@ -63,7 +63,7 @@ A paused task keeps everything its agent started, and a stack can hold far more 
 | Quit | No |
 | Every terminal transition | Yes, before `reapTaskLeftovers`, bounded |
 
-It runs in the task's worktree, or the project folder for a task with none, through the platform shell, with no `KANGENTIC_TASK_ID`. With "Stop leftover processes" off it does not run at all.
+It runs in the task's worktree, or the project folder for a task with none or whose worktree is gone from disk, through the platform shell, with no `KANGENTIC_TASK_ID`. With "Stop leftover processes" off it does not run at all.
 
 **After a pause** (`src/main/stop-script/parked-stop.ts`). `startParkedStop` runs outside the task lock and nothing waits for it, up to 2 minutes (`STOP_SCRIPT_PAUSE_TIMEOUT_MS`). One attempt runs per task at a time. It re-reads the pause, since the user may have resumed by then, and again right before the script. A Resume after that does not cancel the script, since a stack stopped halfway is worse than one stopped: it runs to its end, and its held message reaches the resumed agent. It asks the pty host what the task has running (`probeTaskProcesses`, `process-tag/task-tree-probe.ts`): a task that left nothing runs no script, and a probe that fails runs none. The probe also waits for an agent still exiting, as the reap does, or the agent would read as something left running.
 

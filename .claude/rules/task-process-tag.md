@@ -303,7 +303,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   `reapTaskLeftovers` (script, then reap, on the terminal budget, once per folder, a failure still
   reaps, a Command Terminal runs none) and the Pause, Stop and `auto_spawn=false` negatives.
   `tests/unit/task-tree-probe.test.ts` pins the two sets, and `session-reap-real-processes.test.ts`
-  a probe over a real server and a real untagged client. `tests/unit/run-stop-script.test.ts` runs a
+  a probe over a real server and a real untagged client, and a whole parked stop on real processes:
+  held off for a live client, then a stub script stops the server and the message names it.
+  `tests/unit/run-stop-script.test.ts` runs a
   real stub through the real shell: its folder, no tag, each failure, the bound, the abort, one run
   per task. `tests/unit/idle-agent-pause.test.ts` pins the pass before a pause.
 - **Test (tag):** `tests/unit/session-spawn-flow.test.ts` pins the tag on a task session, a

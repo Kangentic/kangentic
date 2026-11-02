@@ -45,7 +45,7 @@ sources:
 | `projectGroup:reorder` | invoke | Reorder groups by ID array |
 | `projectGroup:setCollapsed` | invoke | Toggle group collapsed state |
 
-## Tasks (34 channels)
+## Tasks (35 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|
 | `task:list` | invoke | Fetch tasks, optionally by swimlane |

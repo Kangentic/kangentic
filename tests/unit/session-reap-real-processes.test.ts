@@ -37,6 +37,8 @@ import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-proces
 import { resolveTaskDirectories } from '../../src/main/pty/process-tag/task-directories';
 import { buildWslReapInvocation } from '../../src/main/pty/process-tag/wsl-reap';
 import { isInsideDirectory } from '../../src/main/pty/process-tag/reap-plan';
+import { stopParkedTask, type ParkedStopDeps } from '../../src/main/stop-script/parked-stop';
+import { isStopScriptRunning, runStopScript } from '../../src/main/stop-script/run-stop-script';
 import type { ScannedProcess } from '../../src/main/pty/process-tag/process-scan';
 
 const execFileAsync = promisify(execFile);
@@ -513,6 +515,76 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     expect(connected.entries[0].connected).toBe(true);
     expect(isProcessAlive(Number(serverPid))).toBe(true);
     expect(isProcessAlive(client.pid as number)).toBe(true);
+  }, 60_000);
+
+  // No agent here: this is everything a parked stop does after the pause, on real
+  // processes through the real shell, with a stub standing in for the project's
+  // stop. The session record check is the one fake.
+  it('a parked stop holds off for a real client, then the real script stops the real server and the message names it', async () => {
+    const scratch = makeScratch();
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const serverPath = writeTcpServer(scratch.root);
+    const clientPath = writeTcpClient(scratch.root);
+    const serverFile = path.join(scratch.root, 'parked-server.txt');
+    spawn(process.execPath, [launcherPath, serverPath, serverFile], {
+      cwd: scratch.worktree,
+      stdio: 'ignore',
+      windowsHide: true,
+      env: { ...process.env, [TASK_PROCESS_TAG_ENV]: TASK_ID },
+    }).unref();
+    await waitForFile(serverFile);
+    const [serverPidText, port] = fs.readFileSync(serverFile, 'utf8').split(' ');
+    const serverPid = Number(serverPidText);
+    startedPids.push(serverPid);
+
+    const untagged: NodeJS.ProcessEnv = { ...process.env };
+    delete untagged[TASK_PROCESS_TAG_ENV];
+    const clientFile = path.join(scratch.root, 'parked-client.txt');
+    const client = spawn(process.execPath, [clientPath, clientFile, port], { cwd: scratch.elsewhere, stdio: 'ignore', windowsHide: true, env: untagged });
+    startedPids.push(client.pid as number);
+    await waitForFile(clientFile);
+
+    const stubPath = path.join(scratch.root, 'stop-stub.js');
+    fs.writeFileSync(stubPath, `process.kill(${serverPid}); require('fs').writeFileSync('ran-here.txt', process.cwd());`);
+    const held: string[] = [];
+    const directories = await resolveTaskDirectories(scratch.project, scratch.worktree);
+    const deps: ParkedStopDeps = {
+      scriptOf: () => `node "${stubPath}"`,
+      isStoppingEnabled: () => true,
+      isShuttingDown: () => false,
+      parkedTask: () => ({ title: 'Fix login', worktreePath: scratch.worktree }),
+      isScriptRunning: isStopScriptRunning,
+      probe: async (_target, worktreePath, connections) => {
+        const result = await probeTaskTrees(
+          { tasks: [{ taskId: TASK_ID, directories, worktreePath }], mainPid: process.pid, readConnections: connections },
+          { reader, liveRootPids: () => [] },
+        );
+        return result.failed ? null : result.entries.find((entry) => entry.taskId === TASK_ID) ?? null;
+      },
+      closeOffscreenLanes: () => 0,
+      folderOf: async (_target, worktreePath) => worktreePath ?? scratch.project,
+      runScript: (taskId, script, cwd) => runStopScript({ taskId, script, cwd, timeoutMs: 20_000 }),
+      holdMessage: (_target, message) => { held.push(message); },
+      reportFailure: () => {},
+      wait: (ms) => new Promise((resolve) => { setTimeout(resolve, ms); }),
+    };
+    const target = { projectId: 'proj-1', projectPath: scratch.project, taskId: TASK_ID };
+
+    // Someone is using it: nothing runs, and the server stays up.
+    expect(await stopParkedTask(deps, target)).toBe('held-off');
+    expect(fs.existsSync(path.join(scratch.worktree, 'ran-here.txt'))).toBe(false);
+    expect(isProcessAlive(serverPid)).toBe(true);
+
+    // The client leaves, and the recheck finds the way clear.
+    client.kill();
+    expect(await waitUntilDead([client.pid as number])).toEqual([]);
+
+    expect(await stopParkedTask(deps, target)).toBe('stopped');
+    expect(await waitUntilDead([serverPid])).toEqual([]);
+    expect(fs.realpathSync.native(fs.readFileSync(path.join(scratch.worktree, 'ran-here.txt'), 'utf8'))).toBe(fs.realpathSync.native(scratch.worktree));
+    expect(held).toHaveLength(1);
+    expect(held[0]).toContain("The project's Stop script stopped what this task left running");
+    expect(held[0]).toContain('node');
   }, 60_000);
 
   it('keeps a server another task holds a TCP connection to, and stops one only its own task uses and an idle one', async () => {
