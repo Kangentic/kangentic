@@ -1,6 +1,6 @@
 import { type BrowserWindow, ipcMain } from 'electron';
 import { IPC } from '../../shared/ipc-channels';
-import type { ProjectOpenByPathOverrides, RendererErrorContext } from '../../shared/types';
+import type { ProjectOpenByPathOverrides, RendererErrorContext, Session } from '../../shared/types';
 import {
   trackEvent,
   sanitizeErrorMessage,
@@ -52,6 +52,13 @@ import { registerWorkflowHandlers } from './handlers/workflows';
 import { registerLeftoverProcessHandlers } from './handlers/leftover-processes';
 import { startMetricsSnapshotTimer } from './handlers/metrics-snapshot-timer';
 import { registerTransientSessionHandlers } from './handlers/transient-sessions';
+import {
+  claimCommandTerminalRestore,
+  claimLostCommandTerminal,
+  isRestorableAfterHostLoss,
+  registerCommandTerminalRestoreHandlers,
+  type LostCommandTerminal,
+} from './handlers/command-terminal-restore';
 import { registerTranscriptionHandlers } from './handlers/transcription';
 import { TranscriptionService } from '../transcription/transcription-service';
 import { registerBoardHandlers } from './handlers/board';
@@ -343,6 +350,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     sessionManager,
     reap: (projectPath, task, wslDistros) => reapTaskLeftovers(requireContext(), projectPath, [task], { wslDistros, skipStopScript: true }),
     stopBackgroundSession: (ended) => stopEndedCommandTerminalBackgroundSession(requireContext(), ended),
+    willRestore: (session) => isRestorableAfterHostLoss(requireContext(), session),
     isShuttingDown,
   });
   commandTerminalLeftovers.start();
@@ -375,6 +383,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     notifyChanged: (projectId) => broadcast(requireContext().mainWindow, IPC.COMMAND_TERMINAL_HISTORY_CHANGED, projectId),
     conversationEnded: (projectId, agentSessionId) => retrievalService.scheduleCommandTerminalIndex(requireContext(), projectId, agentSessionId),
     searchText: (projectId, query) => retrievalService.searchCommandTerminalText(requireContext(), projectId, query),
+    claimRestore: (projectId) => claimCommandTerminalRestore(requireContext(), projectId),
   });
   commandTerminalHistory.start();
   context.commandTerminalHistory = commandTerminalHistory;
@@ -398,6 +407,16 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   // non-zero code. Once a new host (or the in-process fallback) is up, the
   // agent sessions resume as they would after a hard shutdown.
   const sessionsLostToPtyHost = new Map<string, Set<string>>();
+  // A Command Terminal's row goes as its PTY's exit is reported, before
+  // 'pty-host-lost' fires, so its conversation is captured from the removal.
+  // Registered after the history's own listener, which lets the conversation go.
+  const terminalsLostToPtyHost = new Map<string, LostCommandTerminal[]>();
+  sessionManager.on('session-removed', (_sessionId: string, session?: Session) => {
+    if (!context || !session) return;
+    const lostTerminal = claimLostCommandTerminal(context, session);
+    if (!lostTerminal) return;
+    terminalsLostToPtyHost.set(session.projectId, [...(terminalsLostToPtyHost.get(session.projectId) ?? []), lostTerminal]);
+  });
   sessionManager.on('pty-host-lost', (sessionIds: string[]) => {
     for (const sessionId of sessionIds) {
       const projectId = sessionManager.getSessionProjectId(sessionId);
@@ -409,8 +428,12 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   });
   sessionManager.on('pty-host-restarted', () => {
     const lostByProject = new Map(sessionsLostToPtyHost);
+    const lostTerminalsByProject = new Map(terminalsLostToPtyHost);
     sessionsLostToPtyHost.clear();
-    if (lostByProject.size > 0 && context) void recoverSessionsAfterPtyHostLoss(context, lostByProject);
+    terminalsLostToPtyHost.clear();
+    if ((lostByProject.size > 0 || lostTerminalsByProject.size > 0) && context) {
+      void recoverSessionsAfterPtyHostLoss(context, lostByProject, lostTerminalsByProject);
+    }
   });
 
   registerProjectHandlers(context);
@@ -429,6 +452,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerWorkflowHandlers(context);
   registerLeftoverProcessHandlers(context);
   registerTransientSessionHandlers(context);
+  registerCommandTerminalRestoreHandlers(context);
   registerTranscriptionHandlers(context);
   registerBoardHandlers(context);
   registerBacklogHandlers(context);

@@ -1,5 +1,5 @@
 import React from 'react';
-import { Brain, ChartColumn, CloudDownload, Command, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
+import { Brain, ChartColumn, CloudDownload, Command, Loader2, Megaphone, Minus, Settings, Square, SquareActivity, X } from 'lucide-react';
 import { plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import { useProjectStore } from '../../stores/project-store';
@@ -16,6 +16,7 @@ import { warmKnowledgeGraph } from '../knowledge-graph/LazyKnowledgeGraph';
 import { usePopOut } from '../../pop-out/usePopOut';
 import { selectCommandTerminalSummary } from '../../stores/session-store/transient-session-slice';
 import { CommandTerminalIcon } from '../command-bar/CommandTerminalIcon';
+import { IconSlot } from '../IconSlot';
 import { isWorktreePath } from '../../../shared/git-utils';
 import { BrandMark } from '../BrandMark';
 import { Tooltip } from '../Tooltip';
@@ -36,6 +37,7 @@ export function TitleBar({
 }: TitleBarProps) {
   const { t } = useLingui();
   const currentProject = useProjectStore((s) => s.currentProject);
+  const commandBarOpening = useSessionStore((s) => s.commandBarOpening);
   const settingsOpen = useConfigStore((s) => s.settingsOpen);
   const setSettingsOpen = useConfigStore((s) => s.setSettingsOpen);
   const openProjectSettings = useConfigStore((s) => s.openProjectSettings);
@@ -193,18 +195,26 @@ export function TitleBar({
             panel's own rail. */}
         {currentProject && onQuickSession && (
           <Tooltip
-            label={commandBarOpen ? t`Hide Command Terminal` : t`Command Terminal`}
-            keys={commandBarOpen ? undefined : 'commandBar.toggle'}
+            label={commandBarOpening ? t`Resuming terminals...` : commandBarOpen ? t`Hide Command Terminal` : t`Command Terminal`}
+            keys={commandBarOpen || commandBarOpening ? undefined : 'commandBar.toggle'}
           >
             <button
               onClick={onQuickSession}
               className="relative p-1.5 hover:bg-surface-hover rounded text-fg-muted hover:text-fg transition-colors"
               aria-label={commandBarOpen ? t`Hide Command Terminal` : t`Command Terminal`}
+              aria-busy={commandBarOpening}
               data-testid="quick-session-button"
             >
               {/* The activity color lives IN the glyph (stroke color = aggregate
-                  activity), so there is no separate corner badge to clash or clutter. */}
-              <CommandTerminalIcon tone={transientActivityTone} />
+                  activity), so there is no separate corner badge to clash or clutter.
+                  The spinner is a press's answer while the panel waits for main to
+                  bring terminals back after a restart; the slot keeps a click that
+                  lands as the glyph swaps. */}
+              <IconSlot size={20}>
+                {commandBarOpening
+                  ? <Loader2 size={18} className="animate-spin" data-testid="quick-session-opening" />
+                  : <CommandTerminalIcon tone={transientActivityTone} />}
+              </IconSlot>
             </button>
           </Tooltip>
         )}

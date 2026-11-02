@@ -8,6 +8,7 @@ paths:
   - "src/renderer/pop-out/surfaces/command-terminal-surface.tsx"
   - "src/main/ipc/handlers/transient-sessions.ts"
   - "src/main/ipc/helpers/command-terminal-history.ts"
+  - "src/main/ipc/handlers/command-terminal-restore.ts"
   - "src/main/agent/shared/command-terminal-namer.ts"
   - "src/main/mobile-bridge/handlers/command-terminal.ts"
 ---
@@ -131,6 +132,30 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   then names the id `resolveResumableSessionId` returns. Both run on the agent's own files alone
   (`backgroundSessionOf`, `command-terminal-background-session.ts`), so an ordinary end or resume
   runs no CLI, and never on a background session a live terminal still holds.
+- **A running terminal survives a restart: Stop is the only end for good.** A row with no end is
+  the signal: a quit removes no registry row, and a crash or an OS kill leaves the same state, so
+  nothing runs on the quit path. `command-terminal-restore.ts` brings it back in its slot with its
+  name, conversation, grid, tag, model and effort, for every project, gated on
+  `agent.autoResumeSessionsOnRestart`. Reading Earlier ends an open row, so the CLAIM is synchronous
+  and runs on the first touch from anything (`claimCommandTerminalRestore`, a cold open, `list()`,
+  the panel's wait), and `list()` calls it and waits for nothing more. The START runs once, only
+  from a cold open, after `resumeSuspendedSessions` in a `finally`, so tasks keep first claim on the
+  cap and a chain that throws settles its claims. Every restore goes through `startCommandTerminal`
+  with its third argument, so nothing over IPC or from a phone can pass one, and there is no new
+  spawn path. Nothing to resume means nothing restored: never a fresh terminal in its place, which
+  would run a cold start's checkout with nobody at the desk. A refused restore is quiet: one log
+  line, and the conversation stays in Earlier. `useCommandBar.open()` and the detached window wait
+  on the restore (with a ceiling, so a wedged pass never leaves the shortcut dead) before they look
+  for terminals, and a wait past 150 ms shows on the title-bar toggle (`commandBarOpening`). A model
+  a picker set counts once the agent's own status shows that model, since Claude's "No, go back"
+  reaches nothing. Name a terminal's directory by its session, never its tag, or the project-open
+  sweep deletes a restored terminal's. A queued terminal holds its slot, so everything that asks
+  whether a slot is live (`isLiveSessionStatus`) counts it. A pty host crash restores too, and the
+  panel's wait holds for that restore as well:
+  its row goes before `pty-host-lost` fires, so it is captured and claimed from its
+  `session-removed`, and the leftover reaper skips it (`isRestorableAfterHostLoss`); one that does
+  not come back is reaped from `restoreLostCommandTerminals`. The panel
+  reopens only over a terminal that came back (`reopen-panel.ts`); a detached window does not.
 - **An ended conversation is recorded, and Earlier resumes it.** `CommandTerminalHistory`
   (`ipc/helpers/command-terminal-history.ts`, table `command_terminal_history`) writes a row when
   the agent's own session id is captured, so a `/clear` or `/resume` inside a terminal ends the
@@ -374,6 +399,17 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   `tests/unit/command-terminal-resume-request.test.ts` (the renderer's per-slot resume requests),
   and `tests/unit/mobile-bridge/command-terminal.test.ts` (the phone's cap, and its worst case
   through the real frame encoder).
+- **Test (restart):** `tests/unit/command-terminal-restore.test.ts` runs the pass over a real
+  database (the setting, once per launch, a claim from `list()` that spawns nothing, the cap, slot
+  order and fallback, a refusal leaving the Earlier row, the duplicate tag, host loss).
+  `command-terminal-history.test.ts` pins what a row keeps through `/clear`, `/resume` and an early
+  id, `transient-session-resume.test.ts` the third argument,
+  `session-manager-host-lifecycle.test.ts` that a lost terminal's removal comes first with the
+  crash's exit code, `command-terminal-leftovers.test.ts` the reaper's skip,
+  `session-spawn-flow.test.ts` the name through a promotion, and `command-terminal.spec.ts`
+  ("Restart restore") the panel opened during the restore, a queued terminal, the reopen and no
+  reopen. `tests/e2e/command-terminal-restart.spec.ts` quits and relaunches the real app, stops a
+  restored terminal and checks that what it started before the quit dies, and kills a real pty host.
 - **Test (search):** `tests/unit/earlier-search.test.ts` pins the renderer's match and
   `tests/unit/command-terminal-conversation-index.test.ts` the corpus on real parsers and SQLite (no
   session, no ledger, no vectors, no reach from the other searches, the purge and the sweep cap).

@@ -32,6 +32,40 @@ function runningTerminal(id: string, slot: string, projectId = PROJECT_A): Comma
 }
 
 describe('planCommandWindowReconciliation', () => {
+  it('counts a queued terminal as live: it holds its slot, so a fresh start there would get slot-taken', () => {
+    const plan = planCommandWindowReconciliation({
+      windows: [windowRef('slot-1')],
+      transientSessions: {},
+      sessions: [{ id: 'queued-terminal', status: 'queued', transient: true, projectId: PROJECT_A, commandTerminalSlot: 'slot-1' }],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    expect(plan.closeWindowIds).toEqual([]);
+    expect(plan.openSlots).toEqual([]);
+  });
+
+  it('opens a window for a queued terminal that has none', () => {
+    const plan = planCommandWindowReconciliation({
+      windows: [],
+      transientSessions: {},
+      sessions: [{ id: 'queued-terminal', status: 'queued', transient: true, projectId: PROJECT_A, commandTerminalSlot: 'slot-3' }],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    expect(plan.openSlots).toEqual(['slot-3']);
+  });
+
+  it('keeps a window whose map entry names a queued session', () => {
+    const plan = planCommandWindowReconciliation({
+      windows: [windowRef('slot-1'), windowRef('slot-2')],
+      transientSessions: transientMap([{ projectId: PROJECT_A, slot: 'slot-2', sessionId: 'queued-terminal' }]),
+      sessions: [{ id: 'queued-terminal', status: 'queued' }],
+      projectId: PROJECT_A,
+      maxWindows: MAX_WINDOWS,
+    });
+    expect(plan.closeWindowIds).toEqual(['win-slot-1']);
+  });
+
   it('keeps only the lowest-slot window when the project has no live sessions', () => {
     const plan = planCommandWindowReconciliation({
       windows: [windowRef('slot-1'), windowRef('slot-2')],

@@ -17,6 +17,7 @@
 
 import type { SessionStatus } from '../../../shared/types';
 import { commandTerminalSlotNumber } from '../../../shared/command-terminal-name';
+import { isLiveSessionStatus } from '../../../shared/session-liveness';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 
 /** A window's identity for reconciliation: its store id and its durable slot
@@ -69,7 +70,9 @@ function slotNumber(slot: string): number {
  *
  *  Liveness matches the window mount effect exactly (`CommandTerminalWindow.tsx`):
  *  a map entry counts as live only when it belongs to the current project AND a
- *  `sessions` row with the same id is still `running`. */
+ *  `sessions` row with the same id is running or queued. A queued terminal holds
+ *  its slot in main, so a window that read the slot as free would start a fresh
+ *  terminal and get `slot-taken`. */
 export function planCommandWindowReconciliation(input: {
   windows: ReadonlyArray<CommandWindowSlotRef>;
   transientSessions: Readonly<Record<string, CommandWindowTransientEntry>>;
@@ -79,8 +82,8 @@ export function planCommandWindowReconciliation(input: {
 }): CommandWindowReconcilePlan {
   const { windows, transientSessions, sessions, projectId, maxWindows } = input;
 
-  const runningSessionIds = new Set(
-    sessions.filter((session) => session.status === 'running').map((session) => session.id),
+  const liveSessionIds = new Set(
+    sessions.filter((session) => isLiveSessionStatus(session.status)).map((session) => session.id),
   );
   // Two sources, unioned. The map is the renderer's own pairing; the session rows
   // are main's, and they are what keeps this correct when the map is behind. A
@@ -89,7 +92,7 @@ export function planCommandWindowReconciliation(input: {
   // the branch below, and lets the kept window fresh-spawn over a live terminal.
   const liveSlots = new Set([
     ...Object.values(transientSessions)
-      .filter((entry) => entry.projectId === projectId && runningSessionIds.has(entry.sessionId))
+      .filter((entry) => entry.projectId === projectId && liveSessionIds.has(entry.sessionId))
       .map((entry) => entry.slot),
     // flatMap rather than filter-then-map: a boolean predicate cannot narrow
     // `commandTerminalSlot` for the map that follows it, so that shape needs a
@@ -97,7 +100,7 @@ export function planCommandWindowReconciliation(input: {
     // slot from inside the guard lets the compiler prove it instead.
     ...sessions.flatMap((session) => (
       isCommandTerminalSession(session)
-      && session.status === 'running'
+      && isLiveSessionStatus(session.status)
       && session.projectId === projectId
       && session.commandTerminalSlot
         ? [session.commandTerminalSlot]

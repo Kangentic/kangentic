@@ -4285,7 +4285,7 @@ export interface AppConfig {
      * longest, one a minute, until there is room again. Global-only.
      */
     pauseIdleAgentsOnLowMemory: boolean;
-    autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click
+    autoResumeSessionsOnRestart: boolean; // when false, sessions stay paused after restart and require a manual Resume click, and Command Terminals wait in Earlier
     /** Global, agent-keyed remote-server identity (url + auth). Machine-scoped, mirrors cliPaths. */
     executionServers: Record<string, AgentExecutionServer>;
     /** Per-project, agent-keyed local/remote choice + server working directory. Project-overridable. */
@@ -4907,6 +4907,11 @@ export interface AppConfig {
    *  renderer re-reads it from disk rather than preserving its own copy. See
    *  src/shared/command-terminal-rail.ts. */
   commandTerminalRail: CommandTerminalRailState;
+  /** The project the Command Terminal panel is showing for, or null while it is
+   *  hidden. Written as the panel opens and hides, never at quit, so a panel left
+   *  showing at a quit reads as open on the next launch and reopens, as board task
+   *  windows do. See src/renderer/hooks/useCommandBar.ts. */
+  commandTerminalOpenProjectId: string | null;
   /** GLOBAL in-app layout for the Agent Monitor's task-detail window layer: which
    *  details are open over the monitor and how they are arranged. One blob, not
    *  keyed by project, because the monitor is cross-project by design (its windows
@@ -5177,6 +5182,7 @@ export const DEFAULT_CONFIG: AppConfig = {
   commandTerminalWorkspace: null,
   commandTerminalPanel: null,
   commandTerminalRail: { width: COMMAND_RAIL_DEFAULT_WIDTH_PX, collapsed: false },
+  commandTerminalOpenProjectId: null,
   monitorWorkspace: null,
   discoveredModelsByAgent: {},
   discoveredContextWindowsByAgent: {},
@@ -8334,6 +8340,12 @@ export interface ElectronAPI {
     searchCommandTerminalHistory: (projectId: string, query: string) => Promise<CommandTerminalHistorySearchResult>;
     /** A project's earlier conversations changed: re-list them. */
     onCommandTerminalHistoryChanged: (callback: (projectId: string) => void) => () => void;
+    /**
+     * Resolves once this launch's restore of the project's running terminals is
+     * over, or at main's ceiling. The panel and the detached window wait on it
+     * before they look for a project's terminals.
+     */
+    waitForCommandTerminalRestore: (projectId: string) => Promise<void>;
     setFocused: (sessionIds: string[]) => Promise<void>;
     /**
      * Which sessions this renderer has an xterm MOUNTED for - a superset of

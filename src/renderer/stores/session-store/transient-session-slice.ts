@@ -164,6 +164,12 @@ export interface TransientSessionSlice {
   commandBarVisible: boolean;
   setCommandBarVisible: (visible: boolean) => void;
 
+  /** An open asked for while main is still bringing terminals back after a restart.
+   *  The panel waits, and the title-bar toggle shows it is on its way. Resets on a
+   *  reload on purpose: the wait it reports does not survive one. */
+  commandBarOpening: boolean;
+  setCommandBarOpening: (opening: boolean) => void;
+
   /** Bumped to ask the mounted command bar to hide itself. The open/closed state
    *  is React state inside `useCommandBar`, so a non-React caller (the Agent
    *  Monitor's deep-link) has no handle on it; a nonce is how this codebase asks
@@ -277,6 +283,8 @@ export function createTransientSessionSlice(preserved: {
   return (set, get) => ({
     commandBarVisible: false,
     setCommandBarVisible: (visible) => set({ commandBarVisible: visible }),
+    commandBarOpening: false,
+    setCommandBarOpening: (opening) => set({ commandBarOpening: opening }),
 
     commandBarHideNonce: 0,
     requestHideCommandBar: () => set((state) => ({ commandBarHideNonce: state.commandBarHideNonce + 1 })),

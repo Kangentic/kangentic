@@ -745,6 +745,22 @@ describe('performSpawn - one row per task', () => {
     expect(rows[0].status).toBe('running');
   });
 
+  it("queue promotion: a Command Terminal keeps the name set on its placeholder, and a user's mark", async () => {
+    // A resume seeds the name on the row the spawn returns. At the session cap
+    // that row is the queued placeholder, and the promotion replaces it.
+    const context = makeContext();
+    const queuedId = makeInput().id!;
+    seedRow(context, { id: queuedId, status: 'queued', startedAt: SUSPENDED_STARTED_AT });
+    Object.assign(context.registry.get(queuedId)!, { commandTerminalLabel: 'Fix the flaky drag test', commandTerminalNamedByUser: true });
+
+    await performSpawn(makeInput(), context);
+
+    const promoted = context.registry.get(queuedId)!;
+    expect(promoted.status).toBe('running');
+    expect(promoted.commandTerminalLabel).toBe('Fix the flaky drag test');
+    expect(promoted.commandTerminalNamedByUser).toBe(true);
+  });
+
   it('pickCarryoverSource fallback: a lone queued placeholder keeps its own (empty) carry-over as the only sibling', async () => {
     // Promoting a lone queued placeholder with no predecessor: the sibling
     // loop skips the row matching the reused id (it has no scrollback worth

@@ -1,10 +1,11 @@
 ---
 type: Reference
 title: Transient sessions
-description: "How Command Terminals and workflow agents run as transient sessions with no DB row: startCommandTerminal's slot claim and four-terminal cap, cold-spawn checkout, spawn-failed handling, resuming an earlier conversation, the kill flow, and rebuilding slots after a renderer reload."
+description: "How Command Terminals and workflow agents run as transient sessions with no DB row: startCommandTerminal's slot claim and four-terminal cap, cold-spawn checkout, spawn-failed handling, resuming an earlier conversation, the pass that restores running terminals after a restart or a pty host crash, the kill flow, and rebuilding slots after a renderer reload."
 tags: [sessions, transient, command-terminal, slots]
 sources:
   - resource: src/main/ipc/handlers/transient-sessions.ts
+  - resource: src/main/ipc/handlers/command-terminal-restore.ts
   - resource: src/renderer/stores/session-store/transient-recovery.ts
   - resource: src/shared/command-terminal-name.ts
   - resource: src/main/pty/session-registry.ts
@@ -16,7 +17,7 @@ Command Terminals are ephemeral agent terminals spawned from the command bar (Ct
 
 - **No task association** - run at the project root with no Kanban task
 - **No DB persistence** - no session record in the database
-- **No resume in place** - killed on close, and a suspend ends the terminal, since no task record keeps its place. What survives is the conversation: `CommandTerminalHistory` records each one the terminal held (`command_terminal_history`), and a later start can resume it by id (see [Resume](#resume))
+- **No resume in place** - a suspend ends the terminal, since no task record keeps its place. What survives is the conversation: `CommandTerminalHistory` records each one the terminal held (`command_terminal_history`), and a later start can resume it by id (see [Resume](#resume)). A quit is not an end: the next launch brings a running terminal back as itself (see [Restored after a restart](#restored-after-a-restart))
 - **Queued like any spawn** - at the concurrency limit the row starts `queued` and already holds its slot
 
 A workflow's own agent is the other transient session. It shares the first two and the queue, but
@@ -72,7 +73,7 @@ first await and released once the spawn has registered its row or the start has 
    point. A checkout failure falls back to the current branch with a `checkoutError`, and git's
    own reason goes to the log rather than the toast. This runs
    on a cold spawn only; a reattach never fetches or checks out
-2. Create a session directory at `.kangentic/sessions/<transientTaskId>/` for bridge files
+2. Create a session directory at `.kangentic/sessions/<sessionId>/` for bridge files. It is named by the session, not by the tag: a restored terminal keeps its tag, and the project-open sweep running in the same cold open would delete last run's directory
 3. `await adapter.ensureTrust(projectRoot)` - trust pre-population, `kangentic` MCP enablement,
    and for Claude the diff-panel write (see
    [Global Config Writes](../../integrations/agents/claude-code.md#global-config-writes-claudejson)). The Command
@@ -104,9 +105,70 @@ with `conversation-gone` when the row is missing or its agent cannot resume by i
 `conversation-open` while a live terminal or another resume holds it, so two agents never write
 one transcript. The command is built with the conversation's id and `resume`, the spawn is marked
 `resuming` and touched (`hasUserInput`), and the terminal's label is seeded from the row so the
-namer skips it. The claim settles in the `finally`: a start that made no terminal releases it at
-once, and one that did keeps it until the agent reports the conversation's id or the terminal
-ends.
+namer skips it. The command starts on the model and effort the conversation's context bar last
+set, else the project's defaults. A picked model is saved only once the agent's status shows it
+(a declined switch saves nothing, and a typed `/model` is never seen), see the
+[`command_terminal_history` table](../../database/session-tables.md#command_terminal_history-table). The claim settles in the `finally`: a start that made no terminal
+releases it at once, and one that did keeps it until the agent reports the conversation's id or the
+terminal ends.
+
+### Restored after a restart
+
+`command-terminal-restore.ts` (`src/main/ipc/handlers/`) brings back what was running when the app
+last went away. The signal is a used `command_terminal_history` row with no `ended_at`. A quit
+removes no registry row, so a terminal open at a quit leaves its row open, a crash or an OS kill
+leaves the same state, and nothing runs on the synchronous quit path. The pass is gated on
+`agent.autoResumeSessionsOnRestart`, with no setting of its own, and runs for every project, so the
+sidebar count and a phone see the terminals. The cost is real: up to four idle agents per project at
+about 1.15 GB of commit each, and no pause reaches them.
+
+Reading Earlier erases the signal: `list()` deletes untouched open rows and stamps the rest ended.
+So the pass has two halves:
+
+- **The claim** (`claimCommandTerminalRestore`) is synchronous and runs once per launch, on the first
+  touch from any caller: a cold open, `list()`, a phone's `list-earlier`, the panel's wait. It reads
+  the newest `MAX_COMMAND_TERMINALS` open rows and `claimResume`s each, so `list()` reads them as
+  live. `list()` calls it and waits for nothing more, since the spawn phase can run past a phone's
+  10 s budget.
+- **The start** (`startCommandTerminalRestore`) runs once, only from the three cold-open paths in
+  `handlers/projects.ts`, after `resumeSuspendedSessions` and in a `finally`, so tasks keep first
+  claim on `maxConcurrentSessions` and a chain that throws still settles its claims. It starts one
+  row at a time, saved slots first, through `startCommandTerminal` with a third argument
+  (`CommandTerminalRestoreStart`) that neither IPC nor a phone can reach. So the cap, the reservation,
+  the name seed, the rule that a resume never fetches or checks out, and the stop of a `/bg`
+  background session all hold, and there is no new spawn path.
+
+The third argument takes the claim as held, keeps the saved process tag so the terminal's Stop still
+reaches what it left running, starts at the saved grid (`restoredGrid`) so an agent restored with
+the panel closed composes at it, and skips the `command_terminal` feature count. A `slot-taken`
+falls back to the lowest free slot. Any other refusal logs one line and settles the claim, and the
+conversation stays in Earlier. A fresh terminal never takes the place of one that cannot resume:
+it would run a cold start's checkout with nobody at the desk.
+
+With the panel closed a restored terminal behaves like a phone's. The toggle and sidebar count
+update live, and the next open adopts it. `useCommandBar.open()` and the detached window's mount
+gate wait on `commandTerminalRestore:wait` first, because a default window would otherwise start
+fresh in a slot the restore is about to take. The wait has a 10 s ceiling, so a wedged pass never
+leaves the shortcut dead, and past 150 ms the title-bar toggle shows a spinner, so a press at boot
+is answered. A panel left showing at quit reopens (`reopen-panel.ts`, see
+[Command Terminal](../renderer/command-terminal.md#after-a-restart)).
+
+At the session cap a restored terminal starts `queued` and holds its slot, so the reconcile,
+`findAdoptableTransientSession` and `planTransientRecovery` count a queued terminal as live. Its
+promotion replaces the placeholder row, so `performSpawn` carries the name and its
+`commandTerminalNamedByUser` mark across.
+
+A pty host crash takes the same route. A terminal's row goes as its PTY's exit is reported, before
+`pty-host-lost` fires, so a `session-removed` listener in `register-all.ts` captures it by
+`PTY_HOST_LOST_EXIT_CODE` and claims the conversation in that emit, or the rail would offer it in
+Earlier while the host restarts. `recoverSessionsAfterPtyHostLoss` restores them after the tasks,
+even when task recovery throws, and `commandTerminalRestore:wait` holds a panel open until then, or
+its default window would start fresh in a slot the restore is about to take. The leftover reaper
+skips such a terminal (`isRestorableAfterHostLoss`), since what it left running
+is still its own. One that does not come back has ended, so `restoreLostCommandTerminals` reaps it
+the way the reaper would have: the agent CLI's background session first, then its leftovers. A
+refused restore at boot reaps nothing, as a quit reaps nothing. The crash closes the terminals'
+windows, so the panel hides and the next open adopts them.
 
 ## Kill Flow (`SESSION_KILL_TRANSIENT`)
 

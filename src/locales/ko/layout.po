@@ -262,6 +262,10 @@ msgstr "프로젝트 설정 읽기"
 msgid "Refresh"
 msgstr "새로 고침"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "Runs real terminals"

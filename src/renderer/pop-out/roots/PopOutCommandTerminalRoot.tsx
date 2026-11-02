@@ -20,6 +20,7 @@ type LoadState = 'loading' | 'ready' | 'missing' | 'failed';
  *   shows one project for its whole life. It is set on this window's own store
  *   and never asked of main: `projects.open` would switch the main window's
  *   board to it.
+ * - the restore, because a terminal a restart is bringing back has no row yet.
  * - the config, because the layer restores the saved layout once, on mount.
  * - the session list, because a window that mounts before it cannot find the
  *   terminal already running in its slot and starts a second one.
@@ -41,6 +42,10 @@ function useSeedCommandTerminalWindow(projectId: string): LoadState {
         return;
       }
       useProjectStore.setState({ currentProject: project });
+      // Ahead of the session list: a window that mounts while main is still
+      // restoring would start fresh in a slot the restore is about to take.
+      await window.electronAPI.sessions.waitForCommandTerminalRestore(projectId);
+      if (cancelled) return;
       const [, sessionsSynced] = await Promise.all([
         useConfigStore.getState().loadConfig(),
         useSessionStore.getState().syncSessions(),

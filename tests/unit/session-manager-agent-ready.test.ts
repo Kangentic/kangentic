@@ -177,6 +177,42 @@ describe('SessionManager: the launch overlay waits for the agent', () => {
     manager.remove(session.id);
   });
 
+  // What keeps a restart quiet. The desktop notifier fires on 'activity', which
+  // the engine emits only on a change, and a terminal the app restores is idle
+  // from its first frame, so booting raises none. A real relaunch does push
+  // SESSION_ACTIVITY once per terminal, about 500 ms in: idle, reason idle, with
+  // no thinking before it. That is the reason channel ('activity-reason'), which
+  // no notifier hears. Red-green: seed it thinking and this reads red.
+  it("raises no activity for a resumed Command Terminal's boot, so a restart notifies nobody", async () => {
+    const mock = createMockPty();
+    vi.mocked(pty.spawn).mockReturnValue(mock.mockPty as unknown as pty.IPty);
+    const session = await manager.spawn({
+      taskId: 'restored-terminal',
+      command: '',
+      cwd: tmpDir,
+      agentParser: cursorHideAgent(),
+      agentName: 'cursor-hide-agent',
+      transient: true,
+      resuming: true,
+      agentSessionId: 'conversation-a',
+      commandTerminalSlot: 'slot-1',
+    });
+    const activity = vi.fn();
+    manager.on('activity', activity);
+
+    mock.feedData(SHELL_STARTUP);
+    mock.feedData(SHELL_PROMPT);
+    await waitForFlush();
+    mock.feedData(HANDOFF_CLEAR);
+    await waitForFlush();
+    mock.feedData(AGENT_TEXT);
+    sendSessionStart(manager, session.id);
+    await waitForFlush();
+
+    expect(activity).not.toHaveBeenCalled();
+    manager.remove(session.id);
+  });
+
   it("fires once on the agent's first text after the shell ran the spawn command", async () => {
     const { session, firstOutput, feedData } = await spawnAgentSession('task-agent-text');
     feedData(SHELL_STARTUP);

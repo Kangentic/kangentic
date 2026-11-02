@@ -262,6 +262,10 @@ msgstr "プロジェクトの設定を読み込み"
 msgid "Refresh"
 msgstr "更新"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "Runs real terminals"

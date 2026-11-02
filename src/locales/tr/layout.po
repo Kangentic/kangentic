@@ -262,6 +262,10 @@ msgstr "Projenizin kurulumunu okur"
 msgid "Refresh"
 msgstr "Yenile"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "Runs real terminals"

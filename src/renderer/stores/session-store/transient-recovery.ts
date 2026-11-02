@@ -21,12 +21,17 @@
  */
 
 import type { Session } from '../../../shared/types';
+import { isLiveSessionStatus } from '../../../shared/session-liveness';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import { buildTransientSessionEntry, type TransientSessionEntry, transientKey } from './transient-session-slice';
 
-/** A running Command Terminal PTY for some project. A workflow's agent is transient too, and never one. */
+/**
+ * A live Command Terminal for some project, running or queued: a queued one has
+ * no PTY yet but holds its slot in main, so a window must attach to it rather
+ * than start a second one. A workflow's agent is transient too, and never one.
+ */
 function isLiveTransient(session: Session): boolean {
-  return isCommandTerminalSession(session) && session.status === 'running';
+  return isCommandTerminalSession(session) && isLiveSessionStatus(session.status);
 }
 
 /**

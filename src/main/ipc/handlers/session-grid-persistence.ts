@@ -2,6 +2,7 @@ import { getOpenProjectDb } from '../../db/database';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { WorkflowRepository } from '../../db/repositories/workflow-repository';
 import { isShuttingDown } from '../../shutdown-state';
+import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { PtyResizeOrigin } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 
@@ -31,7 +32,7 @@ const pendingSpawnWrites = new Map<string, NodeJS.Immediate>();
  *   silently reopen one a close or the quit just released.
  */
 export function persistPtyGrid(
-  context: Pick<IpcContext, 'sessionManager'>,
+  context: Pick<IpcContext, 'sessionManager' | 'commandTerminalHistory'>,
   sessionId: string,
   grid: { cols: number; rows: number },
   origin: PtyResizeOrigin,
@@ -47,8 +48,12 @@ export function persistPtyGrid(
       if (!database) return;
       // A workflow's own agent has no session record: its grid is kept on its
       // workflow, in the home project the agent runs in.
-      const workflowId = context.sessionManager.getSession?.(sessionId)?.workflowId ?? null;
+      // A Command Terminal has no session record either: its grid is kept on its
+      // conversation's history row.
+      const session = context.sessionManager.getSession?.(sessionId);
+      const workflowId = session?.workflowId ?? null;
       if (workflowId) new WorkflowRepository(database).setAgentGrid(workflowId, grid);
+      else if (session && isCommandTerminalSession(session)) context.commandTerminalHistory?.recordGrid(sessionId, grid);
       else new SessionRepository(database).updatePtyGrid(sessionId, grid);
     } catch {
       // Best-effort: a resume without a recorded grid spawns at the default.

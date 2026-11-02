@@ -91,6 +91,22 @@ export interface StartCommandTerminalInput extends SpawnTransientSessionInput {
 }
 
 /**
+ * What a restart hands back to a terminal it restores
+ * (command-terminal-restore.ts). A third argument rather than part of the input
+ * because the input arrives over IPC and from a phone: only main restores.
+ *
+ * The caller holds the conversation's claim already, so the start does not take
+ * it (it would refuse its own claim with `conversation-open`), and it still
+ * settles it. Every other refusal stays what it is for any resume.
+ */
+export interface CommandTerminalRestoreStart {
+  /** The tag the terminal ran with, so its Stop still reaches what it left running. */
+  processTag: string | null;
+  /** The grid it last had, so an agent restored with the panel closed composes at it. */
+  grid: { cols: number; rows: number } | null;
+}
+
+/**
  * Slots a start in flight has claimed but not yet spawned into, per project.
  * Filled synchronously on entry, before the first await, so two starts racing
  * through detect, fetch and checkout cannot both take the same slot or both
@@ -222,6 +238,7 @@ function projectRootIsShared(context: IpcContext, projectRoot: string): boolean 
 export async function startCommandTerminal(
   context: IpcContext,
   input: StartCommandTerminalInput,
+  restore?: CommandTerminalRestoreStart,
 ): Promise<SpawnTransientSessionResult> {
   const project = context.projectRepo.getById(input.projectId);
   if (!project) throw new CommandTerminalStartError('unknown-project', 'Cannot spawn transient session: project not found');
@@ -244,7 +261,7 @@ export async function startCommandTerminal(
       ? await resolveResumedConversation(context, input.projectId, input.resumeAgentSessionId)
       : null;
     if (resume) {
-      if (!context.commandTerminalHistory?.claimResume(input.projectId, resume.agentSessionId)) {
+      if (!restore && !context.commandTerminalHistory?.claimResume(input.projectId, resume.agentSessionId)) {
         throw new CommandTerminalStartError('conversation-open', 'That conversation is already open in another terminal.');
       }
       claimedConversation = resume.agentSessionId;
@@ -296,7 +313,9 @@ export async function startCommandTerminal(
     // distro CLI runs in that distro's shell, whatever the Terminal setting says.
     const shell = shellForTarget(cliTarget) ?? await context.sessionManager.getShell();
     const permissionMode = config.agent.permissionMode as PermissionMode;
-    const transientTaskId = uuidv4();
+    // The tag a terminal's processes carry. A restored terminal keeps its own: a
+    // quit reaps nothing, so what it started before the restart still carries it.
+    const transientTaskId = restore?.processTag ?? uuidv4();
     const sessionId = uuidv4();
 
     // A resume never fetches or checks out: it picks a conversation up where
@@ -309,8 +328,10 @@ export async function startCommandTerminal(
     }
 
     // Create session directory for status/events bridge files so the
-    // shimmer overlay can detect when Claude Code is ready.
-    const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', transientTaskId);
+    // shimmer overlay can detect when Claude Code is ready. Named by the session,
+    // never the tag: a restored terminal's tag names last run's directory, which
+    // holds that run's status and which the project-open sweep is about to delete.
+    const sessionDirectory = path.join(projectRoot, '.kangentic', 'sessions', sessionId);
     // sync-write-ok: this must throw, not degrade, for the same reason as
     // prepare-spawn.ts's session directory - a Command Terminal with no
     // session directory has nowhere to write status/events. This function
@@ -386,9 +407,10 @@ export async function startCommandTerminal(
       mcpServerToken: context.mcpServerHandle?.token,
       // Project default model/effort, same tier board-task spawns apply. A
       // fresh Command Terminal starts on the project's preferred combo
-      // instead of the CLI's own default.
-      model: project.default_model ?? undefined,
-      effort: project.default_effort ?? undefined,
+      // instead of the CLI's own default. A resume starts on what the
+      // conversation's context bar last set.
+      model: resume?.model ?? project.default_model ?? undefined,
+      effort: resume?.effort ?? project.default_effort ?? undefined,
       // The conversation to pick up through the CLI's own resume, or the chat
       // created for a fresh start that prints no id.
       ...(conversationCommandOptions ?? {}),
@@ -425,6 +447,9 @@ export async function startCommandTerminal(
       exitSequence: adapter.getExitSequence?.() ?? ['\x03'],
       cols: input.cols,
       rows: input.rows,
+      // No window fits a terminal restored with the panel closed, and its agent
+      // composes at the grid it starts on.
+      ...(restore?.grid ? { restoredGrid: restore.grid } : {}),
       ...(conversationSessionFields ?? {}),
       // The shell the command was built for, and where its CLI runs.
       shell,
@@ -457,11 +482,14 @@ export async function startCommandTerminal(
     if (createdAgentSessionId) {
       context.sessionManager.emit('agent-session-id', session.id, transientTaskId, input.projectId, createdAgentSessionId);
     }
+    // So a `/clear` in the resumed terminal keeps them on its next row.
+    if (resume) context.commandTerminalHistory?.recordRuntimeSettings(session.id, { model: resume.model, effort: resume.effort });
 
     // Volume for these sessions comes from session_spawn (isTransient: true),
     // adoption from this feature; the old transient_session_spawn event was a
     // third answer to the same question and was removed rather than renamed.
-    trackFeatureUsed('command_terminal');
+    // A restored terminal is nobody using the feature: the app brought it back.
+    if (!restore) trackFeatureUsed('command_terminal');
     return { session, slot: reservation.slot, branch, ...(checkoutError ? { checkoutError } : {}) };
   } finally {
     // The spawned row now holds the slot itself (it is in the registry), and a
@@ -480,7 +508,16 @@ async function resolveResumedConversation(
   context: IpcContext,
   projectId: string,
   agentSessionId: string,
-): Promise<{ agentSessionId: string; agentName: string; label: string | null; namedByUser: boolean; cliTarget: string | null; cwd: string }> {
+): Promise<{
+    agentSessionId: string;
+    agentName: string;
+    label: string | null;
+    namedByUser: boolean;
+    cliTarget: string | null;
+    cwd: string;
+    model: string | null;
+    effort: string | null;
+  }> {
   const history = context.commandTerminalHistory;
   const row = history?.find(projectId, agentSessionId) ?? null;
   const adapter = row ? agentRegistry.get(row.agent_name) : undefined;
@@ -499,6 +536,8 @@ async function resolveResumedConversation(
     namedByUser: row.named_by_user === 1,
     cliTarget: row.cli_target ?? null,
     cwd: row.cwd,
+    model: row.model ?? null,
+    effort: row.effort ?? null,
   };
 }
 
@@ -685,10 +724,10 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
 
   // Session-keyed model/effort injection for transient (command-terminal)
   // sessions. These have no task row, so the task-keyed
-  // TASK_SET_RUNTIME_OVERRIDE handler cannot serve them. A Command Terminal
-  // keeps no settings record (a resumed one starts on the project defaults),
-  // so this is a best-effort live slash-command inject only. Mutates no per-task state, so it does not
-  // take a task lock.
+  // TASK_SET_RUNTIME_OVERRIDE handler cannot serve them. The live slash-command
+  // inject is best-effort, and what the picker set is kept on the conversation's
+  // history row, where a resume starts from. Mutates no per-task state, so it
+  // does not take a task lock.
   ipcMain.handle(
     IPC.SESSION_INJECT_SETTINGS,
     async (_, input: SessionInjectSettingsInput): Promise<SessionInjectSettingsResult> => {
@@ -718,6 +757,13 @@ export function registerTransientSessionHandlers(context: IpcContext): void {
         effort: nextEffort,
         effortChanged: input.effort !== undefined && input.effort !== currentEffort,
       };
+
+      if (isCommandTerminalSession(session)) {
+        context.commandTerminalHistory?.recordRuntimeSettings(input.sessionId, {
+          model: input.model ?? null,
+          effort: input.effort ?? null,
+        });
+      }
 
       const sequence = adapter.getInjectionSequence?.(spec) ?? [];
       if (sequence.length === 0) return { ok: true, injected: false };

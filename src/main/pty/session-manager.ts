@@ -138,7 +138,7 @@ const ALT_SCREEN_POLL_MS = 100;
 
 /** A Command Terminal's per-session directory, created by `startCommandTerminal`. */
 function commandTerminalSessionDirectory(session: ManagedSession): string {
-  return path.join(session.cwd, '.kangentic', 'sessions', session.taskId);
+  return path.join(session.cwd, '.kangentic', 'sessions', session.id);
 }
 
 /** Best-effort: the directory only holds the bridges' status and event files. */

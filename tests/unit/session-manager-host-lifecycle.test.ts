@@ -69,6 +69,7 @@ import { SessionManager, SHARED_RENDERER_ID } from '../../src/main/pty/session-m
 import { recordTerminalTrace } from '../../src/main/pty/terminal-trace';
 import { createFakeRendererPort } from './helpers/fake-renderer-port';
 import type { ManagedSession } from '../../src/main/pty/session-registry';
+import type { Session } from '../../src/shared/types';
 import {
   InProcessPtyHostTransport,
   type PtyHostLifecycleListener,
@@ -238,6 +239,31 @@ describe("SessionManager: 'pty-host-lost' lists only what the host took down", (
     const listed = manager.listSessions().find((session) => session.id === lost.id);
     expect(listed?.status).toBe('exited');
     expect(listed?.taskId).toBe('task-lost');
+  });
+
+  // A Command Terminal's row goes as its exit is reported, so the 'pty-host-lost'
+  // handler can no longer find it, and the restore captures it from the removal.
+  // Red-green: move the removal after onHostLost, or read the exit code after
+  // the removal, and this fails.
+  it("removes a lost Command Terminal first, with the crash's exit code on the snapshot", async () => {
+    const { manager, transport } = makeManager();
+    vi.mocked(pty.spawn).mockReturnValue(createMockPty(106) as unknown as pty.IPty);
+    const terminal = await manager.spawn({ taskId: 'terminal-tag', command: '', cwd: tmpDir, transient: true, commandTerminalSlot: 'slot-2' });
+    const order: string[] = [];
+    const removals: Array<Session | undefined> = [];
+    manager.on('session-removed', (_sessionId: string, session?: Session) => {
+      order.push('removed');
+      removals.push(session);
+    });
+    manager.on('pty-host-lost', () => order.push('lost'));
+    manager.on('pty-host-restarted', () => order.push('restarted'));
+
+    transport.hostDown();
+    transport.hostUp(true);
+
+    expect(order).toEqual(['removed', 'lost', 'restarted']);
+    expect(removals[0]).toMatchObject({ id: terminal.id, exitCode: PTY_HOST_LOST_EXIT_CODE, commandTerminalSlot: 'slot-2', taskId: 'terminal-tag' });
+    expect(registryRow(manager, terminal.id)).toBeUndefined();
   });
 
   it('announces an empty list when the host held nothing', async () => {

@@ -165,6 +165,33 @@ if (prompt) {
   console.log('MOCK_CLAUDE_NO_PROMPT');
 }
 
+// Conversation harness for the Command Terminal restart guard
+// (tests/e2e/command-terminal-restart.spec.ts).
+//
+// A Command Terminal passes no --session-id, so the app learns the conversation
+// from the agent's status line, and a resume looks for the agent's transcript.
+// When MOCK_CLAUDE_TRANSCRIPT_FOLDER names a folder, an interactive run does what
+// the real CLI does for both: it writes the transcript at
+// `~/.claude/projects/<folder>/<id>.jsonl`, which the locator's scan finds, and
+// the `session_id` its status line would put in status.json. A resume keeps its
+// id. The folder is the spec's own, and it deletes it. The home folder itself
+// cannot be redirected: a fake HOME and USERPROFILE crash Chromium on Windows.
+if (process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER && settingsPath && !args.includes('--print')) {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const pathMod = require('node:path');
+  const conversationId = sessionId || require('node:crypto').randomUUID();
+  const transcriptDirectory = pathMod.join(os.homedir(), '.claude', 'projects', process.env.MOCK_CLAUDE_TRANSCRIPT_FOLDER);
+  try {
+    fs.mkdirSync(transcriptDirectory, { recursive: true });
+    fs.appendFileSync(pathMod.join(transcriptDirectory, `${conversationId}.jsonl`), JSON.stringify({ type: 'system', sessionId: conversationId }) + '\n');
+    fs.writeFileSync(pathMod.join(pathMod.dirname(settingsPath), 'status.json'), JSON.stringify({ session_id: conversationId }));
+    console.log('MOCK_CLAUDE_CONVERSATION:' + conversationId);
+  } catch (error) {
+    console.error('MOCK_CLAUDE_CONVERSATION_ERROR:' + error.message);
+  }
+}
+
 // Background-shell harness for the bg-shell false-idle regression guard.
 //
 // When MOCK_CLAUDE_BACKGROUND_BASH=1 is set, emit the POST-REMAP event
@@ -433,7 +460,15 @@ if (process.env.MOCK_CLAUDE_TURN_END === '1' && sessionId && settingsPath && !ar
 // second survivor whose pid the spec never learns: a resume (--resume), a headless
 // run (--print), and a fresh start after the launcher already reported (the result
 // file exists).
-if (process.env.MOCK_CLAUDE_FAST_DETACH_RESULT_FILE && sessionId && !resumed && !args.includes('--print')) {
+//
+// MOCK_CLAUDE_FAST_DETACH_COMMAND_TERMINAL=1 (tests/e2e/command-terminal-restart.spec.ts)
+// moves it to a Command Terminal's first fresh start, the one PTY run with
+// --settings and no --session-id, so neither a task's agent on the same board nor
+// a CLI probe, which runs with no PTY and no tag, can take it.
+const fastDetachHere = process.env.MOCK_CLAUDE_FAST_DETACH_COMMAND_TERMINAL === '1'
+  ? Boolean(settingsPath && !sessionId)
+  : Boolean(sessionId && !resumed);
+if (process.env.MOCK_CLAUDE_FAST_DETACH_RESULT_FILE && fastDetachHere && !args.includes('--print')) {
   const fs = require('node:fs');
   const pathMod = require('node:path');
   const { spawn } = require('node:child_process');

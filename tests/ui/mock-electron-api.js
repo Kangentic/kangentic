@@ -422,6 +422,7 @@
     commandTerminalPanel: null,
     // Mirrors DEFAULT_CONFIG.commandTerminalRail.
     commandTerminalRail: { width: 300, collapsed: false },
+    commandTerminalOpenProjectId: null,
     monitorWorkspace: null,
     // Mirrors DEFAULT_CONFIG.monitor. Required on AppConfig, and this file is .js
     // so tsc cannot catch its absence; without it a UI test has no way to seed a
@@ -3015,6 +3016,12 @@
       // window.__mockCommandTerminalHistory = { [projectId]: CommandTerminalHistoryEntry[] };
       // nothing seeded answers an empty list, as a project with no ended
       // terminals does.
+      // A test holds the restore open with `window.__mockCommandTerminalRestoreGate`,
+      // a promise, to drive a panel opened while main is still restoring.
+      waitForCommandTerminalRestore: async function () {
+        var gate = typeof window !== 'undefined' && window.__mockCommandTerminalRestoreGate;
+        if (gate) await gate;
+      },
       listCommandTerminalHistory: async function (projectId) {
         var seeded = typeof window !== 'undefined' && window.__mockCommandTerminalHistory;
         var entries = (seeded && seeded[projectId]) || [];

@@ -392,19 +392,37 @@ describe('pruneStaleResources -- async background cleanup', () => {
     logSpy.mockRestore();
   });
 
-  it('preserves a live Command Terminal\'s directory, which is named by its made-up task id', async () => {
-    // startCommandTerminal names the directory after the terminal's own task
-    // id, not its session id, and no task row holds that id. A phone can start
-    // one in a project the desktop cold-opens later. Red without the live
-    // sessions' task ids in the referenced set.
+  it('preserves a live Command Terminal\'s directory, which is named by its session id', async () => {
+    // A terminal has no task row, and a phone can start one in a project the
+    // desktop cold-opens later. It is not named by the terminal's tag: a
+    // restored terminal keeps its tag, and this sweep runs during the same cold
+    // open, with last run's directory unreferenced and days old.
     const taskRepo = makeMockTaskRepo([]);
     const sessionRepo = makeMockSessionRepo();
     const sessionMgr = makeMockSessionManager();
     (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
-      .listSessions.mockReturnValue([{ id: 'terminal-session-uuid', taskId: 'terminal-task-uuid', status: 'running', transient: true }]);
+      .listSessions.mockReturnValue([{ id: 'terminal-session-uuid', taskId: 'terminal-tag-uuid', status: 'running', transient: true }]);
 
     setupReaddir({
-      [SESSIONS_DIR]: [dirEntry('terminal-task-uuid')],
+      [SESSIONS_DIR]: [dirEntry('terminal-session-uuid')],
+    });
+
+    await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);
+    await runWithTimers();
+
+    expect(mockRm).not.toHaveBeenCalled();
+  });
+
+  it('preserves a live workflow agent\'s directory, which is named by its workflow id', async () => {
+    // Red without the live sessions' task ids in the referenced set.
+    const taskRepo = makeMockTaskRepo([]);
+    const sessionRepo = makeMockSessionRepo();
+    const sessionMgr = makeMockSessionManager();
+    (sessionMgr as unknown as { listSessions: ReturnType<typeof vi.fn> })
+      .listSessions.mockReturnValue([{ id: 'agent-session-uuid', taskId: 'workflow-uuid', status: 'running', transient: true, workflowId: 'workflow-uuid' }]);
+
+    setupReaddir({
+      [SESSIONS_DIR]: [dirEntry('workflow-uuid')],
     });
 
     await pruneOrphanedDirectories(PROJECT, taskRepo, sessionRepo, sessionMgr);

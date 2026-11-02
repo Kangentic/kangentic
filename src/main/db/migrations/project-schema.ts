@@ -2120,6 +2120,29 @@ export function runProjectMigrations(db: Database.Database): void {
   if (!hasNamedByUser) {
     db.exec('ALTER TABLE command_terminal_history ADD COLUMN named_by_user INTEGER NOT NULL DEFAULT 0');
   }
+
+  // What a terminal running at a quit or a pty host crash needs to come back as
+  // itself: its slot, its process tag (`KANGENTIC_TASK_ID`, so its Stop still
+  // reaches what it left running), the grid its agent composed at, and the model
+  // and effort its context bar set. All NULL for an existing row: a restored
+  // terminal then takes the lowest free slot, a new tag, the default grid and
+  // the project's model and effort.
+  const commandTerminalRestoreColumns = [
+    ['slot', 'TEXT'],
+    ['task_tag', 'TEXT'],
+    ['last_pty_cols', 'INTEGER'],
+    ['last_pty_rows', 'INTEGER'],
+    ['model', 'TEXT'],
+    ['effort', 'TEXT'],
+  ] as const;
+  const commandTerminalHistoryColumns = new Set(
+    (db.pragma('table_info(command_terminal_history)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  for (const [name, type] of commandTerminalRestoreColumns) {
+    if (!commandTerminalHistoryColumns.has(name)) {
+      db.exec(`ALTER TABLE command_terminal_history ADD COLUMN ${name} ${type} DEFAULT NULL`);
+    }
+  }
 }
 
 /**

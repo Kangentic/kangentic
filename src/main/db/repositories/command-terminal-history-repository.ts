@@ -15,9 +15,19 @@ export interface CommandTerminalHistoryRow {
   cli_target: string | null;
   /** 1 once a user chose or cleared this conversation's name, so the namer stays off. */
   named_by_user: number;
+  /** The slot the terminal last held (`slot-N`), or null for a row from before the column. */
+  slot: string | null;
+  /** The `KANGENTIC_TASK_ID` the terminal last ran with, or null for a row from before the column. */
+  task_tag: string | null;
+  /** The grid the terminal last had on the desktop, or null until it had one. */
+  last_pty_cols: number | null;
+  last_pty_rows: number | null;
+  /** What the terminal's context bar set, or null for the project's default. */
+  model: string | null;
+  effort: string | null;
 }
 
-const COLUMNS = 'agent_session_id, agent_name, label, first_prompt, cwd, started_at, touched_at, ended_at, updated_at, cli_target, named_by_user';
+const COLUMNS = 'agent_session_id, agent_name, label, first_prompt, cwd, started_at, touched_at, ended_at, updated_at, cli_target, named_by_user, slot, task_tag, last_pty_cols, last_pty_rows, model, effort';
 
 /**
  * The conversations a project's Command Terminals held (migration 91). Written
@@ -31,7 +41,10 @@ export class CommandTerminalHistoryRepository {
   /**
    * Record a conversation when its terminal's agent reports its id. A row that
    * already exists (a resumed conversation reports the same id again) keeps its
-   * start and touch, and takes the newest cwd, agent and CLI target.
+   * start and touch, and takes the newest cwd, agent and CLI target. The slot,
+   * tag, grid, model and effort take the new value when there is one: a resumed
+   * terminal reports its id before anything seeds what it knows, so a null here
+   * must not wipe what the row saved.
    */
   recordConversation(entry: {
     agentSessionId: string;
@@ -40,11 +53,16 @@ export class CommandTerminalHistoryRepository {
     label: string | null;
     touched: boolean;
     cliTarget?: string | null;
+    slot?: string | null;
+    taskTag?: string | null;
+    grid?: { cols: number; rows: number } | null;
+    model?: string | null;
+    effort?: string | null;
   }): void {
     const now = new Date().toISOString();
     this.db.prepare(`
       INSERT INTO command_terminal_history (${COLUMNS})
-      VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, 0)
+      VALUES (?, ?, ?, NULL, ?, ?, ?, NULL, ?, ?, 0, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(agent_session_id) DO UPDATE SET
         agent_name = excluded.agent_name,
         cwd = excluded.cwd,
@@ -52,7 +70,13 @@ export class CommandTerminalHistoryRepository {
         touched_at = COALESCE(command_terminal_history.touched_at, excluded.touched_at),
         ended_at = NULL,
         updated_at = excluded.updated_at,
-        cli_target = excluded.cli_target
+        cli_target = excluded.cli_target,
+        slot = COALESCE(excluded.slot, command_terminal_history.slot),
+        task_tag = COALESCE(excluded.task_tag, command_terminal_history.task_tag),
+        last_pty_cols = COALESCE(excluded.last_pty_cols, command_terminal_history.last_pty_cols),
+        last_pty_rows = COALESCE(excluded.last_pty_rows, command_terminal_history.last_pty_rows),
+        model = COALESCE(excluded.model, command_terminal_history.model),
+        effort = COALESCE(excluded.effort, command_terminal_history.effort)
     `).run(
       entry.agentSessionId,
       entry.agentName,
@@ -62,7 +86,27 @@ export class CommandTerminalHistoryRepository {
       entry.touched ? now : null,
       now,
       entry.cliTarget ?? null,
+      entry.slot ?? null,
+      entry.taskTag ?? null,
+      entry.grid?.cols ?? null,
+      entry.grid?.rows ?? null,
+      entry.model ?? null,
+      entry.effort ?? null,
     );
+  }
+
+  /** The terminal's grid changed on the desktop. */
+  setGrid(agentSessionId: string, grid: { cols: number; rows: number }): void {
+    this.db.prepare(
+      'UPDATE command_terminal_history SET last_pty_cols = ?, last_pty_rows = ? WHERE agent_session_id = ?',
+    ).run(grid.cols, grid.rows, agentSessionId);
+  }
+
+  /** The terminal's context bar set a model or an effort. A null leaves the saved value. */
+  setRuntimeSettings(agentSessionId: string, settings: { model: string | null; effort: string | null }): void {
+    this.db.prepare(
+      'UPDATE command_terminal_history SET model = COALESCE(?, model), effort = COALESCE(?, effort) WHERE agent_session_id = ?',
+    ).run(settings.model, settings.effort, agentSessionId);
   }
 
   /** The terminal was used: its conversation is worth offering back. */
@@ -143,6 +187,18 @@ export class CommandTerminalHistoryRepository {
       `SELECT ${COLUMNS} FROM command_terminal_history
        WHERE touched_at IS NOT NULL
        ORDER BY COALESCE(ended_at, updated_at) DESC, rowid DESC`,
+    ).all() as CommandTerminalHistoryRow[];
+  }
+
+  /**
+   * Used conversations no end was recorded for, newest first: what was running
+   * at the last quit, crash or OS kill, which is what a restart brings back.
+   */
+  listOpenUsed(): CommandTerminalHistoryRow[] {
+    return this.db.prepare(
+      `SELECT ${COLUMNS} FROM command_terminal_history
+       WHERE touched_at IS NOT NULL AND ended_at IS NULL
+       ORDER BY updated_at DESC, rowid DESC`,
     ).all() as CommandTerminalHistoryRow[];
   }
 

@@ -75,7 +75,10 @@ vi.mock('../../src/main/agent/agent-registry', () => ({
   },
 }));
 
-import { registerTransientSessionHandlers } from '../../src/main/ipc/handlers/transient-sessions';
+import path from 'node:path';
+import { v4 as uuidv4 } from 'uuid';
+import { registerTransientSessionHandlers, startCommandTerminal } from '../../src/main/ipc/handlers/transient-sessions';
+import { trackFeatureUsed } from '../../src/main/analytics/usage';
 import { IPC } from '../../src/shared/ipc-channels';
 import { serializeCliTarget } from '../../src/main/agent/shared/cli-target';
 import type { SpawnTransientSessionInput } from '../../src/shared/types';
@@ -116,7 +119,10 @@ function storedDistroTarget(distro: string): string {
   return serialized;
 }
 
-function createContext(history: Record<string, { agent_name: string; label: string | null; cli_target?: string | null; named_by_user?: number }>, options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {}) {
+function createContext(
+  history: Record<string, { agent_name: string; label: string | null; cli_target?: string | null; named_by_user?: number; model?: string | null; effort?: string | null }>,
+  options: { alreadyOpen?: boolean; transcriptGone?: boolean } = {},
+) {
   return {
     currentProjectId: 'proj-1',
     projectRepo: {
@@ -139,6 +145,7 @@ function createContext(history: Record<string, { agent_name: string; label: stri
       conversationAvailable: vi.fn(async () => options.transcriptGone !== true),
       claimResume: vi.fn(() => options.alreadyOpen !== true),
       settleResume: vi.fn(),
+      recordRuntimeSettings: vi.fn(),
       list: vi.fn(async () => [{ agentSessionId: 'conversation-a' }]),
     },
     sessionManager: {
@@ -226,6 +233,66 @@ describe('startCommandTerminal: resuming an earlier conversation', () => {
     await expect(spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }))
       .rejects.toMatchObject({ code: 'spawn-failed' });
     expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', null);
+  });
+
+  it('starts a resume on the model and effort the conversation last set, and keeps them for a /clear', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null, model: 'opus', effort: 'xhigh' } });
+    await spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' });
+    expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: 'opus', effort: 'xhigh' }));
+    expect(context.commandTerminalHistory.recordRuntimeSettings).toHaveBeenCalledWith('session-1', { model: 'opus', effort: 'xhigh' });
+  });
+
+  it('falls back to the project default for a conversation that set no model', async () => {
+    const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+    context.projectRepo.getById.mockReturnValue({ id: 'proj-1', path: PROJECT_ROOT, default_agent: 'codex', default_model: 'sonnet' as never, default_effort: 'low' as never });
+    await spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' });
+    expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ model: 'sonnet', effort: 'low' }));
+  });
+
+  describe('a restart restoring a terminal', () => {
+    const restore = { processTag: 'saved-tag', grid: { cols: 180, rows: 44 } };
+
+    it('takes the claim its pass already holds as its own, and still settles it', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } }, { alreadyOpen: true });
+      await startCommandTerminal(context as never, { projectId: 'proj-1', slot: 'slot-2', resumeAgentSessionId: 'conversation-a' }, restore);
+      expect(context.commandTerminalHistory.claimResume).not.toHaveBeenCalled();
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ commandTerminalSlot: 'slot-2' }));
+      expect(context.commandTerminalHistory.settleResume).toHaveBeenCalledWith('proj-1', 'conversation-a', 'session-1');
+    });
+
+    it('runs under its saved tag and grid, with the directory named by the new session', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      await startCommandTerminal(context as never, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }, restore);
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({
+        taskId: 'saved-tag',
+        id: 'mock-transient-task-id',
+        restoredGrid: { cols: 180, rows: 44 },
+      }));
+      expect(adapters.get('claude')!.buildCommand).toHaveBeenCalledWith(expect.objectContaining({ taskProcessTag: 'saved-tag' }));
+      const { statusOutputPath } = vi.mocked(context.sessionManager.spawn).mock.calls[0][0 as never] as unknown as { statusOutputPath: string };
+      expect(path.basename(path.dirname(statusOutputPath))).toBe('mock-transient-task-id');
+    });
+
+    it('takes a new tag when the row saved none', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      vi.mocked(uuidv4).mockReturnValueOnce('new-tag' as never);
+      await startCommandTerminal(context as never, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }, { processTag: null, grid: null });
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'new-tag' }));
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ restoredGrid: expect.anything() }));
+    });
+
+    it('counts as nobody using the feature', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      await startCommandTerminal(context as never, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a' }, restore);
+      expect(trackFeatureUsed).not.toHaveBeenCalled();
+    });
+
+    it('an Earlier resume still counts, and neither IPC nor a phone can pass a restore', async () => {
+      const context = createContext({ 'conversation-a': { agent_name: 'claude', label: null } });
+      await spawn(context, { projectId: 'proj-1', resumeAgentSessionId: 'conversation-a', processTag: 'forged', grid: { cols: 1, rows: 1 } } as SpawnTransientSessionInput);
+      expect(trackFeatureUsed).toHaveBeenCalledWith('command_terminal');
+      expect(context.sessionManager.spawn).toHaveBeenCalledWith(expect.not.objectContaining({ taskId: 'forged' }));
+    });
   });
 
   it('starts fresh on the project default when no resume is asked for', async () => {

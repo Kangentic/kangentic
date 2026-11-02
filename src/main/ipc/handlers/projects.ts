@@ -6,6 +6,13 @@ import { relocateProject } from './project-relocate';
 import { TaskRepository } from '../../db/repositories/task-repository';
 import { SessionRepository } from '../../db/repositories/session-repository';
 import { resumeSuspendedSessions, autoSpawnTasks, type ResumeSuspendedOptions, type FirstAgentStarter } from '../../transition-engine/session-startup';
+import {
+  claimCommandTerminalRestore,
+  forgetCommandTerminalRestore,
+  restoreLostCommandTerminals,
+  startCommandTerminalRestore,
+  type LostCommandTerminal,
+} from './command-terminal-restore';
 import { cleanupStaleResourcesAsync, pruneOrphanedWorktreeTasks } from '../../transition-engine/resource-cleanup';
 import { SwimlaneRepository } from '../../db/repositories/swimlane-repository';
 import { AutomationRunRepository } from '../../db/repositories/automation-run-repository';
@@ -177,6 +184,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
     }
     context.recoveredProjects.delete(projectId);
     context.snapshottedProjects.delete(projectId);
+    forgetCommandTerminalRestore(context, projectId);
     return;
   }
 
@@ -355,6 +363,7 @@ export async function cleanupProject(context: IpcContext, projectId: string, pro
   }
   context.recoveredProjects.delete(projectId);
   context.snapshottedProjects.delete(projectId);
+  forgetCommandTerminalRestore(context, projectId);
 
   console.log(`[PROJECT_DELETE] Cleaned up project at ${projectPath}`);
 }
@@ -724,6 +733,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
     const automationRunRepo = new AutomationRunRepository(db);
     const taskMoveRepo = new TaskMoveRepository(db);
 
+    // Before anything can list Earlier, which would end the rows it restores from.
+    claimCommandTerminalRestore(context, project.id);
+
     // Ordering contract (see pruneOrphanedWorktreeTasks): the prune completes
     // before session recovery reads the DB, but the whole chain runs off the
     // awaited open path. The remaining passes (backlog cleanup + orphan
@@ -740,6 +752,9 @@ export async function openProjectByPath(context: IpcContext, projectPath: string
           return resumeSuspendedSessions(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), recoveryOptions(context, openedProject.path));
         })
         .catch((err) => console.error('[PROJECT_OPEN] Session recovery failed:', err))
+        // After the resume, so tasks keep first claim on the session cap, and not
+        // awaited: it never rejects, and a task's first agent need not wait on it.
+        .then(() => { void startCommandTerminalRestore(context, openedProject.id); })
         .then(() => autoSpawnTasks(openedProject.id, openedProject.path, context.sessionManager, context.configManager, openedProject.default_agent, context.mcpServerHandle, openedProject.default_model, openedProject.default_effort, context.boardConfigManager.getBoardProfiles(openedProject.path), { startFirstAgent: firstAgentStarter(context, openedProject.id) }))
         .catch((err) => console.error('[PROJECT_OPEN] Session reconciliation failed:', err))
         .then(() => startToolBreakdownRepair(openedProject)),
@@ -846,9 +861,25 @@ function scheduleBoardSnapshot(context: IpcContext, project: Project): void {
  * resume could not bring back (its session had no agent session id yet, so
  * there was nothing to resume) when its column starts one. Scoped to the lost
  * ids and their tasks, so a session that exited or was suspended earlier this
- * run is not woken with them.
+ * run is not woken with them. The Command Terminals it took down come back after
+ * every task has, by the conversations their removals claimed.
  */
 export async function recoverSessionsAfterPtyHostLoss(
+  context: IpcContext,
+  lostSessionIdsByProject: ReadonlyMap<string, ReadonlySet<string>>,
+  lostTerminalsByProject: ReadonlyMap<string, readonly LostCommandTerminal[]> = new Map(),
+): Promise<void> {
+  try {
+    await recoverTasksAfterPtyHostLoss(context, lostSessionIdsByProject);
+  } finally {
+    // In a `finally`, so a task recovery that throws still settles their claims.
+    for (const [projectId, lostTerminals] of lostTerminalsByProject) {
+      await restoreLostCommandTerminals(context, projectId, lostTerminals);
+    }
+  }
+}
+
+async function recoverTasksAfterPtyHostLoss(
   context: IpcContext,
   lostSessionIdsByProject: ReadonlyMap<string, ReadonlySet<string>>,
 ): Promise<void> {
@@ -951,16 +982,23 @@ export async function activateAllProjects(context: IpcContext): Promise<void> {
       const automationRunRepo = new AutomationRunRepository(db);
       const taskMoveRepo = new TaskMoveRepository(db);
 
-      // See openProjectByPath for rationale: the awaited prune ensures
-      // recovery reads a clean DB; the slow async passes run in the
-      // background and may still be in flight when activateAllProjects
-      // resolves.
-      await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
-      cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
-        .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
-      sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
+      // See openProjectByPath: before anything can list Earlier, and started
+      // after the resume. In a `finally`, so a chain that throws settles its claims.
+      claimCommandTerminalRestore(context, project.id);
+      try {
+        // See openProjectByPath for rationale: the awaited prune ensures
+        // recovery reads a clean DB; the slow async passes run in the
+        // background and may still be in flight when activateAllProjects
+        // resolves.
+        await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
+        cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
+          .catch((err) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, err));
+        sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
 
-      await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
+        await resumeSuspendedSessions(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path));
+      } finally {
+        void startCommandTerminalRestore(context, project.id);
+      }
       await autoSpawnTasks(project.id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, project.id) });
       // Deliberately AFTER the chain (unlike the open paths, which mark up
       // front to guard rapid double-opens): a failed background activation
@@ -1103,16 +1141,23 @@ export function registerProjectHandlers(context: IpcContext): void {
           const automationRunRepo = new AutomationRunRepository(db);
           const taskMoveRepo = new TaskMoveRepository(db);
 
-          // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
-          // completes before session recovery reads the DB; the slow
-          // filesystem passes are fired without awaiting.
-          await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
-          cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
-            .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
-          sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
+          // See openProjectByPath: before anything can list Earlier, and started
+          // after the resume. In a `finally`, so a chain that throws settles its claims.
+          claimCommandTerminalRestore(context, id);
+          try {
+            // Ordering contract (see pruneOrphanedWorktreeTasks): the prune
+            // completes before session recovery reads the DB; the slow
+            // filesystem passes are fired without awaiting.
+            await pruneOrphanedTasksAndNotify(context, project, taskRepo, swimlaneRepo, sessionRepo);
+            cleanupStaleResourcesAsync(project.path, taskRepo, taskMoveRepo, swimlaneRepo, sessionRepo, context.sessionManager, automationRunRepo, notifyRunsInterrupted(context, project.id), leftoverSweepOptions(context, project.path))
+              .catch((error) => console.error(`[PROJECT_OPEN] Resource cleanup failed for ${project.name}:`, error));
+            sweepSpareWorktreesAtOpen(context, project.path, taskRepo);
 
-          await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
-            .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
+            await resumeSuspendedSessions(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), recoveryOptions(context, project.path))
+              .catch((error) => console.error('[PROJECT_OPEN] Session recovery failed:', error));
+          } finally {
+            void startCommandTerminalRestore(context, id);
+          }
           await autoSpawnTasks(id, project.path, context.sessionManager, context.configManager, project.default_agent, context.mcpServerHandle, project.default_model, project.default_effort, context.boardConfigManager.getBoardProfiles(project.path), { startFirstAgent: firstAgentStarter(context, id) })
             .catch((error) => console.error('[PROJECT_OPEN] Session reconciliation failed:', error));
           startToolBreakdownRepair(project);
