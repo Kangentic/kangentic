@@ -8,6 +8,7 @@ sources:
   - resource: .claude/skills/pull-request/SKILL.md
   - resource: .claude/skills/merge-pull-request/SKILL.md
   - resource: scripts/review-verdict.mjs
+  - resource: scripts/tested-tree.mjs
 ---
 # Board test gate
 
@@ -19,6 +20,12 @@ the code and de-flaking or rewriting tests along the way, then stops without mer
 checkout for HMR. PRs are the normal path to `main` (CI gates it); `/merge-back` stays a direct
 quick-push escape hatch for admins. `/test` is for **manual local runs** only and is not wired to a
 column.
+
+The push to `main` that a merge makes does not run those checks again. `main` requires a PR to be
+up to date and PRs land by rebase, so the push carries the tree the PR's head already passed on, and
+the run's `Tree already tested` job passes it in seconds (`scripts/tested-tree.mjs`). A `/merge-back`
+has no PR behind it, so its push runs everything, and so does any doubt about the tree. What earns a
+check here, and what one costs an unrelated PR, is in `.claude/rules/test-value.md`.
 
 A contributor's PR from a fork goes through the same two columns with three differences, each spelled
 out in the two skills. Main is merged in rather than rebased onto, so the contributor's history

@@ -9,12 +9,13 @@ argument-hint: [quick|unit|ui|e2e|audit|write]
 
 A fast, predictable, comprehensive local gate (run before commit/merge). **The skill runs tests
 directly but delegates all test-writing and coverage analysis to the `test-builder` agent**
-(`.claude/agents/test-builder.md`) - the single source of truth for tier classification,
-anti-flake patterns, the 10-second E2E rule, and canonical helpers. This skill does not
-re-implement any of that knowledge inline.
+(`.claude/agents/test-builder.md`), which owns how to write one: anti-flake patterns, the 10-second
+E2E rule, and canonical helpers. What earns a test, which tier it belongs to, and what earns a CI job
+are in `.claude/rules/test-value.md`. This skill does not re-implement any of that inline.
 
 There is no affected-test selection. The gate runs ALL tests in fixed tier sets - predictable by
-design, with no import-graph guessing and no domain map to maintain.
+design, with no import-graph guessing and no domain map to maintain. The web demo tier is not in
+these sets, because it needs its own build: run `npm run build:demo`, then `npm run test:demo`.
 
 **Usage:** `/test [mode]`
 
