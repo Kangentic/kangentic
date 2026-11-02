@@ -10,21 +10,25 @@ test.describe.configure({ mode: 'parallel' });
 const MOCK_SCRIPT = path.join(__dirname, 'mock-electron-api.js');
 const VITE_URL = `http://localhost:${process.env.PLAYWRIGHT_VITE_PORT || '5173'}`;
 
-let page: Page;
-
-test.beforeEach(async () => {
-  const launched = await launchPage();
-  page = launched.page;
-  await createProject(page, 'Alpha');
-  await createProject(page, 'Beta');
-  await createProject(page, 'Gamma');
-});
-
-test.afterEach(async () => {
-  await page.context().browser()?.close();
-});
-
 test.describe('Project Sidebar Search', () => {
+  // Scoped to this describe: the group edge cases below launch their own browser
+  // and never use this page, and when the hooks were file-wide each of them paid
+  // for a second launch and three project creations inside its 15 s test timeout.
+  // A loaded CI shard ran one out (16 s, then 13.7 s on its retry).
+  let page: Page;
+
+  test.beforeEach(async () => {
+    const launched = await launchPage();
+    page = launched.page;
+    await createProject(page, 'Alpha');
+    await createProject(page, 'Beta');
+    await createProject(page, 'Gamma');
+  });
+
+  test.afterEach(async () => {
+    await page.context().browser()?.close();
+  });
+
   test('typing filters the project list by name', async () => {
     const sidebar = page.locator('.bg-surface-raised').first();
     const search = page.locator('[data-testid="project-sidebar-search"]');
