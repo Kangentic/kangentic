@@ -183,6 +183,9 @@ describe('the list', () => {
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'multiplexer' }), 'running').text).toBe('A tmux server. Stopping it ends all your tmux sessions.');
     // Shared covers a supervisor running the user's work and a server another task is connected to.
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'shared' }), 'running').text).toBe('Other work uses it too. Stopping it can break that work.');
+    // Outside is a tree only this task uses, part of which works elsewhere: it names no other work.
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'outside' }), 'running').text).toBe('Part of it runs outside this task\'s folders. Stopping it stops that too.');
+    expect(rowDetailOf(leftoverProcess({ outcome: 'kept', reason: 'outside' }), 'ended').text).toBe('No longer running.');
     expect(rowDetailOf(leftoverProcess(), 'stopped').text).toBe('Ran in the worktree.');
     expect(rowDetailOf(leftoverProcess({ place: 'project' }), 'stopped').text).toBe('Ran in the project folder.');
     expect(rowDetailOf(leftoverProcess({ outcome: 'kept' }), 'running').text).toBe('Runs in the worktree.');

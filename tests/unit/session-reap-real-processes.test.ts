@@ -157,6 +157,25 @@ function writeTcpClient(directory: string): string {
   return clientPath;
 }
 
+/**
+ * A detached parent that starts a child with its own tag, working in argv[3],
+ * and stays alive beside it. Writes `<parentPid> <childPid>` to argv[2].
+ */
+function writeOutsideChildParent(directory: string, sleeperPath: string): string {
+  const parentPath = path.join(directory, 'outside-child-parent.js');
+  fs.writeFileSync(parentPath, [
+    "const fs = require('fs');",
+    "const { spawn } = require('child_process');",
+    `const childPidFile = process.argv[2] + '.child';`,
+    `const child = spawn(process.execPath, [${JSON.stringify(sleeperPath)}, childPidFile], { stdio: 'ignore', windowsHide: true, cwd: process.argv[3] });`,
+    'const wait = setInterval(() => {',
+    '  try { const childPid = fs.readFileSync(childPidFile, "utf8"); if (childPid) { fs.writeFileSync(process.argv[2], process.pid + " " + childPid); clearInterval(wait); } } catch {}',
+    '}, 50);',
+    'setTimeout(() => {}, 60000);',
+  ].join('\n'));
+  return parentPath;
+}
+
 function envWithTag(tagValue: string | null): NodeJS.ProcessEnv {
   const env: NodeJS.ProcessEnv = { ...process.env };
   delete env[TASK_PROCESS_TAG_ENV];
@@ -470,6 +489,23 @@ describe.skipIf(reader === null)('task reap against real processes', () => {
     const result = await reap(scratch);
     expect(result.killedPids).not.toContain(parentPid);
     expect(result.killedPids).not.toContain(childPid);
+    expect(isProcessAlive(parentPid)).toBe(true);
+    expect(isProcessAlive(childPid)).toBe(true);
+  }, 60_000);
+
+  it('keeps a tagged parent whose own tagged child works outside the task, and reports it as outside, not shared', async () => {
+    const scratch = makeScratch();
+    const sleeperPath = writeSleeper(scratch.root);
+    const launcherPath = writeDetachingLauncher(scratch.root);
+    const parentPath = writeOutsideChildParent(scratch.root, sleeperPath);
+    const pairFile = path.join(scratch.root, 'outside-child.pids');
+    spawn(process.execPath, [launcherPath, parentPath, pairFile, scratch.elsewhere], { stdio: 'ignore', windowsHide: true, cwd: scratch.worktree, env: envWithTag(TASK_ID) });
+    const [parentPid, childPid] = (await waitForFile(pairFile)).split(' ').map(Number);
+    startedPids.push(parentPid, childPid);
+
+    const result = await reap(scratch);
+    expect(result.killedPids).toEqual([]);
+    expect(result.entries).toEqual([expect.objectContaining({ pid: parentPid, outcome: 'kept', reason: 'outside', place: 'worktree' })]);
     expect(isProcessAlive(parentPid)).toBe(true);
     expect(isProcessAlive(childPid)).toBe(true);
   }, 60_000);

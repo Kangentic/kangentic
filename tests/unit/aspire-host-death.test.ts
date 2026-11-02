@@ -10,13 +10,13 @@
  * rather than deciding it. It runs a real `aspire run`, reaps through the real
  * reader and `reapTaggedOnce`, then follows the pre-kill scan by identity.
  *
- * It asserts only that the run proved something: the plan has to reproduce the
+ * It asserts that the run proved something: the plan has to reproduce the
  * measured shape, or the survivors it reports mean nothing.
  *
  * The second case opens the dashboard in a browser. The dashboard dials the
- * AppHost's resource service only once a page subscribes (`EnsureInitialized`),
- * and a process the plan spared counts as connection evidence, so that pair
- * could spare the AppHost itself.
+ * AppHost's resource service only once a page subscribes (`EnsureInitialized`).
+ * Before a process in a tree spared only as `outside` stopped counting as a
+ * client, that pair spared the AppHost and the reap stopped nothing.
  *
  * NEVER RUN THIS ON A DEVELOPER'S MACHINE. DCP 0.26.5's `stop-process-tree`
  * follows recorded parent pids without comparing start times, so a teardown can
@@ -406,16 +406,19 @@ describe.runIf(process.platform === 'win32' && CI_RUNNER)('what a killed AppHost
     expect(baseline.plan.targets).toHaveLength(2);
     const [keptRoot] = baseline.plan.kept;
     expect(imageOf(baseline, keptRoot.process.pid)).toBe('dcp.exe');
+    expect(keptRoot.reason).toBe('outside');
     expect(keptRoot.because.basis).toBe('descendant');
     expect(imageOf(baseline, keptRoot.because.evidencePid as number)).toContain('dashboard');
   }, CASE_TIMEOUT_MS);
 
-  it('dashboard open in a browser: whether the plan still reaches the AppHost', async () => {
+  it('dashboard open in a browser: the plan still reaches the AppHost', async () => {
     const { baseline, appHostPid, dialed } = await measure(reader as TaggedProcessReader, true);
     const appHostTargeted = baseline.plan.targets.some((target) => target.pid === appHostPid);
     log(`RESULT dialed=${dialed} appHostTargeted=${appHostTargeted}`);
-    // A measurement, not a pin: the answer is read from the log. Only a run
-    // that never reached the question fails.
-    expect(dialed).not.toBeNull();
+    // A dashboard that never dialed never asked the question.
+    expect(dialed).toBe(true);
+    expect(appHostTargeted).toBe(true);
+    expect(baseline.plan.targets).toHaveLength(2);
+    expect(baseline.plan.kept.map((kept) => kept.reason)).toEqual(['outside']);
   }, CASE_TIMEOUT_MS);
 });

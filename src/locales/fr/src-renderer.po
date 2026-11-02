@@ -1359,6 +1359,10 @@ msgstr "Facultatif"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "D'autres travaux l'utilisent aussi. L'arrêter peut les interrompre."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"

@@ -1104,6 +1104,10 @@ msgstr "可选"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "其他工作也在使用它。停止它可能中断那些工作。"
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 msgid "Paste or drop files here"
 msgstr "在此粘贴或拖放文件"

@@ -1359,6 +1359,10 @@ msgstr "Volitelné"
 msgid "Other work uses it too. Stopping it can break that work."
 msgstr "Používá ho i jiná práce. Jeho zastavení ji může narušit."
 
+#: src/renderer/lib/leftover-processes.ts
+msgid "Part of it runs outside this task's folders. Stopping it stops that too."
+msgstr ""
+
 #: src/renderer/components/DescriptionEditor.tsx
 #, fuzzy
 msgid "Paste or drop files here"

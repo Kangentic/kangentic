@@ -834,6 +834,19 @@ describe('reapTaggedOnce with the connections another task holds', () => {
     expect(result.entries.find((entry) => entry.pid === 2001)).toMatchObject({ outcome: 'kept', reason: 'shared' });
   });
 
+  it('gives the force pass what the first plan kept as outside: a dashboard it spared does not save a host that ignored its signal', async () => {
+    // 2101 is a host listening on a port, 2102 the tagged root of a stack beside
+    // it, and 2103 that stack's dashboard, working elsewhere, a client of the host.
+    const host = tagged(2101, TASK);
+    const stackRoot = tagged(2102, TASK);
+    const dashboard = tagged(2103, TASK, 'start-2103', OTHER_PROJECT, 2102);
+    const read: LocalConnectionRead = { pairs: [{ listenerPid: 2101, clientPid: 2103 }], listeningPids: [2101, 2103] };
+    const reader = new ConnectionReader([[host, stackRoot, dashboard], [host, stackRoot, dashboard], [stackRoot, dashboard]], [read]);
+    const result = await reapTaggedOnce({ tasks: [reapTask(TASK)], mainPid: MAIN_PID, stop: true }, deps(reader));
+    expect(reader.kills.map((kill) => `${kill.pid}:${kill.strength}`)).toEqual(['2101:graceful', '2101:force']);
+    expect(result.entries.map((entry) => `${entry.pid}:${entry.outcome}:${entry.reason}`)).toEqual(['2101:stopped:null', '2102:kept:outside']);
+  });
+
   it('reports connection_list in the second pass when the read throws there, lists what it signalled as not stopped, and runs no force pass', async () => {
     const reader = new ConnectionReader([
       [server, otherTaskClient, devServer],
@@ -1300,9 +1313,15 @@ describe('leftoverLogLine: the local log names what the reap left running, and w
     ...overrides,
   });
 
-  it('names a shared process with the descendant that made it shared, as the stopping /preview\'s shell was', () => {
+  it('names a shared process with the descendant that made it shared', () => {
     expect(leftoverLogLine(entry({}))).toBe(
       "kept cmd (pid 63776) of task 7a1f2c3d in the project: shared, by descendant node (preview-trash-delete.js) (pid 118916), which works outside the task's directories or does not carry its tag",
+    );
+  });
+
+  it('says a process kept for its own descendant elsewhere is not shared, as the stopping /preview\'s shell was', () => {
+    expect(leftoverLogLine(entry({ reason: 'outside' }))).toBe(
+      "kept cmd (pid 63776) of task 7a1f2c3d in the project: its descendant node (preview-trash-delete.js) (pid 118916) carries the task's tag and works outside the task's directories",
     );
   });
 
@@ -1330,7 +1349,7 @@ describe('leftoverLogLine: the local log names what the reap left running, and w
     expect(result.entries).toEqual([expect.objectContaining({
       pid: 2001,
       outcome: 'kept',
-      reason: 'shared',
+      reason: 'outside',
       because: { basis: 'descendant', evidencePid: 2003, evidenceLabel: 'node (preview-trash-delete.js)' },
     })]);
     // Labeled, never reported: the report names only the kept shell.
