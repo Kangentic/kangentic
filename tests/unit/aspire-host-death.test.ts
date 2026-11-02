@@ -108,16 +108,19 @@ async function makeStack(): Promise<Stack> {
   };
 }
 
-/** Built with no tag: a tagged build leaves tagged compiler and MSBuild servers no measured stack had. */
-async function buildAppHost(stack: Stack): Promise<void> {
+function untaggedEnvironment(stack: Stack): NodeJS.ProcessEnv {
   const environment = { ...stack.environment };
   delete environment[TASK_PROCESS_TAG_ENV];
-  await execFileAsync('dotnet', ['build', PROJECT_FILE], { cwd: stack.appHostDirectory, env: environment, windowsHide: true, timeout: BUILD_TIMEOUT_MS });
+  return environment;
+}
+
+/** Built with no tag: a tagged build leaves tagged compiler and MSBuild servers no measured stack had. */
+async function buildAppHost(stack: Stack): Promise<void> {
+  await execFileAsync('dotnet', ['build', PROJECT_FILE], { cwd: stack.appHostDirectory, env: untaggedEnvironment(stack), windowsHide: true, timeout: BUILD_TIMEOUT_MS });
 }
 
 interface DetachOutput {
   appHostPid: number;
-  cliPid: number;
   dashboardUrl?: string | null;
 }
 
@@ -253,9 +256,7 @@ async function openDashboard(reader: TaggedProcessReader, stack: Stack, dashboar
     .map((directory) => path.join(directory, 'Google', 'Chrome', 'Application', 'chrome.exe'));
   const chrome = candidates.find((candidate) => fs.existsSync(candidate));
   if (!chrome) throw new Error(`no Chrome at ${candidates.join(' or ')}`);
-  const environment = { ...stack.environment };
-  delete environment[TASK_PROCESS_TAG_ENV];
-  const browser = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', `--user-data-dir=${path.join(stack.root, 'chrome')}`, dashboardUrl], { stdio: 'ignore', env: environment });
+  const browser = spawn(chrome, ['--headless=new', '--disable-gpu', '--no-first-run', `--user-data-dir=${path.join(stack.root, 'chrome')}`, dashboardUrl], { stdio: 'ignore', env: untaggedEnvironment(stack) });
   const deadline = Date.now() + DASHBOARD_DIAL_TIMEOUT_MS;
   while (Date.now() < deadline) {
     const reading = await read(reader, stack);
@@ -354,15 +355,17 @@ function printDcpLog(stack: Stack): void {
   }
 }
 
-/** Ends what is left, for the next case on this runner. Only processes this run started, by identity. */
-async function endSurvivors(reader: TaggedProcessReader, watched: Map<string, Watched>): Promise<void> {
-  for (const entry of watched.values()) {
-    if (entry.goneAfterMs !== null) continue;
-    try { await reader.kill(entry.scanned, 'force'); } catch { /* it ended on its own */ }
-  }
+/** Ends what is left, however the case ended, for the next one on this runner. Only processes with this run's own tag. */
+async function endStack(reader: TaggedProcessReader, stack: Stack): Promise<void> {
+  try {
+    const scan = await reader.scan();
+    for (const scanned of scan.processes.filter(isStackProcess(stack))) {
+      try { await reader.kill(scanned, 'force'); } catch { /* it ended on its own */ }
+    }
+  } catch { /* a failed scan names nothing to end */ }
 }
 
-async function measure(reader: TaggedProcessReader, withBrowser: boolean): Promise<{ baseline: Reading; appHostPid: number; dialed: boolean | null }> {
+async function measure(reader: TaggedProcessReader, withBrowser: boolean): Promise<{ baseline: Reading; killedPids: number[]; appHostPid: number; dialed: boolean | null }> {
   const stack = await makeStack();
   let browser: ChildProcess | null = null;
   try {
@@ -387,23 +390,28 @@ async function measure(reader: TaggedProcessReader, withBrowser: boolean): Promi
     const watched = await watchStack(reader, stack, baseline);
     summarize(stack, watched);
     printDcpLog(stack);
-    await endSurvivors(reader, watched);
-    return { baseline, appHostPid: started.appHostPid, dialed };
+    return { baseline, killedPids: reaped.killedPids, appHostPid: started.appHostPid, dialed };
   } finally {
     browser?.kill();
+    await endStack(reader, stack);
     try { fs.rmSync(stack.root, { recursive: true, force: true }); } catch { /* a survivor may hold it */ }
   }
 }
 
-describe.runIf(process.platform === 'win32' && CI_RUNNER)('what a killed AppHost leaves running (real Aspire stack)', () => {
+function requireReader(): TaggedProcessReader {
   const reader = createTaggedProcessReader();
+  if (!reader) throw new Error(`no process reader on ${process.platform}`);
+  return reader;
+}
 
+describe.runIf(process.platform === 'win32' && CI_RUNNER)('what a killed AppHost leaves running (real Aspire stack)', () => {
   it('dashboard idle: the plan reproduces the measured shape, and the watch prints what is left', async () => {
-    const { baseline, appHostPid } = await measure(reader as TaggedProcessReader, false);
+    const { baseline, killedPids, appHostPid } = await measure(requireReader(), false);
     const targetImages = baseline.plan.targets.map((target) => imageOf(baseline, target.pid));
     expect(targetImages).toContain('aspire.exe');
     expect(baseline.plan.targets.map((target) => target.pid)).toContain(appHostPid);
     expect(baseline.plan.targets).toHaveLength(2);
+    expect(killedPids).toContain(appHostPid);
     const [keptRoot] = baseline.plan.kept;
     expect(imageOf(baseline, keptRoot.process.pid)).toBe('dcp.exe');
     expect(keptRoot.reason).toBe('outside');
@@ -412,13 +420,14 @@ describe.runIf(process.platform === 'win32' && CI_RUNNER)('what a killed AppHost
   }, CASE_TIMEOUT_MS);
 
   it('dashboard open in a browser: the plan still reaches the AppHost', async () => {
-    const { baseline, appHostPid, dialed } = await measure(reader as TaggedProcessReader, true);
+    const { baseline, killedPids, appHostPid, dialed } = await measure(requireReader(), true);
     const appHostTargeted = baseline.plan.targets.some((target) => target.pid === appHostPid);
     log(`RESULT dialed=${dialed} appHostTargeted=${appHostTargeted}`);
     // A dashboard that never dialed never asked the question.
     expect(dialed).toBe(true);
     expect(appHostTargeted).toBe(true);
     expect(baseline.plan.targets).toHaveLength(2);
+    expect(killedPids).toContain(appHostPid);
     expect(baseline.plan.kept.map((kept) => kept.reason)).toEqual(['outside']);
   }, CASE_TIMEOUT_MS);
 });
