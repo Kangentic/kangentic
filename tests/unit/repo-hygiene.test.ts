@@ -129,10 +129,10 @@ describe('.github/workflows/codeql.yml', () => {
    * THE LOAD-BEARING ONE.
    *
    * ci.yml's concurrency-budget block documents that the PR gate already runs 21
-   * concurrent jobs against GitHub Free's ~20-job account-wide cap, and that 21
-   * is a ceiling: at 22+ the earliest slot releaser becomes a ~70s unit shard,
-   * so a queued UI shard starts that late and pushes the run past its ~226s
-   * pole. CodeQL's two Analyze jobs on a PR would take it to 23.
+   * concurrent jobs against GitHub Free's 20-job account-wide cap, and that 21
+   * is a ceiling: at 22 a queued UI shard waits for the first shard to finish,
+   * and the pole starts that late. CodeQL's two Analyze jobs on a PR would take
+   * it to 23.
    *
    * Adding a `pull_request:` trigger here is therefore a CI wall-clock
    * regression on every PR, forever, and it is a completely reasonable-looking

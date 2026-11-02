@@ -22,7 +22,7 @@
  * follows recorded parent pids without comparing start times, so a teardown can
  * end a stranger's tree (see "Parent pids Windows reuses" in the same doc).
  * That is why it needs both `CI` and `KANGENTIC_ASPIRE_PROBE=1`. The
- * `task-reap-real-processes.yml` workflow runs it on `workflow_dispatch` alone.
+ * `aspire-host-death.yml` workflow runs it, on `workflow_dispatch` alone.
  * A job that dies mid-run is an inconclusive run, not a result.
  */
 

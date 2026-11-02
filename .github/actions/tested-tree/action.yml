@@ -1,0 +1,19 @@
+name: Tree already tested
+description: >-
+  Says whether a push to main landed a tree its PR already tested, so the workflow can skip
+  running it again. scripts/tested-tree.mjs holds the decision and prints the branch it took.
+  Needs a checkout, and the job needs checks, contents and pull-requests read.
+
+outputs:
+  tested:
+    description: "'true' when the pushed tree passed on its PR's head. Any doubt answers 'false'."
+    value: ${{ steps.decide.outputs.tested }}
+
+runs:
+  using: composite
+  steps:
+    - id: decide
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: node scripts/tested-tree.mjs "$GITHUB_SHA"

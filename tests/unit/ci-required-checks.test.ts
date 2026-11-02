@@ -57,12 +57,16 @@ const REQUIRED_CONTEXTS_FROM_CI = [
  * list yet: it landed after the 2026-08-29 snapshot above. Promoting it is the
  * `gh api -X PATCH` in the header comment plus moving it to
  * REQUIRED_CONTEXTS_FROM_CI, in the same change.
+ *
+ * `Tree already tested` runs only on a push to main, so a pull request could never
+ * report it: requiring it would block every merge.
  */
 const DELIBERATELY_NOT_REQUIRED = [
   'Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
   'UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
   'E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})',
   'Web demo (build + smoke)',
+  'Tree already tested',
 ];
 
 function readWorkflow(file: string): string {
