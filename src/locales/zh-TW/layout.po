@@ -211,6 +211,10 @@ msgstr "讀取專案的設定"
 msgid "Refresh"
 msgstr "重新整理"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Runs real terminals"
 msgstr "執行真正的終端機"

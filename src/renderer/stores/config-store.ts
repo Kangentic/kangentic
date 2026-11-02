@@ -92,6 +92,8 @@ interface ConfigStore {
    *  just wrote. Not preserved across a refetch: the detached window writes it
    *  too, and the panel must read that write back. */
   saveCommandTerminalRail: (rail: CommandTerminalRailState) => void;
+  /** Note which project the panel is showing for, or null once it hides. */
+  saveCommandTerminalOpenProject: (projectId: string | null) => void;
   /** Take the rail's state as read from disk, without writing it back: the
    *  panel re-reads it when it mounts, since the detached window may have
    *  changed it since this window last loaded config. */
@@ -450,6 +452,14 @@ const createConfigStore = () => create<ConfigStore>((set, get) => {
         globalConfig: { ...state.globalConfig, commandTerminalRail: rail },
       }));
       window.electronAPI.config.set({ commandTerminalRail: rail });
+    },
+
+    saveCommandTerminalOpenProject: (projectId) => {
+      set((state) => ({
+        config: { ...state.config, commandTerminalOpenProjectId: projectId },
+        globalConfig: { ...state.globalConfig, commandTerminalOpenProjectId: projectId },
+      }));
+      window.electronAPI.config.set({ commandTerminalOpenProjectId: projectId });
     },
 
     adoptCommandTerminalRail: (rail) => {

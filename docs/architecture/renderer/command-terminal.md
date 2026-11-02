@@ -388,7 +388,9 @@ SessionManager's own events, in main:
 
 - **A row is written when the agent reports its session id**, not when the terminal ends, because
   a quit removes no registry row (`killAll` never calls `remove()`). A terminal open at quit keeps
-  its row, and the list stamps its end the first time it reads it. A `/clear` or `/resume` inside
+  its row open, which is what the next launch restores it from
+  ([After a restart](#after-a-restart)); what the restore leaves, the list stamps ended the first
+  time it reads it. A `/clear` or `/resume` inside
   the terminal reports a new id, which ends the previous row and starts one for the new
   conversation. An id a board task or a workflow already owns is skipped: a `/resume` into a
   task's conversation is not a terminal's.
@@ -434,6 +436,38 @@ names the id a `--resume` reaches (`settleCommandTerminalResume`,
 `src/main/ipc/helpers/command-terminal-background-session.ts`). That runs only on the agent's own
 transcripts, so an ordinary resume runs no CLI. See
 [Claude Code background sessions](../../integrations/agents/session-history.md#claude-code-background-sessions-bg).
+
+### After a restart
+
+A terminal running at a quit, a crash or an OS kill comes back on the next launch, in the same
+slot, with the same name, conversation, grid, tag, model and effort. Hide and quit keep a terminal,
+and Stop is the only thing that ends one for good. Main does the restoring, for every project
+([Transient sessions](../sessions/transient-sessions.md#restored-after-a-restart)). The renderer's
+part is small, because it already adopts a live terminal into its slot:
+
+- **The open waits.** `useCommandBar.open()` is the one place the panel is shown, and it waits on
+  `commandTerminalRestore:wait` before its reconcile, as the detached window's mount gate does. A
+  default window opened ahead of the restore would start fresh in a slot the restore is about to
+  take. A hide or a project switch drops the wait, and a second press adds none. An open still
+  waiting after 150 ms sets `commandBarOpening`, and the title-bar toggle shows a spinner in place
+  of its glyph, through `IconSlot`, with "Resuming terminals..." as its tip. Measured in a preview:
+  two terminals with no tasks take about 2.6 s from renderer start. An ordinary open is answered
+  inside the delay and never flashes it.
+- **The overlay stays up over a terminal still booting.** A mount that attaches normally skips the
+  launch overlay, since it is looking at a running conversation. One attached to a queued terminal,
+  or to a `resuming` one with no `sessionFirstOutput`, keeps it: all it could show is an empty pane,
+  or the shell's prompt and the typed command. A reload's `syncSessions` rehydrates that map, so a
+  survivor never flashes the overlay.
+- **The panel reopens if it was showing**, as board task windows do. `useCommandBar` writes
+  `AppConfig.commandTerminalOpenProjectId` on each open and hide, skipping the first value so a
+  boot's closed panel cannot erase it, and a quit writes nothing, so the record survives. After
+  `restoreWorkspaceForProject` the cold path calls `reopenCommandTerminalPanelAfterRestart`
+  (`reopen-panel.ts`), which waits for the restore and arms the pending-open flag only if a terminal
+  of that project is live. With none it clears the key: a reopened panel would start a fresh
+  terminal and run a checkout with nobody at the desk. A hard reload reopens the panel the same way.
+  The backdrop paints flat, since this is a restore (`restore-no-animation-replay.md`).
+
+A detached window does not come back, as no pop-out does on boot. Its terminals show in the panel.
 
 In the rail, a row resumes IN PLACE of the focused terminal (or the only one) only while nothing
 has reached that terminal: a fresh terminal the user opened and then decided against is replaced

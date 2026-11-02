@@ -69,6 +69,11 @@ export interface CommandTerminalLeftoverDeps {
    * removal; the reap waits for it.
    */
   stopBackgroundSession?(ended: EndedCommandTerminal): Promise<void>;
+  /**
+   * The terminal comes back (`isRestorableAfterHostLoss`), so it did not end:
+   * what its agent left running stays for the conversation that returns to it.
+   */
+  willRestore?(session: Session): boolean;
   isShuttingDown(): boolean;
   /** Injectable for tests. */
   delayMs?: number;
@@ -100,6 +105,7 @@ export class CommandTerminalLeftoverReaper {
     // A workflow's own agent is transient too, but runs no shell tool, and its
     // end already waits for its process to exit (`endWorkflowAgent`).
     if (!session || !isCommandTerminalSession(session) || !session.cwd || this.disposed) return;
+    if (this.deps.willRestore?.(session)) return;
     // The terminal's own folder is the reap's directory. It is never passed as
     // a worktree: the macOS orphan rule treats a worktree as wholly the task's,
     // and a project root is shared with every task that has no worktree.

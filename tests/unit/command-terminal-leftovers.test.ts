@@ -41,7 +41,7 @@ function removedSession(overrides: Partial<Session> = {}): Session {
   } as Session;
 }
 
-function makeRig(options: { shuttingDown?: boolean } = {}) {
+function makeRig(options: { shuttingDown?: boolean; willRestore?: (session: Session) => boolean } = {}) {
   const sessionManager = new EventEmitter();
   const reaps: Array<{ projectPath: string; task: CommandTerminalLeftoverTask }> = [];
   const reapDistros: string[][] = [];
@@ -52,6 +52,7 @@ function makeRig(options: { shuttingDown?: boolean } = {}) {
       reaps.push({ projectPath, task });
       reapDistros.push(wslDistros);
     },
+    willRestore: options.willRestore,
     isShuttingDown: () => shuttingDown,
   });
   reaper.start();
@@ -61,6 +62,20 @@ function makeRig(options: { shuttingDown?: boolean } = {}) {
 describe('CommandTerminalLeftoverReaper', () => {
   beforeEach(() => vi.useFakeTimers());
   afterEach(() => vi.useRealTimers());
+
+  it('leaves a terminal that comes back alone: what it left running is still its own', async () => {
+    const { sessionManager, reaps } = makeRig({ willRestore: (session) => session.id === 'session-1' });
+    sessionManager.emit('session-removed', 'session-1', removedSession());
+    await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+    expect(reaps).toEqual([]);
+  });
+
+  it('still reaps a terminal that does not come back', async () => {
+    const { sessionManager, reaps } = makeRig({ willRestore: () => false });
+    sessionManager.emit('session-removed', 'session-1', removedSession());
+    await vi.advanceTimersByTimeAsync(COMMAND_TERMINAL_REAP_DELAY_MS);
+    expect(reaps).toHaveLength(1);
+  });
 
   it('leaves the orphan grace to the reap\'s own wait, and backstops past Claude\'s longest measured exit', () => {
     // The reap's agent-exit request outlives the orphan cleanup's grace and the killed-shell bound,

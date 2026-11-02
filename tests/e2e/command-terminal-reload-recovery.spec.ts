@@ -155,7 +155,10 @@ test.describe('Command Terminal reload recovery', () => {
       .poll(async () => (await liveTerminals(page)).map((row) => row.id), { timeout: 15000, intervals: [250, 500] })
       .toEqual([secondTerminal.id]);
 
-    await openCommandTerminalLayer(page);
+    // The panel was showing when the page went, so it comes back by itself
+    // (`reopen-panel.ts`), and a press here would hide it.
+    await page.locator('[data-testid="command-terminal-window"]').first()
+      .waitFor({ state: 'visible', timeout: 20000 });
 
     // It comes back as Command Terminal 2, the number it has always had. Under
     // the positional guess it returned as "Command Terminal 1", so the window

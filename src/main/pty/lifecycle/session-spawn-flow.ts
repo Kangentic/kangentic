@@ -472,6 +472,11 @@ export async function performSpawn(
   }
   const ptyProcess = spawnOutcome.pty;
 
+  // A queue promotion replaces its placeholder, and a queued Command Terminal
+  // was named on that row: a resume seeds it, and a user can rename it there.
+  // Read from `siblings`: the drain above took the row out of the registry.
+  const promotedRow = siblings.find((sibling) => sibling.id === id);
+
   const session: ManagedSession = {
     id,
     taskId: input.taskId,
@@ -488,6 +493,8 @@ export async function performSpawn(
     workflowId: input.workflowId ?? null,
     commandTerminalSlot: input.commandTerminalSlot ?? null,
     commandTerminalBranch: input.commandTerminalBranch ?? null,
+    commandTerminalLabel: promotedRow?.commandTerminalLabel,
+    commandTerminalNamedByUser: promotedRow?.commandTerminalNamedByUser,
     hasUserInput: input.hasUserInput === true || undefined,
     isolatedSwimlaneId: input.isolatedSwimlaneId,
     exitSequence: input.exitSequence ?? ['\x03'],

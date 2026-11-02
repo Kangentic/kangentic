@@ -262,6 +262,10 @@ msgstr "Считывает настройки проекта"
 msgid "Refresh"
 msgstr "Обновить"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr ""
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 #, fuzzy
 msgid "Runs real terminals"

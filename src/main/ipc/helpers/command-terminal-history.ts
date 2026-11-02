@@ -25,8 +25,12 @@
  *
  * Rows are written as the id is captured, not when the terminal ends, because a
  * quit removes no row (`killAll` never calls `remove()`): a terminal open at
- * quit keeps its row, and the list stamps its end the first time it reads it,
- * or deletes the row if nobody used that terminal.
+ * quit keeps its row with no end, and so does a crash or an OS kill. That open
+ * row is the signal the next launch restores the terminal from
+ * (command-terminal-restore.ts), so a row also keeps what the terminal needs to
+ * come back as itself: its slot, its process tag, its grid, and the model and
+ * effort its context bar set. What the restore leaves, the list stamps ended the
+ * first time it reads it, or deletes if nobody used that terminal.
  */
 import PQueue from 'p-queue';
 import {
@@ -36,16 +40,19 @@ import {
   type CommandTerminalHistorySearchResult,
   type Session,
   type SessionEvent,
+  type SessionUsage,
   type StoredCliTarget,
 } from '../../../shared/types';
 import { serializeCliTarget } from '../../agent/shared/cli-target';
 import { normalizeCommandTerminalName } from '../../../shared/command-terminal-name';
+import { parseModelId } from '../../../shared/model-id';
 import { isCommandTerminalSession } from '../../../shared/session-owner';
 import type { CommandTerminalHistoryRepository, CommandTerminalHistoryRow } from '../../db/repositories/command-terminal-history-repository';
 
 type AgentSessionIdListener = (sessionId: string, taskId: string, projectId: string, agentSessionId: string) => void;
 type SessionListener = (sessionId: string, session?: Session) => void;
 type SessionEventListener = (sessionId: string, event: SessionEvent) => void;
+type SessionUsageListener = (sessionId: string, usage: SessionUsage) => void;
 
 /** Longer than any rail or phone row shows; the row cuts it with an ellipsis. */
 const FIRST_PROMPT_MAX_LENGTH = 200;
@@ -70,9 +77,11 @@ export interface CommandTerminalHistorySessionSource {
   on(event: 'agent-session-id', listener: AgentSessionIdListener): unknown;
   on(event: 'session-changed' | 'session-removed', listener: SessionListener): unknown;
   on(event: 'event', listener: SessionEventListener): unknown;
+  on(event: 'usage', listener: SessionUsageListener): unknown;
   off(event: 'agent-session-id', listener: AgentSessionIdListener): unknown;
   off(event: 'session-changed' | 'session-removed', listener: SessionListener): unknown;
   off(event: 'event', listener: SessionEventListener): unknown;
+  off(event: 'usage', listener: SessionUsageListener): unknown;
   getSession(sessionId: string): Session | undefined;
   getSessionAgentName(sessionId: string): string | undefined;
   /** Where the session's CLI runs when it is not this machine (a WSL distro), or null. */
@@ -98,6 +107,29 @@ export interface CommandTerminalHistoryDeps {
   conversationEnded(projectId: string, agentSessionId: string): void;
   /** Search the project's conversation text. Never throws. */
   searchText(projectId: string, query: string): Promise<CommandTerminalHistorySearchResult>;
+  /**
+   * Claim what this launch's restore will bring back
+   * (`claimCommandTerminalRestore`). Synchronous, so a list reads the rows only
+   * once the restore holds its own, and it must never delete or backfill them.
+   */
+  claimRestore?(projectId: string): void;
+}
+
+/**
+ * Whether a reported model id is the model a picker named. A picker's value is an
+ * id or a short name inside one (`opus` in `claude-opus-5-5`), with or without a
+ * suffix `parseModelId` strips.
+ */
+function statusShowsModel(reportedModel: string, pickedModel: string): boolean {
+  return parseModelId(reportedModel).baseId.toLowerCase()
+    .includes(parseModelId(pickedModel).baseId.toLowerCase());
+}
+
+/** What a terminal keeps on its row beyond the conversation, as it changes. */
+interface TerminalRestoreFacts {
+  grid: { cols: number; rows: number } | null;
+  model: string | null;
+  effort: string | null;
 }
 
 /** What the record knows about the conversation a live terminal holds. */
@@ -128,6 +160,26 @@ export class CommandTerminalHistory {
    */
   private readonly labelBeforeRow = new Map<string, string | null>();
   /**
+   * The grid, model and effort each terminal holds, by terminal. Kept apart from
+   * `heldBySession` because each outlives a row: a resize can land before the
+   * agent's id arrives, and a `/clear` starts a new row in the same terminal,
+   * on the same grid and model.
+   */
+  private readonly restoreFactsBySession = new Map<string, TerminalRestoreFacts>();
+  /**
+   * The model each terminal's agent last reported, by terminal. Never the spawn's
+   * seed, which only repeats the `--model` flag.
+   */
+  private readonly reportedModelBySession = new Map<string, string>();
+  /**
+   * A model a picker asked for that the agent has not switched to, by terminal.
+   * Claude asks before it switches a conversation, and its "No, go back" reaches
+   * nothing here, so what a picker set counts once the status shows that model.
+   * The first status that moves off `fromModel` to any other model ends the pick:
+   * it was declined, and a `/model` typed after it moved the terminal instead.
+   */
+  private readonly pickedModelBySession = new Map<string, { model: string; fromModel: string }>();
+  /**
    * Conversations a resume is starting, by agent session id, with the terminal
    * that took each once it spawned (null while the start runs). A resumed
    * terminal reports its agent's id a second or two after it spawns, so until
@@ -148,6 +200,7 @@ export class CommandTerminalHistory {
     this.deps.sessionManager.on('session-changed', this.onSessionChanged);
     this.deps.sessionManager.on('session-removed', this.onSessionRemoved);
     this.deps.sessionManager.on('event', this.onSessionEvent);
+    this.deps.sessionManager.on('usage', this.onSessionUsage);
   }
 
   /** Synchronous: detaches the listeners. */
@@ -159,12 +212,81 @@ export class CommandTerminalHistory {
       this.deps.sessionManager.off('session-changed', this.onSessionChanged);
       this.deps.sessionManager.off('session-removed', this.onSessionRemoved);
       this.deps.sessionManager.off('event', this.onSessionEvent);
+      this.deps.sessionManager.off('usage', this.onSessionUsage);
     }
     this.heldBySession.clear();
     this.promptBeforeRow.clear();
     this.labelBeforeRow.clear();
+    this.restoreFactsBySession.clear();
+    this.reportedModelBySession.clear();
+    this.pickedModelBySession.clear();
     this.resumesInFlight.clear();
     this.transcriptFoundAt.clear();
+  }
+
+  /** The terminal's grid changed on the desktop. A phone's grid never comes here. */
+  recordGrid(sessionId: string, grid: { cols: number; rows: number }): void {
+    if (this.disposed) return;
+    this.restoreFactsOf(sessionId).grid = grid;
+    const held = this.heldBySession.get(sessionId);
+    const repository = held ? this.deps.getRepository(held.projectId) : null;
+    if (held && repository) this.write(() => repository.setGrid(held.agentSessionId, grid), 'grid');
+  }
+
+  /**
+   * The terminal's context bar set a model or an effort, or a resume started it
+   * on the row's. A null leaves what the terminal held. Only the pickers report
+   * here: a `/model` typed into the agent is not seen. An agent that reports its
+   * model has the last word on a model: it counts once the status shows the
+   * change (`pickedModelBySession`). One that reports none counts at once.
+   */
+  recordRuntimeSettings(sessionId: string, settings: { model: string | null; effort: string | null }): void {
+    if (this.disposed) return;
+    const fromModel = this.reportedModelBySession.get(sessionId);
+    if (settings.model !== null && fromModel !== undefined && !statusShowsModel(fromModel, settings.model)) {
+      this.pickedModelBySession.set(sessionId, { model: settings.model, fromModel });
+      this.applyRuntimeSettings(sessionId, { model: null, effort: settings.effort });
+      return;
+    }
+    this.applyRuntimeSettings(sessionId, settings);
+  }
+
+  private applyRuntimeSettings(sessionId: string, settings: { model: string | null; effort: string | null }): void {
+    if (settings.model === null && settings.effort === null) return;
+    const facts = this.restoreFactsOf(sessionId);
+    facts.model = settings.model ?? facts.model;
+    facts.effort = settings.effort ?? facts.effort;
+    const held = this.heldBySession.get(sessionId);
+    const repository = held ? this.deps.getRepository(held.projectId) : null;
+    if (held && repository) this.write(() => repository.setRuntimeSettings(held.agentSessionId, settings), 'settings');
+  }
+
+  private readonly onSessionUsage: SessionUsageListener = (sessionId, usage) => {
+    if (this.disposed) return;
+    const reportedModel = usage.model?.reportedByAgent === true ? usage.model.id : null;
+    if (!reportedModel) return;
+    const session = this.deps.sessionManager.getSession(sessionId);
+    if (!session || !isCommandTerminalSession(session)) return;
+    this.reportedModelBySession.set(sessionId, reportedModel);
+    const picked = this.pickedModelBySession.get(sessionId);
+    if (!picked || picked.fromModel === reportedModel) return;
+    this.pickedModelBySession.delete(sessionId);
+    if (statusShowsModel(reportedModel, picked.model)) {
+      this.applyRuntimeSettings(sessionId, { model: picked.model, effort: null });
+    }
+  };
+
+  private restoreFactsOf(sessionId: string): TerminalRestoreFacts {
+    const existing = this.restoreFactsBySession.get(sessionId);
+    if (existing) return existing;
+    const facts: TerminalRestoreFacts = { grid: null, model: null, effort: null };
+    this.restoreFactsBySession.set(sessionId, facts);
+    return facts;
+  }
+
+  /** The conversations with no recorded end, newest first, for the restore. */
+  listOpen(projectId: string): CommandTerminalHistoryRow[] {
+    return this.read(() => this.deps.getRepository(projectId)?.listOpenUsed() ?? [], [], 'list-open');
   }
 
   /**
@@ -192,6 +314,9 @@ export class CommandTerminalHistory {
    */
   settleResume(projectId: string, agentSessionId: string, sessionId: string | null): void {
     if (!this.resumesInFlight.has(agentSessionId)) return;
+    // A terminal took it, so a caller whose own step failed after the start
+    // cannot free a conversation that terminal still holds.
+    if (sessionId === null && this.resumesInFlight.get(agentSessionId) !== null) return;
     const alreadyReported = sessionId !== null
       && (this.heldBySession.has(sessionId) || this.deps.sessionManager.getSession(sessionId)?.agentSessionId === agentSessionId);
     if (sessionId === null || alreadyReported || this.disposed) this.resumesInFlight.delete(agentSessionId);
@@ -214,6 +339,9 @@ export class CommandTerminalHistory {
   async list(projectId: string): Promise<CommandTerminalHistoryEntry[]> {
     const repository = this.deps.getRepository(projectId);
     if (!repository) return [];
+    // First: an open row is what a restart restores from, and everything below
+    // ends it. A row the restore claimed reads as live from here on.
+    this.deps.claimRestore?.(projectId);
     const liveConversationIds = this.liveConversationIds(projectId);
     let rows: CommandTerminalHistoryRow[];
     try {
@@ -366,6 +494,7 @@ export class CommandTerminalHistory {
     const touched = session.hasUserInput === true;
     const label = session.commandTerminalLabel ?? null;
     const namedByUser = session.commandTerminalNamedByUser === true;
+    const facts = this.restoreFactsBySession.get(sessionId);
     this.write(() => repository.recordConversation({
       agentSessionId,
       agentName: this.deps.sessionManager.getSessionAgentName(sessionId) ?? 'agent',
@@ -374,6 +503,11 @@ export class CommandTerminalHistory {
       touched,
       // A terminal whose CLI runs in a WSL distro: its transcript is there.
       cliTarget: serializeCliTarget(this.deps.sessionManager.getSessionCliTarget?.(sessionId) ?? null),
+      slot: session.commandTerminalSlot ?? null,
+      taskTag: session.taskId,
+      grid: facts?.grid ?? null,
+      model: facts?.model ?? null,
+      effort: facts?.effort ?? null,
     }), 'record');
     // A row that already existed (a resumed conversation) kept its own name;
     // a rename made before the id arrived replaces it.
@@ -449,6 +583,9 @@ export class CommandTerminalHistory {
     this.releaseResumesOf(sessionId);
     this.promptBeforeRow.delete(sessionId);
     this.labelBeforeRow.delete(sessionId);
+    this.restoreFactsBySession.delete(sessionId);
+    this.reportedModelBySession.delete(sessionId);
+    this.pickedModelBySession.delete(sessionId);
     const held = this.heldBySession.get(sessionId);
     if (!held) return;
     this.heldBySession.delete(sessionId);

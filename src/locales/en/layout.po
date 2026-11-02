@@ -211,6 +211,10 @@ msgstr "Reads your project's setup"
 msgid "Refresh"
 msgstr "Refresh"
 
+#: src/renderer/components/layout/TitleBar.tsx
+msgid "Resuming terminals..."
+msgstr "Resuming terminals..."
+
 #: src/renderer/components/layout/WelcomeScreen.tsx
 msgid "Runs real terminals"
 msgstr "Runs real terminals"

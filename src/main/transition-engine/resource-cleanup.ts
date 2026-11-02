@@ -691,10 +691,11 @@ export async function pruneOrphanedDirectories(
     true, // has junctions
   );
 
-  // Session directories: match by directory name (UUID). A live session's task
-  // id counts too: a Command Terminal's directory is named by its made-up task
-  // id, which no task row holds, and a terminal can run in a project before the
-  // desktop cold-opens it (a phone started it).
+  // Session directories: match by directory name (UUID). A live session's own id
+  // counts too: a Command Terminal's directory is named by it, no task row holds
+  // it, and a terminal can run in a project before the desktop cold-opens it (a
+  // phone started it). A workflow's agent names its directory by its task id,
+  // which is the workflow's.
   const liveSessions = sessionManager.listSessions();
   const referencedSessionIds = new Set([
     ...allTasks.map(task => task.id),

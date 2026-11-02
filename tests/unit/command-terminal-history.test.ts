@@ -82,7 +82,7 @@ class FakeSessions extends EventEmitter {
   }
 }
 
-function setup(options: { available?: (agentSessionId: string) => boolean } = {}) {
+function setup(options: { available?: (agentSessionId: string) => boolean; claimRestore?: (projectId: string) => void } = {}) {
   const database = openTestDatabase();
   openDatabases.push(database);
   runProjectMigrations(database);
@@ -97,6 +97,7 @@ function setup(options: { available?: (agentSessionId: string) => boolean } = {}
     notifyChanged,
     conversationEnded,
     searchText: async () => ({ indexingOff: false, hits: [] }),
+    claimRestore: options.claimRestore,
   });
   history.start();
   histories.push(history);
@@ -143,6 +144,218 @@ describe('command_terminal_history migration', () => {
     expect(new CommandTerminalHistoryRepository(database).get('conversation-old')).toMatchObject({ label: 'Named by the namer', named_by_user: 0 });
     const index = database.prepare("SELECT name FROM sqlite_master WHERE name = 'idx_command_terminal_history_ended'").get();
     expect(index).toBeUndefined();
+  });
+
+  it('adds the restore columns as NULL to existing rows, and runs again cleanly', () => {
+    const database = openTestDatabase();
+    openDatabases.push(database);
+    runProjectMigrations(database);
+    const now = new Date().toISOString();
+    database.prepare(`
+      INSERT INTO command_terminal_history (agent_session_id, agent_name, cwd, started_at, touched_at, updated_at)
+      VALUES ('conversation-old', 'claude', '/projects/demo', ?, ?, ?)
+    `).run(now, now, now);
+    for (const column of ['slot', 'task_tag', 'last_pty_cols', 'last_pty_rows', 'model', 'effort']) {
+      database.exec(`ALTER TABLE command_terminal_history DROP COLUMN ${column}`);
+    }
+
+    runProjectMigrations(database);
+    runProjectMigrations(database);
+
+    expect(new CommandTerminalHistoryRepository(database).get('conversation-old')).toMatchObject({
+      slot: null, task_tag: null, last_pty_cols: null, last_pty_rows: null, model: null, effort: null,
+    });
+  });
+});
+
+describe('what a row keeps for a restart', () => {
+  const grid = { cols: 180, rows: 44 };
+
+  it('records the slot and tag with the conversation', () => {
+    const { repository, sessions } = setup();
+    sessions.add('terminal-1', { commandTerminalSlot: 'slot-2' });
+    sessions.reportAgentId('terminal-1', 'conversation-a');
+    expect(repository.get('conversation-a')).toMatchObject({ slot: 'slot-2', task_tag: 'task-terminal-1' });
+  });
+
+  it('carries the slot, tag, grid and settings onto the row a /clear starts', () => {
+    const { repository, sessions, history } = setup();
+    sessions.add('terminal-1', { commandTerminalSlot: 'slot-3' });
+    sessions.reportAgentId('terminal-1', 'conversation-a');
+    history.recordGrid('terminal-1', grid);
+    history.recordRuntimeSettings('terminal-1', { model: 'opus', effort: null });
+    sessions.reportAgentId('terminal-1', 'conversation-b');
+    expect(repository.get('conversation-b')).toMatchObject({
+      slot: 'slot-3', task_tag: 'task-terminal-1', last_pty_cols: 180, last_pty_rows: 44, model: 'opus', effort: null,
+    });
+  });
+
+  it('keeps a grid and a setting that landed before the id, for the row the id records', () => {
+    const { repository, sessions, history } = setup();
+    sessions.add('terminal-1');
+    history.recordGrid('terminal-1', grid);
+    history.recordRuntimeSettings('terminal-1', { model: 'opus', effort: 'high' });
+    sessions.reportAgentId('terminal-1', 'conversation-a');
+    expect(repository.get('conversation-a')).toMatchObject({ last_pty_cols: 180, last_pty_rows: 44, model: 'opus', effort: 'high' });
+  });
+
+  it('writes a change to the row that holds the conversation, and one setting leaves the other', () => {
+    const { repository, sessions, history } = setup();
+    sessions.add('terminal-1');
+    sessions.reportAgentId('terminal-1', 'conversation-a');
+    history.recordGrid('terminal-1', grid);
+    history.recordRuntimeSettings('terminal-1', { model: 'opus', effort: 'high' });
+    history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: null });
+    expect(repository.get('conversation-a')).toMatchObject({ last_pty_cols: 180, model: 'sonnet', effort: 'high' });
+  });
+
+  describe('a model the picker asked for, on an agent that reports its model', () => {
+    function usage(id: string) {
+      return { model: { id, displayName: id, reportedByAgent: true } };
+    }
+
+    it('does not count a switch the user declined at the agent\'s own prompt', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: null });
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      expect(repository.get('conversation-a')?.model).toBeNull();
+    });
+
+    it('counts it once the status shows the model moved', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: null });
+      sessions.emit('usage', 'terminal-1', usage('claude-sonnet'));
+      expect(repository.get('conversation-a')?.model).toBe('sonnet');
+    });
+
+    it('drops a declined pick when the status moves to a third model', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: null });
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      sessions.emit('usage', 'terminal-1', usage('claude-opus'));
+      sessions.emit('usage', 'terminal-1', usage('claude-sonnet'));
+      expect(repository.get('conversation-a')?.model).toBeNull();
+    });
+
+    it('counts at once a pick of the model the status already shows', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'haiku', effort: null });
+      expect(repository.get('conversation-a')?.model).toBe('haiku');
+    });
+
+    it('matches a pick to a status whose id carries a window or date suffix', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'Opus[1m]', effort: null });
+      sessions.emit('usage', 'terminal-1', usage('claude-opus-5-5-20261001[1m]'));
+      expect(repository.get('conversation-a')?.model).toBe('Opus[1m]');
+    });
+
+    it('does not read the spawn seed as the agent reporting a model', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', { model: { id: 'sonnet', displayName: 'sonnet' } });
+      history.recordRuntimeSettings('terminal-1', { model: 'opus', effort: null });
+      expect(repository.get('conversation-a')?.model).toBe('opus');
+    });
+
+    it('leaves an effort picked with it to count at once', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'terminal-1', usage('claude-haiku'));
+      history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: 'high' });
+      expect(repository.get('conversation-a')).toMatchObject({ model: null, effort: 'high' });
+    });
+
+    it('takes the picker at its word for an agent that has reported no model', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      history.recordRuntimeSettings('terminal-1', { model: 'sonnet', effort: null });
+      expect(repository.get('conversation-a')?.model).toBe('sonnet');
+    });
+
+    it('reads no task session\'s usage', () => {
+      const { repository, sessions, history } = setup();
+      sessions.add('task-session', { transient: false });
+      sessions.add('terminal-1');
+      sessions.reportAgentId('terminal-1', 'conversation-a');
+      sessions.emit('usage', 'task-session', usage('claude-haiku'));
+      history.recordRuntimeSettings('task-session', { model: 'sonnet', effort: null });
+      sessions.emit('usage', 'task-session', usage('claude-sonnet'));
+      expect(repository.get('conversation-a')?.model).toBeNull();
+    });
+  });
+
+  it("does not wipe the saved columns when a resumed terminal reports its id before anything seeds it", () => {
+    const { repository, sessions, history } = setup();
+    sessions.add('terminal-1', { commandTerminalSlot: 'slot-2' });
+    sessions.reportAgentId('terminal-1', 'conversation-a');
+    history.recordGrid('terminal-1', grid);
+    history.recordRuntimeSettings('terminal-1', { model: 'opus', effort: 'high' });
+    sessions.change('terminal-1', { hasUserInput: true });
+    sessions.remove('terminal-1');
+
+    sessions.add('terminal-2', { commandTerminalSlot: 'slot-4' });
+    sessions.reportAgentId('terminal-2', 'conversation-a');
+
+    expect(repository.get('conversation-a')).toMatchObject({
+      slot: 'slot-4', task_tag: 'task-terminal-2', last_pty_cols: 180, last_pty_rows: 44, model: 'opus', effort: 'high', ended_at: null,
+    });
+  });
+
+  it('lists only what was used and never ended, newest first', () => {
+    const { sessions, history } = setup();
+    sessions.add('used-and-open', { hasUserInput: true });
+    sessions.reportAgentId('used-and-open', 'open-a');
+    sessions.add('untouched');
+    sessions.reportAgentId('untouched', 'open-untouched');
+    sessions.add('stopped', { hasUserInput: true });
+    sessions.reportAgentId('stopped', 'ended-a');
+    sessions.remove('stopped');
+    sessions.add('used-later', { hasUserInput: true });
+    sessions.reportAgentId('used-later', 'open-b');
+    expect(history.listOpen(PROJECT_ID).map((row) => row.agent_session_id).sort()).toEqual(['open-a', 'open-b']);
+  });
+
+  it('lets the restore claim before a list ends the row, as the next launch reads it', async () => {
+    const rig = setup();
+    rig.sessions.add('terminal-1', { hasUserInput: true });
+    rig.sessions.reportAgentId('terminal-1', 'conversation-a');
+    // A quit: the row stays open, and nothing in memory survives.
+    rig.sessions.sessions.delete('terminal-1');
+    rig.history.dispose();
+    const after = new CommandTerminalHistory({
+      sessionManager: rig.sessions,
+      getRepository: () => rig.repository,
+      conversationAvailable: async () => true,
+      notifyChanged: vi.fn(),
+      conversationEnded: vi.fn(),
+      searchText: async () => ({ indexingOff: false, hits: [] }),
+      // What the real claim does: the row reads as live, so the list leaves it.
+      claimRestore: () => { after.claimResume(PROJECT_ID, 'conversation-a'); },
+    });
+    after.start();
+    histories.push(after);
+
+    expect(await after.list(PROJECT_ID)).toEqual([]);
+    expect(rig.repository.get('conversation-a')?.ended_at).toBeNull();
   });
 });
 
@@ -597,6 +810,21 @@ describe('CommandTerminalHistory', () => {
     history.settleResume(PROJECT_ID, 'conversation-a', 'pty-new');
     sessions.remove('pty-new');
     expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+  });
+
+  it('keeps the claim of a start whose terminal exists when its caller then settles with no terminal', () => {
+    // A restore's start can succeed and a step after it fail, so the caller
+    // settles null. The terminal that took the claim still holds the conversation.
+    const fixture = setup();
+    endedConversation(fixture, 'conversation-a');
+    const { sessions, history } = fixture;
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
+    sessions.add('pty-new', { hasUserInput: true });
+    history.settleResume(PROJECT_ID, 'conversation-a', 'pty-new');
+
+    history.settleResume(PROJECT_ID, 'conversation-a', null);
+
+    expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(false);
   });
 
   it('refuses a claim on a conversation a live session already reports', () => {

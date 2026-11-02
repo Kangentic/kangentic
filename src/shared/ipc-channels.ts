@@ -187,6 +187,7 @@ export const IPC = {
   COMMAND_TERMINAL_HISTORY_REMOVE: 'commandTerminalHistory:remove',
   COMMAND_TERMINAL_HISTORY_SEARCH: 'commandTerminalHistory:search',
   COMMAND_TERMINAL_HISTORY_CHANGED: 'commandTerminalHistory:changed',
+  COMMAND_TERMINAL_RESTORE_WAIT: 'commandTerminalRestore:wait',
   SESSION_SET_FOCUSED: 'session:setFocused',
   SESSION_SET_MOUNTED: 'session:setMounted',
   SESSION_NOTIFY_USER_INTERRUPT: 'session:notifyUserInterrupt',

@@ -44,6 +44,7 @@ import { CommandTerminalRail } from './CommandTerminalRail';
 import { COMMAND_RAIL_COLLAPSED_WIDTH_PX, COMMAND_RAIL_DEFAULT_WIDTH_PX, COMMAND_RAIL_MIN_WIDTH_PX } from '../../../shared/command-terminal-rail';
 import type { RailCommandTerminal } from './useRailTerminalMenuActions';
 import { killCommandTerminalInSlot } from './stop-command-terminal';
+import { clearPanelEnterSkip, isPanelEnterSkipped } from './reopen-panel';
 import type { CommandTerminalHistoryEntry, Session } from '../../../shared/types';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -497,10 +498,12 @@ function CommandBridges({ onHide }: { onHide: () => void }): null {
  *  ~200ms ease-out, the same enter every dialog/panel uses). Fading the element
  *  that CARRIES the blur eases the blur in for free without animating the
  *  (expensive) filter radius. Skipped on an HMR remount so it does not replay
- *  while dogfooding (mirrors the window content's `skipEnterOnHmr`). */
+ *  while dogfooding (mirrors the window content's `skipEnterOnHmr`), and on the
+ *  reopen after a restart, which is a restore, not a user's open. */
 function CommandBackdrop({ onHide }: { onHide: () => void }) {
   const pressedOnSelf = useRef(false);
-  const [animateIn] = useState(() => !getIsHmrReload());
+  const [animateIn] = useState(() => !getIsHmrReload() && !isPanelEnterSkipped());
+  useEffect(() => clearPanelEnterSkip(), []);
   return (
     <div
       className={`absolute inset-0 bg-surface/40 backdrop-blur-xs pointer-events-auto ${animateIn ? 'overlay-backdrop-in' : ''}`}

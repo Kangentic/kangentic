@@ -128,7 +128,7 @@ describe('SessionManager.endCommandTerminal', () => {
 
     exit.resolve();
     await vi.waitFor(() => expect(rmSpy).toHaveBeenCalledTimes(1));
-    expect(rmSpy).toHaveBeenCalledWith(path.join(projectRoot, '.kangentic', 'sessions', 'made-up-uuid'), { recursive: true, force: true });
+    expect(rmSpy).toHaveBeenCalledWith(path.join(projectRoot, '.kangentic', 'sessions', 'term-1'), { recursive: true, force: true });
   });
 
   it('announces the end as a removal, which closes the desktop window and ends a phone\'s feed', () => {
@@ -341,7 +341,7 @@ describe('a session spawned through a real SessionManager whose PTY exits', () =
     expect(timeline).toEqual([`exit:${session.id}`, `session-removed:${session.id}`]);
     expect(manager.getSession(session.id)).toBeUndefined();
     await vi.waitFor(() => expect(rmSpy).toHaveBeenCalledWith(
-      path.join(session.cwd, '.kangentic', 'sessions', 'made-up-uuid'),
+      path.join(session.cwd, '.kangentic', 'sessions', session.id),
       { recursive: true, force: true },
     ));
   });
@@ -420,9 +420,10 @@ describe('a Command Terminal\'s session directory on a Stop', () => {
       resize: vi.fn(),
       kill: vi.fn(),
     } as unknown as pty.IPty);
-    const sessionDirectory = path.join(projectDirectory, '.kangentic', 'sessions', 'made-up-uuid');
+    const sessionDirectory = path.join(projectDirectory, '.kangentic', 'sessions', 'terminal-session');
     fs.mkdirSync(sessionDirectory, { recursive: true });
     const session = await manager.spawn({
+      id: 'terminal-session',
       taskId: 'made-up-uuid',
       command: '',
       cwd: projectDirectory,

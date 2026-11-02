@@ -34,6 +34,7 @@ import {
   getProjectSnapshot,
 } from '../stores/project-cache';
 import { restoreWorkspaceForProject } from '../window-manager/persistence/restore-workspace';
+import { reopenCommandTerminalPanelAfterRestart } from '../components/command-bar/reopen-panel';
 import { captureRetainedTasks, pruneRetainedTasks, planWindowRetention } from '../window-manager/bridge/retained-task-snapshots';
 import { useWindowStore } from '../window-manager/store/window-store';
 import { showConversationExpiredNotices } from '../lib/conversation-expired-toast';
@@ -422,6 +423,7 @@ export function useProjectSwitchEffect(currentProject: Project | null): void {
               // board, and every warm switch back would paint that.
               markProjectSeen(currentProject.id);
               restoreWorkspaceForProject(currentProject.id);
+              void reopenCommandTerminalPanelAfterRestart(currentProject.id);
               // Restore for this project is complete (its detail windows, if any, are now in the
               // window store). Disarm the pending collapse signal; the live `dialogSessionIds`
               // (reconciled by useWindowSessionClaims) drives the panel from here. Guarded above

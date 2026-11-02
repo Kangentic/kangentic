@@ -61,6 +61,10 @@ every row but the lost ones counts as the task having a session: a resumed sessi
 placeholder that keeps its Resume, and a resume whose spawn failed, whose exited row a fresh agent
 must not replace.
 
+Command Terminals have no record for this pipeline to read. Their own pass restores them after
+the tasks, at a cold open and after a pty host crash alike: see
+[Transient sessions](transient-sessions.md#restored-after-a-restart).
+
 Both passes spawn each task under its lifecycle lock (`withTaskLock`), after reading the task again,
 because their preparation awaits the shell and every agent's detection. A task is skipped when its
 column changed or its `session_id` changed (a Reset clears it). A resume is also skipped when the

@@ -44,6 +44,7 @@ import { shortcutIcon } from '../../utils/swimlane-icons';
 import { resolveProjectRoot } from '../../../shared/git-utils';
 import { isActive, requiresUserInteraction } from '../../../shared/activity-state';
 import { commandTerminalTitle } from '../../../shared/command-terminal-name';
+import { isLiveSessionStatus } from '../../../shared/session-liveness';
 import { useLayerStore, windowIdsInReadingOrder } from '../../window-manager';
 import type { ManagedWindow } from '../../window-manager';
 import { runTerminalLayoutChange, terminalLayoutScopeOf } from '../../utils/terminal-layout-transition';
@@ -63,9 +64,22 @@ const ChangesPanel = lazy(() => import('../dialogs/task-detail/changes/ChangesPa
 
 /** What a window attaches to at mount; see `resolveMountAttach`. */
 type MountAttach =
-  | { kind: 'reattach'; sessionId: string }
+  | { kind: 'reattach'; sessionId: string; session: Session }
   | { kind: 'adopt'; sessionId: string; session: Session }
   | null;
+
+/**
+ * An attach whose agent is not on screen yet: a terminal a restart brought back
+ * moments ago, or one still queued with no PTY. It keeps the launch overlay,
+ * since all it could show is the shell's prompt, the typed command, or nothing.
+ * A session that resumed long ago has `sessionFirstOutput` set, which a reload's
+ * `syncSessions` hydrates, so a reattach never flashes the overlay over a
+ * running conversation.
+ */
+function isAttachStillBooting(session: Session): boolean {
+  if (session.status === 'queued') return true;
+  return session.resuming === true && !useSessionStore.getState().sessionFirstOutput[session.id];
+}
 
 /**
  * Decide, from the store as it stands at the first render, whether the slot's
@@ -84,8 +98,9 @@ function resolveMountAttach(slot: string): MountAttach {
   if (!currentProjectId) return null;
   const state = useSessionStore.getState();
   const existing = state.transientSessions[transientKey(currentProjectId, slot)];
-  if (existing && state.sessions.some((session) => session.id === existing.sessionId && session.status === 'running')) {
-    return { kind: 'reattach', sessionId: existing.sessionId };
+  const existingSession = existing ? state.sessions.find((session) => session.id === existing.sessionId) : undefined;
+  if (existing && existingSession && isLiveSessionStatus(existingSession.status)) {
+    return { kind: 'reattach', sessionId: existing.sessionId, session: existingSession };
   }
   const adoptable = findAdoptableTransientSession(state.sessions, state.transientSessions, currentProjectId, slot);
   if (adoptable) return { kind: 'adopt', sessionId: adoptable.id, session: adoptable };
@@ -340,12 +355,13 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
   // synced: `terminalReady` used to be state that an effect set, which is the
   // cascading-render shape React's compiler rules forbid. The latch holds the
   // two non-derivable answers.
-  const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null);
+  const [readyLatch, setReadyLatch] = useState(() => mountAttach !== null && !isAttachStillBooting(mountAttach.session));
   const terminalReady = readyLatch || hasAgentOnScreen;
   // Whether the start in flight resumes a conversation, so the shimmer says so:
   // an Earlier row that opened this window left its request for the mount to
   // take, and a resume in place or a branch switch sets it as it respawns.
   const [startingResume, setStartingResume] = useState(() => {
+    if (mountAttach?.session.resuming) return true;
     const projectId = useProjectStore.getState().currentProject?.id ?? null;
     return projectId !== null && !!useSessionStore.getState().pendingCommandTerminalResumes[transientKey(projectId, slot)];
   });

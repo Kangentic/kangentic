@@ -384,6 +384,7 @@ const api: ElectronAPI = {
     setTransientBranch: (sessionId: string, branch: string) => ipcRenderer.invoke(IPC.SESSION_SET_TRANSIENT_BRANCH, sessionId, branch),
     renameTransient: (sessionId: string, name: string | null) => ipcRenderer.invoke(IPC.SESSION_RENAME_TRANSIENT, sessionId, name),
     listCommandTerminalHistory: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_LIST, projectId),
+    waitForCommandTerminalRestore: (projectId: string) => ipcRenderer.invoke(IPC.COMMAND_TERMINAL_RESTORE_WAIT, projectId),
     renameCommandTerminalHistory: (projectId: string, agentSessionId: string, name: string | null) =>
       ipcRenderer.invoke(IPC.COMMAND_TERMINAL_HISTORY_RENAME, projectId, agentSessionId, name),
     removeCommandTerminalHistory: (projectId: string, agentSessionId: string) =>

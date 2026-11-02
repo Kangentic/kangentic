@@ -307,6 +307,12 @@ The conversations a project's Command Terminals held, so the Command Terminal pa
 | updated_at | TEXT | NOT NULL | |
 | cli_target | TEXT | | NULL |
 | named_by_user | INTEGER | NOT NULL | 0 |
+| slot | TEXT | | NULL |
+| task_tag | TEXT | | NULL |
+| last_pty_cols | INTEGER | | NULL |
+| last_pty_rows | INTEGER | | NULL |
+| model | TEXT | | NULL |
+| effort | TEXT | | NULL |
 
 Written in main by `CommandTerminalHistory` (`src/main/ipc/helpers/command-terminal-history.ts`) from `SessionManager`'s events, for every terminal, one a phone started included:
 - A row is written when the agent reports its session id. A `/clear` or `/resume` inside a terminal reports a new id, which stamps the previous row's `ended_at` and writes a new one.
@@ -316,5 +322,9 @@ Written in main by `CommandTerminalHistory` (`src/main/ipc/helpers/command-termi
 - `first_prompt` takes the conversation's first prompt on one line (capped at 200 characters), first write wins, so a resume keeps the original. The Earlier row and the phone's list show it when `label` is null, which is every row while no Automation agent is set and nobody renamed the terminal. The activity engine's synthetic prompt marker is skipped.
 - `ended_at` is stamped when the terminal ends.
 - `cli_target` is the terminal's CLI target, as the `sessions` column holds it, taking the newest on each write. The Earlier list asks the agent for the transcript where it is, so a conversation a WSL distro holds is not dropped as purged. NULL for this machine.
+- `slot` and `task_tag` are the terminal's slot and its `KANGENTIC_TASK_ID`, written with the row, so a `/clear` or `/resume` row carries them. A restored terminal takes that slot, and keeps that tag so its Stop still reaches what it left running. A write with a value replaces them, as a terminal restored into another slot does.
+- `last_pty_cols` and `last_pty_rows` are the grid the terminal last had on the desktop, written from the `pty-resize` event as the `sessions` columns are (`persistPtyGrid`), never a phone's. A restored terminal spawns at it, so an agent with the panel closed composes at the grid it had.
+- `model` and `effort` are what the context bar's pickers set (`SESSION_INJECT_SETTINGS`), which every resume starts on. An agent that reports its model has the last word: Claude asks before it switches a conversation, so a picked model is written once the agent's own status shows that model, and a declined switch writes nothing, even when a later `/model` moves the status elsewhere. A `/model` typed into the agent is not seen. NULL starts on the project's default.
+- A resumed conversation can report its id before anything seeds these, so a write with no value keeps the row's.
 
-Rows are written as the id is captured rather than at the end because a quit removes no row (`killAll` never calls `remove()`). A row left open by a quit is listed once no live terminal holds it, and the list stamps its `ended_at` from `updated_at`. An id that a `sessions` or `workflows` row owns is never recorded: a `/resume` into a task's or a workflow's conversation belongs to its card. The list drops a row whose agent can no longer find the transcript (`locateSessionHistoryFile`), since it can never be resumed, and that is what bounds the table: 30 days for Claude Code. A 50-row prune used to cap it, and the rows it deleted are gone for good. The conversation's text is indexed for the Earlier search as its own `command_terminal` corpus, keyed by `agent_session_id` ([`memory_chunks`](knowledge-graph-tables.md#memory_chunks-table)). All timestamps are UTC ISO 8601. No indexes.
+Rows are written as the id is captured rather than at the end because a quit removes no row (`killAll` never calls `remove()`). A used row with no `ended_at` is what the next launch restores from ([Transient sessions](../architecture/sessions/transient-sessions.md#restored-after-a-restart)), and a crash or an OS kill leaves the same state. A row the restore leaves (the setting off, or past the cap) is listed once no live terminal holds it, and the list stamps its `ended_at` from `updated_at`. An id that a `sessions` or `workflows` row owns is never recorded: a `/resume` into a task's or a workflow's conversation belongs to its card. The list drops a row whose agent can no longer find the transcript (`locateSessionHistoryFile`), since it can never be resumed, and that is what bounds the table: 30 days for Claude Code. A 50-row prune used to cap it, and the rows it deleted are gone for good. The conversation's text is indexed for the Earlier search as its own `command_terminal` corpus, keyed by `agent_session_id` ([`memory_chunks`](knowledge-graph-tables.md#memory_chunks-table)). All timestamps are UTC ISO 8601. No indexes.

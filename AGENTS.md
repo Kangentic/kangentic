@@ -256,7 +256,7 @@ indexes it and Cursor gets no copy.
 - `external-scripts-parity.md` - unbundled bridge/plugin scripts register in `EXTERNAL_SCRIPTS` and are copied by both `build.js` and `dev.js`.
 - `activity-state-classification.md` - bucket `ActivityState` idle-vs-active only via `src/shared/activity-state.ts`.
 - `activity-marks.md` - marks come from `@kangentic/branding` via `ActivityMark`; composited motion only; `IconSlot` for element-type swaps.
-- `command-terminal.md` - slot-keyed windows in an auto-tiled panel, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, a terminal that ends when its agent exits, no pause that reaches one, resumable Earlier conversations, and a detached window that never shows beside the panel.
+- `command-terminal.md` - slot-keyed windows in an auto-tiled panel, main-owned slots and cap, global geometry against per-project population, a reattach that never checks out, a terminal that ends when its agent exits, no pause that reaches one, a running terminal that survives a restart, resumable Earlier conversations, and a detached window that never shows beside the panel.
 - `board-completing-task-chokepoint.md` - hide in-flight Done-completing tasks at KanbanBoard's `tasksPerLane`, never per-lane.
 - `keybindings-registry.md` - shortcuts declared in `KEYBINDINGS` and bound via `useKeybinding`, not ad-hoc keydown listeners.
 - `keyboard-drag-intent.md` - `IntentKeyboardSensor` is the only dnd-kit keyboard sensor, and it arms only on Tab-placed focus.

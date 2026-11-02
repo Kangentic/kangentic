@@ -63,6 +63,43 @@ function contextFor(projectId: string | undefined): Pick<IpcContext, 'sessionMan
 
 const nextMacrotask = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
 
+describe('a Command Terminal grid', () => {
+  beforeEach(() => {
+    hoisted.openDb = createCapturingMockDb().db;
+    hoisted.shuttingDown = false;
+  });
+
+  function terminalContext(session: Record<string, unknown>) {
+    const recordGrid = vi.fn();
+    const context = {
+      sessionManager: { getSessionProjectId: () => 'project-1', getSession: () => session },
+      commandTerminalHistory: { recordGrid },
+    } as unknown as Pick<IpcContext, 'sessionManager' | 'commandTerminalHistory'>;
+    return { context, recordGrid };
+  }
+
+  it('goes to its history row, since it has no session record', () => {
+    const { db, prepared } = createCapturingMockDb();
+    hoisted.openDb = db;
+    const { context, recordGrid } = terminalContext({ transient: true, workflowId: null });
+    persistPtyGrid(context, 'terminal-1', { cols: 180, rows: 44 }, 'desktop');
+    expect(recordGrid).toHaveBeenCalledWith('terminal-1', { cols: 180, rows: 44 });
+    expect(prepared).toEqual([]);
+  });
+
+  it("skips a phone's grid, as a task's is", () => {
+    const { context, recordGrid } = terminalContext({ transient: true, workflowId: null });
+    persistPtyGrid(context, 'terminal-1', { cols: 40, rows: 20 }, 'mobile');
+    expect(recordGrid).not.toHaveBeenCalled();
+  });
+
+  it("leaves a workflow agent's grid on its workflow", () => {
+    const { context, recordGrid } = terminalContext({ transient: true, workflowId: 'workflow-1' });
+    persistPtyGrid(context, 'agent-1', { cols: 180, rows: 44 }, 'desktop');
+    expect(recordGrid).not.toHaveBeenCalled();
+  });
+});
+
 describe('SessionRepository grid columns', () => {
   it('updatePtyGrid writes both columns for the record', () => {
     const { db, prepared, runParams } = createCapturingMockDb();

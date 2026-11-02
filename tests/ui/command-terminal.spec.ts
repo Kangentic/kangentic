@@ -46,6 +46,7 @@ const PROJECT_B_ID = 'proj-cmd-b';
 const TASK_SESSION_ID = 'sess-task-1';
 const TASK_ID = 'task-1';
 const TRANSIENT_SESSION_ID = 'sess-transient-1';
+const RESTORE_PROJECT_ID = 'proj-restart-restore';
 
 /**
  * Pre-configure mock state with a project, a task session, and a transient session.
@@ -568,6 +569,55 @@ function adoptPreConfig(): string {
     });
     ${spawnCounterSource()}
   `;
+}
+
+/** A boot after a quit. `sessions` are the terminals main has restored by the time
+ *  the renderer asks, `reopen` leaves the panel recorded as showing at quit, and
+ *  `holdRestore` keeps main's restore running until `window.__releaseRestore()`. */
+function restartRestorePreConfig(options: {
+  sessions?: Array<{ id: string; slot: string; status: 'running' | 'queued'; resuming?: boolean }>;
+  reopen?: boolean;
+  holdRestore?: boolean;
+} = {}): string {
+  return `
+    window.__mockPreConfigure(function (state) {
+      var ts = new Date().toISOString();
+      state.projects.push({
+        id: '${RESTORE_PROJECT_ID}',
+        name: 'Restart Restore Project',
+        path: '/mock/restart-restore-project',
+        github_url: null,
+        default_agent: 'claude',
+        last_opened: ts,
+        created_at: ts,
+      });
+      state.DEFAULT_SWIMLANES.forEach(function (s, i) {
+        state.swimlanes.push(Object.assign({}, s, { id: 'lane-rr-' + i, position: i, created_at: ts }));
+      });
+      ${JSON.stringify(options.sessions ?? [])}.forEach(function (session, index) {
+        state.sessions.push({
+          id: session.id, taskId: 'tag-' + session.id, projectId: '${RESTORE_PROJECT_ID}', pid: 3401 + index,
+          status: session.status, shell: 'bash', cwd: '/mock/restart-restore-project', startedAt: ts,
+          exitCode: null, resuming: session.resuming === true, transient: true,
+          commandTerminalSlot: session.slot, commandTerminalBranch: 'main',
+        });
+      });
+      return { currentProjectId: '${RESTORE_PROJECT_ID}' };
+    });
+    ${options.reopen ? `window.electronAPI.config.set({ commandTerminalOpenProjectId: '${RESTORE_PROJECT_ID}' });` : ''}
+    ${options.holdRestore
+    ? 'window.__mockCommandTerminalRestoreGate = new Promise(function (resolve) { window.__releaseRestore = resolve; });'
+    : ''}
+    ${spawnCounterSource()}
+  `;
+}
+
+/** What the saved config says the panel is showing for, which is what a next launch reads. */
+async function recordedOpenProject(page: Page): Promise<string | null> {
+  return page.evaluate(async () => {
+    const saved = await window.electronAPI.config.getGlobal();
+    return saved.commandTerminalOpenProjectId ?? null;
+  });
 }
 
 /** Drop every transient pairing entry, leaving the sessions list untouched. */
@@ -2079,6 +2129,410 @@ test.describe('Command Terminal', () => {
           .poll(() => commandWindowAnchors(page), { timeout: 5000, intervals: [100, 200, 500] })
           .toEqual(['slot-2']);
         expect(await spawnCountFor(page, BACKGROUND_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------
+  // Restart restore - main brings back the terminals running at the last quit
+  // (command-terminal-restore.ts). The renderer's half: the panel waits for that,
+  // attaches to what came back, and reopens if it was showing.
+  // ---------------------------------------------------------------------------
+  test.describe('Restart restore', () => {
+    test('a panel opened during the restore waits, then attaches and starts nothing', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({ holdRestore: true }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+
+        // Its default window would start fresh in slot-1, the slot the restore is
+        // about to take. A second press must not start a second wait.
+        await page.keyboard.press('Control+Shift+P');
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+
+        // The press is answered: the toggle says the panel is on its way.
+        await expect(page.getByTestId('quick-session-opening')).toBeVisible({ timeout: 5000 });
+        await expect(page.getByTestId('quick-session-button')).toHaveAttribute('aria-busy', 'true');
+
+        await injectRunningTerminal(page, { id: 'restored-1', projectId: RESTORE_PROJECT_ID, slot: 'slot-1' });
+        await page.evaluate(() => (window as unknown as { __releaseRestore: () => void }).__releaseRestore());
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0);
+        await expect
+          .poll(() => transientPairingFor(page, RESTORE_PROJECT_ID), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-1': 'restored-1' });
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('an ordinary open shows no spinner', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'restored-1', slot: 'slot-1', status: 'running' }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.evaluate(() => {
+          (window as unknown as { __sawSpinner: boolean }).__sawSpinner = false;
+          new MutationObserver(() => {
+            if (document.querySelector('[data-testid="quick-session-opening"]')) (window as unknown as { __sawSpinner: boolean }).__sawSpinner = true;
+          }).observe(document.body, { childList: true, subtree: true });
+        });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        expect(await page.evaluate(() => (window as unknown as { __sawSpinner: boolean }).__sawSpinner)).toBe(false);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a terminal queued at the session cap keeps its window, under the launch overlay', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'queued-1', slot: 'slot-2', status: 'queued', resuming: true }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect
+          .poll(() => transientPairingFor(page, RESTORE_PROJECT_ID), { timeout: 8000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-2': 'queued-1' });
+
+        await page.keyboard.press('Control+Shift+P');
+        const commandWindow = page.getByTestId('command-terminal-window');
+        await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
+        await expect
+          .poll(() => commandWindowAnchors(page), { timeout: 5000, intervals: [100, 200, 500] })
+          .toEqual(['slot-2']);
+        // No PTY yet, so there is nothing to show, and a fresh start would be refused.
+        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toBeVisible();
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a terminal a restart just resumed shows the overlay, not its shell', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'resumed-1', slot: 'slot-1', status: 'running', resuming: true }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        const commandWindow = page.getByTestId('command-terminal-window');
+        await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
+        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toBeVisible();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the panel reopens if it was showing at quit, flat, over what came back', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        reopen: true,
+        sessions: [
+          { id: 'restored-1', slot: 'slot-1', status: 'running' },
+          { id: 'restored-2', slot: 'slot-2', status: 'running' },
+        ],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(2, { timeout: 8000 });
+        await expect(page.getByTestId('command-window-backdrop')).not.toHaveClass(/overlay-backdrop-in/);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+        expect(await recordedOpenProject(page)).toBe(RESTORE_PROJECT_ID);
+
+        // A user's own open is not a restore: it fades in.
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-window-backdrop')).toHaveClass(/overlay-backdrop-in/);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('nothing came back: the panel stays hidden, starts nothing, and forgets it was showing', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({ reopen: true }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect
+          .poll(() => recordedOpenProject(page), { timeout: 8000, intervals: [100, 200, 500] })
+          .toBeNull();
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('the panel records where it is showing as it opens and hides', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'restored-1', slot: 'slot-1', status: 'running' }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        expect(await recordedOpenProject(page)).toBeNull();
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect.poll(() => recordedOpenProject(page)).toBe(RESTORE_PROJECT_ID);
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0, { timeout: 5000 });
+        await expect.poll(() => recordedOpenProject(page)).toBeNull();
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // -------------------------------------------------------------------------
+    // An open waiting on main's restore can be dropped. The gate is held so the
+    // wait is still pending when the user hides the panel, switches project or
+    // presses again, and then released to see what the late answer does.
+    // -------------------------------------------------------------------------
+
+    /** Two projects (Alpha open) with main's restore held until `window.__releaseRestore()`. */
+    function heldTwoProjectPreConfig(): string {
+      return `
+        ${twoProjectPreConfig()}
+        window.__mockCommandTerminalRestoreGate = new Promise(function (resolve) { window.__releaseRestore = resolve; });
+        ${spawnCounterSource()}
+      `;
+    }
+
+    async function releaseRestore(page: Page): Promise<void> {
+      await page.evaluate(() => (window as unknown as { __releaseRestore: () => void }).__releaseRestore());
+    }
+
+    async function hideRequestedByStore(page: Page): Promise<void> {
+      await page.evaluate(() => {
+        (window as unknown as {
+          __zustandStores: { session: { getState: () => { requestHideCommandBar: () => void } } };
+        }).__zustandStores.session.getState().requestHideCommandBar();
+      });
+    }
+
+    async function commandBarVisible(page: Page): Promise<boolean> {
+      return page.evaluate(() => (window as unknown as {
+        __zustandStores: { session: { getState: () => { commandBarVisible: boolean } } };
+      }).__zustandStores.session.getState().commandBarVisible);
+    }
+
+    /** Count every `setCommandBarVisible(true)`, which is the one place an open shows the panel. */
+    async function countPanelShows(page: Page): Promise<void> {
+      await page.evaluate(() => {
+        const win = window as unknown as {
+          __panelShowCount: number;
+          __zustandStores: {
+            session: {
+              getState: () => { setCommandBarVisible: (visible: boolean) => void };
+              setState: (partial: { setCommandBarVisible: (visible: boolean) => void }) => void;
+            };
+          };
+        };
+        const sessionStore = win.__zustandStores.session;
+        const original = sessionStore.getState().setCommandBarVisible;
+        win.__panelShowCount = 0;
+        sessionStore.setState({
+          setCommandBarVisible: (visible: boolean) => {
+            if (visible) win.__panelShowCount += 1;
+            original(visible);
+          },
+        });
+      });
+    }
+
+    async function panelShowCount(page: Page): Promise<number> {
+      return page.evaluate(() => (window as unknown as { __panelShowCount: number }).__panelShowCount);
+    }
+
+    /** Press the shortcut and wait until the title-bar toggle says the open is waiting. */
+    async function pressAndWaitForOpening(page: Page): Promise<void> {
+      await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+      await page.keyboard.press('Control+Shift+P');
+      await expect(page.getByTestId('quick-session-opening')).toBeVisible({ timeout: 5000 });
+    }
+
+    test('an open hidden while it waits on the restore is dropped, and the late answer shows nothing', async () => {
+      const { browser, page } = await launchWithState(heldTwoProjectPreConfig());
+      try {
+        await pressAndWaitForOpening(page);
+
+        await hideRequestedByStore(page);
+        // The wait is over for the user at once, not when main answers.
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0, { timeout: 3000 });
+        await expect(page.getByTestId('quick-session-button')).not.toHaveAttribute('aria-busy', 'true');
+
+        await releaseRestore(page);
+        // Frames, not a timer: the late answer is a microtask, so this is long enough for it to land.
+        await settleFrames(page, 20);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+        expect(await commandBarVisible(page)).toBe(false);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0);
+        expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('an open waiting on the restore is dropped by a project switch, and the late answer opens nothing', async () => {
+      const { browser, page } = await launchWithState(heldTwoProjectPreConfig());
+      try {
+        await pressAndWaitForOpening(page);
+
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0, { timeout: 3000 });
+
+        await releaseRestore(page);
+        await settleFrames(page, 20);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+        expect(await commandBarVisible(page)).toBe(false);
+        expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(0);
+        expect(await spawnCountFor(page, PROJECT_B_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('an open dropped by leaving its project is not revived by coming back before the answer', async () => {
+      const { browser, page } = await launchWithState(heldTwoProjectPreConfig());
+      try {
+        await pressAndWaitForOpening(page);
+
+        await page.locator('[role="button"]:has-text("Project Beta")').click();
+        await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_B_ID);
+        await page.locator('[role="button"]:has-text("Project Alpha")').click();
+        await expect.poll(() => activeProjectId(page), { timeout: 5000, intervals: [100, 200, 500] }).toBe(PROJECT_A_ID);
+
+        // The wait was for the press on Alpha before the trip. It was dropped on the way out,
+        // so the answer, arriving with Alpha current again, is nobody's open.
+        await releaseRestore(page);
+        await settleFrames(page, 20);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+        expect(await commandBarVisible(page)).toBe(false);
+        expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('pressing again after a hide starts a fresh wait, and the answer opens the panel exactly once', async () => {
+      const { browser, page } = await launchWithState(heldTwoProjectPreConfig());
+      try {
+        await pressAndWaitForOpening(page);
+        await countPanelShows(page);
+
+        await hideRequestedByStore(page);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0, { timeout: 3000 });
+        await page.keyboard.press('Control+Shift+P');
+        await expect(page.getByTestId('quick-session-opening')).toBeVisible({ timeout: 5000 });
+
+        await releaseRestore(page);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await settleFrames(page, 20);
+        // Both presses' answers arrive; only the live one may show the panel.
+        expect(await panelShowCount(page)).toBe(1);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1);
+        await expect(page.getByTestId('quick-session-opening')).toHaveCount(0);
+        expect(await spawnCountFor(page, PROJECT_A_ID)).toBe(1);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // -------------------------------------------------------------------------
+    // The launch overlay over a terminal a restart just resumed.
+    // -------------------------------------------------------------------------
+
+    test('a terminal a restart resumed names the resume under its launch overlay', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'resumed-1', slot: 'slot-1', status: 'running', resuming: true }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await page.keyboard.press('Control+Shift+P');
+        const commandWindow = page.getByTestId('command-terminal-window');
+        await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
+        // Not "Starting Command Terminal...": this attach resumes a conversation.
+        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toContainText('Resuming conversation');
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    test('a resumed terminal whose agent is already on screen shows no overlay, and stays ready', async () => {
+      const { browser, page } = await launchWithState(restartRestorePreConfig({
+        sessions: [{ id: 'resumed-1', slot: 'slot-1', status: 'running', resuming: true }],
+      }));
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        await expect
+          .poll(() => transientPairingFor(page, RESTORE_PROJECT_ID), { timeout: 8000, intervals: [100, 200, 500] })
+          .toEqual({ 'slot-1': 'resumed-1' });
+        // Main's markAgentReady already saw this agent, as a reload's sync hydrates it.
+        await page.evaluate(() => {
+          const sessionStore = (window as unknown as {
+            __zustandStores: {
+              session: {
+                getState: () => { sessionFirstOutput: Record<string, boolean> };
+                setState: (partial: { sessionFirstOutput: Record<string, boolean> }) => void;
+              };
+            };
+          }).__zustandStores.session;
+          sessionStore.setState({ sessionFirstOutput: { ...sessionStore.getState().sessionFirstOutput, 'resumed-1': true } });
+        });
+
+        await page.keyboard.press('Control+Shift+P');
+        const commandWindow = page.getByTestId('command-terminal-window');
+        await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
+        await settleFrames(page, 20);
+        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toHaveCount(0);
+
+        // The attach decided it was not booting when it mounted, so it keeps that even if
+        // the replica's record of the agent's first output is later replaced.
+        await page.evaluate(() => {
+          (window as unknown as {
+            __zustandStores: { session: { setState: (partial: { sessionFirstOutput: Record<string, boolean> }) => void } };
+          }).__zustandStores.session.setState({ sessionFirstOutput: {} });
+        });
+        await settleFrames(page, 20);
+        await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toHaveCount(0);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // -------------------------------------------------------------------------
+    // A restart's reopen paints flat. A reopen that does not mount the panel must
+    // not hand that to the next open, which is a user's and fades in.
+    // -------------------------------------------------------------------------
+
+    test('a reopen that only focused the detached window leaves the next open fading in', async () => {
+      const { browser, page } = await launchWithState(`${restartRestorePreConfig({
+        reopen: true,
+        sessions: [{ id: 'restored-1', slot: 'slot-1', status: 'running' }],
+      })}
+        window.__mockFirePopOutChanged(['command-terminal:${RESTORE_PROJECT_ID}']);`);
+      try {
+        await page.locator('[data-swimlane-name="To Do"]').waitFor({ state: 'visible', timeout: 15000 });
+        // The reopen ran its open, which found the project's own window and brought it forward.
+        await expect.poll(() => page.evaluate(() => (window as unknown as {
+          __mockPopOut: { getCalls: () => Array<{ type: string }> };
+        }).__mockPopOut.getCalls().filter((call) => call.type === 'focus').length), { timeout: 10000, intervals: [100, 200, 500] }).toBeGreaterThan(0);
+        await expect(page.getByTestId('command-terminal-layer')).toHaveCount(0);
+
+        // The window closes and the panel comes back, which is not a restore.
+        await page.evaluate(() => (window as unknown as { __mockFirePopOutChanged: (keys: string[]) => void }).__mockFirePopOutChanged([]));
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 5000 });
+        await expect(page.getByTestId('command-window-backdrop')).toHaveClass(/overlay-backdrop-in/);
+        expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
       } finally {
         await browser.close();
       }
@@ -4550,6 +5004,32 @@ test.describe('Command Terminal', () => {
           const calls = (window.electronAPI.sessions as unknown as { __setFocusedCalls: string[][] }).__setFocusedCalls;
           return calls.at(-1) ?? null;
         }), { timeout: 5000 }).toEqual([LIVE_TERMINAL_ID]);
+      } finally {
+        await browser.close();
+      }
+    });
+
+    // A window booted while main is still restoring the last quit's terminals would find
+    // no terminal in its slot and start one there, which the restore is about to take.
+    test('the window waits on main\'s restore before it mounts, then attaches to the restored terminal', async () => {
+      const { browser, page } = await launchDetachedWindow(`${detachedPreConfig({ liveTerminal: false })}
+        window.__mockCommandTerminalRestoreGate = new Promise(function (resolve) { window.__releaseRestore = resolve; });`);
+      try {
+        await expect(page.getByTestId('command-terminal-window-loading')).toBeVisible({ timeout: 15000 });
+        // Frames, not a timer: long enough for a start, were the layer mounted, to go out.
+        await settleFrames(page, 20);
+        await expect(page.getByTestId('command-terminal-window-loading')).toBeVisible();
+        await expect(page.getByTestId('command-terminal-detached')).toHaveCount(0);
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(0);
+        expect(await spawnCount(page)).toBe(0);
+
+        // The restore finishes: the terminal it brought back is in main's list when the window reads it.
+        await injectRunningTerminal(page, { id: 'restored-detached', projectId: DETACHED_PROJECT_ID, slot: 'slot-1' });
+        await page.evaluate(() => (window as unknown as { __releaseRestore: () => void }).__releaseRestore());
+
+        await expect(page.getByTestId('command-terminal-window')).toHaveCount(1, { timeout: 10000 });
+        await expect.poll(async () => (await transientPairingFor(page, DETACHED_PROJECT_ID))['slot-1'], { timeout: 5000 }).toBe('restored-detached');
+        expect(await spawnCount(page)).toBe(0);
       } finally {
         await browser.close();
       }
