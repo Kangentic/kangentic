@@ -121,11 +121,15 @@ interface DetachOutput {
   dashboardUrl?: string | null;
 }
 
-/** `aspire run --detach`: its launcher exits, so nothing links the stack to this test by parent. */
+/**
+ * `aspire run --detach`: its launcher exits, so nothing links the stack to this
+ * test by parent. Through `cmd`, because the installed tool is not a plain `.exe`
+ * on PATH and Node's spawn tries no other extension (ENOENT on windows-latest).
+ */
 async function startStack(stack: Stack): Promise<DetachOutput> {
   const { stdout } = await execFileAsync(
-    'aspire',
-    ['run', '--detach', '--isolated', '--no-build', '--format', 'Json', '--non-interactive', '--apphost', PROJECT_FILE],
+    process.env.ComSpec ?? 'cmd.exe',
+    ['/d', '/c', 'aspire', 'run', '--detach', '--isolated', '--no-build', '--format', 'Json', '--non-interactive', '--apphost', PROJECT_FILE],
     { cwd: stack.appHostDirectory, env: { ...stack.environment, [TASK_PROCESS_TAG_ENV]: stack.taskId }, windowsHide: true, timeout: START_TIMEOUT_MS },
   );
   log(`detach output: ${stdout.trim()}`);
