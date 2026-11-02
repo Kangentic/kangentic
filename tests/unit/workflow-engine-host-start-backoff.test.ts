@@ -90,6 +90,7 @@ const { setWorkflowWake, wakeWorkflowEngine } = await import('../../src/main/wor
 const { BranchCheckoutBlockedError } = await import('../../src/main/ipc/helpers/task-git');
 
 import { openTestDatabase } from './helpers/test-database';
+import { wrapWorktreeSetupError } from '../../src/main/ipc/helpers/worktree-setup-error';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 
 const DEBOUNCE_MS = 150;
@@ -421,6 +422,18 @@ describe('the workflow engine host', () => {
       await advance(DEBOUNCE_MS);
 
       expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', error, 'home']);
+    });
+
+    it('names the worktree step for an error the real wrapWorktreeSetupError built', async () => {
+      // The move handlers throw this wrapper; the host recognizes it by the
+      // shared prefix, so build it with the real function, not a literal.
+      runningWorkflow('Usage budgets');
+      const cause = new Error('fatal: a branch named that already exists');
+      moveFails(wrapWorktreeSetupError(cause));
+
+      await advance(DEBOUNCE_MS);
+
+      expect(harness.notifySpawnBlocked.mock.calls[0].slice(2)).toEqual(['worktree', cause, 'home']);
     });
 
     it('names the checkout step for a BranchCheckoutBlockedError', async () => {

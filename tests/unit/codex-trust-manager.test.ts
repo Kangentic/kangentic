@@ -211,6 +211,23 @@ describe('removeCodexWorktreeTrust', () => {
     expect(readConfig()).not.toContain('worktrees');
   });
 
+  it('removes its table when the trust_level line ends in a trailing comment, in either quote', async () => {
+    // A user or a TOML-rewriting tool may annotate the line; it is still the
+    // sole `trust_level = "trusted"` table Kangentic wrote.
+    writeConfig(
+      `[projects.'${WORKTREE}']\ntrust_level = "trusted"  # note\n\n`
+      + `[projects.'${PROJECT}']\ntrust_level = 'trusted' # kept project\n`,
+    );
+    await removeCodexWorktreeTrust(WORKTREE);
+    expect(readConfig()).not.toContain('worktrees');
+    expect(readConfig()).not.toContain('# note');
+    expect(trustOf(PROJECT)).toBe('trusted');
+
+    writeConfig(`[projects.'${WORKTREE}']\ntrust_level = 'trusted' # note\n`);
+    await removeCodexWorktreeTrust(WORKTREE);
+    expect(readConfig()).not.toContain('worktrees');
+  });
+
   it('preserves a table that carries more than trust_level', async () => {
     // Anything else in there came from the user or a future Codex.
     writeConfig(`[projects.'${WORKTREE}']\ntrust_level = "trusted"\nsome_future_key = 42\n`);
