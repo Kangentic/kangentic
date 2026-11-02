@@ -67,7 +67,7 @@ This agent is invoked in two ways:
 
 ## Step 0: Load Context
 
-Before writing or modifying any test, read the testing skill and the current playwright config:
+Before writing or modifying any test, read the test-value rule and the current playwright config:
 
 - `.claude/rules/test-value.md` (what earns a test, the tier, and the CI budget; this file holds the how)
 - `playwright.config.ts` (workers, retries, timeouts, projects)
@@ -84,7 +84,7 @@ These are project rules learned from production incidents. Violating any of them
 
 3. **Run only ONE Playwright pass at a time.** Concurrent Playwright runs collide on the Vite dev server port and produce confusing failures. Wait for one to finish before starting the next.
 
-4. **The electron project's `workers` is Windows/local=1, CI Linux=4.** `playwright.config.ts` sets `workers: process.env.CI && process.platform !== 'win32' ? 4 : 1`. On **Windows/local** keep it 1 - Windows cannot reliably handle concurrent `electron.launch()`; the `helpers.ts:launchApp()` retry loop covers transient debug-pipe failures at workers=1 (commit 484e58c). On **CI Linux** (ubuntu, xvfb, `--no-sandbox`) concurrent launches are safe, so CI runs workers=8, sharded. Do NOT raise workers on Windows/local. Parallel safety relies on per-pid temp-dir isolation in `helpers.ts` (`createTempProject` / `getTestDataDir` / `ensureGitTemplate` all key on `process.pid`).
+4. **The electron project's `workers` is Windows/local=1, CI Linux=8.** `playwright.config.ts` sets `workers: process.env.CI && process.platform !== 'win32' ? 8 : 1`. On **Windows/local** keep it 1 - Windows cannot reliably handle concurrent `electron.launch()`; the `helpers.ts:launchApp()` retry loop covers transient debug-pipe failures at workers=1 (commit 484e58c). On **CI Linux** (ubuntu, xvfb, `--no-sandbox`) concurrent launches are safe, so CI runs workers=8, sharded. Do NOT raise workers on Windows/local. Parallel safety relies on per-pid temp-dir isolation in `helpers.ts` (`createTempProject` / `getTestDataDir` / `ensureGitTemplate` all key on `process.pid`).
 
 5. **NODE_ENV=test bypasses single-instance lock.** `src/main/index.ts` skips `app.requestSingleInstanceLock()` under NODE_ENV=test. Without this, every E2E test fails with `<ws disconnected> code=1006` whenever the dogfooding app is running. Do not remove this branch.
 

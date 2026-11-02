@@ -237,7 +237,7 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
 } else if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId) {
   const fs = require('node:fs');
   const pathMod = require('node:path');
-  const { spawn } = require('node:child_process');
+  const { spawn, spawnSync } = require('node:child_process');
 
   const sessionDir = pathMod.dirname(settingsPath);
   const eventsPath = pathMod.join(sessionDir, 'events.jsonl');
@@ -379,7 +379,7 @@ if (process.env.MOCK_CLAUDE_BACKGROUND_BASH === '1' && sessionId && !settingsPat
           // The shell and the timer under it both go: taskkill /T on Windows, the
           // child's own process group (it is detached, so a group leader) elsewhere.
           if (isWindows) {
-            require('node:child_process').spawnSync('taskkill', ['/PID', String(tick.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+            spawnSync('taskkill', ['/PID', String(tick.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
           } else {
             process.kill(-tick.pid);
           }

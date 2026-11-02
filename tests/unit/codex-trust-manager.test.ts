@@ -205,6 +205,12 @@ describe('removeCodexWorktreeTrust', () => {
     expect(trustOf(PROJECT)).toBe('trusted');
   });
 
+  it('removes its table after a rewrite to the single-quoted TOML string', async () => {
+    writeConfig(`[projects.'${WORKTREE}']\ntrust_level = 'trusted'\n`);
+    await removeCodexWorktreeTrust(WORKTREE);
+    expect(readConfig()).not.toContain('worktrees');
+  });
+
   it('preserves a table that carries more than trust_level', async () => {
     // Anything else in there came from the user or a future Codex.
     writeConfig(`[projects.'${WORKTREE}']\ntrust_level = "trusted"\nsome_future_key = 42\n`);

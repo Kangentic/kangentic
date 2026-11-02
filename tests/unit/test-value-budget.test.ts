@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { WORKFLOWS_DIR, readWorkflow } from './helpers/read-workflow';
 
 // The mechanical half of .claude/rules/test-value.md. The web demo job took ci.yml past GitHub Free's
 // job cap with nothing to notice, and seven jobs queued for 85-208s on every PR until the 2026-11-02
@@ -13,7 +14,6 @@ import path from 'node:path';
 // Tier: Unit.
 
 const REPO_ROOT = path.resolve(__dirname, '../..');
-const WORKFLOWS_DIR = path.join(REPO_ROOT, '.github', 'workflows');
 
 /** GitHub Free allows 20 concurrent jobs. The CLA check frees its slot in ~10-17s, so one over holds. */
 const PR_JOB_CEILING = 21;
@@ -23,10 +23,6 @@ const MACOS_JOB_CAP = 5;
 const PUSH_WITHOUT_GATE_ALLOWED: Record<string, string> = {
   'codeql.yml': 'Scanning never ran on the PR, so the push is the only scan the merged tree gets.',
 };
-
-function readWorkflow(name: string): string {
-  return fs.readFileSync(path.join(WORKFLOWS_DIR, name), 'utf8').replace(/\r\n/g, '\n');
-}
 
 function workflowNames(): string[] {
   return fs.readdirSync(WORKFLOWS_DIR).filter((name) => /\.ya?ml$/.test(name)).sort();
@@ -258,5 +254,7 @@ describe('test-builder teaches the real worker counts', () => {
     expect(agent).toContain('- E2E: 8 workers on CI, 1 on Windows and locally');
     expect(agent).toContain('- Demo: 3 workers on CI, 1 locally');
     expect(agent, 'A stale count taught every spec written from it the wrong floor.').not.toMatch(/workers=4/);
+    expect(agent, 'The agent quotes this line of the config, so the quote has to stay true.')
+      .toContain(`workers: ${workersOf(config, 'electron')}`);
   });
 });
