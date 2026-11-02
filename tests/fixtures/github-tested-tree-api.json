@@ -1,0 +1,117 @@
+{
+  "pushedSha": "ec3a2edc175625c14fc9e43c7b6abdcceb674ba2",
+  "headSha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+  "pulls": [
+    {
+      "url": "https://api.github.com/repos/Kangentic/kangentic/pulls/717",
+      "number": 717,
+      "state": "closed",
+      "created_at": "2026-11-02T13:56:52Z",
+      "closed_at": "2026-11-02T14:13:26Z",
+      "merged_at": "2026-11-02T14:13:26Z",
+      "merge_commit_sha": "ec3a2edc175625c14fc9e43c7b6abdcceb674ba2",
+      "head": { "ref": "docs/release-0-52-0", "sha": "c36843464f8e993cf6202b2a0a205754cbffcccc" },
+      "base": { "ref": "main", "sha": "e717fba8f76121d64fb2886769b4df9006d236d9" }
+    }
+  ],
+  "commits": {
+    "ec3a2edc175625c14fc9e43c7b6abdcceb674ba2": {
+      "sha": "ec3a2edc175625c14fc9e43c7b6abdcceb674ba2",
+      "tree": {
+        "sha": "e41c8cd6f29249594d44c1d8618a758cf3a503d9",
+        "url": "https://api.github.com/repos/Kangentic/kangentic/git/trees/e41c8cd6f29249594d44c1d8618a758cf3a503d9"
+      }
+    },
+    "c36843464f8e993cf6202b2a0a205754cbffcccc": {
+      "sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+      "tree": {
+        "sha": "e41c8cd6f29249594d44c1d8618a758cf3a503d9",
+        "url": "https://api.github.com/repos/Kangentic/kangentic/git/trees/e41c8cd6f29249594d44c1d8618a758cf3a503d9"
+      }
+    }
+  },
+  "checkRunPages": [
+    {
+      "total_count": 6,
+      "check_runs": [
+        {
+          "id": 125334492030,
+          "name": "UI tests (Playwright)",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:32:20Z",
+          "completed_at": "2026-11-02T14:32:24Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        },
+        {
+          "id": 125330683468,
+          "name": "E2E tests (Electron)",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:22:14Z",
+          "completed_at": "2026-11-02T14:22:21Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        },
+        {
+          "id": 125330683470,
+          "name": "Unit tests (Vitest)",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:22:14Z",
+          "completed_at": "2026-11-02T14:22:21Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        }
+      ]
+    },
+    {
+      "total_count": 6,
+      "check_runs": [
+        {
+          "id": 125330683471,
+          "name": "Lint, Typecheck, Build",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:22:14Z",
+          "completed_at": "2026-11-02T14:22:21Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        },
+        {
+          "id": 125330683472,
+          "name": "Web demo (build + smoke)",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:22:14Z",
+          "completed_at": "2026-11-02T14:22:21Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        },
+        {
+          "id": 125330683473,
+          "name": "cla",
+          "head_sha": "c36843464f8e993cf6202b2a0a205754cbffcccc",
+          "status": "completed",
+          "conclusion": "success",
+          "started_at": "2026-11-02T14:22:14Z",
+          "completed_at": "2026-11-02T14:22:21Z",
+          "output": { "title": null, "summary": null, "text": null, "annotations_count": 0 },
+          "app": { "id": 15368, "slug": "github-actions", "name": "GitHub Actions" },
+          "pull_requests": []
+        }
+      ]
+    }
+  ]
+}

@@ -9,7 +9,8 @@
  * it (a direct /merge-back) answers false and runs everything.
  *
  * Any doubt runs the tests. An API error, a check still running, a head missing one of the checks
- * this relies on: each answers false, and the reason is printed on every run.
+ * this relies on: each answers false, and the reason is printed on every run. A required check counts
+ * only when GitHub Actions posted it, so another app's run of the same name passes nothing.
  *
  * Usage (from .github/actions/tested-tree): node scripts/tested-tree.mjs <sha>
  * Reads GITHUB_REPOSITORY and GITHUB_TOKEN, and writes `tested=` to GITHUB_OUTPUT.
@@ -32,7 +33,7 @@ const PASSING_CONCLUSIONS = new Set(['success', 'skipped', 'neutral']);
  * @typedef {object} Api
  * @property {(sha: string) => Promise<Array<{ number: number, merged_at: string | null, base: { ref: string }, head: { sha: string } }>>} pullsForCommit
  * @property {(sha: string) => Promise<string>} treeOf
- * @property {(sha: string) => Promise<Array<{ name: string, status: string, conclusion: string | null }>>} checksOn
+ * @property {(sha: string) => Promise<Array<{ name: string, status: string, conclusion: string | null, app?: { slug: string } | null }>>} checksOn
  */
 
 /**
@@ -79,7 +80,7 @@ async function judgePull(sha, pull, api) {
       return { tested: false, reason: `${label}: did not pass on its head: ${failing.join(', ')}` };
     }
     const absent = REQUIRED_PASSES.filter((name) =>
-      !checks.some((check) => check.name === name && check.conclusion === 'success'));
+      !checks.some((check) => check.name === name && check.conclusion === 'success' && check.app?.slug === 'github-actions'));
     if (absent.length > 0) {
       return { tested: false, reason: `${label}: no passing run on its head of: ${absent.join(', ')}` };
     }
@@ -93,9 +94,9 @@ function describe(error) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function githubApi(repository, token) {
+export function githubApi(repository, token, fetchResponse = fetch) {
   const request = async (path) => {
-    const response = await fetch(`https://api.github.com/repos/${repository}/${path}`, {
+    const response = await fetchResponse(`https://api.github.com/repos/${repository}/${path}`, {
       headers: {
         Accept: 'application/vnd.github+json',
         Authorization: `Bearer ${token}`,

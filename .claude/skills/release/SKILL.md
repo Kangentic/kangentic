@@ -153,9 +153,12 @@ PREVIOUS version. That is why Step 2 reads all three files back.
 
    Then check the two package legs a pull request no longer runs: `gh run list --repo
    Kangentic/kangentic --workflow=package-smoke.yml --event schedule --limit 1 --json
-   headSha,conclusion,createdAt`. Require `conclusion: success`. A newer main than that run's
-   `headSha` is fine, since it runs nightly. On `failure`, stop: Linux arm64 or Intel macOS may not
-   package, and the release matrix would find out after the tag exists.
+   headSha,conclusion,createdAt`. Require `conclusion: success` and a `createdAt` within the last 48
+   hours. A newer main than that run's `headSha` is fine, since it runs nightly. On any other
+   conclusion, an older run, or an empty list, stop: Linux arm64 or Intel macOS may not package, the
+   nightly itself may have stopped running, and the release matrix would find out after the tag
+   exists. `gh workflow run package-smoke.yml --ref main` gets a fresh answer, but it reports under
+   `--event workflow_dispatch`, so read that run instead.
 
    A green conclusion already rules out a flaky test. CI runs the UI, E2E and web demo tiers with
    `retries: 1` and `--fail-on-flaky-tests`, so a test that passes only on its retry fails its

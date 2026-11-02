@@ -56,8 +56,9 @@ interface TrustRemovalRow {
   otherProjectSurvives(): boolean;
   /** Trust levels a user could have written for the worktree. */
   userDecisions: string[];
-  seedUserDecision(worktree: string, decision: string): void;
-  userDecisionSurvives(worktree: string, decision: string): boolean;
+  /** Turns the entry `ensure` wrote into a user's, so its key is the adapter's own on any platform. */
+  changeToUserDecision(decision: string): void;
+  userDecisionSurvives(decision: string): boolean;
 }
 
 function jsonTrustRow(options: {
@@ -84,8 +85,10 @@ function jsonTrustRow(options: {
     seedOtherProject: () => write({ [OTHER_PROJECT]: 'TRUST_FOLDER' }),
     otherProjectSurvives: () => read()[OTHER_PROJECT] === 'TRUST_FOLDER',
     userDecisions: ['TRUST_PARENT', 'DO_NOT_TRUST'],
-    seedUserDecision: (worktree, decision) => write({ [worktree]: decision }),
-    userDecisionSurvives: (worktree, decision) => read()[worktree] === decision,
+    changeToUserDecision: (decision) => {
+      write(Object.fromEntries(Object.keys(read()).map((key) => [key, decision])));
+    },
+    userDecisionSurvives: (decision) => Object.values(read()).includes(decision),
   };
 }
 
@@ -104,11 +107,10 @@ function codexTrustRow(): TrustRemovalRow {
     },
     otherProjectSurvives: () => read().includes(`[projects.'${OTHER_PROJECT}']`),
     userDecisions: ['untrusted'],
-    seedUserDecision: (worktree, decision) => {
-      fs.mkdirSync(path.dirname(configPath()), { recursive: true });
-      fs.writeFileSync(configPath(), `[projects.'${worktree}']\ntrust_level = "${decision}"\n`);
+    changeToUserDecision: (decision) => {
+      fs.writeFileSync(configPath(), read().replace('trust_level = "trusted"', `trust_level = "${decision}"`));
     },
-    userDecisionSurvives: (worktree, decision) => read().includes(`[projects.'${worktree}']\ntrust_level = "${decision}"`),
+    userDecisionSurvives: (decision) => read().includes(`trust_level = "${decision}"`),
   };
 }
 
@@ -201,8 +203,10 @@ describe.each(rows)('$adapter removes the trust entry of a removed worktree', (r
 
   it.each(row.userDecisions)('never removes a user decision of %s', async (decision) => {
     // The user's, not ours: a later worktree at the same path must still honor it.
-    row.seedUserDecision(WORKTREE, decision);
+    row.prepare();
+    await row.ensure(WORKTREE);
+    row.changeToUserDecision(decision);
     await row.remove(WORKTREE);
-    expect(row.userDecisionSurvives(WORKTREE, decision)).toBe(true);
+    expect(row.userDecisionSurvives(decision)).toBe(true);
   });
 });

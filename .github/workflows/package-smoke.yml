@@ -34,8 +34,8 @@ name: Package smoke
 # package.json is not in it.
 #
 # A pull request runs three legs. Linux arm64 and Intel macOS run nightly on main
-# instead, with the other three, so a tag never ships a target nothing packaged
-# since the last merge. Their PR reds were runner faults: 7 of the 14 reruns the
+# instead, with the other three, so a merge that breaks one surfaces by the next
+# day, not on a tag. Their PR reds were runner faults: 7 of the 14 reruns the
 # audit read were electron-builder's ETXTBSY on arm64, and none was a product bug
 # (docs/audits/test-suite-audit.md). /release checks the nightly run before a tag.
 # The Intel leg also gives back a macOS slot: the account has 5, and a lockfile PR
