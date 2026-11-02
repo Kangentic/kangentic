@@ -26,7 +26,7 @@ import type { Profiler } from 'node:inspector';
 import type { ActivityState, ExitSequenceStep, SessionEvent, SessionUsage } from '../../../shared/types';
 import type { EventLoopLagReport } from '../../diagnostics/event-loop-lag';
 import type { HostRoundTripReading } from '../../diagnostics/pty-round-trip-probe';
-import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { WriteOrigin } from '../prompt-draft-ledger';
 import type { FromPtyHostPortMessage, ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { AgentExitWaitResult } from './exited-root-wait';
@@ -328,6 +328,10 @@ export interface PtyHostRequestMap {
    *  false (ended), or null (cannot tell). Reads identities only, no scan,
    *  and runs outside the reap and Stop queues. */
   checkReportedProcesses: { params: { identities: Array<{ pid: number; startKey: string }> }; result: Array<boolean | null> };
+  /** What these tasks have running in their folders, and whether anything
+   *  outside a task's tree is connected to it. Scans and signals nothing, and
+   *  runs outside the reap and Stop queues (`process-tag/task-tree-probe.ts`). */
+  probeTaskProcesses: { params: TaskProbeRequest; result: TaskProbeResult };
   /** Wait, bounded, for what these tasks' exited shells left running to exit
    *  by itself, before a reap (`exited-root-wait.ts`). Runs outside the reap
    *  and Stop queues, so waits for several tasks overlap. */

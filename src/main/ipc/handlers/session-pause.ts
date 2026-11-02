@@ -13,7 +13,9 @@
  * check). The workflow's memory resume is the one exception, for a
  * `'low_memory'` pause of a running workflow's task. A pause never reaps
  * the task's leftover processes: the task is parked, not finished
- * (task-process-tag.md).
+ * (task-process-tag.md). In a project with a Stop script, the two pauses
+ * Kangentic makes start that script once they return, outside this lock
+ * (`src/main/stop-script/`); this function never does.
  *
  * No Done or archive gate, on purpose, matching the task view, whose Pause
  * stays available in Done and on an archived task because it is the only stop

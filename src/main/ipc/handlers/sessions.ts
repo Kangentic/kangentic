@@ -31,6 +31,7 @@ import { forgetTranscriptPath, persistTranscriptPath } from './session-transcrip
 import { abortInFlightResume } from './session-resume-controllers';
 import { resumeTaskSession } from './session-resume';
 import { pauseTaskSession } from './session-pause';
+import { startParkedStop } from '../../stop-script/parked-stop-service';
 import { isSessionInOwnCall } from './own-call-turn-wait';
 import type { ActivityReason, ActivityState, AssistantMessageTrailEntry, PtyResizeOrigin, Session, TaskResolvePrResult } from '../../../shared/types';
 import { agentRegistry } from '../../agent/agent-registry';
@@ -688,7 +689,11 @@ function registerSessionRecoveryHandlers(context: IpcContext): void {
       },
     }).then(
       (outcome) => {
-        if (outcome === 'paused') announce();
+        if (outcome !== 'paused') return;
+        announce();
+        // Outside the task lock, started and not awaited: a Stop script never
+        // holds a pause up, and it reads the record this pause just wrote.
+        startParkedStop(context, projectId, taskId);
       },
       (error: unknown) => {
         console.error('[idle-timeout] pause failed:', error);

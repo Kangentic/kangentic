@@ -877,6 +877,10 @@ msgstr "기본 분기를 저장할 수 없음"
 msgid "Couldn't save shortcuts"
 msgstr "바로 가기를 저장할 수 없음"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Count merge bypass as ready"
@@ -1438,6 +1442,10 @@ msgstr "변경 내용 패널에서 파일의 diff를 표시하는 방식입니�
 msgid "How the relay works"
 msgstr "릴레이 작동 방식"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "How to install and pair"
@@ -1608,6 +1616,12 @@ msgstr "레이아웃"
 #, fuzzy
 msgid "Leave blank if the server does not require credentials"
 msgstr "서버에 자격 증명이 필요 없으면 비워 두세요"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "남은 프로세스"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2634,9 +2648,18 @@ msgid "Stop leftover processes"
 msgstr "남은 프로세스 중지"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "작업이 완료되거나, To Do로 돌아가거나, 삭제되거나, Command Terminal이 종료되면 에이전트가 폴더에서 실행 중으로 남겨 둔 항목을 중지합니다."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy

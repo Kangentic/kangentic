@@ -268,4 +268,8 @@ export function registerBoardHandlers(context: IpcContext): void {
   ipcMain.handle(IPC.BOARD_CONFIG_SET_DEFAULT_BASE_BRANCH, (_, branch: string) => {
     context.boardConfigManager.setDefaultBaseBranch(branch);
   });
+
+  ipcMain.handle(IPC.BOARD_CONFIG_SET_STOP_SCRIPT, (_, script: string | null) => {
+    context.boardConfigManager.setStopScript(script);
+  });
 }

@@ -16,6 +16,7 @@ import { startEventLoopLagMonitor } from './diagnostics/event-loop-lag';
 import { skipConsoleListHelper } from './pty/spawn/conpty-console-list';
 import { startHostMemorySampler, getLastHostMemorySample } from './diagnostics/host-memory';
 import { createLowMemoryAgentPauser, sampleAsRead, setSimulatedLowMemory } from './diagnostics/low-memory-agent-pauser';
+import { tickHeldOffStops } from './stop-script/parked-stop-service';
 import { workflowMemoryGate } from './workflows/workflow-memory-gate';
 import { resumeMemoryPausedWorkflowTasks } from './workflows/workflow-memory-resume';
 import { createRendererReloadGate, isRecoverableRendererDeath, formatHostMemoryDetailLine, RENDERER_RELOAD_MAX, RENDERER_RELOAD_WINDOW_MS } from './diagnostics/renderer-recovery';
@@ -2028,6 +2029,14 @@ app.whenReady().then(async () => {
         lowMemoryAgentPauser.onSample(sample);
       } catch (error) {
         console.error('[idle-agent-pause] Tick failed:', error);
+      }
+      // Stops a connected client held off. Nothing to do, and no work, unless
+      // one is waiting (`src/main/stop-script/held-off-stops.ts`).
+      try {
+        const stopContext = getOptionalIpcContext();
+        if (stopContext) tickHeldOffStops(stopContext);
+      } catch (error) {
+        console.error('[stop-script] Tick failed:', error);
       }
       // The workflow's nudges and memory resumes wait their turn on the same
       // reading (`workflow-memory-gate.ts`), and the paused tasks come back

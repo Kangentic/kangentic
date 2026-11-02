@@ -4306,6 +4306,13 @@ export interface AppConfig {
     copyFiles: string[];
     initScript: string | null;
     /**
+     * The project's Stop script, for the settings row only. Its one store is
+     * `stopScript` in `kangentic.json`, with `kangentic.local.json` over it
+     * (`BoardConfig.stopScript`). `CONFIG_GET` lays that value here, and nothing
+     * writes this key to a config file, so main never reads it from here.
+     */
+    stopScript: string | null;
+    /**
      * Symlink the root node_modules into each worktree so agents skip a fresh
      * install. Disable to let initScript own the worktree's deps, which a
      * workspace repo needs: its package links resolve to the main checkout's
@@ -5083,6 +5090,7 @@ export const DEFAULT_CONFIG: AppConfig = {
     defaultBaseBranch: 'main',
     copyFiles: [],
     initScript: null,
+    stopScript: null,
     linkNodeModules: true,
     holdPromptForInitScript: true,
     prAutoRefresh: true,
@@ -7649,7 +7657,34 @@ export interface BoardConfig {
    */
   profiles?: BoardProfile[];
   defaultBaseBranch?: string;
+  /**
+   * The project's Stop script: a shell command Kangentic runs in a task's folder
+   * after an idle or low-memory pause, and before a terminal transition's reap,
+   * when the task left something running (`src/main/stop-script/`). Team-shared,
+   * since how to stop a stack is a fact about the repository. Absent, or empty
+   * in `kangentic.local.json`, means none. Like `shortcuts`, it has no DB
+   * representation, so `buildBoardConfigFromDb` must carry it across.
+   */
+  stopScript?: string;
   _modifiedBy?: string;
+}
+
+/**
+ * Why a Stop script failed, as facts the renderer words: a non-zero exit with the
+ * last line it printed, a run past its budget, or a run that never got that far
+ * (`detail` is the raw error).
+ */
+export type StopScriptFailure =
+  | { kind: 'exit-code'; exitCode: number; detail: string }
+  | { kind: 'timeout'; timeoutMs: number }
+  | { kind: 'error'; detail: string };
+
+/** A Stop script run that failed, pushed on `STOP_SCRIPT_FAILED`, at most one a minute per project. */
+export interface StopScriptFailedEvent {
+  projectId: string;
+  taskId: string;
+  taskTitle: string;
+  failure: StopScriptFailure;
 }
 
 // === Preload API (exposed to renderer via contextBridge) ===
@@ -7994,6 +8029,8 @@ export interface ElectronAPI {
      * the renderer already toasts.
      */
     onSpawnBlocked: (callback: (taskId: string, taskTitle: string, message: string, projectId?: string) => void) => () => void;
+    /** A project's Stop script failed for this task. Everything else about the task went on. */
+    onStopScriptFailed: (callback: (event: StopScriptFailedEvent) => void) => () => void;
     /**
      * Non-blocking spawn warning: the agent STARTED, but its base branch could
      * not be freshened (a network or credential fetch failure), so it may be
@@ -8876,6 +8913,8 @@ export interface ElectronAPI {
     getShortcuts: () => Promise<(ShortcutConfig & { source: 'team' | 'local' })[]>;
     setShortcuts: (actions: ShortcutConfig[], target: 'team' | 'local') => Promise<void>;
     setDefaultBaseBranch: (branch: string) => Promise<void>;
+    /** Null or an empty string removes it from `kangentic.json`. */
+    setStopScript: (script: string | null) => Promise<void>;
   };
 
   // Clipboard

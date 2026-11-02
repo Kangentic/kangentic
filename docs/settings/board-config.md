@@ -227,6 +227,7 @@ Ghost columns are invisible on the board but still exist in the database. Once a
     }
   ],
   "defaultBaseBranch": "main",
+  "stopScript": "npm run stop",
   "shortcuts": [],
   "profiles": [
     {
@@ -348,6 +349,18 @@ list, an entry in one that is not an object, a column with no name, or a transit
 entry that is not an object. A `shortcuts` or `profiles` value that is not a list reads as none.
 
 The `defaultBaseBranch` field sets the team-shared default base branch for worktree creation. When present, it takes precedence over the per-user `git.defaultBaseBranch` in `AppConfig`. Individual users can override it via `kangentic.local.json`.
+
+## stopScript
+
+The `stopScript` field names a project's Stop script: a shell command Kangentic runs in a task's worktree, or the project folder for a task with none, after an idle or low-memory pause and before every reap, when the task left something running. [Suspend and cleanup](../architecture/sessions/suspend-and-cleanup.md#a-projects-stop-script) has which events run it and why.
+
+```json
+{
+  "stopScript": "npm run stop"
+}
+```
+
+It lives here, and only here, because how to stop a stack is a fact about the repository, and teammates want it without setting it on each machine. Settings > Git > Leftover processes writes it, and an empty field removes the key. `CONFIG_GET` lays it on `AppConfig.git.stopScript` for that row, and nothing else reads that copy. It has no database representation, so `buildBoardConfigFromDb` carries it across a write-back. An individual can replace it in `kangentic.local.json`, or turn it off on one machine with `"stopScript": ""`. A script committed here runs on every teammate's machine with no prompt, as a committed Run script automation does.
 
 The `_modifiedBy` field is auto-set by Kangentic to record which device last wrote the file (last-writer provenance) and should not be edited manually.
 

@@ -1,18 +1,20 @@
-import { GitBranch, GitFork, GitPullRequest } from 'lucide-react';
+import { CircleStop, GitBranch, GitFork, GitPullRequest } from 'lucide-react';
 import { useLingui } from '@lingui/react/macro';
 import type { AppConfig } from '../../../../shared/types';
 import { BranchPicker } from '../../dialogs/BranchPicker';
 import { SettingTextInput, useScopedUpdate } from '../shared';
 import { SettingsCard, CardRow, CardToggleRow, SettingTag } from '../settings-card';
 import { settingProps } from '../settings-registry';
+import { useConfigStore } from '../../../stores/config-store';
 import { useToastStore } from '../../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../../lib/ipc-error';
 
 /**
- * Three cards: Branches (where work starts and how current it stays),
- * Worktrees (the feature switch and everything that only matters with it on),
- * and Pull requests. Only Worktrees has a master switch. Branches and pull
- * requests work either way, so their cards have no switch and always show.
+ * Four cards: Branches (where work starts and how current it stays), Worktrees
+ * (the feature switch and everything that only matters with it on), Leftover
+ * processes (the project's Stop script), and Pull requests. Only Worktrees has a
+ * master switch. The others work either way, so they have no switch and always
+ * show.
  */
 export function GitTab({ config }: { config: AppConfig }) {
   const { t } = useLingui();
@@ -106,6 +108,38 @@ export function GitTab({ config }: { config: AppConfig }) {
             ) : null}
           </>
         ) : null}
+      </SettingsCard>
+
+      {/* Not in the Worktrees card: the script also runs in the project folder
+          for a task with no worktree, so a project with worktrees off needs it. */}
+      <SettingsCard
+        icon={<CircleStop size={16} />}
+        label={t`Leftover processes`}
+        description={t`How this project stops what a task leaves running.`}
+        searchIds={['git.stopScript']}
+      >
+        <CardRow {...settingProps('git.stopScript')}>
+          <SettingTextInput
+            value={config.git.stopScript || ''}
+            onCommit={(nextStopScript) => {
+              // Saved in kangentic.json alone, so the row reads it back from there.
+              window.electronAPI.boardConfig.setStopScript(nextStopScript || null).then(
+                () => useConfigStore.getState().loadConfig(),
+                (error: unknown) => {
+                  useToastStore.getState().addToast({
+                    title: t`Couldn't save Stop script`,
+                    message: asSentence(describeIpcError(error)),
+                    variant: 'error',
+                  });
+                },
+              );
+            }}
+            // i18n-ok: an example shell command
+            placeholder="npm run stop"
+            ariaLabel={t`Stop script`}
+            className="placeholder-fg-faint"
+          />
+        </CardRow>
       </SettingsCard>
 
       <SettingsCard

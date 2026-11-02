@@ -33,7 +33,7 @@ import {
   type SeedFrameResult,
 } from './protocol';
 import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
-import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult } from '../process-tag/tagged-reap';
+import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
 import { SPAWN_REQUEST_TIMEOUT_MS } from './root-pid-gate';
 
@@ -589,6 +589,11 @@ export class PtyHostClient {
   /** Whether each reported process still runs (see `process-tag/tagged-reap.ts`). */
   checkReportedProcesses(identities: Array<{ pid: number; startKey: string }>, timeoutMs: number): Promise<Array<boolean | null>> {
     return this.transport.request('checkReportedProcesses', { identities }, { timeoutMs });
+  }
+
+  /** What these tasks have running, signalling nothing (see `process-tag/task-tree-probe.ts`). */
+  probeTaskProcesses(request: TaskProbeRequest, timeoutMs: number): Promise<TaskProbeResult> {
+    return this.transport.request('probeTaskProcesses', request, { timeoutMs });
   }
 
   /** Wait for what these tasks' exited shells left running to exit (see `exited-root-wait.ts`). */

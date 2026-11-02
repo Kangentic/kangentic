@@ -12,8 +12,14 @@ const mocks = vi.hoisted(() => ({
   getProjectRepos: vi.fn(),
   hasPendingMessageDelivery: vi.fn((_taskId: string) => false),
   noteWorkflowTaskPaused: vi.fn(),
+  startParkedStop: vi.fn(),
+  relieveParkedTasks: vi.fn(async (): Promise<'started' | 'held' | 'none'> => 'none'),
 }));
 
+vi.mock('../../src/main/stop-script/parked-stop-service', () => ({
+  startParkedStop: mocks.startParkedStop,
+  relieveParkedTasks: mocks.relieveParkedTasks,
+}));
 vi.mock('../../src/main/workflows/workflow-recovery', () => ({ noteWorkflowTaskPaused: mocks.noteWorkflowTaskPaused }));
 vi.mock('../../src/main/ipc/handlers/session-pause', () => ({ pauseTaskSession: mocks.pauseTaskSession }));
 vi.mock('../../src/main/ipc/helpers', () => ({ getProjectRepos: mocks.getProjectRepos }));
@@ -179,6 +185,38 @@ describe('createLowMemoryAgentPauser', () => {
       IPC.HOST_MEMORY_AGENT_PAUSED,
       expect.objectContaining({ taskId: 'task-1', projectId: 'proj-1', taskTitle: 'Fix login redirect', projectName: 'kangentic' }),
     );
+  });
+
+  it('starts the project\'s Stop script after a pause, with no window open too', async () => {
+    const context = makeContext();
+    context.mainWindow.isDestroyed.mockReturnValue(true);
+    mocks.pauseTaskSession.mockResolvedValue('paused');
+
+    createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+    await settle();
+
+    expect(mocks.startParkedStop).toHaveBeenCalledWith(context, 'proj-1', 'task-1');
+  });
+
+  it('starts no Stop script for a pause that was declined', async () => {
+    const context = makeContext();
+    mocks.pauseTaskSession.mockResolvedValue('declined');
+
+    createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+    await settle();
+
+    expect(mocks.startParkedStop).not.toHaveBeenCalled();
+  });
+
+  it('gives a parked task\'s stop the tick, and pauses no agent on it', async () => {
+    const context = makeContext();
+    mocks.relieveParkedTasks.mockResolvedValueOnce('started');
+
+    createLowMemoryAgentPauser(() => context as never).onSample(lowWindowsSample());
+    await settle();
+
+    expect(mocks.relieveParkedTasks).toHaveBeenCalledWith(context);
+    expect(mocks.pauseTaskSession).not.toHaveBeenCalled();
   });
 
   it('re-checks the agent under the lock: it declines once the agent went back to work', async () => {

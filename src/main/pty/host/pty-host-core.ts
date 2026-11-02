@@ -69,6 +69,8 @@ import {
   type TaggedReapRequest,
   type TaggedReapResult,
   type TaggedReaperQueue,
+  type TaskProbeRequest,
+  type TaskProbeResult,
 } from '../process-tag/tagged-reap';
 import type { TaggedProcessReader } from '../process-tag/process-scan';
 import {
@@ -874,6 +876,8 @@ export class PtyHostCore {
         return this.stopReportedProcess(params as StopProcessRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'checkReportedProcesses':
         return this.checkReportedProcesses((params as PtyHostRequestMap['checkReportedProcesses']['params']).identities) as Promise<PtyHostRequestMap[M]['result']>;
+      case 'probeTaskProcesses':
+        return this.probeTaskProcesses(params as TaskProbeRequest) as Promise<PtyHostRequestMap[M]['result']>;
       case 'awaitAgentExit':
         return this.awaitAgentExit((params as PtyHostRequestMap['awaitAgentExit']['params']).taskIds) as Promise<PtyHostRequestMap[M]['result']>;
       case 'spawnRaw':
@@ -1073,6 +1077,17 @@ export class PtyHostCore {
     const reaper = this.ensureTaggedReaper();
     if (!reaper) return Promise.resolve(identities.map(() => null));
     return reaper.checkRunning(identities);
+  }
+
+  /**
+   * What these tasks have running, for a project's Stop script
+   * (`process-tag/task-tree-probe.ts`). Signals nothing. A host with no reader
+   * answers `failed`, which runs no script.
+   */
+  probeTaskProcesses(request: TaskProbeRequest): Promise<TaskProbeResult> {
+    const reaper = this.ensureTaggedReaper();
+    if (!reaper) return Promise.resolve({ entries: [], failed: true });
+    return reaper.probe(request);
   }
 
   /**

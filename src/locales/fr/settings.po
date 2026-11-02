@@ -877,6 +877,10 @@ msgstr "Impossible d'enregistrer la branche de base"
 msgid "Couldn't save shortcuts"
 msgstr "Impossible d'enregistrer les raccourcis"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Couldn't save Stop script"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Count merge bypass as ready"
@@ -1438,6 +1442,10 @@ msgstr "Affichage du diff d'un fichier dans le panneau Modifications."
 msgid "How the relay works"
 msgstr "Fonctionnement du relais"
 
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "How this project stops what a task leaves running."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "How to install and pair"
@@ -1608,6 +1616,12 @@ msgstr "Disposition"
 #, fuzzy
 msgid "Leave blank if the server does not require credentials"
 msgstr "Laisser vide si le serveur ne requiert pas d'identifiants"
+
+#: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+#, fuzzy
+msgid "Leftover processes"
+msgstr "Processus résiduels"
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2634,9 +2648,18 @@ msgid "Stop leftover processes"
 msgstr "Arrêter les processus résiduels"
 
 #: src/renderer/components/settings/settings-registry.ts
+#: src/renderer/components/settings/tabs/GitTab.tsx
+msgid "Stop script"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Arrêter ce qu'un agent a laissé en cours d'exécution dans son dossier lorsque sa tâche est terminée, renvoyée dans To Do ou supprimée, ou que son Command Terminal se ferme."
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Stops what a task left running after an idle or low-memory pause, and before it finishes. Saved in kangentic.json, and runs through cmd.exe on Windows."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
