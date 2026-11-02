@@ -3556,6 +3556,13 @@
 
     config: {
       get: async function (projectId) {
+        // Off by default. A spec of a per-project read seeds
+        // window.__mockStopScriptByProject = { [projectId]: 'script' } and gets that
+        // project's Stop script back for that id only, over the config below.
+        if (projectId && window.__mockStopScriptByProject && projectId in window.__mockStopScriptByProject) {
+          var seededGit = Object.assign({}, config.git, { stopScript: window.__mockStopScriptByProject[projectId] });
+          return Object.assign({}, config, { git: seededGit });
+        }
         // Another project's effective config (a workflow's planned task on its
         // board), as main answers config:get with a projectId: global merged
         // with that project's overrides. Outside the graphics-acceleration
@@ -5281,12 +5288,20 @@
       getShortcuts: async function () { return []; },
       setShortcuts: async function (/* actions, target */) {},
       setDefaultBaseBranch: async function (/* branch */) {},
-      setStopScript: async function (script) {
-        // Main writes kangentic.json alone and overlays it at config:get, so a
+      setStopScript: async function (projectId, script) {
+        // Main writes the board config file and overlays it at config:get, so a
         // spec reads what was saved from __mockStopScriptSaves, not config:set.
         if (!window.__mockStopScriptSaves) window.__mockStopScriptSaves = [];
         window.__mockStopScriptSaves.push(script);
+        if (!window.__mockStopScriptSaveProjects) window.__mockStopScriptSaveProjects = [];
+        window.__mockStopScriptSaveProjects.push(projectId);
         if (window.__mockStopScriptSaveError) throw new Error(window.__mockStopScriptSaveError);
+        // A project the spec seeded per project keeps its own value, as main's
+        // per-project board config file does; any other id writes the shared config.
+        if (window.__mockStopScriptByProject && projectId in window.__mockStopScriptByProject) {
+          window.__mockStopScriptByProject[projectId] = script || null;
+          return;
+        }
         config.git.stopScript = script || null;
       },
     },

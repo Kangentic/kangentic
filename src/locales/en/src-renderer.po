@@ -129,6 +129,10 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 
 #: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr "\"{taskTitle}\": {detail}"
+
+#: src/renderer/lib/stop-script-toast.ts
 msgid "\"{taskTitle}\": exited with code {exitCode}."
 msgstr "\"{taskTitle}\": exited with code {exitCode}."
 

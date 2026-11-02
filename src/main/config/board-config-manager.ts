@@ -450,45 +450,70 @@ export class BoardConfigManager {
    * when there is none. Takes a path because a pause and a recheck can be in a
    * project that is not the active one. Both files come from JSON.parse, so
    * anything that is not a non-empty string reads as none: an empty local value
-   * is how one machine turns a team's script off.
+   * is how one machine turns a team's script off. A local script counts with no
+   * `kangentic.json` too, which the effective config reads as no config at all.
    */
   getStopScriptForPath(projectPath: string): string | null {
-    const script: unknown = this.getEffectiveConfigForPath(projectPath)?.stopScript;
+    const config = this.getEffectiveConfigForPath(projectPath) ?? this.loadLocalOverridesForPath(projectPath);
+    const script: unknown = config?.stopScript;
     if (typeof script !== 'string') return null;
     const trimmed = script.trim();
     return trimmed === '' ? null : trimmed;
   }
 
-  /** Set the active project's Stop script in `kangentic.json`. Null or blank removes the key. */
-  setStopScript(script: string | null): void {
-    if (!this.activeProjectPath) return;
+  /**
+   * Set a project's Stop script. The project need not be the active one, since the
+   * Settings panel's switcher can name another. The write goes where the value is
+   * read from: `kangentic.local.json` when that holds the key, because a team-file
+   * write would change nothing on this machine, else `kangentic.json`. Null or blank
+   * removes the team key, or leaves an empty local value, which keeps it off here.
+   * Throws when the write fails, so the row can say so.
+   */
+  setStopScript(projectPath: string, script: string | null): void {
+    const isActive = projectPath === this.activeProjectPath;
     // As `setDefaultBaseBranch`: every exit path below serves fresh reads.
     this.invalidateConfigCache();
-    this.assertWritable(this.activeProjectPath, TEAM_FILE, 'setStopScript');
+    this.assertWritable(projectPath, LOCAL_FILE, 'setStopScript');
+    const localConfig = this.readExistingForWrite(projectPath, LOCAL_FILE, {});
+    const writesLocal = 'stopScript' in localConfig;
+    if (!writesLocal) this.assertWritable(projectPath, TEAM_FILE, 'setStopScript');
 
-    const filePath = path.join(this.activeProjectPath, TEAM_FILE);
-    const existing = this.readExistingForWrite(this.activeProjectPath, TEAM_FILE, emptyTeamConfig());
+    const filePath = path.join(projectPath, writesLocal ? LOCAL_FILE : TEAM_FILE);
+    const existing = writesLocal ? localConfig : this.readExistingForWrite(projectPath, TEAM_FILE, emptyTeamConfig());
 
     const trimmed = script?.trim() ?? '';
-    if (trimmed === '') delete existing.stopScript;
-    else existing.stopScript = trimmed;
-    (existing as BoardConfig)._modifiedBy = this.fingerprint;
+    if (writesLocal) {
+      existing.stopScript = trimmed;
+    } else {
+      if (trimmed === '') delete existing.stopScript;
+      else existing.stopScript = trimmed;
+      (existing as BoardConfig)._modifiedBy = this.fingerprint;
+    }
+
+    const rememberWrittenHash = (contentHash: string | null): void => {
+      if (!isActive) return;
+      if (writesLocal) this.lastLocalContentHash = contentHash;
+      else this.lastTeamContentHash = contentHash;
+    };
 
     const fileCheck = contentMatchesFile(filePath, existing);
     if (fileCheck.matches) {
-      this.lastTeamContentHash = fileCheck.contentHash;
+      rememberWrittenHash(fileCheck.contentHash);
       return;
     }
 
-    this.isWritingBack = true;
+    if (isActive) this.isWritingBack = true;
     try {
-      this.lastTeamContentHash = atomicWriteJson(filePath, existing);
+      rememberWrittenHash(atomicWriteJson(filePath, existing));
     } catch (error) {
       console.warn('[BOARD_CONFIG] setStopScript failed:', error);
+      throw error;
     } finally {
-      setTimeout(() => {
-        this.isWritingBack = false;
-      }, 1000);
+      if (isActive) {
+        setTimeout(() => {
+          this.isWritingBack = false;
+        }, 1000);
+      }
     }
   }
 

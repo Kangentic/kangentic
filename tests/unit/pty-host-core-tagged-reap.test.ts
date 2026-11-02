@@ -10,6 +10,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type * as nodePty from 'node-pty';
 import { PtyHostCore } from '../../src/main/pty/host/pty-host-core';
+import { PtyHostClient, type PtyHostTransport } from '../../src/main/pty/host/pty-host-client';
 import type { PtyHostRawSpawnParams, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
 import { ScanStepError, type KillStrength, type ProcessScan, type ScannedProcess, type TaggedProcessReader } from '../../src/main/pty/process-tag/process-scan';
 
@@ -281,6 +282,66 @@ describe('PtyHostCore checkReportedProcesses', () => {
       createTaggedProcessReader: () => null,
     });
     await expect(core.checkReportedProcesses([{ pid: 5000, startKey: 'start-5000' }])).resolves.toEqual([null]);
+  });
+});
+
+describe('PtyHostCore probeTaskProcesses request (the Stop script\'s question)', () => {
+  const PROBE_REQUEST = { tasks: REQUEST.tasks, mainPid: MAIN_PID, readConnections: false };
+
+  it('reaches the reaper\'s probe: scans, signals nothing, and answers what the task has running', async () => {
+    const reader = new TableReader([
+      row(MAIN_PID, 900, null),
+      row(5000, 1, TASK),
+    ]);
+    const scan = vi.spyOn(reader, 'scan');
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => reader,
+    });
+
+    const answer = await core.handleRequest('probeTaskProcesses', PROBE_REQUEST);
+
+    expect(scan).toHaveBeenCalledTimes(1);
+    expect(answer.failed).toBe(false);
+    expect(answer.entries).toHaveLength(1);
+    expect(answer.entries[0]).toMatchObject({ taskId: TASK, connected: false });
+    expect(answer.entries[0].processes.map((probed) => probed.pid)).toEqual([5000]);
+    expect(reader.kills).toEqual([]);
+  });
+
+  it('answers failed, with no entries, on a platform with no reader', async () => {
+    const core = new PtyHostCore({
+      emit: () => {},
+      resolveAgent: () => undefined,
+      transcriptSinkFor: () => null,
+      coalesceMs: 0,
+      createTaggedProcessReader: () => null,
+    });
+
+    await expect(core.handleRequest('probeTaskProcesses', PROBE_REQUEST)).resolves.toEqual({ entries: [], failed: true });
+  });
+});
+
+describe('PtyHostClient.probeTaskProcesses', () => {
+  it('sends the probeTaskProcesses request with the budget it was given, and returns the host\'s answer', async () => {
+    const answer = { entries: [], failed: false };
+    const request = vi.fn(async () => answer);
+    const transport: PtyHostTransport = {
+      post: () => undefined,
+      request: request as unknown as PtyHostTransport['request'],
+      setEventListener: () => undefined,
+      hostPid: 1234,
+      shutdown: () => undefined,
+    };
+    const probe = { tasks: REQUEST.tasks, mainPid: MAIN_PID, readConnections: true };
+
+    const result = await new PtyHostClient(transport).probeTaskProcesses(probe, 5_000);
+
+    expect(request).toHaveBeenCalledWith('probeTaskProcesses', probe, { timeoutMs: 5_000 });
+    expect(result).toBe(answer);
   });
 });
 

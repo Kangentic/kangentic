@@ -267,7 +267,7 @@ Valid values: `default`, `plan`, `acceptEdits`, `dontAsk`, `bypassPermissions`, 
 | `boardConfig:setShortcuts` | Update task detail dialog shortcuts |
 | `boardConfig:shortcutsChanged` | Event: shortcuts file changed |
 | `boardConfig:setDefaultBaseBranch` | Update the default base branch in `kangentic.json` |
-| `boardConfig:setStopScript` | Update the project's Stop script in `kangentic.json` |
+| `boardConfig:setStopScript` | Update a project's Stop script in `kangentic.json`, or in `kangentic.local.json` when that holds the key |
 
 ## Environment Variables
 

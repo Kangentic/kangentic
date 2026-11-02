@@ -14,11 +14,12 @@ const FAILURE_TOAST_COOLDOWN_MS = 60_000;
 
 const lastToastAtByProject = new Map<string, number>();
 
-export function reportStopScriptFailure(context: IpcContext, event: StopScriptFailedEvent, now: number = Date.now()): void {
+export function reportStopScriptFailure(context: IpcContext, event: StopScriptFailedEvent): void {
+  if (context.mainWindow.isDestroyed()) return;
+  const now = Date.now();
   const lastToastAt = lastToastAtByProject.get(event.projectId);
   if (lastToastAt !== undefined && now - lastToastAt < FAILURE_TOAST_COOLDOWN_MS) return;
   lastToastAtByProject.set(event.projectId, now);
-  if (context.mainWindow.isDestroyed()) return;
   context.mainWindow.webContents.send(IPC.STOP_SCRIPT_FAILED, event);
 }
 

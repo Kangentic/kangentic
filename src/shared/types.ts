@@ -8913,8 +8913,11 @@ export interface ElectronAPI {
     getShortcuts: () => Promise<(ShortcutConfig & { source: 'team' | 'local' })[]>;
     setShortcuts: (actions: ShortcutConfig[], target: 'team' | 'local') => Promise<void>;
     setDefaultBaseBranch: (branch: string) => Promise<void>;
-    /** Null or an empty string removes it from `kangentic.json`. */
-    setStopScript: (script: string | null) => Promise<void>;
+    /**
+     * The project the Settings panel is editing, which can be one whose board is not
+     * open. Null or an empty string clears it in the file the value is read from.
+     */
+    setStopScript: (projectId: string, script: string | null) => Promise<void>;
   };
 
   // Clipboard

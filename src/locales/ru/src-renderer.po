@@ -159,6 +159,10 @@ msgid "\"{taskTitle}\": \"{automationName}\" failed on {columnName}."
 msgstr "Задача «{taskTitle}»: автоматизация «{automationName}» завершилась с ошибкой в столбце {columnName}."
 
 #: src/renderer/lib/stop-script-toast.ts
+msgid "\"{taskTitle}\": {detail}"
+msgstr ""
+
+#: src/renderer/lib/stop-script-toast.ts
 msgid "\"{taskTitle}\": exited with code {exitCode}."
 msgstr ""
 

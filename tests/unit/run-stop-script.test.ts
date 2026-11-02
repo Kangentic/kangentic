@@ -11,7 +11,7 @@ import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { classifyStopScriptError, isStopScriptRunning, runStopScript } from '../../src/main/stop-script/run-stop-script';
+import { classifyStopScriptError, isStopScriptRunning, runStopScript, stopScriptFolder } from '../../src/main/stop-script/run-stop-script';
 import { TASK_PROCESS_TAG_ENV } from '../../src/main/pty/process-tag/task-process-tag';
 
 const TASK_ID = 'task-run-0001';
@@ -82,18 +82,49 @@ describe('runStopScript', () => {
     expect(await run).toEqual({ status: 'aborted' });
   }, 30_000);
 
-  it('runs one script per task, and a second caller waits for it within its own bound', async () => {
+  it('runs one script per task, and a second caller waits for it', async () => {
     const script = stub('count.js', "const fs = require('fs'); fs.appendFileSync('runs.txt', 'x'); setTimeout(() => {}, 700);");
 
     const first = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 20_000 });
     const joined = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 20_000 });
-    const outlasted = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 1 });
 
     expect(isStopScriptRunning(TASK_ID)).toBe(true);
-    expect(await outlasted).toEqual({ status: 'aborted' });
     expect(await joined).toEqual(await first);
     expect(fs.readFileSync(path.join(folder, 'runs.txt'), 'utf8')).toBe('x');
   }, 30_000);
+
+  it('ends the run for a joined caller whose bound runs out, since a reap comes next', async () => {
+    const script = stub('hang-join.js', 'setTimeout(() => {}, 60000);');
+
+    const first = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 20_000 });
+    const joined = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 200 });
+
+    expect(await joined).toEqual({ status: 'aborted' });
+    expect(await first).toEqual({ status: 'aborted' });
+    expect(isStopScriptRunning(TASK_ID)).toBe(false);
+  }, 30_000);
+
+  it('ends the run when a joined caller\'s move is superseded', async () => {
+    const script = stub('hang-join-abort.js', 'setTimeout(() => {}, 60000);');
+    const controller = new AbortController();
+
+    const first = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 20_000 });
+    const joined = runStopScript({ taskId: TASK_ID, script, cwd: folder, timeoutMs: 20_000, signal: controller.signal });
+    setTimeout(() => controller.abort(), 200);
+
+    expect(await joined).toEqual({ status: 'aborted' });
+    expect(await first).toEqual({ status: 'aborted' });
+  }, 30_000);
+});
+
+describe('stopScriptFolder', () => {
+  it('is the worktree while it exists, else the project folder', async () => {
+    const gone = path.join(folder, 'removed-worktree');
+
+    expect(await stopScriptFolder(folder, '/mock/project')).toBe(folder);
+    expect(await stopScriptFolder(gone, '/mock/project')).toBe('/mock/project');
+    expect(await stopScriptFolder(null, '/mock/project')).toBe('/mock/project');
+  });
 });
 
 describe('classifyStopScriptError', () => {
