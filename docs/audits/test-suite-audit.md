@@ -1,7 +1,7 @@
 ---
 type: Audit
 title: Test suite audit
-description: "What the test suite and CI cost on 2026-11-02 and what each tier has caught: 37,794 tests and 16.8 minutes to green, set by one web demo job and the UI tier, with little true duplication. CI structure took a PR to about 10 minutes; removals barely move it. Baseline, research with sources, every workflow's verdict, and the options rejected."
+description: "What the test suite and CI cost on 2026-11-02 and what each tier has caught: 37,794 tests and 16.8 minutes to green, set by one web demo job and the UI tier, with little true duplication. CI structure took a PR to 10 to 12 minutes; removals barely move it. Baseline, research with sources, every workflow's verdict, and the options rejected."
 tags: [audit, testing, ci, performance]
 sources:
   - resource: .github/workflows/ci.yml
@@ -20,7 +20,7 @@ The suite had grown to 2,296 test files and a pull request took a median 16.8 mi
 green. The question was what to keep, what to cut, and how to stop it drifting back.
 
 **Verdict: the suite is not padded, and removing tests is the wrong lever for speed.** One job and
-one tier set a PR's time. CI structure took a PR from about 17 minutes to about 10 with no test
+one tier set a PR's time. CI structure took a PR from about 17 minutes to 10 to 12 with no test
 removed. Reading the eight biggest UI families found little true duplication, and removing all of it
 saves about 15 seconds of wall clock. The trims are worth doing for upkeep and honesty, since seven
 tests asserted their own copy of the logic and one of those contradicted production. They do not
@@ -157,6 +157,8 @@ or the evidence said otherwise: 311 are named as a rule's enforcement, and 71 we
 Agents then read the flagged families: the eight biggest UI families, the heaviest specs, every
 single-file source pin, the adapter families, and all 51 E2E specs.
 
+What the reviews proposed. [What was removed](#what-was-removed) has what survived the second read.
+
 | Family reviewed | Tests | Removed | Folded | Moved down |
 |---|---:|---:|---:|---:|
 | command-terminal | 202 | 6 | 3 | 2 |
@@ -190,25 +192,27 @@ disputed removal.
 
 ## Before and after
 
-Three runs dispatched on a research branch, against baseline run 41391402821. The method rule says to
-discard a run with over 20s of queue, so only the first is a clean wall-clock number. The other two
-shared the account's job cap with another PR's CI, and they are shown because that is also what a
-real PR meets. A dispatch has no CLA check, which is one job fewer than a real PR.
+Runs dispatched on a research branch, against baseline run 41391402821. The method rule says to
+discard a run with over 20s of queue, so the two clean runs are the wall-clock numbers: one before
+the trims and one with them all landed. The other two shared the account's job cap with another PR's
+CI, and they are shown because that is also what a real PR meets. A dispatch has no CLA check, which
+is one job fewer than a real PR.
 
-| Measure | Before | After, quiet account | After, contended |
-|---|---:|---:|---:|
-| Time to all green (s) | 1,026 | 590 | 707, 1,144 |
-| Longest queue (s) | 210 | 21 | 101, 550 |
-| Web demo job (s) | 1,023 | 442 | 523, 447 |
-| Slowest UI job (s) | 687 | 566 | 697, 596 |
-| Heaviest UI shard's test-seconds | 1,791 | 1,485 | 1,815, 1,564 |
-| Job minutes per run | 122 | 104 | 118, 116 |
-| Concurrent jobs on a PR | 22 | 21 | 21 |
-| Tests | 37,794 | 37,794 plus the audit's own | same |
+| Measure | Before | Quiet, before trims | Quiet, final | Contended |
+|---|---:|---:|---:|---:|
+| Time to all green (s) | 1,026 | 590 | 709 | 707, 1,144 |
+| Longest queue (s) | 210 | 21 | 14 | 101, 550 |
+| Web demo job (s) | 1,023 | 442 | 514 | 523, 447 |
+| Slowest UI job (s) | 687 | 566 | 694 | 697, 596 |
+| Heaviest UI shard's test-seconds | 1,791 | 1,485 | 1,782 | 1,815, 1,564 |
+| Job minutes per run | 122 | 104 | 114 | 118, 116 |
+| Concurrent jobs on a PR | 22 | 21 | 21 | 21 |
+| Tests | 37,794 | 37,794 | 37,449 | |
 
-- **The demo job stopped setting the time.** It held at 442-523s at 3 workers with no flake in three
+- **The demo job stopped setting the time.** It held at 442-523s at 3 workers with no flake in five
   runs, so the slowest UI job is the pole now.
-- **The UI tier did not change,** and the shard numbers say so: its spread across these runs is noise.
+- **The trims did not speed CI, as expected.** The final run is slower than the first clean one. The
+  UI tier lost 64 tests, and its spread across these runs is noise that swamps them.
 - **A merged PR's push run** drops from about 120 job-minutes to one short job, in the 10 of 14 recent
   pushes the gate would have skipped. The gate read real history correctly: all three direct pushes
   and the one PR whose pushed tree differed from its head still ran everything.
@@ -240,12 +244,39 @@ red rate over the next weeks shows whether these held.
 
 ## What was removed
 
-Everything on the sign-off list, on its recommended option:
+Everything on the sign-off list, on its recommended option. Each cut was read against the test said
+to cover it, and that read overturned three, so those tests stayed.
 
+| Tier | Before | After | Change |
+|---|---:|---:|---|
+| Unit | 34,305 | 34,027 | The dev tooling's tests went, and 22 UI tests arrived |
+| UI | 3,061 | 2,997 | 40 removed or folded, 2 loop cases cut, 22 moved down |
+| E2E | 121 | 118 | 4 duplicates of `event-bridge.test.ts` out, 1 new test in |
+| Web demo | 307 | 307 | Unchanged |
+
+- **UI trims.** 27 removed and 13 folded. `board-filter`'s title match, `knowledge-graph` :2380 and
+  `sidebar-command-terminals` :819 stayed: each was the only assertion of what it covers.
+- **Moved down.** The completion slice, the mock-only tests and the graph refresh are unit tests now,
+  each shown to fail on a mutation. The other 47 candidates stayed in the UI tier, since each needed
+  logic extracted from a component for about 15 seconds of wall clock.
+- **Mirror tests.** `permission-mode-guard` and `use-terminal-scrollback` are deleted, since each
+  contradicted production. The second was meant to be rewritten, but the logic is tangled in terminal
+  and focus behavior, and real replay is covered by `terminal-replay-veil.spec.ts`. The other five run
+  production code now. They found copies that had drifted in the split resize, the font race and the
+  worktree revert.
+- **Adapter tables.** `adapter-detectors.test.ts` replaces four files and now covers every adapter's
+  binary name and parser, up from four adapters. `adapter-trust-removal.test.ts` replaces the copied
+  cases. Rewriting that table found a real bug: Codex's `removeWorktreeTrust` deleted a user's explicit
+  `"untrusted"`, which Gemini and Qwen protect. It now removes only the table it wrote.
+- **Source pins.** The three `register-all` pins are behavior tests, and so are three of the four
+  literal pins. `app-layout-render-scope` stays a pin, since a re-render claim needs a client renderer
+  the unit tier does not have.
 - **Dev tooling.** `eval-docs-reads` and `measure-docs-structure`, and `scripts/review-eval/`, each
   with its tests, 6,879 lines of test and script that nothing in `package.json`, a skill, a rule or a
   workflow used. The fan-out audit's section 17 numbers can no longer be rerun from this tree;
   git history holds the harness. The alternative was keeping `review-eval` for a future eval.
+- **The gap.** `claude-hook-path.spec.ts` runs the real hook commands from `settings.json` through a
+  shell on Linux and Windows, which nothing did end to end. Breaking the bridge path turns it red.
 
 ## Rejected options
 
