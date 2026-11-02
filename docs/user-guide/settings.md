@@ -159,7 +159,7 @@ All permission modes are available in both the global App Settings dropdown and 
 
 ## Git Settings
 
-Three cards: **Branches**, **Worktrees**, and **Pull requests**.
+Four cards: **Branches**, **Worktrees**, **Leftover processes**, and **Pull requests**.
 
 | Setting | Card | Description |
 |---------|------|-------------|
@@ -171,6 +171,7 @@ Three cards: **Branches**, **Worktrees**, and **Pull requests**.
 | Copy files | Worktrees | Files to copy from repo root into each new worktree, such as `.env` |
 | Post-worktree script | Worktrees | Shell script run in each new worktree after creation (e.g. `npm install`). When you move a task into a column that starts an agent, or an MCP tool starts one, the agent starts while the script runs (see the next row); creating, promoting or restoring a task starts it after the script. Other tasks' git work does not wait for it. A non-zero exit or timeout fails worktree creation |
 | Hold prompt for script | Worktrees | Shows while a Post-worktree script is set. On by default: an agent that can take its first prompt typed (Claude today) starts while the script runs and gets that prompt once the script succeeds, and any other agent starts after the script. A failed script fails the task as before. Off, every agent starts on its prompt at once, is told the script is still running, and a failed script is reported on the task and to the agent instead of moving the task back. Off saves the whole install; on saves the agent's start-up |
+| Stop script | Leftover processes | A shell command, such as `npm run stop`, that stops what a task left running. Kangentic runs it in the task's worktree, or the project folder for a task with none, after an idle or low-memory pause and before it stops a task's leftover processes. It saves to `kangentic.json`, so the team shares it. See [stopScript](../settings/board-config.md#stopscript) |
 | Auto-refresh PRs | Pull requests | On by default. Checks each open PR about 2 minutes after its own last check, one call at a time and at least 10 s apart, so at most 360 calls an hour however many PRs are open. Any check resets a PR's clock: this queue, the 30 s re-poll while CI runs, an agent's `gh pr create`, or a manual refresh. Past 12 open PRs each PR's interval stretches instead of the cost growing. Off, PRs are checked when the project opens and nothing re-polls one whose checks are running |
 | Count merge bypass as ready | Pull requests | On by default, GitHub only. Ready means you could merge the PR now. A PR still waiting on a required review reads `blocked` even when you can bypass that rule and merge it yourself, which is how the Merge column already lands PRs. That stays true once somebody else's PR lands and leaves yours behind the base. On, such a PR reads `ready`, at one extra `gh` call per such PR per check. Never past a check: the same call reads the branch's required checks and every one must have reported green. Turn it off to keep the review norm even where you could bypass |
 
@@ -190,7 +191,7 @@ Per-project. The Browser tab holds this project's [Browser pane](task-detail.md#
 
 The Shortcuts tab lets you add custom command buttons to the task detail dialog. Each shortcut has a label, icon, shell command, and display location (header bar, kebab menu, or both).
 
-Commands support template variables: `{{cwd}}`, `{{branchName}}`, `{{taskTitle}}`, `{{projectPath}}`. These are resolved at runtime using the active task's context.
+Commands support [template variables](../settings/board-config.md#shortcuts), resolved at runtime from the active task's context.
 
 Shortcuts can be scoped as **Team** (saved in `kangentic.json`, shared via git) or **Personal** (saved in `kangentic.local.json`, local-only). Presets are available for common tools (VS Code, Cursor, GitHub Desktop, terminal emulators, file managers).
 
