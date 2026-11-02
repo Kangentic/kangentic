@@ -187,6 +187,26 @@ describe('LeftoverProcessReports', () => {
     });
   });
 
+  it('carries a kept process\'s reason to the renderer unchanged, including outside', () => {
+    const reports = new LeftoverProcessReports();
+    const sent: LeftoverProcessReport[] = [];
+    reports.add((report) => sent.push(report), [
+      entry(2001, TASK, { outcome: 'kept', reason: 'outside' }),
+      entry(2002, TASK, { outcome: 'kept', reason: 'shared' }),
+      entry(2003, TASK, { outcome: 'kept', reason: 'window' }),
+      entry(2004, TASK, { outcome: 'kept', reason: 'multiplexer' }),
+      entry(2005),
+    ], TITLES, false);
+    vi.runAllTimers();
+    expect(sent[0].processes.map((reported) => [reported.pid, reported.outcome, reported.reason])).toEqual([
+      [2001, 'kept', 'outside'],
+      [2002, 'kept', 'shared'],
+      [2003, 'kept', 'window'],
+      [2004, 'kept', 'multiplexer'],
+      [2005, 'stopped', null],
+    ]);
+  });
+
   it('falls back to a generic title for a task it was not told about', () => {
     const reports = new LeftoverProcessReports();
     const sent: LeftoverProcessReport[] = [];
