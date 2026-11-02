@@ -9,7 +9,8 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { KANGENTIC_HOSTED_RELAY_URL } from '../../src/shared/relay';
 import { IPC } from '../../src/shared/ipc-channels';
-import type { RendererErrorContext } from '../../src/shared/types';
+import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
+import type { RendererErrorContext, Session } from '../../src/shared/types';
 import type { IdentityTreeStop } from '../../src/main/git/zombie-reaper';
 
 // ── Hoisted mocks ─────────────────────────────────────────────────────────
@@ -68,6 +69,9 @@ vi.mock('../../src/main/pty/session-manager', () => {
       setEarlierRunsSource = vi.fn();
       // The pty-host-lost listener files each lost session under its project.
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
+      // A Command Terminal the host took down is captured from its removal, which
+      // reads the agent the registry row still names.
+      getSessionAgentName = vi.fn((_sessionId: string): string | undefined => 'claude');
       // The Stop registerAllIpc hands the worktree reaper, by pid and creation time.
       stopProcessByCreationTime = vi.fn(async (_pid: number, _startedAtMs: number) => 'stopped' as const);
       // registerAllIpc applies the configured session cap before anything spawns.
@@ -106,7 +110,11 @@ vi.mock('../../src/main/agent/adapters/claude/command-builder', () => ({
 // reconcile against a persisted mobileBridge.enabled: true.
 const getEffectiveConfigMock = vi.fn(() => ({ agent: { maxConcurrentSessions: 8 }, git: {}, terminal: {} }));
 vi.mock('../../src/main/config/config-manager', () => ({
-  ConfigManager: class { getEffectiveConfig = getEffectiveConfigMock; },
+  ConfigManager: class {
+    getEffectiveConfig = getEffectiveConfigMock;
+    // Whether a terminal the host took down comes back reads the restart setting.
+    load = vi.fn(() => ({ agent: { autoResumeSessionsOnRestart: true } }));
+  },
 }));
 vi.mock('../../src/main/config/board-config-manager', () => ({
   BoardConfigManager: class {
@@ -773,6 +781,122 @@ describe('registerAllIpc idempotency', () => {
 
       expect(recoveries()).toHaveLength(0);
     }, 30000);
+
+    describe('Command Terminals the host took down', () => {
+      // A terminal's registry row goes as its PTY's exit is reported, before
+      // 'pty-host-lost' fires, so register-all captures it from its removal. Red-green:
+      // drop the terminals from the restart's `size > 0` check and the first test goes
+      // red; hand recovery the live map and the grouping test goes red; drop the
+      // `.clear()` and the second restart passes the first loss again; pass the
+      // reaper no `willRestore` and the last test finds a reap scheduled.
+      const RECOVERY_LOST_TERMINALS_ARGUMENT = 2;
+
+      function lostTerminalSession(sessionId: string, projectId: string, overrides: Partial<Session> = {}): Session {
+        return {
+          id: sessionId,
+          taskId: `tag-${sessionId}`,
+          projectId,
+          status: 'exited',
+          exitCode: PTY_HOST_LOST_EXIT_CODE,
+          transient: true,
+          agentSessionId: `conversation-${sessionId}`,
+          hasUserInput: true,
+          cwd: '/mock/project',
+          shell: 'pwsh',
+          commandTerminalSlot: 'slot-1',
+          ...overrides,
+        } as Session;
+      }
+
+      async function startWiringWithTerminals() {
+        const { registerAllIpc, getSessionManager } = await import('../../src/main/ipc/register-all');
+        const { recoverSessionsAfterPtyHostLoss } = await import('../../src/main/ipc/handlers/projects');
+        const window = { id: 1, isDestroyed: () => false, webContents: { send: vi.fn() } };
+        registerAllIpc(window as unknown as import('electron').BrowserWindow);
+        const sessionManager = getSessionManager();
+        const remove = (session: Session) => sessionManager.emit('session-removed', session.id, session);
+        const recoveries = () => vi.mocked(recoverSessionsAfterPtyHostLoss).mock.calls;
+        return { sessionManager, recoveries, remove };
+      }
+
+      it('still hands them to recovery when the crash took down no task session', async () => {
+        const { sessionManager, recoveries, remove } = await startWiringWithTerminals();
+
+        remove(lostTerminalSession('terminal-1', 'project-1'));
+        sessionManager.emit('pty-host-lost', ['terminal-1']);
+        sessionManager.emit('pty-host-restarted');
+
+        expect(recoveries()).toHaveLength(1);
+        const [, lostTasksByProject, lostTerminalsByProject] = recoveries()[0];
+        expect(lostTasksByProject.size).toBe(0);
+        expect([...lostTerminalsByProject.keys()]).toEqual(['project-1']);
+        expect(lostTerminalsByProject.get('project-1')?.map((lost) => lost.agentSessionId)).toEqual(['conversation-terminal-1']);
+      }, 30000);
+
+      it('files two terminals of one project together and a second project apart', async () => {
+        const { sessionManager, recoveries, remove } = await startWiringWithTerminals();
+
+        remove(lostTerminalSession('terminal-1', 'project-1'));
+        remove(lostTerminalSession('terminal-2', 'project-1', { commandTerminalSlot: 'slot-2' }));
+        remove(lostTerminalSession('terminal-3', 'project-2'));
+        sessionManager.emit('pty-host-lost', ['terminal-1', 'terminal-2', 'terminal-3']);
+        sessionManager.emit('pty-host-restarted');
+
+        expect(recoveries()).toHaveLength(1);
+        const lostTerminalsByProject = recoveries()[0][RECOVERY_LOST_TERMINALS_ARGUMENT];
+        expect([...lostTerminalsByProject.keys()].sort()).toEqual(['project-1', 'project-2']);
+        expect(lostTerminalsByProject.get('project-1')?.map((lost) => lost.agentSessionId))
+          .toEqual(['conversation-terminal-1', 'conversation-terminal-2']);
+        expect(lostTerminalsByProject.get('project-2')?.map((lost) => lost.agentSessionId))
+          .toEqual(['conversation-terminal-3']);
+      }, 30000);
+
+      it('hands each loss over once: a second restart passes nothing, and the next loss starts clean', async () => {
+        const { sessionManager, recoveries, remove } = await startWiringWithTerminals();
+
+        remove(lostTerminalSession('terminal-1', 'project-1'));
+        sessionManager.emit('pty-host-restarted');
+        expect(recoveries()).toHaveLength(1);
+
+        sessionManager.emit('pty-host-restarted');
+        expect(recoveries()).toHaveLength(1);
+
+        remove(lostTerminalSession('terminal-4', 'project-2'));
+        sessionManager.emit('pty-host-restarted');
+        expect(recoveries()).toHaveLength(2);
+        const secondLostTerminals = recoveries()[1][RECOVERY_LOST_TERMINALS_ARGUMENT];
+        expect([...secondLostTerminals.keys()]).toEqual(['project-2']);
+        expect(secondLostTerminals.get('project-2')?.map((lost) => lost.agentSessionId)).toEqual(['conversation-terminal-4']);
+      }, 30000);
+
+      it('captures nothing for a terminal nobody used, a workflow agent or a task session', async () => {
+        const { sessionManager, recoveries, remove } = await startWiringWithTerminals();
+
+        remove(lostTerminalSession('unused', 'project-1', { hasUserInput: false }));
+        remove(lostTerminalSession('workflow-agent', 'project-1', { workflowId: 'workflow-1' }));
+        remove(lostTerminalSession('task-session', 'project-1', { transient: false }));
+        sessionManager.emit('pty-host-restarted');
+
+        expect(recoveries()).toHaveLength(0);
+      }, 30000);
+
+      it("gives the leftover reaper the real predicate: a terminal that comes back is not reaped, one that does not is", async () => {
+        const { remove } = await startWiringWithTerminals();
+        vi.useFakeTimers();
+        try {
+          const timersBefore = vi.getTimerCount();
+
+          remove(lostTerminalSession('comes-back', 'project-1'));
+          expect(vi.getTimerCount()).toBe(timersBefore);
+
+          // Nobody used it: nothing to resume, so its leftovers are reaped as at any end.
+          remove(lostTerminalSession('stays-gone', 'project-1', { hasUserInput: false, agentSessionId: null }));
+          expect(vi.getTimerCount()).toBe(timersBefore + 1);
+        } finally {
+          vi.useRealTimers();
+        }
+      }, 30000);
+    });
   });
 
   describe('worktree reap identity stop wiring', () => {

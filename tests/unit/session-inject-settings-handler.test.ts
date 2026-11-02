@@ -117,6 +117,7 @@ interface MockContext {
     listSessions: ReturnType<typeof vi.fn>;
   };
   terminalSubmitScheduler: { scheduleKeystrokes: ReturnType<typeof vi.fn> };
+  commandTerminalHistory: { recordRuntimeSettings: ReturnType<typeof vi.fn> };
 }
 
 function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
@@ -147,6 +148,7 @@ function createMockContext(overrides: Partial<MockContext> = {}): MockContext {
       listSessions: vi.fn(() => []),
     },
     terminalSubmitScheduler: { scheduleKeystrokes: vi.fn() },
+    commandTerminalHistory: { recordRuntimeSettings: vi.fn() },
     ...overrides,
   };
 }
@@ -378,6 +380,74 @@ describe('SESSION_INJECT_SETTINGS handler', () => {
 
     expect(mockAgentRegistryGet).toHaveBeenCalledWith('gemini');
     expect(mockAgentRegistryGet).not.toHaveBeenCalledWith('claude');
+  });
+
+  // =========================================================================
+  // What a picker set is kept on the conversation's history row, so a restart
+  // restores the terminal on that model and effort. Only a Command Terminal has
+  // such a row.
+  // =========================================================================
+
+  describe('recording the picker for a restart', () => {
+    beforeEach(() => {
+      mockAgentRegistryGet.mockReturnValue({ getInjectionSequence: vi.fn(() => []) });
+      context.sessionManager.getSessionAgentName.mockReturnValue('claude');
+    });
+
+    it('keeps the model a Command Terminal picked, with no effort', async () => {
+      context.sessionManager.getSession.mockReturnValue({ taskId: 'transient-1', cwd: '/proj', transient: true });
+
+      await callHandler(context, { sessionId: 'terminal-1', agent: 'claude', model: 'opus' });
+
+      expect(context.commandTerminalHistory.recordRuntimeSettings).toHaveBeenCalledTimes(1);
+      expect(context.commandTerminalHistory.recordRuntimeSettings).toHaveBeenCalledWith(
+        'terminal-1',
+        { model: 'opus', effort: null },
+      );
+    });
+
+    it('keeps the effort a Command Terminal picked, with no model', async () => {
+      context.sessionManager.getSession.mockReturnValue({ taskId: 'transient-1', cwd: '/proj', transient: true });
+
+      await callHandler(context, { sessionId: 'terminal-1', agent: 'claude', effort: 'high' });
+
+      expect(context.commandTerminalHistory.recordRuntimeSettings).toHaveBeenCalledWith(
+        'terminal-1',
+        { model: null, effort: 'high' },
+      );
+    });
+
+    it('records nothing for a task session, which keeps its settings on the task', async () => {
+      context.sessionManager.getSession.mockReturnValue({ taskId: 'task-1', cwd: '/proj', transient: false });
+
+      await callHandler(context, { sessionId: 'task-session', agent: 'claude', model: 'opus' });
+
+      expect(context.commandTerminalHistory.recordRuntimeSettings).not.toHaveBeenCalled();
+    });
+
+    it('records nothing for a workflow agent, which is transient but not a Command Terminal', async () => {
+      context.sessionManager.getSession.mockReturnValue({
+        taskId: 'workflow-1',
+        cwd: '/proj',
+        transient: true,
+        workflowId: 'workflow-1',
+      });
+
+      await callHandler(context, { sessionId: 'workflow-session', agent: 'claude', model: 'opus' });
+
+      expect(context.commandTerminalHistory.recordRuntimeSettings).not.toHaveBeenCalled();
+    });
+
+    it('records before the best-effort injection, so an agent with no live command still keeps the pick', async () => {
+      // The adapter above returns an empty sequence: the handler answers
+      // injected:false, and the pick must already be on the row by then.
+      context.sessionManager.getSession.mockReturnValue({ taskId: 'transient-1', cwd: '/proj', transient: true });
+
+      const result = await callHandler(context, { sessionId: 'terminal-1', agent: 'claude', model: 'opus' });
+
+      expect(result).toEqual({ ok: true, injected: false });
+      expect(context.commandTerminalHistory.recordRuntimeSettings).toHaveBeenCalledTimes(1);
+    });
   });
 });
 
