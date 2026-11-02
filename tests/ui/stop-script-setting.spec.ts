@@ -240,7 +240,10 @@ test.describe('Stop script failed toast', () => {
     await expect(toast.getByTestId('toast-title')).toHaveText('Stop script failed');
     await expect(toast.getByTestId('toast-body')).toHaveText(`"Fix login": exited with code 1. 'stack:stop' is not recognized as an internal or external command.`);
     await expect(toast.getByTestId('toast-countdown')).toHaveCount(1);
-    await expect(toast.getByTestId('toast-action')).toHaveCount(0);
+    // Read now, never retried: a timed toast closes by itself, and a retrying
+    // zero-count would then pass for a toast that is no longer there. The body
+    // above is the positive check that it is up.
+    expect(await toast.getByTestId('toast-action').count()).toBe(0);
   });
 
   test('says how long a script that timed out was given', async () => {

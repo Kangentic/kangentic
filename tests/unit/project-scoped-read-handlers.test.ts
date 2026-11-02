@@ -104,6 +104,7 @@ function makeContext() {
       getBoardProfiles: vi.fn((projectPath?: string) => (projectPath === '/repo/other' ? [{ id: 'profile-phone', name: 'Phone' }] : [{ id: 'profile-heavy', name: 'Heavy' }])),
       getDefaultBaseBranch: vi.fn(() => 'develop'),
       getDefaultBaseBranchForPath: vi.fn((projectPath: string) => (projectPath === '/repo/other' ? 'trunk' : undefined)),
+      getStopScriptForPath: vi.fn((projectPath: string) => (projectPath === '/repo/other' ? 'npm run stop:other' : null)),
     },
   };
 }
@@ -152,13 +153,15 @@ describe('the read channels a planned task on another board reads through', () =
     expect(context.boardConfigManager.getBoardProfiles).not.toHaveBeenCalled();
   });
 
-  it('config:get overlays each board\'s own team-shared base branch, and refuses an unknown project', () => {
-    expect(invoke(IPC.CONFIG_GET, null)).toEqual({ git: { defaultBaseBranch: 'develop', worktreesEnabled: true } });
+  it('config:get overlays each board\'s own team-shared base branch and Stop script, and refuses an unknown project', () => {
+    expect(invoke(IPC.CONFIG_GET, null)).toEqual({ git: { defaultBaseBranch: 'develop', worktreesEnabled: true, stopScript: null } });
     expect(context.configManager.getEffectiveConfig).toHaveBeenLastCalledWith('/repo/current');
+    expect(context.boardConfigManager.getStopScriptForPath).toHaveBeenLastCalledWith('/repo/current');
 
-    expect(invoke(IPC.CONFIG_GET, 'other')).toEqual({ git: { defaultBaseBranch: 'trunk', worktreesEnabled: false } });
+    expect(invoke(IPC.CONFIG_GET, 'other')).toEqual({ git: { defaultBaseBranch: 'trunk', worktreesEnabled: false, stopScript: 'npm run stop:other' } });
     expect(context.configManager.getEffectiveConfig).toHaveBeenLastCalledWith('/repo/other');
     expect(context.boardConfigManager.getDefaultBaseBranchForPath).toHaveBeenCalledWith('/repo/other');
+    expect(context.boardConfigManager.getStopScriptForPath).toHaveBeenLastCalledWith('/repo/other');
 
     expect(() => invoke(IPC.CONFIG_GET, 'unregistered')).toThrow('Unknown project');
   });
