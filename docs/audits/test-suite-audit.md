@@ -33,7 +33,7 @@ The rule this produced is `.claude/rules/test-value.md`. The per-file classifica
 
 Measured on CI run 41391402821 and the run history since 2026-07-27.
 
-| Tier | Files | Tests | CI test seconds | CI shape |
+| Tier | Files | Tests | CI test seconds | CI shape at the baseline |
 |---|---:|---:|---:|---|
 | Unit | 1,915 | 34,305 | 584 | 3 shards, 113-159s each |
 | UI | 327 | 3,061 | 12,236 | 11 shards, 357-687s each |
