@@ -15,19 +15,22 @@ import { describeIpcError, asSentence } from '../../../lib/ipc-error';
  * overrides `config` carries, so the row reads and writes by project id. The panel's
  * switcher can name a project whose board is not open, and a write that followed the
  * open board would land on the wrong repository. `key` gives each project its own
- * field, so an unsaved edit flushes to the project it was typed for.
+ * field, so an unsaved edit flushes to the project it was typed for. The field stays
+ * disabled until this project's value has loaded: a commit of the empty draft would
+ * delete the script.
  */
 function StopScriptRow() {
   const { t } = useLingui();
   const projectId = useSettingsProject()?.id ?? null;
-  const [script, setScript] = useState('');
+  const [loaded, setLoaded] = useState<{ projectId: string; script: string } | null>(null);
+  const isLoaded = loaded?.projectId === projectId;
 
   useEffect(() => {
     if (!projectId) return;
     let stale = false;
     window.electronAPI.config.get(projectId).then(
       (projectConfig) => {
-        if (!stale) setScript(projectConfig.git.stopScript ?? '');
+        if (!stale) setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' });
       },
       (error: unknown) => console.warn('[SETTINGS] Could not read the Stop script:', error),
     );
@@ -40,14 +43,14 @@ function StopScriptRow() {
     <CardRow {...settingProps('git.stopScript')}>
       <SettingTextInput
         key={projectId}
-        value={script}
-        disabled={!projectId}
+        value={isLoaded ? loaded.script : ''}
+        disabled={!isLoaded}
         onCommit={(nextStopScript) => {
           if (!projectId) return;
           window.electronAPI.boardConfig.setStopScript(projectId, nextStopScript || null)
             .then(() => window.electronAPI.config.get(projectId))
             .then(
-              (projectConfig) => setScript(projectConfig.git.stopScript ?? ''),
+              (projectConfig) => setLoaded({ projectId, script: projectConfig.git.stopScript ?? '' }),
               (error: unknown) => {
                 useToastStore.getState().addToast({
                   title: t`Couldn't save Stop script`,
