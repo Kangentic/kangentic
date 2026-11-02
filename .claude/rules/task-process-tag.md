@@ -82,7 +82,12 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   unless it listens on a port itself or the first pass already signalled it. What the first pass
   kept, the second pass keeps. A process
   whose directory cannot be read is never
-  killed. Do not add a kill path that skips any of these, and do not exempt processes by name: each
+  killed. A tree spared only because a descendant with this task's own tag works elsewhere (a .NET
+  Aspire stack's dashboard) is kept as `outside`, not `shared`, and its processes are no client of a
+  listener, or one open dashboard page spares the AppHost and the reap stops nothing. Stronger
+  evidence under the same root, or a real client of the tree, makes it `shared` again, and the
+  second pass reads the difference from `keptOutsideIdentities`. Killing the AppHost is what makes
+  DCP stop the rest, so the DCP root stays kept. Do not add a kill path that skips any of these, and do not exempt processes by name: each
   protection rests on a measured mechanism (`docs/architecture/worktrees/process-reaping.md`, "What the reap kills").
   An untagged client outside Kangentic (the user's browser, Android Studio) is no evidence, by
   decision: a dev server open in a browser tab must still stop at Done.
@@ -276,7 +281,9 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   Windows runners (tmux, pm2, console hosts, visible apps, daemons that move away), and the
   connection evidence and kept launchers measured on a developer's Windows machine (the adb
   server, qemu, netsimd and the emulator launcher; which clients count; propagation; a listener
-  that is never kept for its children). `tests/unit/local-connections.test.ts` pins the pairing.
+  that is never kept for its children), and a real .NET Aspire stack's 45 rows (`outside`, an open
+  dashboard, a real client of it, stronger evidence found later, the force pass).
+  `tests/unit/local-connections.test.ts` pins the pairing.
   `tests/unit/task-directories.test.ts` pins the roots that are never accepted.
 - **Test (background session):** `tests/unit/session-leftover-reap-wiring.test.ts` pins that
   `reapTaskLeftovers` stops a background session holding the conversation before the reap, with
@@ -381,6 +388,11 @@ rule keeps both halves true: every spawn tags, and every reap kills only what is
   exited is reported stopped and a Stop of an exited process answers ended.
   `leftover-worktree-retry.test.ts` pins the Done move's one delayed removal retry, and
   `session-leftover-reap-wiring.test.ts` that the Done move schedules it only when its removal failed.
+- **Test (Aspire, by hand):** `tests/unit/aspire-host-death.test.ts` runs a real `aspire run` through
+  the real reap, with the dashboard idle and open in a browser, and follows the stack by identity.
+  It needs `CI` and `KANGENTIC_ASPIRE_PROBE=1`, because DCP's tree stop can reach a stranger's
+  processes, and only a `workflow_dispatch` of `task-reap-real-processes.yml` runs it. Rerun it when
+  the Aspire version moves.
 - **Test (behavior):** `tests/unit/session-reap-real-processes.test.ts` reaps real fast-detached
   processes and spares what it must (a live child, another task, a cleared tag, a process outside
   the project, an opt-out child's parent, a tmux server, a server another task holds a TCP
