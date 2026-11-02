@@ -2526,6 +2526,11 @@ test.describe('Command Terminal', () => {
     });
 
     test('a resumed terminal whose agent is already on screen shows no overlay, and stays ready', async () => {
+      // The one test in this group that lifts the overlay, so it draws a live terminal pane.
+      // A software-rendered frame of that pane is slow on a CI runner, and the 15 s default
+      // ran out here on every attempt (twice with no assertion failing) while 20 frames at a
+      // time were awaited.
+      test.setTimeout(45_000);
       const { browser, page } = await launchWithState(restartRestorePreConfig({
         sessions: [{ id: 'resumed-1', slot: 'slot-1', status: 'running', resuming: true }],
       }));
@@ -2559,7 +2564,7 @@ test.describe('Command Terminal', () => {
         await page.keyboard.press('Control+Shift+P');
         const commandWindow = page.getByTestId('command-terminal-window');
         await expect(commandWindow).toHaveCount(1, { timeout: 5000 });
-        await settleFrames(page, 20);
+        await settleFrames(page, 3);
         await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toHaveCount(0);
 
         // The attach decided it was not booting when it mounted, so it keeps that even if
@@ -2569,7 +2574,7 @@ test.describe('Command Terminal', () => {
             __zustandStores: { session: { setState: (partial: { sessionFirstOutput: Record<string, boolean> }) => void } };
           }).__zustandStores.session.setState({ sessionFirstOutput: {} });
         });
-        await settleFrames(page, 20);
+        await settleFrames(page, 3);
         await expect(commandWindow.locator('[data-testid="launch-overlay"]')).toHaveCount(0);
         expect(await spawnCountFor(page, RESTORE_PROJECT_ID)).toBe(0);
       } finally {
