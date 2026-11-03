@@ -26,11 +26,20 @@ name: Package smoke
 # notarization (no Apple credentials).
 #
 # Path-filtered and deliberately NOT a required check, like
-# macos-spawn-helper.yml: ci.yml runs at its 21-job concurrency ceiling (see the
-# note at the top of that file), so these jobs queue rather than fail
-# when they overlap a CI run. The filter covers what decides whether a packaged
-# build launches: the packaging config and scripts, the forked processes'
-# entries and their clients, and the code they share.
+# macos-spawn-helper.yml: ci.yml runs at the job cap (see the note at the top of
+# that file), so these jobs queue rather than fail when they overlap a CI run.
+# The filter covers what decides whether a packaged build launches: the packaging
+# config and scripts, the forked processes' entries and their clients, and the
+# code they share. package-lock.json carries every dependency change, so
+# package.json is not in it.
+#
+# A pull request runs three legs. Linux arm64 and Intel macOS run nightly on main
+# instead, with the other three, so a merge that breaks one surfaces by the next
+# day, not on a tag. Their PR reds were runner faults: 7 of the 14 reruns the
+# audit read were electron-builder's ETXTBSY on arm64, and none was a product bug
+# (docs/audits/test-suite-audit.md). /release checks the nightly run before a tag.
+# The Intel leg also gives back a macOS slot: the account has 5, and a lockfile PR
+# filled all of them.
 
 on:
   pull_request:
@@ -38,7 +47,6 @@ on:
     paths:
       - 'electron-builder.yml'
       - 'build/**'
-      - 'package.json'
       - 'package-lock.json'
       - 'scripts/build.js'
       - 'scripts/copy-external-scripts.js'
@@ -58,6 +66,9 @@ on:
       - 'src/main/config/paths.ts'
       - 'src/shared/embedding-runtime-gaps.json'
       - '.github/workflows/package-smoke.yml'
+  schedule:
+    # 03:17 UTC. Off the hour so it does not land in the cron rush.
+    - cron: "17 3 * * *"
   workflow_dispatch:
 
 permissions:
@@ -80,24 +91,15 @@ jobs:
     strategy:
       fail-fast: false
       # One leg per release leg, on the same runner (release.yml's matrix), since
-      # each target builds natively and loads its own arch's native packages.
+      # each target builds natively and loads its own arch's native packages. The two
+      # excludes take those legs off a pull request; on any other event they match no
+      # leg. A job-level `if:` cannot read the matrix, so this is the only way to keep
+      # one literal list.
       matrix:
-        include:
-          - os: ubuntu-24.04
-            package: npm run package -- --publish never
-            smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
-          - os: ubuntu-24.04-arm
-            package: npm run package -- --publish never
-            smoke: xvfb-run -a node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
-          - os: windows-latest
-            package: npm run package -- --publish never
-            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
-          - os: macos-latest
-            package: npm run package -- --publish never --config.mac.identity=-
-            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
-          - os: macos-26-intel
-            package: npm run package -- --publish never --config.mac.identity=-
-            smoke: node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
+        os: [ubuntu-24.04, ubuntu-24.04-arm, windows-latest, macos-latest, macos-26-intel]
+        exclude:
+          - os: ${{ github.event_name == 'pull_request' && 'ubuntu-24.04-arm' || 'no-such-leg' }}
+          - os: ${{ github.event_name == 'pull_request' && 'macos-26-intel' || 'no-such-leg' }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -111,7 +113,7 @@ jobs:
       # prints that it skipped the symbol upload.
       - name: Package (electron-builder --dir)
         shell: bash
-        run: ${{ matrix.package }}
+        run: npm run package -- --publish never ${{ runner.os == 'macOS' && '--config.mac.identity=-' || '' }}
         env:
           NODE_OPTIONS: --max-old-space-size=4096
           KANGENTIC_SENTRY_TOKEN: ''
@@ -131,7 +133,7 @@ jobs:
           echo "Signature verified on ${apps[0]}."
       - name: Run the packaged app
         shell: bash
-        run: ${{ matrix.smoke }}
+        run: ${{ runner.os == 'Linux' && 'xvfb-run -a ' || '' }}node scripts/package-smoke.mjs --scratch-root "$RUNNER_TEMP/package-smoke"
       - name: Upload the smoke scratch on failure
         if: failure()
         uses: actions/upload-artifact@v7

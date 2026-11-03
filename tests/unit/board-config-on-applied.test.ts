@@ -6,11 +6,13 @@
  * when that happens, so nothing else re-checks the queue, and tasks stay queued
  * behind a limit that no longer exists. `BoardConfigManager.setOnConfigApplied`
  * is that re-check hook, and `register-all.ts` wires it to
- * `sessionManager.drainQueue()`.
+ * `sessionManager.drainQueue()`. That second link is checked by registering the
+ * app for real and running the listener it registered, in
+ * register-all-idempotency.test.ts (its `registerAllIpc` runs under a mocked
+ * electron, so nothing here needs a live Electron).
  *
- * Red-green: delete the `this.onConfigApplied?.()` call in `applyConfig`, or the
- * `setOnConfigApplied(...)` line in `register-all.ts`, and the matching test
- * fails.
+ * Red-green: delete the `this.onConfigApplied?.()` call in `applyConfig` and four
+ * of the five tests fail (all but the no-listener one).
  *
  * The DB modules the import graph pulls in are mocked and `applyBoardConfigToDb`
  * is stubbed (same pattern as board-config-write-refusal-edges.test.ts), so this
@@ -130,21 +132,5 @@ describe('BoardConfigManager setOnConfigApplied', () => {
 
     expect(firstListener).not.toHaveBeenCalled();
     expect(secondListener).toHaveBeenCalledTimes(1);
-  });
-});
-
-// The listener only helps if production registers one that drains the queue.
-// register-all.ts builds the whole app (Electron, utility processes), so it is
-// read as source rather than run.
-describe('register-all wires the config-applied listener to the queue drain', () => {
-  const registerAllSource = fs.readFileSync(
-    path.join(__dirname, '../../src/main/ipc/register-all.ts'),
-    'utf-8',
-  );
-
-  it('registers setOnConfigApplied on the board config manager with sessionManager.drainQueue', () => {
-    expect(registerAllSource).toMatch(
-      /boardConfigManager\.setOnConfigApplied\(\s*\(\)\s*=>\s*sessionManager\.drainQueue\(\)\s*\)/,
-    );
   });
 });

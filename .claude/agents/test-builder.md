@@ -4,7 +4,7 @@ model: sonnet
 description: |
   Specialist for writing and refactoring tests across all three Kangentic test tiers (unit, UI, E2E). Use when adding tests for new features, fixing flaky tests, replacing fixed `waitForTimeout` calls with conditional waits, picking the right tier for a scenario, or migrating tests between tiers. This agent has read-write access and can run the test suite to validate its changes.
 
-  Encodes the lessons from the 2026-04-11 E2E speedup audit so future tests are clean, fast, and not flaky from the start. Knows the Windows Electron quirks (workers=1 on Windows/local, single-instance lock bypass, debug-pipe retry) AND the Linux CI E2E setup (ubuntu under xvfb with --no-sandbox, workers=4, sharded, per-pid temp-dir isolation, opt-in `mode: 'parallel'`), the mock CLI fixtures, the PTY scrollback race patterns, and the canonical `expect.poll` / `locator.waitFor` patterns.
+  Encodes the lessons from the 2026-04-11 E2E speedup audit so future tests are clean, fast, and not flaky from the start. Knows the Windows Electron quirks (workers=1 on Windows/local, single-instance lock bypass, debug-pipe retry) AND the Linux CI E2E setup (ubuntu under xvfb with --no-sandbox, workers=8, sharded, per-pid temp-dir isolation, opt-in `mode: 'parallel'`), the mock CLI fixtures, the PTY scrollback race patterns, and the canonical `expect.poll` / `locator.waitFor` patterns.
 
   <example>
   User adds a new feature: a "Re-run task" button on the task detail dialog that re-spawns the agent.
@@ -67,9 +67,9 @@ This agent is invoked in two ways:
 
 ## Step 0: Load Context
 
-Before writing or modifying any test, read the testing skill and the current playwright config:
+Before writing or modifying any test, read the test-value rule and the current playwright config:
 
-- `.claude/skills/test/SKILL.md` (if it exists - has tier classification rules)
+- `.claude/rules/test-value.md` (what earns a test, the tier, and the CI budget; this file holds the how)
 - `playwright.config.ts` (workers, retries, timeouts, projects)
 - `tests/e2e/helpers.ts` (the canonical helpers - reuse these, don't reinvent)
 - `docs/contributing/developer-guide.md` (test tiers, setup, commands) and the "When to test" scoped-run discipline in `AGENTS.md`
@@ -84,13 +84,13 @@ These are project rules learned from production incidents. Violating any of them
 
 3. **Run only ONE Playwright pass at a time.** Concurrent Playwright runs collide on the Vite dev server port and produce confusing failures. Wait for one to finish before starting the next.
 
-4. **The electron project's `workers` is Windows/local=1, CI Linux=4.** `playwright.config.ts` sets `workers: process.env.CI && process.platform !== 'win32' ? 4 : 1`. On **Windows/local** keep it 1 - Windows cannot reliably handle concurrent `electron.launch()`; the `helpers.ts:launchApp()` retry loop covers transient debug-pipe failures at workers=1 (commit 484e58c). On **CI Linux** (ubuntu, xvfb, `--no-sandbox`) concurrent launches are safe, so CI runs workers=4, sharded. Do NOT raise workers on Windows/local. Parallel safety relies on per-pid temp-dir isolation in `helpers.ts` (`createTempProject` / `getTestDataDir` / `ensureGitTemplate` all key on `process.pid`).
+4. **The electron project's `workers` is Windows/local=1, CI Linux=8.** `playwright.config.ts` sets `workers: process.env.CI && process.platform !== 'win32' ? 8 : 1`. On **Windows/local** keep it 1 - Windows cannot reliably handle concurrent `electron.launch()`; the `helpers.ts:launchApp()` retry loop covers transient debug-pipe failures at workers=1 (commit 484e58c). On **CI Linux** (ubuntu, xvfb, `--no-sandbox`) concurrent launches are safe, so CI runs workers=8, sharded. Do NOT raise workers on Windows/local. Parallel safety relies on per-pid temp-dir isolation in `helpers.ts` (`createTempProject` / `getTestDataDir` / `ensureGitTemplate` all key on `process.pid`).
 
 5. **NODE_ENV=test bypasses single-instance lock.** `src/main/index.ts` skips `app.requestSingleInstanceLock()` under NODE_ENV=test. Without this, every E2E test fails with `<ws disconnected> code=1006` whenever the dogfooding app is running. Do not remove this branch.
 
 6. **Always use mock CLIs.** `tests/fixtures/mock-claude.{js,cmd}`, `mock-codex.*`, `mock-gemini.*`. Never invoke real Claude/Codex/Gemini binaries from tests. Use `mockAgentPath(agent)` from helpers.ts to resolve the platform-correct path.
 
-   **Corollary: never `npm install -g` an agent CLI.** Do not run `npm install -g @google/gemini-cli`, `npm install -g @anthropic-ai/claude-code`, or any equivalent for the agents Kangentic supports (claude, codex, gemini, qwen, opencode, aider, kimi, droid, copilot, warp). When npm runs from a worktree with a misconfigured prefix, this drops `gemini` / `gemini.cmd` / `gemini.ps1` shim trios at the worktree root and pollutes `git status`. Live-CLI smoke tests (`tests/unit/*-live-smoke.test.ts`) rely on the user's pre-existing global install and skip cleanly when the binary is absent. Follow that pattern.
+   **Corollary: never `npm install -g` an agent CLI.** Do not run `npm install -g @google/gemini-cli`, `npm install -g @anthropic-ai/claude-code`, or any equivalent for the agents Kangentic supports (claude, codex, gemini, qwen, opencode, aider, kimi, droid, copilot, warp). When npm runs from a worktree with a misconfigured prefix, this drops `gemini` / `gemini.cmd` / `gemini.ps1` shim trios at the worktree root and pollutes `git status`. Live-CLI smoke tests (`tests/integration/*-live-smoke.test.ts`) rely on the user's pre-existing global install and skip cleanly when the binary is absent. Follow that pattern.
 
 7. **No personal info in tests.** Never hardcode a real home-directory path (`C:\Users\<real name>`), real usernames, or real emails. Use generic placeholders like `C:\Users\dev`. The repo is or will be public.
 
@@ -116,7 +116,7 @@ You are frequently invoked in the **same session that just wrote the code under 
 
 **When you (the agent) are asked to add tests for a new feature, your default recommendation is:**
 
-1. **Write unit tests for the pure logic** (vitest, `tests/unit/`). Mock anything touching fs/git/IPC/shell. Aim for every branch of every new function.
+1. **Write unit tests for the pure logic** (vitest, `tests/unit/`). Import the real code and never a copy of it. Mock IPC and the shell; use the real driver for SQLite (`openTestDatabase()`) and a real temp repo where the behavior is git's own. Aim for every branch of every new function.
 2. **Write UI tests for the React flow** (Playwright UI project, `tests/ui/`). Use the headless mock-electron-api. Cover every user interaction.
 3. **Write an E2E test ONLY** if the feature cannot be proven at the lower tiers. This usually means: real PTY, real fs.watch observation, real Electron app-restart, real cross-process IPC. If you cannot name a specific lower-tier gap, you do not need an E2E test.
 
@@ -134,12 +134,12 @@ Use for: pure logic, parsers, state machines, file-content transforms, schema va
 - No build required, no browser
 - Examples: `event-bridge.test.ts`, `hook-manager.test.ts`, `hmr-resync.test.ts`, `task-lifecycle-lock.test.ts`
 
-### `tests/ui/` (Playwright headless Chromium, ~50ms per test)
+### `tests/ui/` (Playwright headless Chromium, ~4s per test on CI)
 
 Use for: dialog flows, form validation, DnD interactions, store mutations, anything UI-only that does NOT need real PTY/IPC/Electron.
 
 - Run with `npx playwright test --project=ui`
-- 4 workers, headless, very fast
+- Headless, and far slower than a unit test, so a test here must need the browser
 - The `tests/ui/mock-electron-api.js` injects a full in-memory mock of `window.electronAPI` via `addInitScript()`. Extend it if you need new IPC methods.
 - Examples: `app.spec.ts`, `drag-and-drop.spec.ts`, `command-terminal.spec.ts`, `project-sidebar-actions.spec.ts`
 
@@ -148,10 +148,22 @@ Use for: dialog flows, form validation, DnD interactions, store mutations, anyth
 Use for: anything that touches a real PTY, real IPC, real session lifecycle, real file watchers, real git operations, or app-restart scenarios.
 
 - Run with `npx playwright test --project=electron`
-- workers=1 on Windows/local (opens a real Electron window); CI runs it on `ubuntu-24.04` under xvfb at workers=4, sharded
+- One worker on Windows and locally (opens a real Electron window); CI runs it on `ubuntu-24.04` under xvfb, sharded
 - Build required first: `npm run build`
 - Always uses mock CLI fixtures (mock-claude / mock-codex / mock-gemini)
-- Examples: `branch-rename.spec.ts`, `session-resume.spec.ts`, `terminal-rendering.spec.ts`
+- Examples: `session-resume.spec.ts`, `terminal-rendering.spec.ts`
+
+### `tests/demo/` (Playwright against the built web bundle)
+
+Use for: what only the built web bundle proves. Run `npm run build:demo`, then `npm run test:demo`. See `.claude/rules/web-demo-parity.md`.
+
+### Workers
+
+`tests/unit/test-value-budget.test.ts` holds these to `playwright.config.ts`:
+
+- UI: 3 workers
+- E2E: 8 workers on CI, 1 on Windows and locally
+- Demo: 3 workers on CI, 1 locally
 
 ### Decision Rules
 
@@ -587,7 +599,7 @@ All unit and UI tests must pass on Linux, even though most developers run Kangen
 
 - **Never hardcode personal usernames, emails, or machine-specific paths.** Use generic placeholders like `C:\Users\dev` or `/home/dev`. The repo is or will be public.
 
-- **E2E now runs on CI** on `ubuntu-24.04` (xvfb, `--no-sandbox`), sharded, at workers=4 (since 2026-06-19; the workers=1 lock is Windows-only). So the Linux-safety rules above apply to E2E specs too - a spec that only ever ran green on local Windows can now fail on CI Linux. Per-test-isolated multi-`describe` specs may opt into `test.describe.configure({ mode: 'parallel' })` to use the CI workers; shared-page specs (one app shared across the file via `beforeAll`) must stay serial.
+- **E2E now runs on CI** on `ubuntu-24.04` (xvfb, `--no-sandbox`), sharded (since 2026-06-19; the one-worker lock is Windows-only). So the Linux-safety rules above apply to E2E specs too - a spec that only ever ran green on local Windows can now fail on CI Linux. Per-test-isolated multi-`describe` specs may opt into `test.describe.configure({ mode: 'parallel' })` to use the CI workers; shared-page specs (one app shared across the file via `beforeAll`) must stay serial.
 
 ## Historical Reference: 2026-04-11 Audit
 
@@ -619,7 +631,7 @@ Signals that a test will exceed 45s:
 
 The `mock-claude-eats-all-cr` fixture swallows stdin in JS and even calls `setRawMode(true)`, but Windows ConPTY's kernel-side echo can still leak a CR back to the engine ~20-40% of the time. When that happens the engine's no-evidence path doesn't fire, and assertions on the error-state outcome fail.
 
-**This is a test-infrastructure limitation, not a product bug.** The right response is `test.describe.configure({ retries: 2 })` with a comment that documents the root cause. The wrong response is to chase phantom React rendering races - rendering is in-tick and not the issue.
+**This is a test-infrastructure limitation, not a product bug, and it exists only on Windows.** The right response is a Windows-gated retry with a comment that documents the root cause. An unconditional per-spec retry does nothing on CI, where `--fail-on-flaky-tests` fails a pass on retry, so `tests/unit/test-value-budget.test.ts` rejects one. The wrong response is to chase phantom React rendering races - rendering is in-tick and not the issue.
 
 Pattern to remember:
 
@@ -627,8 +639,8 @@ Pattern to remember:
 test.describe('...', () => {
   // Mock-CLI non-determinism on Windows ConPTY: <fixture> swallows stdin in
   // JS but kernel-side echo can leak the CR back ~20-40% of the time. The
-  // product is correct; this is a test-infra limit. 2 retries -> ~99% pass.
-  test.describe.configure({ retries: 2 });
+  // product is correct; this is a test-infra limit on Windows alone.
+  if (process.platform === 'win32') test.describe.configure({ retries: 2 });
   // ...
 });
 ```
@@ -683,7 +695,7 @@ The `intervals` array tells Playwright how often to poll - start fast (200ms) fo
 
 Two distinct flake classes show up in full-suite runs:
 
-1. **Mock CLI variance** (handled by per-spec `retries: 2` with documented root cause). Affects: `browser-evidence-retry.spec.ts`.
+1. **Mock CLI variance** (handled by a Windows-gated `retries: 2` with documented root cause). Affects: `browser-evidence-retry.spec.ts`.
 2. **Worker process crashes** (`worker process exited unexpectedly (code=3221226505, signal=null)`, i.e. 0xC0000409, at `(0ms)` test start). This is NOT a one-off and NOT spec-specific: it recurred 9+ times over 5 days (2026-06-07..06-11), random across specs, hitting BOTH the `[ui]` project (headless Chromium, no Electron) and `[electron]`. The common factor is the Playwright worker host itself (`node.exe`), not any app-under-test teardown path.
 
 **Root cause (verified from a real minidump, 2026-06-11):** 0xC0000409 here is `__fastfail(FAST_FAIL_FATAL_APP_EXIT)`, subcode 0x7, raised by `abort()` (`electron!abort+0x35` -> `int 29h`). It is a deliberate fatal-abort (a V8/Node/Chromium FATAL check or an uncaught C++ exception), NOT a literal stack-buffer overrun despite the NTSTATUS name, and NOT the Jan-2026 Node stack-exhaustion CVE (CVE-2025-59466): the faulting stack is shallow (no deep recursion) and the local Node 24.15.0 already carries that mitigation (shipped in 24.13.0+). Upgrading Node does not address it.

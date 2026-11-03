@@ -246,7 +246,7 @@ test.describe('DiffViewer: blame gutter', () => {
     await expect(dialog).not.toBeVisible({ timeout: 8000 });
   });
 
-  test('blame is unavailable for a deleted file', async () => {
+  test('blame is unavailable for a deleted file and for a binary file', async () => {
     const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
     await card.click();
 
@@ -261,23 +261,6 @@ test.describe('DiffViewer: blame gutter', () => {
     await fileTree.locator('text=deleted.ts').click();
     await expect(await openBlameOption(page)).toBeDisabled();
     await closeViewOptions(page);
-
-    await page.locator('[data-testid="changes-toggle"]').click();
-    await page.keyboard.press('Control+Shift+W');
-    await expect(dialog).not.toBeVisible({ timeout: 8000 });
-  });
-
-  test('blame is unavailable for a binary file', async () => {
-    const card = page.locator('[data-swimlane-name="Code Review"]').locator('text=Blame Gutter Task').first();
-    await card.click();
-
-    const dialog = page.locator('[data-testid="task-detail-dialog"]');
-    await dialog.waitFor({ state: 'visible', timeout: 8000 });
-
-    const fileTree = page.locator('[data-testid="changes-file-tree"]');
-    if (!(await fileTree.isVisible())) {
-      await page.locator('[data-testid="changes-toggle"]').click();
-    }
 
     await fileTree.locator('text=font.woff2').click();
     await expect(await openBlameOption(page)).toBeDisabled();

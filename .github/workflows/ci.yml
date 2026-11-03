@@ -24,50 +24,52 @@ concurrency:
 env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
-# CI architecture:
-# - ONE always-on `checks` job runs lint, typecheck and build serially, with each
-#   step reporting independently (see the job for why that wiring is required).
+# CI architecture (the numbers below were measured on 2026-11-02; the audit behind
+# them is docs/audits/test-suite-audit.md):
+# - `checks` runs lint, typecheck and build serially, with each step reporting
+#   independently (see the job for why that wiring is required).
+# - `demo` builds and smokes the web demo. One job, no matrix.
 # - The three test tiers (unit / UI / E2E) are sharded matrices, each behind a
 #   thin gate job whose `name:` is the required status check ("Unit tests
 #   (Vitest)", "UI tests (Playwright)", "E2E tests (Electron)"). The shards are
 #   an implementation detail; the gate is the required check.
+# - `tested-tree` runs only on a push to main. main requires a PR to be up to
+#   date and PRs land by rebase, so a merged PR puts on main the tree its own
+#   head already passed on. When that holds every other job skips and the run
+#   stays green, which is what /release reads. A direct push runs everything,
+#   and any doubt runs everything (scripts/tested-tree.mjs). Every job here
+#   answers to it; tests/unit/tested-tree.test.ts fails on one that does not.
 #
-# THE UI TIER IS THE ONLY THING ON THE CRITICAL PATH. Measured 2026-08-29: every
-# other job finishes by ~115s while the UI pole runs ~226s, so ~11 of the ~20
-# slots sit idle for the last ~150s of a run. Two consequences that mislead
-# people who tune this file:
-#   1. Freeing a concurrency slot buys ~0s of wall clock BY ITSELF. Collapsing
-#      lint/typecheck/build was never a speedup - it is what PAYS for UI shards
-#      10 and 11 while keeping the run at 21 jobs instead of 23.
-#   2. Sharding is balanced by TEST COUNT, not cost. Playwright's filterForShard
-#      walks test groups in file order and cuts them into equal-COUNT windows, so
-#      an expensive file makes its window expensive and no amount of splitting a
-#      spec file moves it (splitting keeps the tests contiguous at the same
-#      cumulative indices). At 9 shards this left a 1.88x work spread (297-558s)
-#      across shards whose counts differed by only 1.06x. 11 shards cut the
-#      heaviest shard's work 558s -> ~495s and the pole 304s -> ~226s.
+# WHAT SETS A PR'S TIME TO GREEN. Time to green is the slowest job plus its queue
+# delay, and only the demo job and the UI shards are ever that job. Unit and E2E
+# shards finish under 3 minutes against UI shards of 6 to 11, so trimming unit or
+# E2E tests buys no wall clock, and a freed slot buys only the queue delay it
+# removes. /pull-request waits on every check, required or not, so a check that
+# is not required still sets the wait: the demo job did, at 1,023s.
 #
-# Concurrency budget (GitHub Free caps concurrent jobs at ~20): UI 11 + E2E 5 +
-# unit 3 = 19 shards, plus the `checks` job + the CLA workflow (a separate
-# workflow, so it never appears in this run's own job list) = 21 - one over the
-# cap, deliberately: the CLA check finishes in ~10-17s and frees its slot, so the
-# single over-cap job queues only that briefly. Measured max queue delay on an
-# uncontended run: 3s.
+# Concurrency budget. GitHub Free caps an account at 20 concurrent jobs and 5
+# concurrent macOS jobs. On a PR: UI 11 + E2E 5 + unit 2 = 18 shards, plus `checks`,
+# `demo` and the CLA workflow (a separate workflow, so it never appears in this
+# run's own job list) = 21. That is one over the cap on purpose: the CLA check
+# finishes in ~10-17s and frees its slot. Two over is what queued seven jobs by
+# 85-208s when `demo` arrived and nothing was given up for it. A path-filtered
+# workflow on the same PR, or a second PR, queues on top of that, since the cap is
+# per account. tests/unit/test-value-budget.test.ts pins this sum and the macOS one.
 #
-# 21 IS A CEILING, NOT A TARGET. Collapsing the three always-on jobs also removed
-# the three EARLIEST slot releasers (they finished at 37s, 41s and 51s) and
-# replaced them with one ~65s job. At 21 that is harmless because CLA is the
-# release valve, but no cheap early releaser remains: at 22+ jobs the first
-# release becomes a ~70s unit shard, and a queued UI shard would start that late
-# and blow past the pole. The cap is also ACCOUNT-wide, so a concurrent release
-# or publish-protocol run eats into it.
+# Sharding is balanced by TEST COUNT, not cost. Playwright's filterForShard walks
+# test groups in file order and cuts them into equal-COUNT windows, so an expensive
+# file makes its window expensive and splitting a spec file moves nothing (the tests
+# stay contiguous at the same indices). Compare shards by aggregate test-seconds and
+# utilisation (aggregate / (test-phase wall x workers)), never by count. Run-to-run
+# spread on identical code has been 231-357s on the old pole, so a change is only
+# measured by paired runs, and any run with over ~20s of queue is discarded.
 #
 # node_modules is cached under one shared lockfile-keyed key, so npm ci runs only
 # on a lockfile change. The key also names the Node major (`node24`) and the
 # install's shape (`nocuda`, the ONNXRUNTIME_NODE_INSTALL skip above): a tree
 # installed under another Node and npm, or with other install flags, is not this
 # one, and keeping the old key would restore it and never run npm ci on the new
-# install. Change the prefix in all six jobs together when either moves
+# install. Change the prefix in every job together when either moves
 # (tests/unit/ci-workflow-hygiene.test.ts fails on keys that disagree). Node 24
 # (npm 11) runs the root package's own postinstall, which is what fetches the
 # Electron binary now that Electron 42+ has no install script of its own; npm 11
@@ -76,9 +78,8 @@ env:
 # setup-node deliberately does NOT set `cache: npm`: that
 # restores a ~366 MB ~/.npm tree which only `npm ci` reads, and `npm ci` only runs
 # on a node_modules cache MISS, so on the warm path it was ~5.3s of dead weight
-# per job (~106s of runner time per run) sitting on the pole's critical path.
-# The thin gates run AFTER their shards (`needs`), so they do not consume a
-# shard-phase slot.
+# per job. The thin gates run AFTER their shards (`needs`), so they do not consume
+# a shard-phase slot.
 #
 # Every job runs on ubuntu-24.04, not ubuntu-latest, which moves to Ubuntu 26
 # from 2026-10-19. Move them together: the node_modules and Playwright cache
@@ -87,34 +88,41 @@ env:
 # change those key prefixes too, or it restores the 24.04 tree and never runs
 # npm ci there.
 #
-# To scale as the suites grow: E2E is launch-bound and its heaviest shards
-# already spill past one workers=8 wave, so 5 is a FLOOR, not a donor (see the
-# e2e-shards note); unit is npm-ci-floored once cached.
-#
-# UI SHARD COUNT IS EXHAUSTED - do not spend another pass on it. Measured
-# 2026-08-29, the heaviest shard's work is flat across counts: N=9 484s,
-# N=11 495s, N=12 465s, N=13 469s. Windows always start at cumulative index 0,
-# and the alphabetical `a*` block occupies indices 0-125, so shrinking the
-# window only trims its tail. Splitting into `agent-monitor` (indices 36-77)
-# would need ~18 shards, which the 21-job cap forbids. The equal-window floor
-# is ~469s of work, roughly a 205s pole against today's ~226s.
-#
-# The pole is now a PACKING problem, not a work problem: shard 4/11 runs at
-# 0.71 utilisation on 408s of work while shard 1 carries 495s at 0.91 and
-# finishes EARLIER. Before touching shard count again, compute per-shard
-# utilisation (aggregate test-seconds / (test-phase wall x workers)); if it is
-# already ~0.9 the work is not the problem. Past this point the only real lever
-# is PWTEST_SHARD_WEIGHTS (internal API, needs a guard test and re-tuning as the
-# suite grows) or a paid plan (Team = 60 concurrent).
+# UI SHARD COUNT IS EXHAUSTED, measured 2026-08-29 when the suite was half this
+# size: the heaviest shard's work is flat across counts, because windows always
+# start at cumulative index 0 and shrinking one only trims its tail. Past that the
+# only levers are fewer or cheaper tests in the heavy files, PWTEST_SHARD_WEIGHTS
+# (internal API, needs a guard test and re-tuning as the suite grows), or a paid
+# plan (Team = 60 concurrent).
 #
 # The job `name:` is the status-check context used by branch protection - keep
 # these in sync with main's required checks if you rename one.
 
 jobs:
-  # lint + typecheck + build, serially, behind ONE checkout/setup/cache. Measured
-  # 62-66s total, against a ~226s UI pole, so it is nowhere near the critical
-  # path. It replaced three separate jobs (72s + 71s + 71s) whose only reason to
-  # be separate was independent reporting, which the step wiring below preserves.
+  # See the note at the top of this file. Skipped on a pull request and a dispatch,
+  # which is why every job below names `!cancelled()`: without it a skipped dependency
+  # would skip the job too. A failure here also runs the tests rather than stopping them.
+  tested-tree:
+    name: Tree already tested
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check the pushed tree against its PR
+        id: tree
+        uses: ./.github/actions/tested-tree
+
+  # lint + typecheck + build, serially, behind ONE checkout/setup/cache. About 150s,
+  # nowhere near the critical path. It replaced three separate jobs whose only reason
+  # to be separate was independent reporting, which the step wiring below preserves.
   #
   # Every step carries `if: ${{ !cancelled() }}` and an `id:`, and the final step
   # aggregates the outcomes. WITHOUT that, a lint failure aborts the job and
@@ -130,6 +138,8 @@ jobs:
   #   publish-protocol.yml only runs on a protocol-v* tag) and lives here now.
   checks:
     name: Lint, Typecheck, Build
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -202,15 +212,18 @@ jobs:
   # Web demo: builds the static web build of the renderer (`npm run build:demo`,
   # dist/demo/) and boots it through the `demo` Playwright project
   # (tests/demo/static-demo.spec.ts serves dist/demo itself on an ephemeral
-  # port). One always-on job, no shards: the tier is one spec file of about 290
-  # tests, which takes 14 minutes on a runner, so the 20 minute cap matches
-  # deploy-demo.yml's run of the same tier. Shard the spec before it nears 18.
+  # port). One always-on job, no shards. The tier was this file's slowest job at
+  # 17 minutes against a 20 minute cap, nearly all of it real-time playback rather
+  # than page setup, so the project runs fullyParallel (see playwright.config.ts).
+  # deploy-demo.yml runs the same tier under the same cap.
   # Setup mirrors the UI shards (shared node_modules cache, cached Chromium, no
   # --with-deps). The steps run in order with the default success() gating on
   # purpose: the smoke has nothing to test without the build, so a failed build
   # must not be followed by a second red for the same cause.
   demo:
     name: Web demo (build + smoke)
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:
@@ -244,21 +257,24 @@ jobs:
         run: npm run test:demo -- --fail-on-flaky-tests
 
   # Unit tier, sharded across ubuntu runners like the UI/E2E tiers (Vitest
-  # `--shard`). The suite is volume-bound (~360 files, no single long pole), and
+  # `--shard`). The suite is volume-bound (~1,900 files, no single long pole), and
   # within one runner Vitest only reaches ~2x parallelism (import / main-thread
-  # Vite-server overhead), so cross-runner sharding is how it scales as the suite
-  # grows. Each shard emits a `blob` report (uploaded as an artifact) plus the
-  # default reporter into its own log; the `unit` gate below merges the blobs into
+  # Vite-server overhead). Two shards hold it under 4 minutes, well clear of the
+  # pole, and the third slot it gave up pays for `demo`. Each shard emits a `blob`
+  # report (uploaded as an artifact) plus the default reporter into its own log;
+  # the `unit` gate below merges the blobs into
   # ONE Vitest summary on the run page and is the required status check.
   unit-shards:
     name: Unit Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
-        shardIndex: [1, 2, 3]
-        shardTotal: [3]
+        shardIndex: [1, 2]
+        shardTotal: [2]
     steps:
       - name: Check out repository
         uses: actions/checkout@v7
@@ -294,8 +310,8 @@ jobs:
   # branch-protection required status-check context.
   unit:
     name: Unit tests (Vitest)
-    needs: [unit-shards]
-    if: ${{ always() }}
+    needs: [tested-tree, unit-shards]
+    if: ${{ always() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -336,6 +352,8 @@ jobs:
   # cached. The single required status check is the thin `ui` gate below.
   playwright-shards:
     name: UI Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -393,8 +411,8 @@ jobs:
   # visible in each shard's own log.
   ui:
     name: UI tests (Playwright)
-    needs: [playwright-shards]
-    if: ${{ always() }}
+    needs: [tested-tree, playwright-shards]
+    if: ${{ always() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
@@ -416,12 +434,8 @@ jobs:
   # top-level cap AND the electron project are both 8; Windows and local stay at
   # 1) and the suite is sharded 5 ways (see the concurrency-budget note at the
   # top of this file). Per-file teardown is I/O-bound so launches overlap
-  # cleanly. NOTE: the suite has outgrown one launch wave. Measured 2026-08-29,
-  # spec files per shard at 5 shards are 5 / 7 / 10 / 8 / 12, so the heaviest
-  # shards already start a second wave past workers=8. That is why E2E cannot
-  # give a concurrency slot back to the UI tier: dropping to 4 shards puts 14
-  # files on one shard and adds a third wave. Growing the tier means MORE
-  # shards, not fewer. Concurrent launches are safe on
+  # cleanly. The heaviest shards already start a second launch wave past
+  # workers=8, so dropping a shard adds a third wave. Concurrent launches are safe on
   # CI: the leaked-Electron janitor is a no-op under
   # GITHUB_ACTIONS, each test has an isolated KANGENTIC_DATA_DIR, and the
   # single-instance lock is bypassed under NODE_ENV=test. helpers.ts adds
@@ -437,6 +451,8 @@ jobs:
   # test passed only on that retry (see the note above the UI shards' run step).
   e2e-shards:
     name: E2E Test (${{ matrix.shardIndex }}/${{ matrix.shardTotal }})
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
@@ -470,8 +486,8 @@ jobs:
   # gate - no checkout/install, just job spin-up.
   e2e:
     name: E2E tests (Electron)
-    needs: [e2e-shards]
-    if: ${{ always() }}
+    needs: [tested-tree, e2e-shards]
+    if: ${{ always() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:

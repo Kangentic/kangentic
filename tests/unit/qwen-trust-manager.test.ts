@@ -405,54 +405,25 @@ describe('removeQwenWorktreeTrust', () => {
   // on Windows and on CI's Linux runner.
   const WORKTREE = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', '3');
 
-  it('drops the entry for a removed worktree', async () => {
-    enableFolderTrust();
-    await ensureQwenWorktreeTrust(WORKTREE);
-    expect(Object.keys(readTrustedFolders())).toHaveLength(1);
+  // The shared remove contract (drops the entry, no growth over cycles, other
+  // projects untouched, user decisions kept, quiet no-op) is the table in
+  // adapter-trust-removal.test.ts. What stays below is Qwen's own.
 
-    await removeQwenWorktreeTrust(WORKTREE);
-    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
-  });
-
-  it('does not grow the file across repeated create/remove cycles', async () => {
-    enableFolderTrust();
-    for (let taskIndex = 0; taskIndex < 25; taskIndex += 1) {
-      const worktree = path.join(path.resolve('/repo'), '.kangentic', 'worktrees', String(taskIndex));
-      await ensureQwenWorktreeTrust(worktree);
-      await removeQwenWorktreeTrust(worktree);
-    }
-    expect(Object.keys(readTrustedFolders())).toHaveLength(0);
-  });
-
-  it('leaves other projects untouched', async () => {
-    enableFolderTrust();
-    const otherProject = path.resolve('/other/project');
-    writeTrustedFolders({ [otherProject]: 'TRUST_FOLDER' });
-    await ensureQwenWorktreeTrust(WORKTREE);
-    await removeQwenWorktreeTrust(WORKTREE);
-    expect(readTrustedFolders()[otherProject]).toBe('TRUST_FOLDER');
-  });
-
-  it('never removes a user decision', async () => {
-    // TRUST_PARENT / DO_NOT_TRUST are the user's, not ours: a later worktree
-    // at the same path must still honor them.
-    for (const level of ['TRUST_PARENT', 'DO_NOT_TRUST']) {
-      writeTrustedFolders({ [WORKTREE]: level });
-      await removeQwenWorktreeTrust(WORKTREE);
-      expect(readTrustedFolders()[WORKTREE]).toBe(level);
-    }
-  });
-
-  it('is a no-op when there is no file or no matching entry', async () => {
-    await expect(removeQwenWorktreeTrust(WORKTREE)).resolves.toBeUndefined();
-
+  it('leaves a relative key alone, whatever the process cwd is', async () => {
     const otherProject = path.resolve('/other/project');
     // "3" is the WORKTREE's own basename, and a relative key in a hand-edited
     // file. It must survive whatever the process cwd happens to be, which is
     // what the isAbsolute guard in the matcher is for: path.resolve would
-    // otherwise expand it against cwd and could match by accident.
+    // otherwise expand it against cwd and could match by accident. The cwd is
+    // pinned to the worktree's parent so that accident is the case under test:
+    // "3" then resolves to WORKTREE itself.
     writeTrustedFolders({ [otherProject]: 'TRUST_FOLDER', '3': 'TRUST_FOLDER' });
-    await removeQwenWorktreeTrust(WORKTREE);
+    const cwdSpy = vi.spyOn(process, 'cwd').mockReturnValue(path.dirname(WORKTREE));
+    try {
+      await removeQwenWorktreeTrust(WORKTREE);
+    } finally {
+      cwdSpy.mockRestore();
+    }
     expect(readTrustedFolders()[otherProject]).toBe('TRUST_FOLDER');
     expect(readTrustedFolders()['3']).toBe('TRUST_FOLDER');
   });

@@ -132,10 +132,11 @@ test.describe('Claude Agent -- Browser Send evidence/retry paths', () => {
   // a CR back to the engine ~20-40% of the time even with setRawMode(true).
   // When that happens the engine succeeds instead of raising PasteSubmitError,
   // so the no-evidence test's error path never fires. The product is correct
-  // - this is a test-infrastructure limitation. 2 retries push effective
-  // pass rate to ~99%. The proper fix is a ConPTY-level CR-suppression
-  // fixture, which is out of scope here.
-  test.describe.configure({ retries: 2 });
+  // - this is a test-infrastructure limitation that exists only on Windows,
+  // whose local runs have no retry. On CI's Linux a retry would only add time,
+  // since --fail-on-flaky-tests fails a pass on retry. The proper fix is a
+  // ConPTY-level CR-suppression fixture, which is out of scope here.
+  if (process.platform === 'win32') test.describe.configure({ retries: 2 });
 
   test('engine retry succeeds when the agent swallows the first \\r', async () => {
     const ctx = await setupVariant('eats-first-cr');

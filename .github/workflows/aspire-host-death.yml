@@ -1,0 +1,54 @@
+name: What a killed AppHost leaves running
+
+# What a .NET Aspire stack does once the reap has killed its AppHost (the header
+# of tests/unit/aspire-host-death.test.ts). A measurement, not a check: it prints
+# what it saw, and an installed .NET and Aspire CLI are no cost for a pull request
+# to pay, so only a dispatch runs it. Rerun it when the Aspire version moves. It
+# stays on a runner because DCP 0.26.5's stop-process-tree can end a stranger's
+# process tree (see "Parent pids Windows reuses" in process-reaping.md). It has
+# its own file so that it does not show as a skipped row on every reap run.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  aspire-host-death:
+    name: what a killed AppHost leaves running (windows-latest)
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - name: Set up .NET 10
+        uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: 10.0.x
+      - name: Install dependencies (npm ci)
+        run: npm ci --ignore-scripts
+      - name: Install the Aspire CLI
+        shell: pwsh
+        run: |
+          dotnet tool install --global Aspire.Cli --version 13.6.1
+          "$env:USERPROFILE\.dotnet\tools" | Out-File -FilePath $env:GITHUB_PATH -Append -Encoding utf8
+      - name: Report the Aspire version
+        shell: pwsh
+        run: |
+          (Get-Command aspire).Source
+          aspire --version
+      - name: Measure a killed AppHost
+        env:
+          KANGENTIC_ASPIRE_PROBE: '1'
+        run: npx vitest run tests/unit/aspire-host-death.test.ts --silent=false --reporter=verbose
+      - name: Report the DCP version
+        if: always()
+        shell: pwsh
+        run: |
+          Get-ChildItem -Path "$env:USERPROFILE\.dotnet\tools", "$env:USERPROFILE\.nuget\packages", "$env:USERPROFILE\.aspire" -Filter dcp.exe -Recurse -ErrorAction SilentlyContinue |
+            ForEach-Object { Write-Output $_.FullName; & $_.FullName version }

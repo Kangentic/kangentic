@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { resolveBrowserUrl, type UrlSource } from './browser-url-resolution';
 
 // Resolves the effective URL for a task's Browser pane and exposes
 // save/recordNavigation helpers.
@@ -15,8 +16,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 //   navigation in a fresh project, which made every sibling task inherit that
 //   task's URL - and once tasks lease their own dev-server ports, inheriting
 //   another task's port is a cross-task collision rather than a convenience.
-
-export type UrlSource = 'task' | 'project' | 'none';
 
 export interface UseBrowserUrlResult {
   loading: boolean;
@@ -131,12 +130,7 @@ export function useBrowserUrl(taskId: string, projectId: string | null, refreshT
   // configures its own ports, so auto-navigating to a reserved one renders a
   // blank page for a server that was never started there. A blank pane is worse
   // than the empty state, which at least says what to do next.
-  const effectiveUrl = taskOverride ?? projectDefault ?? null;
-  const source: UrlSource = taskOverride
-    ? 'task'
-    : projectDefault
-      ? 'project'
-      : 'none';
+  const { effectiveUrl, source } = resolveBrowserUrl(taskOverride, projectDefault);
 
   return {
     loading,

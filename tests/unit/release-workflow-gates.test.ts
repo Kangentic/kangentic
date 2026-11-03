@@ -869,6 +869,21 @@ function matrixRunners(workflowName: string, jobBody: string): string[] {
   return runners;
 }
 
+/** The inline `os: [...]` matrix package-smoke.yml keeps its legs in. */
+function inlineMatrixRunners(workflowName: string, jobBody: string): string[] {
+  const inline = jobBody.match(/^ {8}os: \[(.+)\]$/m);
+  if (!inline) {
+    throw new Error(`${workflowName} has no inline os matrix at the indentation this test reads (was the matrix reshaped?)`);
+  }
+  return inline[1].split(',').map((runner) => runner.trim());
+}
+
+/** The runners a pull request leaves out: the first value of each conditional exclude. */
+function pullRequestExcludes(jobBody: string): string[] {
+  return [...jobBody.matchAll(/^ {10}- os: \$\{\{ github\.event_name == 'pull_request' && '([^']+)' \|\| 'no-such-leg' \}\}$/gm)]
+    .map((match) => match[1]);
+}
+
 /** The `pull_request` path filter, entry by entry. */
 function smokePathFilter(source: string): string[] {
   const lines = source.split(/\r?\n/);
@@ -890,11 +905,17 @@ describe('package-smoke.yml mirrors the release workflow', () => {
   const releaseBody = jobs.find((job) => job.name === 'release')?.body ?? '';
 
   it('packages on exactly the runners the release legs build on', () => {
-    const smokeRunners = matrixRunners('package-smoke.yml', smokeBody);
+    const smokeRunners = inlineMatrixRunners('package-smoke.yml', smokeBody);
     const releaseRunners = matrixRunners('release.yml', releaseBody);
     expect([...smokeRunners].sort()).toEqual([...releaseRunners].sort());
     // The literal list keeps the equality above from passing on two lists that shrank together.
     expect([...smokeRunners].sort()).toEqual([...RELEASE_RUNNERS].sort());
+  });
+
+  it('takes only the Linux arm64 and Intel macOS legs off a pull request, and still runs them nightly', () => {
+    expect(pullRequestExcludes(smokeBody).sort()).toEqual(['macos-26-intel', 'ubuntu-24.04-arm']);
+    // A leg that left the PR path with no schedule would first package after the tag exists.
+    expect(smokeWorkflowSource).toMatch(/^ {2}schedule:\r?\n(?: {4}#.*\r?\n)* {4}- cron: /m);
   });
 
   it('re-runs when the embedding runtime gap list changes', () => {

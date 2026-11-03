@@ -12,8 +12,7 @@
  * that says nobody read a 148KB doc names the doc as it was, and rewriting the path would make the
  * row false), tests (their docs/ paths are mostly made-up fixture paths), URLs into any other site,
  * whose docs/ paths are not this repo's, and a git object spec (`<commit>:docs/x.md`), which names a
- * file as it was at that commit, the way scripts/measure-docs-structure.mjs reads the flat agent doc
- * from before the split. The other audits are scanned: a line there can say which doc describes what
+ * file as it was at that commit. The other audits are scanned: a line there can say which doc describes what
  * shipped, and the paging audit's did, naming a deleted doc. RETIRED_PATH_CITATIONS lists the few
  * places that name a retired path on purpose.
  */
@@ -26,7 +25,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const ROOT_FILES = new Set(['AGENTS.md', 'CLAUDE.md', 'CONTRIBUTING.md', 'README.md']);
 /** The translated READMEs (i18n/README.<locale>.md), which link the docs the way README.md does. */
 const TRANSLATED_README = /^i18n\/README\.[\w-]+\.md$/;
-const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^scripts\/review-eval\/verdict-replay\.json$/, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
+const SKIPPED = [/(^|\/)CHANGELOG[^/]*\.md$/i, /^docs\/log\.md$/, /^docs\/audits\/code-review-fanout-audit\.md$/];
 /**
  * A retired path a file names on purpose, keyed `<file> cites <path>`. release-changelog.mjs matches
  * commit file lists, and review records committed before the audit moved still list its old path.

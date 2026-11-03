@@ -199,6 +199,8 @@ test('Add task shows the same rows, and Create stores the board, the placement a
     await expect(dialog.locator('input[data-testid="workflow-task-project"]')).toHaveValue('kangentic');
     await expect(dialog.locator('[data-testid="task-branch-row"]')).toBeVisible();
     await expect(dialog.locator('[data-testid="task-run-mode"]')).toBeVisible();
+    // No branch name: a task gets one once Start creates it.
+    await expect(dialog.locator('[data-testid="custom-branch-name-input"]')).toHaveCount(0);
     // This board's profiles are listed for a task on this board.
     await expect(dialog.locator('[data-testid="task-profile-select"]')).toBeEnabled();
     await expect(dialog.locator('[data-testid="task-profile-select"] option')).toHaveText(['Default', 'Heavy']);
@@ -211,6 +213,8 @@ test('Add task shows the same rows, and Create stores the board, the placement a
     await expect.poll(() => plannedRow(page, 'Token contrast check')).toMatchObject({
       project_id: null, use_worktree: 0, run_mode: 'column_settings', base_branch: null,
     });
+    // The new card lands selected on the canvas.
+    await expect(page.locator('[data-testid="workflow-canvas-card"][data-selected="true"]')).toContainText('Token contrast check');
   } finally {
     await browser.close();
   }

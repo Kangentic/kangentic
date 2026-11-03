@@ -34,31 +34,6 @@ test.describe('Ghost Columns', () => {
     // Verify tooltip
     await expect(ghostColumn).toHaveAccessibleDescription('Removed from team config. Move tasks to continue.');
 
-    await browser.close();
-  });
-
-  test('ghost column has no add task button', async () => {
-    const { browser, page } = await launchPage();
-    await createProject(page, 'ghost-no-add');
-    await waitForBoard(page);
-
-    // Add a ghost column after project setup
-    await page.evaluate(() => {
-      const api = (window as any).electronAPI;
-      const stores = (window as any).__zustandStores;
-      api.swimlanes.create({
-        name: 'Old Column',
-        color: '#888888',
-        is_ghost: true,
-        auto_spawn: false,
-      }).then(() => {
-        stores.board.getState().loadBoard();
-      });
-    });
-
-    const ghostColumn = page.locator('[data-swimlane-name="Old Column"]');
-    await expect(ghostColumn).toBeVisible();
-
     // "Add task" button should not exist inside ghost column
     const addButton = ghostColumn.locator('text=Add task');
     await expect(addButton).toHaveCount(0);
@@ -101,24 +76,8 @@ test.describe('Config Warning Banner', () => {
     await browser.close();
   });
 
-  // The open-time warnings push is dropped when it lands before the renderer
-  // has made the project current, which is the order a launch restore and an
-  // open by folder path take. The renderer fetches the stored warnings each
-  // time a project becomes current; this drives that fetch through the real
-  // project-switch effect, with nothing injected into the store.
-  test('shows the stored open-time warnings when a project becomes current', async () => {
-    const { browser, page } = await launchPage();
-    await page.evaluate(() => {
-      (window as unknown as { __mockLastConfigWarnings: string[] }).__mockLastConfigWarnings = [
-        'kangentic.json could not be read, so board edits are not saved to it until it is fixed.',
-      ];
-    });
-
-    await createProject(page, 'open-warning-test');
-    await waitForBoard(page);
-
-    await expect(page.locator('text=kangentic.json could not be read')).toBeVisible();
-
-    await browser.close();
-  });
+  // Trimmed (test-suite audit): "shows the stored open-time warnings when a
+  // project becomes current" is the first half of board-config-save-refusals.spec.ts
+  // 'switching projects clears the outgoing banner', which seeds the stored
+  // warning, opens a project and waits for the banner.
 });

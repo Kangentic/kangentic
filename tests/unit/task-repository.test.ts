@@ -323,11 +323,10 @@ describe('TaskRepository SQL contracts', () => {
     });
   });
 
-  // done-move-bookkeeping.test.ts pins clearArchived's SQL TEXT via a source
-  // regex; that cannot catch a `.run(id, now)` argument-order swap (the SQL
-  // string is unchanged, but archived_at would bind to the task id and the
-  // WHERE clause would bind to the timestamp). This calls the real method
+  // A `.run(id, now)` argument-order swap leaves the SQL string unchanged but
+  // binds the timestamp to the WHERE clause. This calls the real method
   // through the tracker to pin the actual bound argument order.
+  // done-move-bookkeeping.test.ts runs it against a real SQLite.
   it('clearArchived binds the timestamp then the id, matching the SQL positional order', () => {
     const before = new Date().toISOString();
     repo.clearArchived('task-to-restore');

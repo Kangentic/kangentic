@@ -10,8 +10,7 @@ name: Shell quoting against real nushell and fish
 # it skips that block and checks only the string pins.
 #
 # Path-filtered, and deliberately NOT a required check, for the reason
-# shell-quoting-windows.yml gives: ci.yml runs at its job concurrency ceiling,
-# and this only has something to say when the escapes, the code that builds the
+# shell-quoting-windows.yml gives: ci.yml runs at the job cap, and this only has something to say when the escapes, the code that builds the
 # quoted line, or these tests change.
 
 on:
@@ -60,8 +59,29 @@ env:
   ONNXRUNTIME_NODE_INSTALL: skip
 
 jobs:
+  # Skips the run below on a push whose tree its PR already tested. See the note at the top of ci.yml.
+  tested-tree:
+    name: Tree already tested
+    if: github.event_name == 'push'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      checks: read
+      contents: read
+      pull-requests: read
+    outputs:
+      tested: ${{ steps.tree.outputs.tested }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Check the pushed tree against its PR
+        id: tree
+        uses: ./.github/actions/tested-tree
+
   posix-shells:
     name: shell quoting against real nushell and fish
+    needs: [tested-tree]
+    if: ${{ !cancelled() && needs.tested-tree.outputs.tested != 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 20
     steps:

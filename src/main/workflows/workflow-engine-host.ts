@@ -14,6 +14,7 @@ import { TaskLinkRepository } from '../db/repositories/task-link-repository';
 import { forgetRecentFetches } from '../git/fetch-throttle';
 import { handleTaskMove } from '../ipc/handlers/task-move';
 import { BranchCheckoutBlockedError, notifySpawnBlocked, type SpawnFailureStep } from '../ipc/helpers/task-git';
+import { WORKTREE_SETUP_FAILED_PREFIX } from '../ipc/helpers/worktree-setup-error';
 import type { IpcContext } from '../ipc/ipc-context';
 import {
   inFlightKey,
@@ -732,11 +733,11 @@ export function getWorkflowEngine(): WorkflowEngineHost | null {
 
 /**
  * Which step a failed start died in, for the toast's wording. The move wraps a
- * worktree failure as "Worktree setup failed: ...", so the toast gets its cause
+ * worktree failure with `wrapWorktreeSetupError`, so the toast gets its cause
  * and adds that label itself, once.
  */
 function spawnFailureOf(error: unknown): { step: SpawnFailureStep; cause: unknown } {
-  if (error instanceof Error && error.message.startsWith('Worktree setup failed: ')) return { step: 'worktree', cause: error.cause ?? error };
+  if (error instanceof Error && error.message.startsWith(WORKTREE_SETUP_FAILED_PREFIX)) return { step: 'worktree', cause: error.cause ?? error };
   if (error instanceof BranchCheckoutBlockedError) return { step: 'checkout', cause: error };
   return { step: 'agent', cause: error };
 }

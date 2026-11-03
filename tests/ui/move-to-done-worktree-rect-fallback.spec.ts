@@ -13,7 +13,7 @@
  * and is used as a fallback when dnd-kit's initial rect is null. The direct-
  * bypass branch now only fires when BOTH sources are unavailable.
  *
- * This spec covers the gap left by move-to-done-animations.spec.ts, which
+ * This spec covers the gap left by move-to-done-no-snapback.spec.ts, which
  * uses worktree_path: null. With no worktree, checkPendingChanges is never
  * called, so the structural-sharing reshuffle that cleared dnd-kit's rect
  * (the original trigger) cannot happen. This spec uses worktree_path: non-null
@@ -242,43 +242,6 @@ test.describe('Move to Done - worktree-path rect fallback', () => {
     }
   });
 
-  test('the probe always fires for worktree tasks', async () => {
-    // Guards against a regression where the worktree probe is short-circuited
-    // before calling checkPendingChanges. If the IPC never fires, dirty
-    // worktrees cannot be detected and the safety net is silently removed.
-    const { browser, page } = await launch();
-
-    try {
-      await page.locator('[data-swimlane-name="Done"]').waitFor({ state: 'visible', timeout: 15000 });
-
-      // Install a spy before the drag so we can verify the IPC was called.
-      await page.evaluate(() => {
-        (window as unknown as { __checkPendingChangesCalledWt: boolean }).__checkPendingChangesCalledWt = false;
-        const original = (window as unknown as {
-          electronAPI: { git: { checkPendingChanges: (...args: unknown[]) => Promise<{ hasPendingChanges: boolean; uncommittedFileCount: number; unpushedCommitCount: number; currentBranch: string | null }> } };
-        }).electronAPI.git.checkPendingChanges;
-        (window as unknown as {
-          electronAPI: { git: { checkPendingChanges: (...args: unknown[]) => Promise<{ hasPendingChanges: boolean; uncommittedFileCount: number; unpushedCommitCount: number; currentBranch: string | null }> } };
-        }).electronAPI.git.checkPendingChanges = async function (...args) {
-          (window as unknown as { __checkPendingChangesCalledWt: boolean }).__checkPendingChangesCalledWt = true;
-          return original.apply(this, args as []);
-        };
-      });
-
-      await dragTaskToColumn(page, 'Worktree Animate Me', 'Done');
-
-      // No dialog because the probe returns clean (hasPendingChanges: false).
-      // (intentional fixed wait - we cannot poll for non-occurrence)
-      await page.waitForTimeout(1000);
-      await expect(page.locator('text=Move to Done?')).toBeHidden();
-
-      // The IPC probe MUST have fired despite the skip flag.
-      const wasCalled = await page.evaluate(() => {
-        return (window as unknown as { __checkPendingChangesCalledWt: boolean }).__checkPendingChangesCalledWt;
-      });
-      expect(wasCalled).toBe(true);
-    } finally {
-      await browser.close();
-    }
-  });
+  // Trimmed (test-suite audit): "the probe always fires for worktree tasks" is
+  // the same spy on the same drag in move-to-done-confirm.spec.ts.
 });

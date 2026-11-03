@@ -109,18 +109,10 @@ async function focusConversationWindow(page: Page): Promise<void> {
 }
 
 test.describe('Conversation Viewer - in-viewer search', () => {
-  test('the search bar is visible by default, with no header toggle button', async () => {
-    const { browser, page } = await launch();
-    try {
-      await openConversation(page);
-      await expect(page.getByTestId('conversation-search-bar')).toBeVisible();
-      await expect(page.getByTestId('conversation-search-input')).toBeVisible();
-      await expect(page.getByTestId('conversation-search-button')).toHaveCount(0);
-    } finally {
-      await browser.close();
-    }
-  });
-
+  // Trimmed (test-suite audit): "the search bar is visible by default" is
+  // implied by the Mod+F test (it focuses the input with no prior click on a
+  // toggle) and the typing test below; the "no header toggle button" count
+  // asserted a testid that no source file defines.
   test('Mod+F focuses the search input while the conversation window is focused, without also triggering board find', async () => {
     const { browser, page } = await launch();
     try {

@@ -71,9 +71,6 @@ const ALL_CAPS_FINAL = 'FIX THE SPACING';
 const ALL_CAPS_FINAL_SENTENCE_CASED = 'Fix the spacing';
 /** A final a model cased itself. Recasing it would type "Gpu". */
 const ACRONYM_FINAL = 'GPU';
-/** A refined final from a session whose live model is the Zipformer: cased and
- *  punctuated by the refinement model, so the shape guard leaves it as written. */
-const REFINED_ACRONYM_FINAL = 'Use the GPU.';
 
 const preConfig = `
   window.__mockPreConfigure(function (state) {
@@ -865,24 +862,10 @@ test.describe('dictation into the Browser pane note input', () => {
     }
   });
 
-  test('a refined final behind an all-caps live model is typed as written', async () => {
-    const page = await launch({ autoSubmit: false });
-    try {
-      await setMockFinal(page, { sentenceCaseFinal: true, stopText: REFINED_ACRONYM_FINAL });
-      const search = page.locator('input[placeholder="Search board..."]');
-      await search.click();
-
-      await pressAndHold(page);
-      expect(await dictationTargetKind(page)).toBe('input');
-      await release(page);
-
-      await expect.poll(() => dictationStatus(page), { timeout: 10000 }).toBe('idle');
-      await expect(search).toHaveValue(REFINED_ACRONYM_FINAL);
-    } finally {
-      await page.context().close();
-    }
-  });
-
+  // Trimmed (test-suite audit): "a refined final behind an all-caps live model
+  // is typed as written" is toPreviewCase's keep-punctuated-text cases in
+  // tests/unit/dictation-preview-case.test.ts; the final path calls the same
+  // function, and the test above proves it is wired in.
   test('a pushed final is recased only when main asks for it', async () => {
     // The `onFinal` push is the second place a final is committed from. It lands
     // in the store's `finalText`, which the popup's Send button commits, so the

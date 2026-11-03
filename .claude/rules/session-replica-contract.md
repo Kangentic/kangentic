@@ -107,7 +107,7 @@ a black terminal with a populated context bar instead of the edit form.
   `killByTaskId(` call site under `src/main` and fails unless a `remove`, `suspend`,
   `announceSessionEnded`, cleanup helper, or inline status/removal emit follows within 40 lines,
   or the site is allowlisted by its own line with a reason. A line-order scan, not control flow;
-  `tests/unit/transition-cleanup-worktree.test.ts` pins the one site that needed the announcement.
+  the same file pins that `announceSessionEnded` still emits a status.
 - **Tests (consumers):** `tests/unit/activity-interval-recorder.test.ts` pins that a removal closes
   the interval a direct `remove()` used to strand; `tests/unit/message-trail-tracker.test.ts` pins
   the eager drop.

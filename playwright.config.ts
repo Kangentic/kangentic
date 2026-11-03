@@ -62,7 +62,7 @@ export default defineConfig({
       // new-task-dialog, the Changes-panel branch header) drop input and fail
       // even past the CI retry. 8 failed deterministically; 4 held until the
       // always-mounted app surface grew enough to tip it under load; 3 restores
-      // the per-page headroom at a negligible wall-clock cost (the 9 shards run
+      // the per-page headroom at a negligible wall-clock cost (the shards run
       // in parallel). The electron project keeps 8 - its per-file launch overlap
       // is the real win there.
       workers: 3,
@@ -84,14 +84,13 @@ export default defineConfig({
       testMatch: '**/*.spec.ts',
       // Windows cannot run concurrent electron.launch(), and a local run (any OS)
       // should not spawn a swarm of app windows - so workers=1 there. On CI's
-      // headless Linux runners (xvfb) concurrent launches are safe, so use 4 to
-      // parallelize the per-file app launch/teardown overhead within each shard.
-      // 8 on CI Linux (capped by the top-level `workers: 8` above - both must
-      // allow it). 8 >= the max spec files a shard lands (~5-6), so a shard
-      // launches all its files in ONE wave instead of a serial 2nd wave
-      // (~25s/file of app launch + teardown). Windows/local stay at 1 (no
-      // concurrent electron.launch()). Per-file teardown is I/O-bound and
-      // overlaps cleanly; per-pid temp-dir isolation keeps launches safe.
+      // headless Linux runners (xvfb) concurrent launches are safe, so use 8 to
+      // parallelize the per-file app launch/teardown overhead within each shard
+      // (capped by the top-level `workers: 8` above - both must allow it). A
+      // shard that lands more files than that starts a serial 2nd wave (~25s/file
+      // of app launch + teardown). Windows/local stay at 1 (no concurrent
+      // electron.launch()). Per-file teardown is I/O-bound and overlaps cleanly;
+      // per-pid temp-dir isolation keeps launches safe.
       workers: process.env.CI && process.platform !== 'win32' ? 8 : 1,
       // Slowest legitimate test is ~15s; 45s gives ~3x headroom while still
       // catching hangs faster than the global 60s default. The 45s budget
@@ -136,14 +135,21 @@ export default defineConfig({
       // shared `webServer` below on purpose: that block starts for every project
       // filter, so a dist/demo server there would break the ui tier (and every
       // local `--project=ui` run) whenever the demo build is absent. The spec
-      // surfaces a missing build as one named error instead. workers=1 because
-      // the file is a handful of serial page loads against one server; the CI
-      // retry mirrors the ui and electron projects.
+      // surfaces a missing build as one named error instead. Every test owns its
+      // page and each worker starts its own server, so nothing stops the tests
+      // running side by side. fullyParallel is what makes one spec file more
+      // than one group; without it the workers below would sit idle. 3 on CI for
+      // the reason the ui project gives (the job's time is real-time playback, not
+      // CPU, so it divides by workers), and the tests that play on a clock are
+      // what would starve first: --fail-on-flaky-tests makes that a red, not a
+      // quiet retry. 1 locally, where a run shares the machine with the app. The
+      // CI retry mirrors the ui and electron projects.
       name: 'demo',
       testDir: './tests/demo',
       testMatch: '**/*.spec.ts',
       timeout: 30_000,
-      workers: 1,
+      fullyParallel: true,
+      workers: process.env.CI ? 3 : 1,
       retries: process.env.CI ? 1 : 0,
       use: {
         browserName: 'chromium',
