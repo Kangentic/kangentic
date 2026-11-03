@@ -1,0 +1,290 @@
+/**
+ * The resume layer between the SSH link and the host helper (#913): a connection dies, the
+ * two endpoints pick up where each other stopped, and nothing is lost or repeated. Every
+ * test runs over in-memory duplex pairs; the real transport is `ssh`'s stdio, exercised by
+ * the rig.
+ */
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { duplexPair, type Duplex } from 'node:stream';
+import { ResumeEndpoint, type GapInfo, type ResumeEndpointOptions } from '../../src/main/remote/protocol/resume-endpoint';
+
+interface Side {
+  endpoint: ResumeEndpoint;
+  messages: Array<{ json: unknown; raw: string }>;
+  detached: string[];
+  gaps: GapInfo[];
+  attachedCount: number;
+}
+
+const sides: Side[] = [];
+
+function makeSide(role: 'link' | 'helper', overrides: Partial<ResumeEndpointOptions> & { vet?: (identity: Record<string, string | number>) => string | null } = {}): Side {
+  const { vet, ...options } = overrides;
+  const side: Side = { endpoint: undefined as unknown as ResumeEndpoint, messages: [], detached: [], gaps: [], attachedCount: 0 };
+  side.endpoint = new ResumeEndpoint(
+    {
+      onMessage: (json, raw) => side.messages.push({ json, raw: raw.toString('latin1') }),
+      onAttached: () => { side.attachedCount += 1; },
+      onDetached: (reason) => side.detached.push(reason),
+      onGap: (info) => side.gaps.push(info),
+      vetPeer: vet ? (peer) => vet(peer.identity) : undefined,
+    },
+    { role, protocol: { min: 1, max: 1 }, identity: { name: role }, ...options },
+  );
+  sides.push(side);
+  return side;
+}
+
+function connect(first: Side, second: Side): [Duplex, Duplex] {
+  const [firstStream, secondStream] = duplexPair();
+  // duplexPair leaves the far end open when one end is destroyed, which a socket or a pipe would not.
+  firstStream.on('close', () => secondStream.destroy());
+  secondStream.on('close', () => firstStream.destroy());
+  first.endpoint.attach(firstStream);
+  second.endpoint.attach(secondStream);
+  return [firstStream, secondStream];
+}
+
+/** A link between two sides through a pipe that can swallow the next bytes going from first to second. */
+function lossyConnect(first: Side, second: Side): { dropNext(count: number): void; streams: [Duplex, Duplex] } {
+  const [firstOuter, firstInner] = duplexPair();
+  const [secondOuter, secondInner] = duplexPair();
+  let toDrop = 0;
+  firstInner.on('data', (chunk: Buffer) => {
+    let kept = chunk;
+    if (toDrop > 0) {
+      const cut = Math.min(toDrop, kept.length);
+      kept = kept.subarray(cut);
+      toDrop -= cut;
+    }
+    if (kept.length > 0) secondInner.write(kept);
+  });
+  secondInner.on('data', (chunk: Buffer) => firstInner.write(chunk));
+  firstInner.on('close', () => secondInner.destroy());
+  secondInner.on('close', () => firstInner.destroy());
+  first.endpoint.attach(firstOuter);
+  second.endpoint.attach(secondOuter);
+  return { dropNext: (count) => { toDrop = count; }, streams: [firstOuter, secondOuter] };
+}
+
+async function settle(): Promise<void> {
+  for (let round = 0; round < 8; round += 1) await new Promise((resolve) => setImmediate(resolve));
+}
+
+const indexes = (side: Side): number[] => side.messages.map((message) => (message.json as { n: number }).n);
+
+afterEach(() => {
+  vi.useRealTimers();
+  for (const side of sides.splice(0)) side.endpoint.detach('test over');
+});
+
+describe('delivery', () => {
+  it('delivers messages both ways in order, with the raw bytes intact', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    connect(link, helper);
+    await settle();
+    link.endpoint.send({ n: 1 }, Buffer.from([0, 255, 10, 13]));
+    link.endpoint.send({ n: 2 });
+    helper.endpoint.send({ n: 3 }, Buffer.from('output'));
+    await settle();
+    expect(indexes(helper)).toEqual([1, 2]);
+    expect(Buffer.from(helper.messages[0].raw, 'latin1')).toEqual(Buffer.from([0, 255, 10, 13]));
+    expect(indexes(link)).toEqual([3]);
+    expect(link.messages[0].raw).toBe('output');
+    expect(link.attachedCount).toBe(1);
+    expect(helper.attachedCount).toBe(1);
+  });
+
+  it('holds what is sent before a connection exists and delivers it once one is up', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    link.endpoint.send({ n: 1 });
+    link.endpoint.send({ n: 2 });
+    connect(link, helper);
+    await settle();
+    expect(indexes(helper)).toEqual([1, 2]);
+  });
+
+  it('frees what the peer has acknowledged', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper', { ackEveryBytes: 1 });
+    connect(link, helper);
+    await settle();
+    for (let n = 0; n < 5; n += 1) link.endpoint.send({ n }, Buffer.alloc(100, 1));
+    await settle();
+    expect(link.endpoint.stats.retainedFrames).toBe(0);
+    expect(link.endpoint.stats.retainedBytes).toBe(0);
+  });
+});
+
+describe('resuming', () => {
+  it('picks up after a dead connection with nothing lost or repeated, both ways', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    const [linkStream] = connect(link, helper);
+    await settle();
+    for (let n = 0; n < 5; n += 1) link.endpoint.send({ n });
+    await settle();
+    linkStream.destroy();
+    await settle();
+    expect(link.detached).toHaveLength(1);
+    expect(helper.detached).toHaveLength(1);
+    for (let n = 5; n < 10; n += 1) link.endpoint.send({ n });
+    for (let n = 100; n < 103; n += 1) helper.endpoint.send({ n });
+    connect(link, helper);
+    await settle();
+    expect(indexes(helper)).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    expect(indexes(link)).toEqual([100, 101, 102]);
+    expect(link.gaps).toEqual([]);
+    expect(helper.gaps).toEqual([]);
+  });
+
+  it('replays frames that were in flight, and lost, when the connection died', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    const lossy = lossyConnect(link, helper);
+    await settle();
+    lossy.dropNext(1_000_000);
+    for (let n = 0; n < 4; n += 1) link.endpoint.send({ n }, Buffer.alloc(300, n));
+    await settle();
+    expect(helper.messages).toHaveLength(0);
+    lossy.streams[0].destroy();
+    await settle();
+    connect(link, helper);
+    await settle();
+    expect(indexes(helper)).toEqual([0, 1, 2, 3]);
+  });
+
+  it('ends a connection whose bytes were damaged in the middle, then resumes cleanly', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    const lossy = lossyConnect(link, helper);
+    await settle();
+    for (let n = 0; n < 6; n += 1) link.endpoint.send({ n }, Buffer.alloc(5000, n));
+    await settle();
+    lossy.dropNext(40);
+    for (let n = 6; n < 20; n += 1) link.endpoint.send({ n }, Buffer.alloc(5000, n));
+    await settle();
+    expect(helper.detached.some((reason) => reason.includes('damaged'))).toBe(true);
+    connect(link, helper);
+    await settle();
+    expect(indexes(helper)).toEqual(Array.from({ length: 20 }, (_, n) => n));
+    for (const message of helper.messages) {
+      const n = (message.json as { n: number }).n;
+      expect(message.raw).toBe(String.fromCharCode(n).repeat(5000));
+    }
+  });
+});
+
+describe('what cannot be replayed', () => {
+  it('turns a resume past the retention limit into a reset the peer reports as a gap', async () => {
+    const link = makeSide('link', { retainLimitBytes: 3000 });
+    const helper = makeSide('helper');
+    const [linkStream] = connect(link, helper);
+    await settle();
+    link.endpoint.send({ n: 0 }, Buffer.alloc(900, 0));
+    await settle();
+    linkStream.destroy();
+    await settle();
+    for (let n = 1; n <= 8; n += 1) link.endpoint.send({ n }, Buffer.alloc(900, n));
+    connect(link, helper);
+    await settle();
+    expect(helper.gaps).toHaveLength(1);
+    expect(helper.gaps[0]).toMatchObject({ direction: 'incoming', cause: 'retention' });
+    expect(helper.gaps[0].lostTo).toBeGreaterThan(helper.gaps[0].lostFrom);
+    expect(link.gaps[0]).toMatchObject({ direction: 'outgoing', cause: 'retention' });
+    const received = indexes(helper);
+    expect(received[0]).toBe(0);
+    expect(received.slice(1)).toEqual(received.slice(1).slice().sort((first, second) => first - second));
+    expect(received.at(-1)).toBe(8);
+    link.endpoint.send({ n: 9 });
+    await settle();
+    expect(indexes(helper).at(-1)).toBe(9);
+  });
+
+  it('tells a peer that remembers more than this side ever sent where the stream is now', async () => {
+    const helper = makeSide('helper');
+    const link = makeSide('link');
+    connect(link, helper);
+    await settle();
+    for (let n = 0; n < 3; n += 1) helper.endpoint.send({ n }, Buffer.alloc(200));
+    await settle();
+    link.endpoint.detach();
+    await settle();
+    const restartedHelper = makeSide('helper');
+    connect(link, restartedHelper);
+    await settle();
+    expect(link.gaps).toHaveLength(1);
+    expect(link.gaps[0]).toMatchObject({ direction: 'incoming', cause: 'peer-ahead' });
+    restartedHelper.endpoint.send({ n: 50 });
+    await settle();
+    expect(indexes(link).at(-1)).toBe(50);
+  });
+});
+
+describe('refusal', () => {
+  it('refuses a peer with no protocol version in common and tells it why', async () => {
+    const link = makeSide('link', { protocol: { min: 3, max: 4 } });
+    const helper = makeSide('helper', { protocol: { min: 1, max: 2 } });
+    connect(link, helper);
+    await settle();
+    expect(link.attachedCount + helper.attachedCount).toBe(0);
+    expect([...link.detached, ...helper.detached].join(' ')).toContain('no protocol version in common');
+  });
+
+  it('lets the owner turn a peer away, and the peer hears the reason', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper', { vet: () => 'another installation owns this host' });
+    connect(link, helper);
+    await settle();
+    expect(helper.attachedCount).toBe(0);
+    expect(link.detached.join(' ')).toContain('another installation owns this host');
+  });
+
+  it('replaces an attached connection when a newer one arrives', async () => {
+    const link = makeSide('link');
+    const helper = makeSide('helper');
+    connect(link, helper);
+    await settle();
+    connect(link, helper);
+    await settle();
+    expect(link.detached.some((reason) => reason.includes('replaced'))).toBe(true);
+    link.endpoint.send({ n: 1 });
+    await settle();
+    expect(indexes(helper)).toEqual([1]);
+  });
+});
+
+describe('liveness', () => {
+  it('drops a connection the peer has gone silent on', async () => {
+    vi.useFakeTimers();
+    const link = makeSide('link', { deadAfterMs: 4_000, heartbeatMs: 1_000 });
+    const [stream] = duplexPair();
+    link.endpoint.attach(stream);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(link.detached.some((reason) => reason.includes('no frame from the peer'))).toBe(true);
+  });
+
+  it('keeps a quiet connection alive with heartbeats', async () => {
+    vi.useFakeTimers();
+    const link = makeSide('link', { deadAfterMs: 4_000, heartbeatMs: 1_000 });
+    const helper = makeSide('helper', { deadAfterMs: 4_000, heartbeatMs: 1_000 });
+    connect(link, helper);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(link.detached).toEqual([]);
+    expect(helper.detached).toEqual([]);
+    expect(link.endpoint.connected).toBe(true);
+  });
+
+  it('drops a connection whose send queue stopped draining, keeping what was sent for the next one', async () => {
+    const link = makeSide('link', { maxWritableBytes: 100_000 });
+    const helper = makeSide('helper');
+    const [, helperStream] = connect(link, helper);
+    await settle();
+    helperStream.pause();
+    for (let n = 0; n < 12; n += 1) link.endpoint.send({ n }, Buffer.alloc(100_000, n));
+    expect(link.detached.some((reason) => reason.includes('send queue'))).toBe(true);
+    expect(link.endpoint.stats.retainedFrames).toBeGreaterThan(0);
+  });
+});
