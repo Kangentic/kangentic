@@ -452,6 +452,7 @@ export async function performSpawn(
         place,
         localSessionDirectory: path.dirname(input.statusOutputPath),
         statusOutputPath: input.statusOutputPath,
+        extraFiles: input.agentParser?.remoteSessionFiles?.() ?? [],
       });
     } catch (error) {
       registrationError = error instanceof Error ? error : new Error(String(error));

@@ -16,6 +16,11 @@ export interface RemoteFileDeclaration {
   home: readonly string[];
   /** Relative to the folder the agent starts in (`.cursor/mcp.json`). */
   project: readonly string[];
+  /**
+   * Files from `home` or `project` that hold a secret (a token in an MCP config), written on the host
+   * readable by their owner only. Without this a project file is written 0644, as a checkout makes it.
+   */
+  private?: readonly string[];
 }
 
 /** A declaration that names nothing, for an adapter that edits no file outside its session folder. */

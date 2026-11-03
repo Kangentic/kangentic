@@ -48,7 +48,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[] } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -98,7 +98,20 @@ async function makeRig(): Promise<Rig> {
   });
   inbox.start();
 
-  await relay.register({ hostId: 'host-a', sessionId: 's1', place, localSessionDirectory: localSession, statusOutputPath: statusPath });
+  for (const [relative, content] of Object.entries(options.extraFiles ?? {})) {
+    const target = path.join(localSession, ...relative.split('/'));
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content);
+  }
+  teardown.push(() => inbox.close(), () => relay.dispose(), () => link.stop(), () => helperRig.helper.dispose());
+  await relay.register({
+    hostId: 'host-a',
+    sessionId: 's1',
+    place,
+    localSessionDirectory: localSession,
+    statusOutputPath: statusPath,
+    ...(options.declareExtra ? { extraFiles: options.declareExtra } : {}),
+  });
   teardown.push(() => inbox.close(), () => relay.dispose(), () => link.stop(), () => helperRig.helper.dispose());
   const hostSession = path.join(hostProject, '.kangentic', 'sessions', 's1');
   return { relay, link, place, localSession, hostSession, eventsPath, statusPath, inbox, mcpCalls };
@@ -127,6 +140,23 @@ describe('registering a session', () => {
     expect(fs.readFileSync(path.join(rig.hostSession, 'wsl-hooks', 'wsl-hook.sh'), 'utf8')).toBe(fs.readFileSync(wslHookPaths(rig.localSession).script, 'utf8'));
     for (const folder of ['inbox', 'requests', 'responses']) expect(fs.statSync(path.join(rig.hostSession, 'wsl-hooks', folder)).isDirectory()).toBe(true);
     if (process.platform !== 'win32') expect(fs.statSync(path.join(rig.hostSession, 'wsl-hooks', 'wsl-hook.sh')).mode & 0o777).toBe(0o755);
+  });
+
+  it('also sends the extra session files an agent names, such as Copilot\'s config folder, and skips one it did not write', async () => {
+    const rig = await makeRig({
+      extraFiles: { 'copilot-config/config.json': '{"account":1}', 'copilot-config/hooks/kangentic.json': '{"hooks":[]}' },
+      declareExtra: ['copilot-config/config.json', 'copilot-config/hooks/kangentic.json', 'copilot-mcp.json'],
+    });
+
+    expect(fs.readFileSync(path.join(rig.hostSession, 'copilot-config', 'config.json'), 'utf8')).toBe('{"account":1}');
+    expect(fs.readFileSync(path.join(rig.hostSession, 'copilot-config', 'hooks', 'kangentic.json'), 'utf8')).toBe('{"hooks":[]}');
+    expect(fs.existsSync(path.join(rig.hostSession, 'copilot-mcp.json'))).toBe(false);
+    if (process.platform !== 'win32') expect(fs.statSync(path.join(rig.hostSession, 'copilot-config', 'config.json')).mode & 0o777).toBe(0o600);
+  });
+
+  it.each(['../escape.json', '/etc/passwd', 'a\\b', 'a//b', ''])('refuses an extra file named %j, so an agent cannot reach outside the session folder', async (name) => {
+    await expect(makeRig({ declareExtra: [name] })).rejects.toThrow(/not a plain path/);
+    expect(fs.existsSync(path.join(hostProject, '..', 'escape.json'))).toBe(false);
   });
 
   it('writes nothing outside the host project\'s folder and the home', async () => {

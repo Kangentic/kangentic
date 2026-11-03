@@ -44,6 +44,11 @@ export interface RemoteSessionRegistration {
   localSessionDirectory: string;
   /** Where the status line's JSON goes on this computer. */
   statusOutputPath: string;
+  /**
+   * More files of the session folder to send, relative to it (`AgentParser.remoteSessionFiles`). A
+   * name that is not a plain relative path is refused, so an adapter cannot reach outside the folder.
+   */
+  extraFiles?: readonly string[];
 }
 
 type HookFileEvent = Extract<PtyHostEvent, { type: 'hookFile' }>;
@@ -112,6 +117,14 @@ export class RemoteSessionRelay {
       for (const [name, mode] of [['settings.json', 0o600], ['mcp.json', 0o600]] as const) {
         const content = await readIfPresent(path.join(registration.localSessionDirectory, name));
         if (content !== null) files.push({ path: toHost(path.join(registration.localSessionDirectory, name)), content, mode });
+      }
+      for (const relative of registration.extraFiles ?? []) {
+        if (relative.length === 0 || relative.startsWith('/') || relative.includes('\\') || relative.split('/').some((part) => part === '' || part === '..')) {
+          throw new Error(`${relative} is not a plain path inside the session folder, so it was not sent to the host.`);
+        }
+        const localFile = path.join(registration.localSessionDirectory, ...relative.split('/'));
+        const content = await readIfPresent(localFile);
+        if (content !== null) files.push({ path: toPosix(toHost(localFile)), content, mode: 0o600 });
       }
       const script = await readIfPresent(localHooks.script);
       if (script !== null) files.push({ path: toPosix(toHost(localHooks.script)), content: script, mode: 0o755 });

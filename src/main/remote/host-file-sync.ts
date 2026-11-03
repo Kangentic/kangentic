@@ -51,6 +51,8 @@ export class HostFileTooLargeError extends Error {
 interface TrackedFile {
   kind: 'home' | 'project';
   relative: string;
+  /** The adapter marked it as holding a secret: written owner-only. */
+  secret: boolean;
   localPath: string;
   hostPath: string;
   /** What the host holds now, as far as this object knows: null when it has no such file. */
@@ -74,15 +76,21 @@ export class HostFileSync {
     const files = place.files;
     if (!files) throw new Error('This host has no connection to edit its files through.');
     const resolvedDirectory = path.resolve(workingDirectory);
+    const secrets = new Set(declaration.private ?? []);
+    for (const relative of secrets) {
+      if (!declaration.home.includes(relative) && !declaration.project.includes(relative)) {
+        throw new Error(`${relative} is marked private but is not a declared host file.`);
+      }
+    }
     const tracked: TrackedFile[] = [
       ...declaration.home.map((relative): TrackedFile => {
         assertRelative(relative);
-        return { kind: 'home', relative, localPath: path.join(place.localHome, ...relative.split('/')), hostPath: `${place.home}/${relative}`, hostContent: null };
+        return { kind: 'home', relative, secret: secrets.has(relative), localPath: path.join(place.localHome, ...relative.split('/')), hostPath: `${place.home}/${relative}`, hostContent: null };
       }),
       ...declaration.project.map((relative): TrackedFile => {
         assertRelative(relative);
         const localPath = path.join(resolvedDirectory, ...relative.split('/'));
-        return { kind: 'project', relative, localPath, hostPath: localPathToHost(localPath, place.roots), hostContent: null };
+        return { kind: 'project', relative, secret: secrets.has(relative), localPath, hostPath: localPathToHost(localPath, place.roots), hostContent: null };
       }),
     ];
     // Each read is its own round trip and none depends on another, so they run together.
@@ -175,10 +183,10 @@ function assertRelative(relative: string): void {
   }
 }
 
-/** Scripts must run; a file under the home may hold a token; a project file keeps the mode a checkout gives. */
+/** Scripts must run; a secret or a file under the home is owner-only; a project file keeps the mode a checkout gives. */
 function modeFor(file: TrackedFile): number {
   if (file.relative.endsWith('.sh')) return 0o755;
-  return file.kind === 'home' ? 0o600 : 0o644;
+  return file.secret || file.kind === 'home' ? 0o600 : 0o644;
 }
 
 async function readLocal(localPath: string): Promise<string | null> {

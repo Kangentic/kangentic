@@ -6668,6 +6668,14 @@ export interface AgentParser {
    */
   consoleCloseIsGraceful?(platform: NodeJS.Platform): boolean;
   /**
+   * Optional: files this agent's command reads from the session's own folder beyond the three the
+   * remote session relay always sends (`settings.json`, `mcp.json`, the hook script), as plain paths
+   * relative to that folder with `/` separators (`copilot-config/config.json`). For a CLI on an SSH
+   * host the relay writes each one that exists to the same place on the host before the agent starts
+   * (#913). Absent for an agent whose command needs nothing more.
+   */
+  remoteSessionFiles?(): readonly string[];
+  /**
    * Optional: whether the agent's plan tool approval hook may answer a
    * permission prompt for this tool. The activity gate waits for the hook's
    * marker only on such a prompt. See `AgentAdapter.mayApprovePlanTool`.

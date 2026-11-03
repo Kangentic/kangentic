@@ -155,6 +155,20 @@ describe('pushing what the adapter changed', () => {
     expect(host.modes.get('/home/dev/app/.kangentic/gemini-wsl-hook.sh')).toBe(0o755);
   });
 
+  it('writes a file the adapter marks private owner-only, and refuses to mark a file it did not declare', async () => {
+    const sync = await HostFileSync.pull({ home: [], project: ['.agents/plugins/kangentic/mcp_config.json', CURSOR_MCP], private: ['.agents/plugins/kangentic/mcp_config.json'] }, projectFolder, place);
+    await fs.mkdir(path.join(projectFolder, '.agents', 'plugins', 'kangentic'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.agents', 'plugins', 'kangentic', 'mcp_config.json'), '{"token":"secret"}');
+    await fs.mkdir(path.join(projectFolder, '.cursor'), { recursive: true });
+    await fs.writeFile(path.join(projectFolder, '.cursor', 'mcp.json'), '{}');
+
+    await sync.push();
+
+    expect(host.modes.get('/home/dev/app/.agents/plugins/kangentic/mcp_config.json')).toBe(0o600);
+    expect(host.modes.get('/home/dev/app/.cursor/mcp.json')).toBe(0o644);
+    await expect(HostFileSync.pull({ home: [], project: [CURSOR_MCP], private: ['.not/declared.json'] }, projectFolder, place)).rejects.toThrow(/not a declared host file/);
+  });
+
   it('does not overwrite a file the user changed on the host while the session was being prepared', async () => {
     host.files.set('/home/dev/app/.cursor/mcp.json', '{"v":1}');
     const sync = await HostFileSync.pull({ home: [], project: [CURSOR_MCP] }, projectFolder, place);
