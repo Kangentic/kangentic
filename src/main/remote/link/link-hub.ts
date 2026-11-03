@@ -56,6 +56,13 @@ export class LinkHub implements PtyHostTransport {
   /** Each remote session's PTY id, so a session the host reports lost takes its PTY's route with it. */
   private readonly sessionPtys = new Map<string, number>();
   private readonly ports = new Map<number, RendererPort>();
+  /**
+   * The last focus each renderer posted and the last tap set. A link added later (the pty host
+   * restarted and replays focus before its hosts are re-added) gets them, or the helper would send a
+   * session's output to no renderer until the next focus change happened to arrive.
+   */
+  private readonly rendererFocus = new Map<number, string[]>();
+  private tapped: string[] = [];
   private eventListener: ((event: PtyHostEvent) => void) | null = null;
   private handlers: RemoteLinkHandlers = {};
 
@@ -93,6 +100,8 @@ export class LinkHub implements PtyHostTransport {
     });
     this.links.set(hostId, link);
     for (const [rendererId, port] of this.ports) link.attachRendererPort(rendererId, port);
+    for (const [rendererId, sessionIds] of this.rendererFocus) link.post({ type: 'setRendererFocus', rendererId, sessionIds });
+    if (this.tapped.length > 0) link.post({ type: 'setTapped', sessionIds: this.tapped });
     link.start();
     return link;
   }
@@ -161,8 +170,13 @@ export class LinkHub implements PtyHostTransport {
   post(command: PtyHostCommand): void {
     const route = commandRoute(command);
     if (route === 'every-host') {
-      // A renderer that is gone takes its port with it; a later host must not attach a dead one.
-      if (command.type === 'forgetRenderer') this.ports.delete(command.rendererId);
+      // A renderer that is gone takes its port and its focus with it; a later host must not get either.
+      if (command.type === 'forgetRenderer') {
+        this.ports.delete(command.rendererId);
+        this.rendererFocus.delete(command.rendererId);
+      }
+      if (command.type === 'setRendererFocus') this.rendererFocus.set(command.rendererId, command.sessionIds);
+      if (command.type === 'setTapped') this.tapped = command.sessionIds;
       for (const link of this.links.values()) link.post(command);
       return;
     }

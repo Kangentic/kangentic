@@ -11,6 +11,7 @@ import { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
 import type { HelperServer } from '../../src/main/remote/helper/helper-server';
 import type { HelperSessionRecord } from '../../src/main/remote/protocol/messages';
 import { dialHelper, makeHelperRig, settle, spawnParams, type HelperRig } from './helpers/remote-link-rig';
+import { createFakeRendererPort, receivedOutput } from './helpers/fake-renderer-port';
 
 const FAST = { initialDelayMs: 100, maxDelayMs: 400 };
 const teardown: Array<() => void> = [];
@@ -106,6 +107,34 @@ describe('LinkHub.addHost for a new host with sessions it already holds', () => 
     secondHub.post({ type: 'write', ptyId, data: 'typed after restart' });
     await settle();
     expect(helper.fakes[0].write).toHaveBeenCalledWith('typed after restart');
+  });
+
+  it('shows the session\'s output in a renderer whose focus was posted before the host was re-added', async () => {
+    const helper = makeHelperRig(1);
+    teardown.push(() => helper.helper.dispose());
+
+    const firstHub = new LinkHub();
+    const firstClient = new PtyHostClient(firstHub);
+    addHostTo(firstHub, 'host-a', helper, 'boot-1');
+    await settle();
+    const spawning = firstClient.spawn(spawnParams('s1', 'task-1', 'host-a'));
+    await settle();
+    const outcome = await spawning;
+    if (!outcome.ok) throw outcome.error;
+    firstHub.removeHost('host-a');
+    await settle();
+
+    // A restarted pty host gets a renderer's port and focus first, and its hosts only seconds later.
+    const secondHub = new LinkHub();
+    const renderer = createFakeRendererPort();
+    secondHub.attachRendererPort(7, renderer.port);
+    secondHub.post({ type: 'setRendererFocus', rendererId: 7, sessionIds: ['s1'] });
+    addHostTo(secondHub, 'host-a', helper, 'boot-2', [{ sessionId: 's1', ptyId: outcome.pty.ptyId }]);
+    await settle();
+
+    helper.fakes[0].feed('output after the restart');
+    await settle();
+    expect(receivedOutput(renderer).map((message) => message.data).join('')).toContain('output after the restart');
   });
 });
 

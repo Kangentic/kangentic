@@ -29,6 +29,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { isEntrypoint } from './lib/is-entrypoint.mjs';
 
 /** Pinned. Raise it deliberately: the helper runs on this Node on every host. */
 export const NODE_VERSION = 'v24.22.2';
@@ -201,7 +202,7 @@ async function main() {
 }
 
 // Run only as a script, so the SSH rigs can import NODE_VERSION without starting a build.
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (isEntrypoint(import.meta.url)) {
   main().catch((error) => {
     process.stderr.write(`[build-host] ${error instanceof Error ? error.message : String(error)}\n`);
     process.exit(1);
