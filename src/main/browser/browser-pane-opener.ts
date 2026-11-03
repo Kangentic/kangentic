@@ -17,6 +17,8 @@ import {
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { openLane, destroyLane, hasLaneForTask } from './browser-lane-manager';
+import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
+import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
 
 /**
  * Opens and closes a task's embedded Browser pane on behalf of the
@@ -67,9 +69,21 @@ export interface BrowserPaneOpenerHost {
    * Keep the `project-not-open` check ahead of every call site.
    */
   taskExists(projectId: string, taskId: string): boolean;
+  /**
+   * Whether a project's Command Terminal slot has a live (running or queued)
+   * session. A Command Terminal's surface is keyed by its slot, not a task, so
+   * this stands in for `taskExists` on that path. Reads the session registry
+   * only, so unlike `taskExists` it is safe for any project id.
+   */
+  commandTerminalLive(projectId: string, slot: string): boolean;
   /** The project's `browser` config overrides, if any. */
   browserOverrides(projectPath: string): { enabled?: boolean; defaultUrl?: string } | null;
-  /** Push to the app window. False when there is no live window to push to. */
+  /**
+   * Push to the app window, and to every pop-out window whose surface declares
+   * the channel: a detached Command Terminal window hosts its terminals' Browser
+   * panes, so an open or close request for one has to reach it. False when there
+   * is no live app window to push to.
+   */
   send(channel: string, ...args: unknown[]): boolean;
   /** Whether the task's Browser pane is detached into its own OS window. */
   hasDetachedWindow(projectId: string, taskId: string): boolean;
@@ -382,7 +396,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   if (!callerTaskId) {
     return failure(
       'no-caller-task',
-      'This connection is not bound to a task, so there is no pane to open. Only an agent running on a Kangentic task can open its own Browser pane; a Command Terminal or a manually configured MCP client cannot. Ask the user to open the task\'s Browser pane instead.',
+      NO_CALLER_BROWSER_DETAIL,
     );
   }
 
@@ -507,7 +521,18 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
     );
   }
 
-  if (!host.taskExists(projectId, callerTaskId)) {
+  // A Command Terminal's owner key names no task row, so it is checked against
+  // the session registry instead: the terminal has to be running for its pane
+  // to have somewhere to mount.
+  const commandTerminal = parseCommandTerminalBrowserOwner(callerTaskId);
+  if (commandTerminal) {
+    if (!host.commandTerminalLive(projectId, commandTerminal.slot)) {
+      return failure(
+        'command-terminal-not-running',
+        'Your Command Terminal is no longer running, so its Browser pane has nowhere to open.',
+      );
+    }
+  } else if (!host.taskExists(projectId, callerTaskId)) {
     return failure('task-not-found', `Task ${callerTaskId} is not on this project's board.`);
   }
 
@@ -528,7 +553,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   if (!resolvedUrl) {
     return failure(
       'no-url',
-      'No URL to load: this task has no saved Browser URL and the project has no default. Pass the `url` argument (for example http://localhost:5173).',
+      'No URL to load: there is no saved Browser URL here and the project has no default. Pass the `url` argument (for example http://localhost:5173).',
     );
   }
   const validated = validateNavigationUrl(resolvedUrl, config);
@@ -562,7 +587,7 @@ export async function openPaneForCallerTask(input: OpenPaneInput): Promise<Drive
   if (!entry) {
     return failure(
       'pane-open-timeout',
-      `The Browser pane did not come up within ${PANE_OPEN_TIMEOUT_MS / 1000}s. The Kangentic window may be minimized, or the task's detail window may have failed to open. Ask the user to check, or call kangentic_browser_list_panes to see what is open.`,
+      `The Browser pane did not come up within ${PANE_OPEN_TIMEOUT_MS / 1000}s. The Kangentic window may be minimized, or the ${commandTerminal ? 'Command Terminal panel' : "task's detail window"} may have failed to open. Ask the user to check, or call kangentic_browser_list_panes to see what is open.`,
     );
   }
 

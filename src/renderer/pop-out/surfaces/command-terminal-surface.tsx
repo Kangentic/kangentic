@@ -44,9 +44,18 @@ export const commandTerminalSurface: SurfaceDescriptor<'command-terminal'> = {
       }),
     ];
     for (const unsubscribe of unsubscribers) signal.addEventListener('abort', unsubscribe);
+    // Which terminals hold their page OFFSCREEN: the Running row's globe and the
+    // Globe pill's dot read it, and only main can see one. Read once, then live
+    // on the push, as the detached Agent Monitor does.
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
+    const unsubscribeOffscreen = window.electronAPI.browser?.onOffscreenSurfaces?.((ownerKeys) => {
+      useSessionStore.getState().setBrowserOffscreenTasks(ownerKeys);
+    });
+    if (unsubscribeOffscreen) signal.addEventListener('abort', unsubscribeOffscreen);
   },
 
   hmrResync: () => {
+    void useSessionStore.getState().loadBrowserOffscreenTasks();
     void useSessionStore.getState().syncSessions();
     void useConfigStore.getState().loadAgentList();
   },

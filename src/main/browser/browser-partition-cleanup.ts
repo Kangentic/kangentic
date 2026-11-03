@@ -42,8 +42,9 @@ const PARTITION_SWEEP_GRACE_PERIOD_MS = 10 * 60 * 1000;
 
 /**
  * The partition strings the clear-storage IPC handler wipes for one project: the
- * legacy shared jar, the project's identity jar, and every task jar it owns on
- * disk (`kng-<thisProjectId>-*`). Derived by prefix match on the Partitions
+ * legacy shared jar, the project's identity jar, and every task jar and the
+ * Command Terminal jar it owns on disk (`kng-<thisProjectId>-*`, matched through
+ * `parseKngPartitionDir`, which knows all three kinds). Derived by prefix match on the Partitions
  * directory - no DB needed. Sync, matching the handler's shape.
  */
 export function enumerateProjectPartitions(projectId: string | null, userDataPath: string): string[] {
@@ -170,7 +171,9 @@ export async function sweepOrphanedBrowserPartitions(
     const parsed = parseKngPartitionDir(name);
     if (!parsed) return false; // legacy shared jar or a foreign consumer - never touch
     if (!projectsByKey.has(parsed.projectId)) return true; // project gone
-    if (parsed.kind === 'identity') return false;
+    // The identity jar and the project's Command Terminal jar belong to the
+    // project itself, not to a task row, so they live as long as it does.
+    if (parsed.kind === 'identity' || parsed.kind === 'terminals') return false;
     const taskIds = taskIdsFor(parsed.projectId);
     if (taskIds === null) return false; // could not read this project's tasks: abstain
     return !taskIds.has(parsed.taskId);

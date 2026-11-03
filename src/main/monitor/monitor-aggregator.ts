@@ -33,6 +33,7 @@ import type {
   WorkflowBoardEnds,
 } from '../../shared/types';
 import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
+import { commandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { isContextOccupancyKnown } from '../../shared/context-occupancy';
 import { canTaskRunAutomations } from '../../shared/automation-manifest';
 import { boardEnds, routeSteps, taskPlace } from '../../shared/workflow-route';
@@ -259,7 +260,11 @@ export async function buildMonitorSnapshot(context: IpcContext, sources: Monitor
       // Distinct from `modelDisplayName`, which falls back to the spawn-time
       // `applied_model` id: the card says "Starting agent..." until this is true.
       modelReported: Boolean(usage?.model.displayName),
-      browserRunning: !isCommandTerminal && browserTaskIds.has(managed.taskId),
+      // A Command Terminal's surface is keyed by its slot's owner key, never its
+      // synthetic task id, so its globe reads that key.
+      browserRunning: isCommandTerminal
+        ? !!managed.commandTerminalSlot && browserTaskIds.has(commandTerminalBrowserOwner(managed.projectId, managed.commandTerminalSlot))
+        : browserTaskIds.has(managed.taskId),
       labels: task?.labels ?? [],
       prUrl: task?.pr_url ?? null,
       prNumber: task?.pr_number ?? null,

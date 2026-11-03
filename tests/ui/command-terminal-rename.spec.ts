@@ -364,6 +364,7 @@ test.describe('Renaming a Command Terminal', () => {
         'command-terminal-row-menu-commands',
         'command-terminal-row-menu-switch-branch',
         'command-terminal-row-menu-toggle-changes',
+        'command-terminal-row-menu-toggle-browser',
         'command-terminal-row-menu-stop',
       ]);
 

@@ -6,4 +6,4 @@
 
 ## Decisions
 
-* [Embedded browser decision log](decision-log.md) - Decisions 1 to 42 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives.
+* [Embedded browser decision log](decision-log.md) - Decisions 1 to 43 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane.

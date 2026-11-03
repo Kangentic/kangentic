@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Command Terminal
-description: Why the Command Terminal is one auto-tiled panel over a second window-manager layer with main-owned slots, why it ends when its agent exits, why no pause reaches it, how ended conversations are recorded and resumed, expand and swap, its own window, naming in main, phone starts, leftover reaping, per-project branch and geometry, the title-bar toggle, and the sidebar indicator.
+description: Why the Command Terminal is one auto-tiled panel over a second window-manager layer with main-owned slots, why it ends when its agent exits, why no pause reaches it, how ended conversations are recorded and resumed, expand and swap, its own window, naming in main, phone starts, leftover reaping, per-project branch and geometry, each terminal's Browser pane, the title-bar toggle, and the sidebar indicator.
 tags: [command-terminal, window-manager, slots, design, resume]
 sources:
   - resource: src/renderer/components/command-bar/
@@ -32,6 +32,10 @@ sources:
   - resource: src/shared/terminal-input-content.ts
   - resource: src/renderer/components/layout/TitleBar.tsx
   - resource: src/renderer/components/sidebar/project-sidebar/SidebarCommandTerminalIndicator.tsx
+  - resource: src/main/ipc/helpers/command-terminal-browser.ts
+    title: A terminal's browser ends with the terminal
+  - resource: src/main/browser/command-terminal-browser-store.ts
+  - resource: src/shared/browser-owner.ts
 ---
 # Command Terminal
 
@@ -989,6 +993,62 @@ cue is a still, faint accent border, shown only while two or more terminals are 
 expanded terminal has nothing to be told apart from. It used to carry a pulsing accent line along
 its top as well; that went on 2026-10-31 for every window the frame draws, task windows included,
 since the border alone tells the tiles apart and the motion only added noise.
+
+## Browser pane
+
+Each terminal has its own Browser pane, the task window's at parity: the Globe pill with its alive
+dot, `commandTerminal.toggleBrowser` (Mod+Shift+B), the terminal and the pane split 50/50 on a seam
+that drags from a quarter to three quarters (`useTaskSplitResize`), Browser and Changes on the same
+side and exclusive (opening one holds or closes the other), Show/Hide and Close browser in the kebab
+and the Running row's menu, the green `BrowserAliveGlobe` after a Running row's name and on a strip
+mark's corner, the Monitor row's globe, and pop out, to a window named for the terminal as a task's
+is for its task (`PopOutSurfaceRoot.tsx`). It is keyed by the slot's owner key,
+`command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`), in the same session-store
+sets a task uses. The key carries the project because the sets are flat and the pane outlives a
+project switch, and the slot rather than the session because a branch switch or a resume in place
+respawns the slot under a new id.
+
+**The pane never lives in the panel.** Before this, a Command Terminal agent that asked for a
+browser got `no-caller-task` and, in one reported session, went looking for the user's Chrome
+extension instead. Mounting the pane inside the window would not have been enough: the panel
+unmounts on every hide, project switch and Open in new window, and a `<webview>` dies with its
+node, so the page would reload and lose `sessionStorage` each time. So the window draws an empty
+slot (`data-command-terminal-browser-slot`), and `CommandTerminalBrowserHost`, mounted always in
+`AppLayout` and in the detached window's root, renders every open pane in a stable, keyed list and
+lays each over its slot. It re-places a pane when its slot mounts or unmounts (the slot announces
+both), when the panel shows or hides, and when the window store changes, and follows a moving slot
+on animation frames with a 250 ms timer beside them. Events carry the weight because a minimized
+window throttles both: measured in a preview, a poll alone left a hidden pane reporting `showing`
+for seconds after the panel hid. With no slot showing it (the panel hidden, another project, behind
+Expand, held, a swap drag in flight) the pane stays at its last rect at `opacity: 0`, inert and
+taking no pointer, which keeps the guest compositing for an agent's screenshot. A drag that locks
+the body's text selection (the seam, a window edge) also takes the pointer off the pane, since the
+host sits above the panel and the drag's capture overlay cannot cover it. Through a respawn's gap
+the pane keeps its last session and re-registers in place. The alternatives (a lane hand-off on
+every hide, or keeping the whole panel mounted) are in the embedded browser decision log,
+decision 43.
+
+**An agent opens it without taking the keyboard.** `useCommandTerminalBrowserBridge` handles
+main's open and close requests for terminal keys (the board's request bridge skips them). With the
+panel hidden it opens the panel through the pending-open flag, stamping every command window
+`openedByAgent` first and again as the panel shows, so the arrival-focus agent-window tier denies
+every terminal. A panel already showing is left as it is. The detached window runs the same bridge
+for its own project, and the main window leaves that project's panes to it.
+
+**It ends with the terminal, and its layout survives a restart.** Main's
+`ipc/helpers/command-terminal-browser.ts` listens on `session-removed` and, for a Command Terminal,
+closes the pane, its Browser pop-out and any offscreen lane, resets viewport overrides, and clears
+the saved URL and layout. The task path does this off a `sessions` row a terminal does not have. A
+branch switch and a resume in place kill with `{ respawn: true }`, which keeps all of it while the
+slot's next start runs. A respawn whose start fails leaves the slot empty, and a check
+`RESPAWN_SETTLE_MS` later (re-armed while a start holds the slot) ends the browser as Stop would
+have. A pty host crash keeps it for the restore (`isRestorableAfterHostLoss`, the leftover reaper's
+own check), and `restoreLostCommandTerminals` ends it for a lost slot no terminal came back to.
+Main saves a layout only while the slot has a live terminal, because the renderer can hear the
+end's close push before its removal push and save after the end cleared the entry. The open
+flag and the split are saved per project and slot (`command-terminal-browser-store.ts`,
+`.kangentic/command-terminal-browser.json`), never in the global workspace, and read once per
+renderer per slot, which is how a restart restore and the detached window reopen the pane.
 
 ## One title-bar toggle
 

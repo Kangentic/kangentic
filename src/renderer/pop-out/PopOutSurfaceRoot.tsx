@@ -6,6 +6,10 @@ import { PopOutWindowFrame } from './PopOutWindowFrame';
 import { POP_OUT_SURFACES, formatTaskAnchor, isGlobalPopOutKind, isProjectPopOutKind, resolveSurfaceTitle } from '../../shared/pop-out';
 import type { PopOutChangesFileParams, PopOutDescriptor, PopOutTaskParams } from '../../shared/pop-out';
 import { translateText } from '../i18n/translate';
+import { useSessionStore } from '../stores/session-store';
+import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
+import { commandTerminalDisplayName } from '../../shared/command-terminal-name';
+import { findLiveCommandTerminalSession } from '../../shared/session-owner';
 import './surfaces';
 import { ToastContainer } from '../components/layout/ToastContainer';
 
@@ -31,9 +35,19 @@ export function PopOutSurfaceRoot({ descriptor }: { descriptor: PopOutDescriptor
   const taskId = isGlobalPopOutKind(descriptor.kind) || isProjectPopOutKind(descriptor.kind)
     ? null
     : (descriptor.params as PopOutTaskParams).taskId;
-  const taskTitle = useBoardStore((state) =>
+  const boardTaskTitle = useBoardStore((state) =>
     taskId ? state.tasks.find((task) => task.id === taskId)?.title ?? null : null,
   );
+  // A Command Terminal's Browser pop-out is keyed by the terminal's owner key,
+  // which names no task row, so it titles by the terminal's own name, as its
+  // header does. The surface's root syncs the session list this reads.
+  const commandTerminal = taskId ? parseCommandTerminalBrowserOwner(taskId) : null;
+  const commandTerminalTitle = useSessionStore((state) => {
+    if (!commandTerminal) return null;
+    const session = findLiveCommandTerminalSession(state.sessions, commandTerminal.projectId, commandTerminal.slot);
+    return session ? commandTerminalDisplayName(session.commandTerminalLabel, commandTerminal.slot) : null;
+  });
+  const taskTitle = commandTerminalTitle ?? boardTaskTitle;
   // The per-file surface titles by its FILE plus the task anchor: the frame
   // header shows "full/path - #N task title" (params carry the task label as a
   // boot seed), the taskbar the basename form of the same (resolveSurfaceTitle,

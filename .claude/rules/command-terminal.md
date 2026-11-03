@@ -337,6 +337,40 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   terminal narrows. While the name field is open the folded set is frozen, so nothing in the
   header moves. The focused terminal's cue is the frame's still accent border, shown only while
   two or more terminals are visible; there is no pulsing line.
+- **Each terminal has its own Browser pane, the task window's, and it never lives inside the
+  panel.** The panel unmounts on every hide, project switch and Open in new window, and a
+  `<webview>` dies with its node. So the pane renders in `CommandTerminalBrowserHost`, mounted
+  always (in `AppLayout`, and in the detached window's root for its project), and is laid over the
+  empty slot the window draws (`data-command-terminal-browser-slot`). The host re-places the pane
+  when the slot mounts or unmounts (it announces both), when the panel shows or hides, and when
+  the window store changes, and follows a moving slot on animation frames, with a 250 ms timer
+  beside them, since a minimized window throttles frames and timers alike; with no slot
+  showing it (panel hidden, another project, behind Expand, held, a swap drag) the pane stays at
+  its last rect at `opacity: 0`, inert. It is keyed by the slot's owner key
+  (`command-terminal::<projectId>::<slot>`), never re-parented, and keeps its last session through
+  a respawn's gap, re-registering in place. Parity with a task window: the Globe pill and its alive
+  dot, `commandTerminal.toggleBrowser` (Mod+Shift+B), the 50/50 split dragged on a seam
+  (`useTaskSplitResize`, 25 to 75 percent), Browser and Changes on the same side and exclusive,
+  Show/Hide and Close browser in the kebab and the row menu (one `CommandTerminalMenuItems`), the
+  green `BrowserAliveGlobe` after a Running row's name and on a strip mark's corner, the Monitor
+  row's globe, and pop out. An agent's `open_pane` with the panel hidden opens it through the
+  pending-open flag with every command window stamped agent-opened
+  (`useCommandTerminalBrowserBridge`), so no terminal takes the keyboard. The open can create the
+  window it lands in, and a window's own open clears a stamp, so every window change re-stamps
+  until the panel has shown and settled or the user presses anywhere. The browser ends with
+  the terminal: main's `command-terminal-browser.ts` listens on `session-removed` and closes the
+  pane, its pop-out and any lane, and clears the saved URL and layout. A branch switch and a
+  resume in place kill with `{ respawn: true }`, which keeps it while the slot's next start runs;
+  a slot still empty once no start holds it ends its browser, as Stop would have. Main saves a
+  layout only for a slot with a live terminal, so a save that lands after the end's clear
+  never recreates the entry. The layout (open, split) is saved
+  per project and slot (`command-terminal-browser-store.ts`, `.kangentic/command-terminal-browser.json`),
+  so a restart restore and the detached window, whose store starts empty, reopen it. The detached
+  window declares `needsWebview` and the browser open, close and offscreen pushes. A pty host
+  crash removes a terminal's row before its restore; the cleanup asks the restore's own
+  `isRestorableAfterHostLoss`, as the leftover reaper does, and keeps the page, URL and layout
+  for the restore. Once the restore has run, a lost slot no terminal came back to ends them
+  (`restoreLostCommandTerminals`).
 - **The title bar hosts ONE terminal control: a plain open/close TOGGLE**
   (`quick-session-button`) that never spawns, so there is always a one-click way to hide the
   panel even when it is maximized over the backdrop. It carries the aggregate activity tone. Add
@@ -490,6 +524,12 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   after a fold, the strip's activity marks and the one in front, the narrowed rail at the window floor, and the cut-name tip.
   `tests/unit/demo-fit-layout-blob.test.ts` holds the web demo's panel fit to the rail width the
   frame's config gives, and the sample install's seeded rail to the fit's fallback.
+- **Test (Browser pane):** `tests/unit/mcp-caller-command-terminal.test.ts` (the caller resolves
+  to its slot, never a task), `tests/unit/command-terminal-browser-cleanup.test.ts` (a final end
+  closes the pane, lanes, pop-out, URL and layout; a respawn keeps them), and
+  `tests/ui/command-terminal-browser.spec.ts` (the pill, the split, exclusivity with Changes, the
+  same registered guest across a hide, an agent's open with no focus moved, the Running row
+  globe, a saved layout reopening the pane).
 - **Review:** the header layout ordering and the title-bar placement are visual conventions with
   no mechanical check. `/code-review` and `ui-conventions.md` are the backstop.
 

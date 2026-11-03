@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useShallow } from 'zustand/react/shallow';
 import { Trans } from '@lingui/react/macro';
 import { CommandTerminalLayer, useCloseCommandWindowOnRemoval } from '../../components/command-bar/CommandTerminalLayer';
+import { CommandTerminalBrowserBridge, CommandTerminalBrowserHost } from '../../components/command-bar/CommandTerminalBrowserHost';
 import { commandWindowManager } from '../../window-manager';
 import { useConfigStore } from '../../stores/config-store';
 import { useProjectStore } from '../../stores/project-store';
@@ -100,20 +101,36 @@ export function PopOutCommandTerminalRoot({ params }: { params: PopOutProjectPar
   usePublishCommandTerminalFocus(params.projectId);
   const closeWindow = useCallback(() => window.electronAPI.window.close(), []);
 
+  let content: ReactNode;
   if (loadState === 'missing') {
-    return (
+    content = (
       <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-missing">
         <Trans>This project is no longer in Kangentic.</Trans>
       </div>
     );
-  }
-  if (loadState === 'failed') {
-    return (
+  } else if (loadState === 'failed') {
+    content = (
       <div className="flex-1 flex items-center justify-center text-sm text-fg-muted" data-testid="command-terminal-window-failed">
         <Trans>Couldn't load the terminals for this window.</Trans>
       </div>
     );
+  } else if (loadState === 'loading') {
+    content = <div className="flex-1" data-testid="command-terminal-window-loading" />;
+  } else {
+    content = (
+      <>
+        <CommandTerminalLayer onHide={closeWindow} host="window" />
+        <CommandTerminalBrowserHost scopeProjectId={params.projectId} />
+      </>
+    );
   }
-  if (loadState === 'loading') return <div className="flex-1" data-testid="command-terminal-window-loading" />;
-  return <CommandTerminalLayer onHide={closeWindow} host="window" />;
+  return (
+    <>
+      {/* This window hosts its terminals' Browser panes: an agent's open_pane
+          and close_pane reach it through the bridge from the first render, and
+          the panes live in the host, which outlives a re-mount of the layer. */}
+      <CommandTerminalBrowserBridge scopeProjectId={params.projectId} />
+      {content}
+    </>
+  );
 }

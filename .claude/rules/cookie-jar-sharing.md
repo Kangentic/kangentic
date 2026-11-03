@@ -35,6 +35,13 @@ per-task keying prevents; and a second, ad-hoc cookie-copy path would let that i
   (`browserPartitionForTask` / `browserPartitionForProjectIdentity` in `browser-partition.ts`),
   never keyed by worktree path - that keying is what lets a jar follow a task and lets the sweep
   parse a jar back to its project + task.
+- **A project's Command Terminals share one jar, `persist:kng-<projectId>-terminals`.** They run
+  in one project root on one HEAD, so they serve one dev server, and one login to it is shared.
+  Every jar consumer asks `browserPartitionForOwner(projectId, ownerKey)`, which maps a Command
+  Terminal owner key (`src/shared/browser-owner.ts`) to that jar and a task id to the task's, so
+  an owner key never becomes a jar name the sweep cannot parse. `parseKngPartitionDir` knows it as
+  `terminals`, the sweep keeps it while its project exists (like the identity jar), and Clear
+  browser data enumerates it. Identity seeding reaches it through `jar-seeder.ts` like any task jar.
 
 ## Enforcement (self-maintaining)
 

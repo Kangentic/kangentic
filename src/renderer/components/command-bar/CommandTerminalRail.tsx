@@ -36,7 +36,8 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { CirclePlay, History, PanelLeftClose, PanelLeftOpen, Pencil, Search, Trash2, X } from 'lucide-react';
+import { CirclePlay, Globe, History, PanelLeftClose, PanelLeftOpen, Pencil, Search, Trash2, X } from 'lucide-react';
+import { BrowserAliveGlobe } from '../board/task-card-view';
 import { defaultRangeExtractor, useVirtualizer, type Range } from '@tanstack/react-virtual';
 import { i18n } from '@lingui/core';
 import { msg } from '@lingui/core/macro';
@@ -221,6 +222,14 @@ function RunningRow({ projectId, terminal, front, onBringToFront, onStop }: Runn
           </button>
         </Tooltip>
       )}
+      {/* The task card's globe, after the name: a page is alive for this
+          terminal, whether showing, held, popped out or offscreen. */}
+      {menuActions.browserAlive && !rename.editing && (
+        <BrowserAliveGlobe
+          testId="command-terminal-running-browser"
+          tip={t`Browser running for the agent. Close it from the terminal's menu to free memory.`}
+        />
+      )}
       {menuPosition && (
         <CommandTerminalRowMenu position={menuPosition} onClose={() => setMenuPosition(null)} {...menuActions} />
       )}
@@ -272,7 +281,7 @@ function RunningMark({ projectId, terminal, front, onBringToFront, onStop }: Run
             event.preventDefault();
             setMenuPosition({ x: event.clientX, y: event.clientY });
           }}
-          className={`inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${MARK_TONE_CLASS[state]} ${
+          className={`relative inline-flex h-7 w-7 flex-shrink-0 items-center justify-center rounded transition-colors ${MARK_TONE_CLASS[state]} ${
             front ? 'bg-surface-hover' : 'hover:bg-surface-hover/50'
           }`}
           aria-label={label}
@@ -283,6 +292,13 @@ function RunningMark({ projectId, terminal, front, onBringToFront, onStop }: Run
           data-front={front ? 'true' : 'false'}
         >
           <ActivityMark mark={mark} size={20} />
+          {/* The strip has no room after a name, so the globe sits on the mark's
+              corner: the same green, the same fact as the open rail's row. */}
+          {menuActions.browserAlive && (
+            <span className="pointer-events-none absolute -bottom-0.5 -right-0.5 flex rounded-full bg-surface text-active" data-testid="command-terminal-running-chip-browser">
+              <Globe size={10} aria-hidden="true" />
+            </span>
+          )}
         </button>
       </Tooltip>
       {menuPosition && (

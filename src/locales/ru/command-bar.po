@@ -49,8 +49,18 @@ msgstr "Доступно после запуска терминала"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "Для агента запущен браузер. Закройте его через меню терминала, чтобы освободить память."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "Очистить поиск"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "Закрыть браузер"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "Не удалось остановить терминал"
 msgid "Couldn't switch branch"
 msgstr "Не удалось переключить ветвь"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "Перетащите для изменения размера"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "Перейти к {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "Свернуть"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "Скрыть браузер"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "Она исчезнет из раздела «Ранее» и стане
 msgid "Its process may still be running."
 msgstr "Его процесс может быть ещё запущен."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "Остаётся активным, пока вы его не закроете"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "Открыть в новом окне"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Открыть папку проекта"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "Страница сохранена"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "Выполняется поиск по беседам..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "Показать браузер"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "Показать изменения"
 
@@ -348,6 +385,11 @@ msgstr "Имя терминала"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "Терминалы возвращены в панель."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "Переключить браузер"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

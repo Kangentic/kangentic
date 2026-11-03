@@ -49,8 +49,18 @@ msgstr "Dostupné po spuštění terminálu"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "Pro agenta běží prohlížeč. Zavřete ho z nabídky terminálu a uvolněte paměť."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "Vymazat hledání"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "Zavřít prohlížeč"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "Terminál se nepodařilo zastavit"
 msgid "Couldn't switch branch"
 msgstr "Větev nelze přepnout"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "Přetažením změníte velikost"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "Přejít na {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "Skrýt"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "Skrýt prohlížeč"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "Zmizí ze sekce Dříve a už ji nebude možné prohledávat. Agent si z
 msgid "Its process may still be running."
 msgstr "Jeho proces možná stále běží."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "Zůstane aktivní, dokud ho nezavřete"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "Otevřít v novém okně"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Otevřít složku projektu"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "Stránka zachována"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "Prohledávání konverzací..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "Zobrazit prohlížeč"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "Zobrazit změny"
 
@@ -348,6 +385,11 @@ msgstr "Název terminálu"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "Terminály jsou zpět v panelu."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "Přepnout prohlížeč"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

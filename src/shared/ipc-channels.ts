@@ -551,6 +551,11 @@ export const IPC = {
   // would leave a control that says Close and does nothing. Main destroys the
   // offscreen window directly.
   BROWSER_OFFSCREEN_CLOSE: 'browser:offscreenClose',
+  // Renderer -> main: a Command Terminal slot's saved Browser layout (open, and
+  // the split), per project and slot. A task keeps these on its own row; a
+  // terminal has none (`command-terminal-browser-store.ts`).
+  BROWSER_COMMAND_TERMINAL_STATE_GET: 'browser:commandTerminalStateGet',
+  BROWSER_COMMAND_TERMINAL_STATE_SET: 'browser:commandTerminalStateSet',
   // Main -> renderer: a file download started from a Browser pane has finished.
   // The pane saves silently to the OS Downloads folder (Chrome's default), so
   // this is what stops an agent-triggered download being invisible.

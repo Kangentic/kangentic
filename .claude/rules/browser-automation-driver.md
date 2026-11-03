@@ -85,6 +85,18 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   caller's project by default. The pane's registered `projectId` is backfilled in
   `BROWSER_PANE_REGISTER` from the session registry, since the renderer's value is ambient
   `currentProject` and a pop-out window's separate store holds it stale across a project switch.
+- **A surface's owner is a task or a Command Terminal, and every caller with a session resolves
+  only its own.** A Command Terminal's owner key is `command-terminal::<projectId>::<slot>`
+  (`src/shared/browser-owner.ts`). It rides every field the pipeline already keys by task id: the
+  registry entry, the lanes, the URL sidecar, the open and close pushes, the Browser pop-out key,
+  and the renderer's sets. A Command Terminal's MCP URL names its session (`transient-sessions.ts`),
+  and `resolveMcpCaller` (`mcp-http/caller-task.ts`) resolves it to its slot. It never hands out the
+  session's synthetic task id, which names no task row; every task-keyed consumer (the workflow
+  lock, dev ports, steering, automations) sees no task, and the browser family gets the owner key
+  through `callerBrowserOwner`. The single-pane fall-through below applies only to a connection that
+  names no session at all. `pop_out` from a Command Terminal whose panel is already in its own
+  window is refused with `pop-out-unavailable`, because that window cannot see a Browser window
+  beside it and the page would show twice.
 - **A surface handle names one tab for its lifetime, and a task-bound caller resolves only its own
   task's surfaces.** The registry (`browser-pane-registry.ts`) keys an entry by a handle bound to the
   guest webContents (`pane_<8hex>` minted by main, `lane_<8hex>` by the lane manager), never by the
@@ -96,8 +108,9 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   value that was never a handle answers `no-pane-open` with the same pointer. The implicit default
   for a caller with a task resolves that task's ONE surface (its visible pane, else the offscreen
   form of it) and never falls through to another task's pane; that fall-through was observed
-  navigating a sibling task's logged-in app to an identity-provider URL. Only a caller with no task
-  uses the project-wide single-pane rule. The renderer unregisters by the guest id it registered
+  navigating a sibling task's logged-in app to an identity-provider URL. Only a connection that
+  names no session uses the project-wide single-pane rule; a Command Terminal resolves its own
+  owner key exactly as a task's agent does. The renderer unregisters by the guest id it registered
   (`BROWSER_PANE_UNREGISTER` takes a `webContentsId`), which is what makes an out-of-order unmount
   structurally unable to clobber a newer registration.
 - **A task has exactly ONE browser surface, and no tool argument can create a second.** It is the
@@ -213,6 +226,9 @@ the two surfaces forking the CDP driver (so click/type/screenshot semantics drif
   over the saved sidecar (red-green: deleting that preference fails the case).
   `tests/unit/mcp-server-instructions-browser.test.ts` fails if `isolated: true` reappears in the
   server instructions, where it would send an agent to a zod schema error instead of a browser.
+- **Test (Command Terminal caller):** `tests/unit/mcp-caller-command-terminal.test.ts` pins that a
+  Command Terminal session resolves to its slot and never to its synthetic task id, and that its
+  bare drive call never reaches a task's pane.
 - **Test (detached window):** `tests/unit/browser-pane-detach.test.ts` pins that every failure
   after the window opens closes it, before waiting for the pane to come back, and names the surface
   left (red-green: returning the failure as is fails every case in its "cannot finish" block).

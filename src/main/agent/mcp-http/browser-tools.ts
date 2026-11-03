@@ -83,9 +83,9 @@ import { READ_ONLY_ANNOTATIONS, MUTATING_ANNOTATIONS } from './annotations';
  */
 
 const SESSION_DESC =
-  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your task\'s current surface. Must be in your own project. Omit to use your own task\'s one surface (its visible pane, or the offscreen form of it); a caller with no task falls back to the single pane open in the project. This is NOT a Kangentic agent session id.';
+  'Optional browser surface handle (pane_… or lane_…) from kangentic_browser_open_pane or kangentic_browser_list_panes. A handle names exactly one tab for its lifetime; if that tab is gone the call fails with surface-gone and names your current surface. Must be in your own project. Omit to use your own one surface, your task\'s or your Command Terminal\'s (its visible pane, or the offscreen form of it). This is NOT a Kangentic agent session id.';
 const TASK_DESC =
-  "Optional Kangentic taskId whose Browser surface to target. An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own task's surface.";
+  "Optional Kangentic taskId whose Browser surface to target. An alternative to sessionId, and must likewise be a task in your own project. Omit both to use your own surface.";
 
 const TARGET_SHAPE = {
   sessionId: z.string().optional().describe(SESSION_DESC),
@@ -109,6 +109,16 @@ export type AutomationConfigReader = () => ResolvedBrowserAutomationConfig;
  */
 export interface BrowserSessionLookup {
   getSessionTaskId(sessionId: string): string | undefined;
+  /**
+   * The session's Command Terminal slot, or undefined when it is not a
+   * Command Terminal. Asked FIRST by `resolveMcpCaller`: a Command Terminal's
+   * registry row carries a synthetic task id that names no task. Optional for
+   * a lookup that sees no Command Terminals (a test's fake); `SessionManager`
+   * always has it.
+   */
+  getCommandTerminalSlot?(sessionId: string): string | undefined;
+  /** The name a project's live Command Terminal in a slot shows, for `list_panes`. */
+  getCommandTerminalName?(projectId: string, slot: string): string | undefined;
 }
 
 export interface BrowserToolDependencies {
@@ -121,8 +131,8 @@ export interface BrowserToolDependencies {
   /**
    * The caller's session id, from the MCP URL path
    * (`/mcp/<projectId>/<callerSessionId>`). Undefined for a human-driven
-   * client, the two-segment `.kangentic/mcp-config.json` URL, and Command
-   * Terminal sessions. Never required: it only sharpens the implicit default.
+   * client and the two-segment `.kangentic/mcp-config.json` URL. Never
+   * required: it only sharpens the implicit default.
    */
   callerSessionId?: string;
   /**
@@ -211,8 +221,10 @@ export function registerBrowserTools(
   server: McpServer,
   getAutomationConfig: AutomationConfigReader,
   dependencies: BrowserToolDependencies,
-  // From `resolveCallerTaskId` (caller-task.ts), passed in so one request
-  // looks it up once.
+  // From `callerBrowserOwner` (caller-task.ts), passed in so one request
+  // looks it up once. It is the caller's task id, or its Command Terminal's
+  // owner key (`src/shared/browser-owner.ts`): the browser pipeline keys a
+  // surface by that one string, so it rides the `callerTaskId` fields below.
   callerTaskId: string | undefined,
 ): void {
   const { projectId, callerSessionId } = dependencies;
@@ -284,6 +296,11 @@ export function registerBrowserTools(
       const panes = (args.includeOtherProjects ? browserPaneRegistry.list() : scoped.panes).map(
         (pane) => ({
           ...pane,
+          // A Command Terminal's pane names its terminal as its header does, so an
+          // agent can tell the user which terminal's browser it means.
+          commandTerminalName: pane.commandTerminalSlot && pane.projectId
+            ? dependencies.sessions?.getCommandTerminalName?.(pane.projectId, pane.commandTerminalSlot) ?? null
+            : null,
           sameProject: pane.projectId === projectId,
           driveable: pane.projectId === projectId,
         }),

@@ -1145,6 +1145,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Muestra u oculta el panel de descripción en el cuadro de diálogo de detalles de la tarea."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Muestra u oculta la barra lateral del proyecto."
@@ -1385,6 +1389,10 @@ msgstr "Alternar panel de cambios"
 #, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "Alternar terminal de comandos"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy
