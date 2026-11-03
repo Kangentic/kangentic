@@ -60,6 +60,13 @@ function extractHookContext(line: string): string | null {
   return typeof hookContext === 'string' ? hookContext : null;
 }
 
+/**
+ * How long past a holder's own time limit (`SessionEvent.expiresAfterMs`) it
+ * is ended by that limit: the CLI's end notice, which says how it ended,
+ * normally lands first.
+ */
+const HOLDER_EXPIRY_GRACE_MS = 60_000;
+
 interface SessionTelemetryCallbacks {
   onUsageChange(sessionId: string, usage: SessionUsage): void;
   onActivityChange(sessionId: string, activity: ActivityState, reason: ActivityReason): void;
@@ -74,7 +81,13 @@ interface SessionTelemetryCallbacks {
    * `ActivityEngineCallbacks.onTurnEnded`). Optional: only the production
    * wiring consumes it.
    */
-  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
+  onTurnEnded?(sessionId: string, turnStartedAt: number | null, workSerial: number, heldReported: boolean): void;
+  /**
+   * A turn the agent ended, with only background work it left holding the
+   * session (see `ActivityEngineCallbacks.onTurnEndedHeld`). Optional: only
+   * the production wiring consumes it.
+   */
+  onTurnEndedHeld?(sessionId: string, turnStartedAt: number | null, workSerial: number): void;
   /**
    * The engine stamped a turn's start (see
    * `ActivityEngineCallbacks.onTurnStarted`). Optional: only the production
@@ -374,7 +387,10 @@ export class SessionTelemetry {
         // change in any listener that observes both streams.
         this.pushEvent(sessionId, event);
       },
-      onTurnEnded: (sessionId, turnStartedAt, workSerial) => this.callbacks.onTurnEnded?.(sessionId, turnStartedAt, workSerial),
+      onTurnEnded: (sessionId, turnStartedAt, workSerial, heldReported) =>
+        this.callbacks.onTurnEnded?.(sessionId, turnStartedAt, workSerial, heldReported),
+      onTurnEndedHeld: (sessionId, turnStartedAt, workSerial) =>
+        this.callbacks.onTurnEndedHeld?.(sessionId, turnStartedAt, workSerial),
       onTurnStarted: (sessionId, turnStartedAt, cause) => this.callbacks.onTurnStarted?.(sessionId, turnStartedAt, cause),
     }, activityEngineOptions);
 
@@ -448,7 +464,9 @@ export class SessionTelemetry {
             //
             // The open-work ledger keeps it: a gate that prints nothing for
             // minutes while other worktrees churn the process count reads the
-            // same way, and its real end (the transcript's notice) closes it.
+            // same way, and its real end closes it: the transcript's notice,
+            // which the watcher keeps asking about for ids only the ledger
+            // holds (`getLedgerOnlyShellIds`), or its own time limit.
             const syntheticEvent: SessionEvent = {
               ts: Date.now(),
               type: EventType.BackgroundShellEnd,
@@ -498,6 +516,15 @@ export class SessionTelemetry {
             this.activityEngine.markBackgroundShellEnded(sessionId, shellId, { source: 'transcript' });
             this.openWork.closeShells(sessionId, [shellId]);
           },
+          getLedgerOnlyShellIds: (sessionId) => {
+            const state = this.activityEngine.getState(sessionId);
+            return this.openWork.get(sessionId).backgroundShells
+              .map((shell) => shell.id)
+              .filter((shellId) => !state?.activeBackgroundShellIds.has(shellId) && !state?.exemptBackgroundShellIds.has(shellId));
+          },
+          // The engine drained it already: only the ledger is told.
+          onLedgerShellTerminated: (sessionId, shellId) => this.openWork.closeShells(sessionId, [shellId]),
+          endExpiredHolders: (sessionId) => this.endExpiredHolders(sessionId),
         },
       });
     }
@@ -1358,6 +1385,17 @@ export class SessionTelemetry {
     return this.activityEngine.getState(sessionId)?.workSerial;
   }
 
+  /** See `ActivityEngine.isTurnHeldByBackgroundWork`. */
+  isTurnHeldByBackgroundWork(sessionId: string): boolean {
+    return this.activityEngine.isTurnHeldByBackgroundWork(sessionId);
+  }
+
+  /** The named background shells the engine still holds the session for (exempt services left out). */
+  getHeldBackgroundShellIds(sessionId: string): string[] {
+    const state = this.activityEngine.getState(sessionId);
+    return state ? [...state.activeBackgroundShellIds] : [];
+  }
+
   /** Is this a tool event from an internal CLI agent? See `ActivityEngine.isInternalAgentEvent`. */
   isInternalAgentEvent(sessionId: string, event: SessionEvent): boolean {
     return this.activityEngine.isInternalAgentEvent(sessionId, event);
@@ -1461,6 +1499,23 @@ export class SessionTelemetry {
   }
 
   /**
+   * End the holders whose own time limit ran out a grace ago (a Monitor's
+   * `timeoutMs`, `SessionEvent.expiresAfterMs`). The CLI's own end notice
+   * normally lands first and closes them; this is what holds when its wording
+   * changes again. Asked once a watcher cycle.
+   */
+  private endExpiredHolders(sessionId: string): void {
+    for (const shellId of this.openWork.expiredShellIds(sessionId, Date.now() - HOLDER_EXPIRY_GRACE_MS)) {
+      const state = this.activityEngine.getState(sessionId);
+      if (state?.activeBackgroundShellIds.has(shellId) || state?.exemptBackgroundShellIds.has(shellId)) {
+        this.pushEvent(sessionId, { ts: Date.now(), type: EventType.BackgroundShellEnd, detail: shellId });
+        this.activityEngine.markBackgroundShellEnded(sessionId, shellId, { source: 'expired' });
+      }
+      this.openWork.closeShells(sessionId, [shellId]);
+    }
+  }
+
+  /**
    * Feed the open-work ledger one admitted event. After the engine has seen
    * it, so a named background shell can be told apart from an exempt service:
    * only a shell the engine holds is work the agent waits on.
@@ -1469,7 +1524,7 @@ export class SessionTelemetry {
     this.openWork.observe(sessionId, event);
     if (event.type === EventType.BackgroundShellStart && looksLikeShellId(event.detail)) {
       if (this.activityEngine.getState(sessionId)?.activeBackgroundShellIds.has(event.detail)) {
-        this.openWork.noteHoldingShell(sessionId, event.detail, event.ts);
+        this.openWork.noteHoldingShell(sessionId, event.detail, event.ts, event.expiresAfterMs);
       }
     }
   }

@@ -91,11 +91,20 @@ const TERMINAL_STATUSES: ReadonlySet<string> = new Set([
  * `<event>` tag keeps a monitored log line that happens to quote the phrase
  * from draining a live holder.
  *
- * Matching the PREFIX rather than the whole sentence is deliberate: the real
- * marker continues with a U+2014, which `tests/unit/writing-style-characters.test.ts`
+ * Two wordings. Claude Code 2.1.316 writes `[Monitor expired after 15m with 19
+ * events delivered. Re-arm it if you still need the watch.]`, and that is the
+ * only one any retained transcript holds: one overnight run had 24 of them and
+ * no other, and the old marker alone left 25 of one task's 30 holders open for
+ * good. `[Monitor timed out` is kept for the CLIs that wrote it. A third
+ * rewording is bounded anyway by the Monitor's own `timeoutMs`
+ * (`SessionTelemetry`'s holder expiry), so this match is the fast path, not the
+ * only one.
+ *
+ * Matching the PREFIX rather than the whole sentence is deliberate: the timed
+ * out marker continues with a U+2014, which `tests/unit/writing-style-characters.test.ts`
  * forbids anywhere in `src/`.
  */
-const MONITOR_TIMEOUT_MARKER = /<event>\s*\[Monitor timed out/;
+const MONITOR_TIMEOUT_MARKER = /<event>\s*\[Monitor (?:timed out|expired)/;
 
 interface TranscriptCursor {
   size: number;

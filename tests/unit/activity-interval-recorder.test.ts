@@ -35,13 +35,23 @@ class FakeSessionManager extends EventEmitter {
   getActivityStatsSnapshot = vi.fn((_sessionId: string) => ({
     recentTransitions: this.recentTransitions,
   }));
+  reason: ActivityReason | undefined = { kind: 'turn-active' };
+  getActivityReason = vi.fn((_sessionId: string) => this.reason);
 }
 
-function fakeStore(): { store: ActivityIntervalStore; openInterval: ReturnType<typeof vi.fn>; closeOpenInterval: ReturnType<typeof vi.fn> } {
-  const openInterval = vi.fn();
-  const closeOpenInterval = vi.fn();
-  const store = { openInterval, closeOpenInterval, getForTask: vi.fn(), getForSession: vi.fn() } as unknown as ActivityIntervalStore;
-  return { store, openInterval, closeOpenInterval };
+function fakeStore(): {
+  store: ActivityIntervalStore;
+  openInterval: ReturnType<typeof vi.fn>;
+  closeOpenInterval: ReturnType<typeof vi.fn>;
+  hasOpenInterval: ReturnType<typeof vi.fn>;
+} {
+  // An open-interval flag the fake keeps as the real store would.
+  let open = false;
+  const openInterval = vi.fn(() => { open = true; });
+  const closeOpenInterval = vi.fn(() => { open = false; });
+  const hasOpenInterval = vi.fn(() => open);
+  const store = { openInterval, closeOpenInterval, hasOpenInterval, getForTask: vi.fn(), getForSession: vi.fn() } as unknown as ActivityIntervalStore;
+  return { store, openInterval, closeOpenInterval, hasOpenInterval };
 }
 
 describe('ActivityIntervalRecorder', () => {
@@ -192,6 +202,7 @@ describe('ActivityIntervalRecorder', () => {
         previousState: 'thinking',
         enterTrigger: 'event:idle',
         startedMs: 5000,
+        reasonKind: 'idle',
       },
       '2026-07-22T00:00:00.000Z',
     );
@@ -215,9 +226,102 @@ describe('ActivityIntervalRecorder', () => {
         previousState: 'idle',
         enterTrigger: 'event:prompt',
         startedMs: 8000,
+        reasonKind: 'turn-active',
       },
       '2026-07-22T00:00:00.000Z',
     );
+  });
+
+  describe('a seeded thinking start', () => {
+    it('opens an active interval for a session seeded thinking, once, even when the seed is emitted again', () => {
+      // A spawn with its prompt on the command line is seeded thinking with no
+      // transition; its whole first turn used to go unrecorded. `adoptSession`
+      // re-emits the seed, which must not open a second row.
+      buildRecorder({ nowMs: () => 4000 });
+      sessionManager.recentTransitions = [];
+
+      sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' } satisfies ActivityReason);
+      sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' } satisfies ActivityReason);
+
+      expect(storeHandle.openInterval).toHaveBeenCalledTimes(1);
+      expect(storeHandle.openInterval).toHaveBeenCalledWith(
+        {
+          sessionId: 'sess-1',
+          taskId: 'task-1',
+          disposition: 'active',
+          state: 'thinking',
+          previousState: 'idle',
+          enterTrigger: 'seed',
+          startedMs: 4000,
+          reasonKind: 'turn-active',
+        },
+        '2026-07-22T00:00:00.000Z',
+      );
+    });
+
+    it('opens nothing for a session seeded idle (a resume waits on the user from its first moment)', () => {
+      buildRecorder();
+      sessionManager.recentTransitions = [];
+
+      sessionManager.emit('activity', 'sess-1', 'idle', { kind: 'idle', since: 1000 } satisfies ActivityReason);
+
+      expect(storeHandle.openInterval).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('the background boundary inside a thinking span', () => {
+    function startTurn(): void {
+      sessionManager.recentTransitions = [
+        { ts: 8000, from: 'idle', to: 'thinking', reasonKind: 'turn-active', trigger: 'event:prompt' },
+      ];
+      sessionManager.emit('activity', 'sess-1', 'thinking', { kind: 'turn-active' } satisfies ActivityReason);
+    }
+
+    it('splits the span where the turn ends and only background work holds it, and again when a turn takes over', () => {
+      // A Stop with a hung command left: the turn's row ends, and the held
+      // time is a row of its own that says what held it.
+      buildRecorder({ nowMs: () => 9000 });
+      startTurn();
+
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'background-shell', count: 1, ids: ['bzmas9lu2'] } satisfies ActivityReason);
+
+      expect(storeHandle.closeOpenInterval).toHaveBeenLastCalledWith('sess-1', 9000, 'reason:background-shell');
+      expect(storeHandle.openInterval).toHaveBeenLastCalledWith(
+        expect.objectContaining({ disposition: 'active', state: 'thinking', enterTrigger: 'reason:background-shell', reasonKind: 'background-shell', startedMs: 9000 }),
+        expect.any(String),
+      );
+
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'tool', pendingCount: 1, currentTool: 'Bash' } satisfies ActivityReason);
+
+      expect(storeHandle.closeOpenInterval).toHaveBeenLastCalledWith('sess-1', 9000, 'reason:turn-work');
+      expect(storeHandle.openInterval).toHaveBeenLastCalledWith(
+        expect.objectContaining({ enterTrigger: 'reason:turn-work', reasonKind: 'tool' }),
+        expect.any(String),
+      );
+      expect(storeHandle.openInterval).toHaveBeenCalledTimes(3);
+    });
+
+    it('never splits on the reason moving between a tool and the turn itself', () => {
+      // That move happens on every tool call: a row per call is the cost the
+      // boundary-only split exists to avoid.
+      buildRecorder();
+      startTurn();
+
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'tool', pendingCount: 1, currentTool: 'Read' } satisfies ActivityReason);
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'turn-active' } satisfies ActivityReason);
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'subagent', depth: 1 } satisfies ActivityReason);
+
+      expect(storeHandle.openInterval).toHaveBeenCalledTimes(1);
+    });
+
+    it('never splits a span it did not open (a row from before a restart)', () => {
+      buildRecorder();
+
+      sessionManager.emit('activity-reason', 'sess-1', 'thinking', { kind: 'background-shell', count: 1, ids: ['b1'] } satisfies ActivityReason);
+
+      expect(storeHandle.openInterval).not.toHaveBeenCalled();
+      expect(storeHandle.closeOpenInterval).not.toHaveBeenCalled();
+    });
   });
 
   it('a permission park (thinking -> permission) opens an "idle"-disposition interval too', () => {

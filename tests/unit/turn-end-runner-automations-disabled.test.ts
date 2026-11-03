@@ -109,6 +109,7 @@ vi.mock('../../src/main/agent/agent-registry', () => ({ agentRegistry: { get: vi
 vi.mock('../../src/main/automations/automation-registry', () => ({ automationRegistry: { get: vi.fn(() => ({})) } }));
 vi.mock('../../src/main/automations/move-target', () => ({ resolveMoveTarget: vi.fn(), routeOf: vi.fn() }));
 vi.mock('../../src/main/workflows/workflow-step', () => ({
+  heldMoveReason: vi.fn(() => null),
   runWorkflowStep: hoisted.runWorkflowStep,
   workflowStepApplies: hoisted.workflowStepApplies,
 }));

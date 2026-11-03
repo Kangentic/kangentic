@@ -2143,6 +2143,20 @@ export function runProjectMigrations(db: Database.Database): void {
       db.exec(`ALTER TABLE command_terminal_history ADD COLUMN ${name} ${type} DEFAULT NULL`);
     }
   }
+
+  // Migration: what kept a session in an interval's state, the activity
+  // reason's kind when it opened (`tool`, `subagent`, `background-shell`,
+  // `turn-active`, `idle`, `permission`). A thinking span splits where its
+  // reason crosses into or out of `background-shell`, so a turn that ended
+  // with a hung command reads as a turn row and a held row. `events.jsonl` was
+  // already empty for one session held nine hours, and nothing durable named
+  // the holder. NULL on rows written before this column.
+  const intervalColumnNames = new Set(
+    (db.pragma('table_info(session_activity_intervals)') as Array<{ name: string }>).map((column) => column.name),
+  );
+  if (!intervalColumnNames.has('reason_kind')) {
+    db.exec('ALTER TABLE session_activity_intervals ADD COLUMN reason_kind TEXT DEFAULT NULL');
+  }
 }
 
 /**

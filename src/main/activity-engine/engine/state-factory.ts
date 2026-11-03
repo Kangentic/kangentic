@@ -32,6 +32,7 @@ export function createSessionEngineState(): SessionEngineState {
     turnEndSource: null,
     turnStartedAt: null,
     workSerial: 0,
+    heldTurnEndSerial: null,
     lastPushedReason: null,
     turnForcedByHeartbeat: false,
     pendingIdleAt: null,

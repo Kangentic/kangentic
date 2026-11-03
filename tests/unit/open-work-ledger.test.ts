@@ -24,7 +24,7 @@ describe('OpenWorkLedger', () => {
     ledger.observe(SESSION, at(3, EventType.SubagentStart, { detail: 'Explore', subagentId: 'agent-1' }));
     ledger.observe(SESSION, at(4, EventType.Notification, { detail: 'Claude needs your permission' }));
     ledger.observe(SESSION, at(5, EventType.Prompt));
-    expect(ledger.get(SESSION).toolCalls).toEqual([{ id: 'artifact', tool: 'Artifact', since: 1 }]);
+    expect(ledger.get(SESSION).toolCalls).toEqual([{ id: 'artifact', tool: 'Artifact', since: 1, command: null }]);
 
     ledger.observe(SESSION, at(6, EventType.ToolEnd, { tool: 'Artifact', toolId: 'artifact' }));
     expect(ledger.get(SESSION).toolCalls).toEqual([]);
@@ -72,6 +72,55 @@ describe('OpenWorkLedger', () => {
     ledger.observe(SESSION, at(1, EventType.ToolStart, { tool: 'Bash', toolId: 'bash' }));
     ledger.noteInterrupted(SESSION);
     expect(ledger.get(SESSION).toolCalls).toEqual([]);
+  });
+
+  it('names the command of a foreground call the CLI moved to the background, and of a Monitor', () => {
+    // An auto-backgrounded Bash reaches the ledger as a plain tool_start, then
+    // a background_shell_start carrying only the shell id. The step check and
+    // the nudge named no command for it ("a background command is still
+    // running: "), on the hung `python -` that held a task six hours.
+    const ledger = new OpenWorkLedger();
+    ledger.observe(SESSION, at(1, EventType.ToolStart, { tool: 'Bash', toolId: 'slow-bash', detail: 'python - <<\'EOF\'' }));
+    ledger.observe(SESSION, at(2, EventType.ToolStart, { tool: 'Monitor', toolId: 'watch', detail: 'tail -f build.log' }));
+    ledger.observe(SESSION, at(3, EventType.BackgroundShellStart, { toolId: 'watch', detail: 'b3mntbkwh' }));
+    ledger.noteHoldingShell(SESSION, 'b3mntbkwh', 3);
+    ledger.observe(SESSION, at(4, EventType.BackgroundShellStart, { toolId: 'slow-bash', detail: 'boeb2h7eo' }));
+    ledger.noteHoldingShell(SESSION, 'boeb2h7eo', 4);
+    expect(ledger.get(SESSION).backgroundShells).toEqual([
+      { id: 'b3mntbkwh', command: 'tail -f build.log', since: 3 },
+      { id: 'boeb2h7eo', command: 'python - <<\'EOF\'', since: 4 },
+    ]);
+  });
+
+  it('reports a holder past its own time limit as expired, and only while it is open', () => {
+    // A Monitor reports its `timeoutMs`. CLI 2.1.316 reworded the end notice,
+    // so every expired Monitor read as running work for good; its own limit
+    // ends it whatever the notice says.
+    const ledger = new OpenWorkLedger();
+    ledger.observe(SESSION, at(1_000, EventType.BackgroundShellStart, { toolId: 'watch', detail: 'b3mntbkwh' }));
+    ledger.noteHoldingShell(SESSION, 'b3mntbkwh', 1_000, 900_000);
+    ledger.noteHoldingShell(SESSION, 'bnolimit1', 1_000);
+
+    expect(ledger.expiredShellIds(SESSION, 900_999)).toEqual([]);
+    expect(ledger.expiredShellIds(SESSION, 901_000)).toEqual(['b3mntbkwh']);
+
+    ledger.closeShells(SESSION, ['b3mntbkwh']);
+    expect(ledger.expiredShellIds(SESSION, 2_000_000)).toEqual([]);
+    expect(ledger.get(SESSION).backgroundShells.map((shell) => shell.id)).toEqual(['bnolimit1']);
+  });
+
+  it('never lends an anonymous launch\'s command to a moved call that lands first, nor the other way', () => {
+    const ledger = new OpenWorkLedger();
+    ledger.observe(SESSION, at(1, EventType.BackgroundShellStart, { detail: 'npm run dev' }));
+    ledger.observe(SESSION, at(2, EventType.ToolStart, { tool: 'Bash', toolId: 'slow-bash', detail: 'pnpm verify' }));
+    ledger.observe(SESSION, at(3, EventType.BackgroundShellStart, { toolId: 'slow-bash', detail: 'bslow0001' }));
+    ledger.noteHoldingShell(SESSION, 'bslow0001', 3);
+    ledger.observe(SESSION, at(4, EventType.BackgroundShellStart, { detail: 'bdev00001' }));
+    ledger.noteHoldingShell(SESSION, 'bdev00001', 4);
+    expect(ledger.get(SESSION).backgroundShells.map((shell) => [shell.id, shell.command])).toEqual([
+      ['bslow0001', 'pnpm verify'],
+      ['bdev00001', 'npm run dev'],
+    ]);
   });
 
   it('keeps a held background shell open until an end names it, with the command its launch reported', () => {
@@ -160,7 +209,7 @@ describe('OpenWorkLedger', () => {
 
       ledger.get(SESSION).toolCalls.length = 0;
 
-      expect(ledger.get(SESSION).toolCalls).toEqual([{ id: 'bash', tool: 'Bash', since: 1 }]);
+      expect(ledger.get(SESSION).toolCalls).toEqual([{ id: 'bash', tool: 'Bash', since: 1, command: null }]);
     });
   });
 });

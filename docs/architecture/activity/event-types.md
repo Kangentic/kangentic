@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Activity event types
-description: The 27 EventType values with their JSONL names and ActivityState mapping, the plan approval gate that holds permission idles, idle_hint turn endings, the onTurnEnded, turnStartedAt and workSerial contract, and turn_failed and turn_retrying recovery layers A to D.
+description: The 27 EventType values with their JSONL names and ActivityState mapping, the plan approval gate that holds permission idles, idle_hint turn endings, the onTurnEnded, onTurnEndedHeld, turnStartedAt and workSerial contract, and turn_failed and turn_retrying recovery layers A to D.
 tags: [activity, events, hooks, turn-end]
 sources:
   - resource: src/shared/types.ts
@@ -13,6 +13,7 @@ sources:
   - resource: src/main/activity-engine/plan-mode-trail.ts
   - resource: src/main/activity-engine/engine/event-handlers.ts
   - resource: src/main/activity-engine/engine/predicate.ts
+  - resource: src/main/pty/turn-settled.ts
 ---
 # Activity event types
 
@@ -33,7 +34,7 @@ The 27 `EventType` values, defined in `src/shared/types.ts`. All but `plan_auto_
 | `SubagentStop` | `subagent_stop` | log-only | Subagent returned; depth counter decrements - EXCEPT an empty-string `detail` ("") which is a spurious inner-loop stop, and a stop whose `subagentId` has already stopped, which is a duplicate. Both are ignored (see [Subagent depth](predicate.md#subagent-depth)) |
 | `Notification` | `notification` | log-only | Informational notification from the agent |
 | `IdleHint` | `idle_hint` | conditional idle | "Waiting for your input" notification, classified at the source. Ends the turn only when no other holder remains; otherwise log-only (see "Idle hints" below) |
-| `Compact` | `compact` | `thinking` | Context-window compaction in progress |
+| `Compact` | `compact` | `thinking` | Context-window compaction in progress. Starts a turn only when one is active: a compaction with no turn active (the CLI compacting an idle session, or one held only by background work) changes no state and moves no `workSerial` |
 | `TeammateIdle` | `teammate_idle` | log-only | Cross-agent teammate signaled idle |
 | `TaskCompleted` | `task_completed` | log-only | Agent declared the task finished |
 | `ConfigChange` | `config_change` | log-only | Agent settings/model changed mid-session |
@@ -140,6 +141,23 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   `idle_hint` that ended it, and null for everything else. `onTurnEnded` fires once, on the
   thinking-to-idle COMMIT, only when the source is `'stop'`. The commit, not the hook, so a turn
   whose background shells or subagents were still held reports only once they drain.
+- **A Stop held by background work (`onTurnEndedHeld`).** When the agent's Stop lands and only
+  background shells it left keep the session thinking (no turn, tool call, subagent or permission
+  prompt open, so the reason is `background-shell`), the engine reports that turn end at once,
+  once per `workSerial` (`heldTurnEndSerial`), and `SessionManager` emits `'turn-ended-held'`. Its
+  `transcriptAnchor` is read, not taken, so the drain's turn end still has it. A hung command never
+  drains: a `python -` left on an empty stdin held one finished workflow task nearly nine hours,
+  and its exit line was never read. Only a running workflow's step acts on it (see
+  [Workflow engine](../workflows/workflow-engine.md)). The drain's
+  `onTurnEnded` still fires, with `heldReported: true` (`TurnEndedPayload.heldReported`), so a
+  consumer that acted on the held end does not act again. A Stop at the same serial (a wake that
+  reported no new work) reports nothing more. A background job's notification that reaches an
+  idle CLI does report new work: it fires the prompt hook (measured on Claude Code 2.1.289, a
+  `prompt` event 126 ms after the task-notification turn), so each such wake is a turn of its own
+  with its own held Stop.
+  `SessionManager.isTurnHeldByBackgroundWork` answers whether the session is in that state, and
+  `isTurnSettled` (`src/main/pty/turn-settled.ts`) is the one place a caller that may act on it
+  accepts it as a finished turn.
 - **What does not.** An `idle_hint` (Esc between tool calls fires no hook and ends the turn exactly
   this way, so the two cannot be told apart), `Interrupted`, `TurnFailed`, a `TurnRetrying` that
   idles, a permission prompt, every watchdog and silence timer, and a resume's idle seed.
@@ -167,7 +185,9 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   a resumed session starts with none, and a drag counts as a plan exit only once it reports plan
   mode again. An agent that reports no mode always answers false.
 - **`workSerial`** is the turn's identity. It counts the turn-initiating events (`TURN_INITIATING_EVENTS`)
-  `processEvent` has handled, and rides the turn end beside `turnStartedAt`.
+  `processEvent` has handled, and rides the turn end beside `turnStartedAt`. A `compact` with no
+  turn active is not counted: an idle compaction used to move the turn past the reply a workflow's
+  recovery had to read, and show the session working for minutes.
   `SessionManager.isLatestTurn(sessionId, workSerial)` is true only while the agent has reported no
   work since. The turn-end runner and the workflow step ask it before acting on a check's answer, so
   a turn the user began meanwhile stops them even after it failed or was interrupted back to idle
@@ -192,7 +212,9 @@ not overloaded for it: that event fires on every state change, and a Stop commit
   `session-030-code-review-background-subagents` (#529's pass #76: 12 Stops, 3 turn ends, because
   the background reviewers held the other nine) and `session-031-turn-failed-then-continue` (a
   captured task session: a `turn_failed` with error `unknown` idles with no turn end, then the turn
-  after the user's "continue" ends once at its Stop).
+  after the user's "continue" ends once at its Stop). `session-035-stop-with-live-shell` pins the
+  held turn end: reported once at the Stop with a hung shell alive, not again for a tool-less wake,
+  and the drain's turn end marked `heldReported`.
 
 ## Aborted-turn recovery (service errors)
 

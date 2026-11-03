@@ -29,7 +29,7 @@ import os from 'node:os';
 import { AgentTool, EventType } from '../../src/shared/types';
 import { buildHooks } from '../../src/main/agent/adapters/claude';
 import { buildHooks as buildGeminiHooks } from '../../src/main/agent/adapters/gemini';
-import { extractTool, extractToolId, extractSubagentId, extractDetail, markSubagentLaunch, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
+import { extractTool, extractToolId, extractSubagentId, extractDetail, extractHolderTimeout, markSubagentLaunch, setToolWhen, setTypeWhen, setTypeWhenDetailContains, setTypeWhenDetailMatches } from '../../src/main/agent/shared/directive-builders';
 
 const BRIDGE = path.resolve(__dirname, '../../src/main/agent/event-bridge.js');
 
@@ -98,6 +98,8 @@ const POSTTOOLUSE_DIRECTIVES = [
   // Monitor because `taskId` is generic enough that a tool-blind extraction
   // would repeat the Agent-completion mis-map this file's T1 case guards.
   extractDetail(['taskId'], { nested: 'tool_response', whenTool: 'Monitor' }),
+  // A Monitor's own limit, so an end notice the CLI rewords cannot hold it open.
+  extractHolderTimeout('timeoutMs', { whenTool: 'Monitor', nested: 'tool_response', unlessField: 'persistent' }),
   setTypeWhenDetailMatches('^[\\w-]{1,64}$', EventType.BackgroundShellStart),
 ];
 
@@ -402,6 +404,36 @@ describe('event-bridge tool completions (PostToolUse)', () => {
     // The toolId is what lets the engine close Monitor's still-pending
     // foreground tool as it converts to a background holder.
     expect(emitted.toolId).toBe('toolu_015TCG837RMCTi9aoGaXNSP8');
+    // Its own limit rides the start, so it ends then whatever its end notice says.
+    expect(emitted.expiresAfterMs).toBe(300000);
+  });
+
+  it('T7b: a persistent Monitor reports no limit, since it runs until stopped', () => {
+    const stdinContent = JSON.stringify({
+      tool_name: 'Monitor',
+      tool_input: { command: 'tail -f server.log' },
+      tool_response: { taskId: 'bpersist1', timeoutMs: 300000, persistent: true },
+      tool_use_id: 'toolu_monitor_persistent',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    const emitted = readEvent();
+    expect(emitted.type).toBe('background_shell_start');
+    expect(emitted.expiresAfterMs).toBeUndefined();
+  });
+
+  it('T7c: another tool carrying an incidental timeoutMs reports no limit', () => {
+    const stdinContent = JSON.stringify({
+      tool_name: 'Bash',
+      tool_input: { command: 'sleep 60', run_in_background: true },
+      tool_response: { shellId: 'bash_1', timeoutMs: 1000 },
+      tool_use_id: 'toolu_bash_timeout_field',
+    });
+
+    runBridge(stdinContent, [outputFile, 'tool_end', ...POSTTOOLUSE_DIRECTIVES]);
+
+    expect(readEvent().expiresAfterMs).toBeUndefined();
   });
 
   it('T8: a non-Monitor tool carrying an incidental tool_response.taskId stays tool_end', () => {

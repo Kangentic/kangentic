@@ -264,7 +264,7 @@ export class ActivityEngine {
       state.lastSignalAt = this.now();
     }
 
-    if (TURN_INITIATING_EVENTS.has(event.type)) {
+    if (TURN_INITIATING_EVENTS.has(event.type) && !isCompactionOutsideTurn(state, event)) {
       state.turnActive = true;
       // The agent reported work, so a turn end reported before now is no
       // longer its latest (`workSerial`).
@@ -869,9 +869,10 @@ export class ActivityEngine {
    * `options.source: 'transcript'` labels a definitive drain confirmed
    * directly from the agent's durable session transcript (task #386) -
    * distinct from a Tier A PID-exit or a heuristic quiescence reclaim,
-   * both of which also pass an id but carry no source.
+   * both of which also pass an id but carry no source. `'expired'` labels a
+   * holder whose own time limit ran out (a Monitor's `timeoutMs`).
    */
-  markBackgroundShellEnded(sessionId: string, shellId?: string, options?: { source?: 'transcript' }): void {
+  markBackgroundShellEnded(sessionId: string, shellId?: string, options?: { source?: 'transcript' | 'expired' }): void {
     if (this.disposed) return;
     const state = this.states.get(sessionId);
     if (!state) return;
@@ -913,8 +914,8 @@ export class ActivityEngine {
         return;
       }
     }
-    const trigger: TransitionTrigger = options?.source === 'transcript'
-      ? 'event:bg-shell-ended:transcript'
+    const trigger: TransitionTrigger = options?.source !== undefined
+      ? `event:bg-shell-ended:${options.source}`
       : shellId !== undefined
         ? `event:bg-shell-ended:${shellId}`
         : 'event:bg-shell-ended:watcher';
@@ -1108,6 +1109,7 @@ export class ActivityEngine {
       // the activity did not. Without this a session that stays `thinking` for
       // minutes reports nothing after the turn's first push.
       this.reportReasonIfChanged(sessionId, state);
+      this.reportHeldTurnEnd(sessionId, state);
       this.scheduleTimer(sessionId, state);
       return;
     }
@@ -1148,9 +1150,31 @@ export class ActivityEngine {
     // any background work it left has drained). Consumed so it reports once.
     if (fromActivity === 'thinking' && newActivity === 'idle' && state.turnEndSource === 'stop') {
       state.turnEndSource = null;
-      this.callbacks.onTurnEnded?.(sessionId, state.turnStartedAt, state.workSerial);
+      const heldReported = state.heldTurnEndSerial === state.workSerial;
+      this.callbacks.onTurnEnded?.(sessionId, state.turnStartedAt, state.workSerial, heldReported);
     }
     this.scheduleTimer(sessionId, state);
+  }
+
+  /**
+   * The agent's Stop landed and only background work it left running keeps
+   * the session thinking: report the turn end now, once per `workSerial`
+   * (`onTurnEndedHeld`). The drain's own turn end still follows.
+   */
+  private reportHeldTurnEnd(sessionId: string, state: SessionEngineState): void {
+    if (!isHeldByBackgroundWork(state) || state.heldTurnEndSerial === state.workSerial) return;
+    state.heldTurnEndSerial = state.workSerial;
+    this.callbacks.onTurnEndedHeld?.(sessionId, state.turnStartedAt, state.workSerial);
+  }
+
+  /**
+   * Is the session's turn over, its end reported held, with only background
+   * work it left keeping it thinking? A consumer that acts on the held turn end
+   * asks this in place of "is it idle".
+   */
+  isTurnHeldByBackgroundWork(sessionId: string): boolean {
+    const state = this.states.get(sessionId);
+    return state !== undefined && isHeldByBackgroundWork(state) && state.heldTurnEndSerial === state.workSerial;
   }
 
   /**
@@ -1430,4 +1454,28 @@ export class ActivityEngine {
       event,
     );
   }
+}
+
+/**
+ * The agent ended its turn with its own Stop, and background work it left
+ * running is all that keeps the session thinking: no turn, tool call,
+ * subagent or permission prompt is open.
+ */
+function isHeldByBackgroundWork(state: SessionEngineState): boolean {
+  return state.activity === 'thinking'
+    && state.turnEndSource === 'stop'
+    && !state.turnActive
+    && deriveReason(state).kind === 'background-shell';
+}
+
+/**
+ * A compaction that starts with no turn active: the CLI compacting an idle
+ * session, or one held only by background work. It is not a turn. Counted as
+ * one, an idle compaction showed a session working for 6.8 minutes until the
+ * stale-thinking watchdog ended it, and its `workSerial` bump moved the turn
+ * past the reply the workflow's step check had to read. A compaction inside a
+ * turn changes nothing either way, since the turn already holds the session.
+ */
+function isCompactionOutsideTurn(state: SessionEngineState, event: SessionEvent): boolean {
+  return event.type === EventType.Compact && !state.turnActive;
 }

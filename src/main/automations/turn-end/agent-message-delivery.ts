@@ -93,6 +93,8 @@ export async function deliverAgentMessageAndWait(
     turnWait: 'always' | 'when-deferred';
     /** What the run log says when `signal` fires first. Defaults to the exit budget's wording. */
     abortReason?: string;
+    /** The turn wait also takes a turn held only by background work its agent left (`waitForTurnCompletion`). */
+    acceptHeld?: boolean;
   },
 ): Promise<void> {
   const abortReason = input.abortReason ?? EXIT_BUDGET_ABORT_REASON;
@@ -117,6 +119,7 @@ export async function deliverAgentMessageAndWait(
       const settled = await waitForTurnCompletion(context.sessionManager, input.sessionId, {
         signal: input.signal,
         timeoutMs: PASTE_TURN_WAIT_MS,
+        acceptHeld: input.acceptHeld,
       });
       if (settled !== 'completed') throw new Error(turnWaitFailure(settled, abortReason));
     }

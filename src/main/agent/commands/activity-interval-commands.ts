@@ -10,6 +10,8 @@ interface OpenIntervalSummary {
   sessionId: string;
   disposition: SessionActivityInterval['disposition'];
   state: SessionActivityInterval['state'];
+  /** What keeps the session in this state: `background-shell` is work its ended turn left running. */
+  reasonKind: SessionActivityInterval['reasonKind'];
   startedMs: number;
   startedAt: string;
   liveElapsedMs: number;
@@ -62,6 +64,7 @@ export const handleGetActivityIntervals: CommandHandler = (
         sessionId: interval.sessionId,
         disposition: interval.disposition,
         state: interval.state,
+        reasonKind: interval.reasonKind,
         startedMs: interval.startedMs,
         startedAt: interval.startedAt,
         liveElapsedMs: now - interval.startedMs,

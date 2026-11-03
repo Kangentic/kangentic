@@ -164,6 +164,8 @@ describe('the workflow step and the turn it judged', () => {
         isLatestTurn: (sessionId: string, workSerial: number) =>
           sessionId === SESSION_ID && workSerial === currentWorkSerial,
         getOpenWork: () => openWork,
+        // No shell the engine still holds: no move waits on background work here.
+        getHeldBackgroundShellIds: () => [],
       },
       projectRepo: { getById: () => ({ path: '/mock/project' }) },
     } as unknown as IpcContext;
