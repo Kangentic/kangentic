@@ -106,7 +106,15 @@ A probe an agent's CLI answers (its hook trust, a chat id, a model list) runs on
 
 ## Agents
 
-All 14 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run on a real host with its real CLI**: every one is covered by unit tests against a fake host, and the mock CLIs on a Docker host have exercised the path end to end (see below). Real CLIs are the Beta gate.
+All 14 adapters that declare `supportsWslCli` declare `remoteCliName` and run on a host. **None has run with its real CLI.** Each is covered by unit tests against a fake host, and each one's mock CLI has run on a real sshd in a Docker container through the real app. That run added the host over ssh with a password, made a remote project, and started tasks for all 14 agents (eight at once in one host folder). It confirmed, for the agents that start there:
+
+- the agent runs on the host under the host program's own Node, and its trust, settings and MCP files are written there with hook paths of the host;
+- a file the user already had (`.gemini/settings.json`, `.cursor/mcp.json`, `~/.gemini/trustedFolders.json`) keeps its own entries beside Kangentic's;
+- a project file Kangentic creates is added to the host's `.git/info/exclude`, and one the user had is not;
+- moving the tasks away puts every file back as the user had it, removes the files that were not theirs, and removes the session folders;
+- a hook fired on the host reaches this computer's event log, in order.
+
+Real CLIs are the Beta gate: the mocks do not run hooks themselves, ask for a login, or draw a real TUI, and the real Codex hook-trust read and Cursor's `create-chat` have only met fakes.
 
 What is not available over SSH for any agent yet: the transcript and conversation viewer, token and cost figures read from the CLI's own session files, and the session-id pass that reads those files. They read this computer's disk, which holds nothing of the host's, and they degrade to nothing without errors. A session id still arrives from the agent's hooks or its output where the adapter has one.
 

@@ -233,6 +233,22 @@ describe('files on the host', () => {
     }
   });
 
+  it('removes folders that hold nothing and leaves one with something in it, or not there, alone', async () => {
+    const rig = await makeRig();
+    await settle();
+    const empty = path.join(home, 'a', 'b');
+    const full = path.join(home, 'c');
+    fs.mkdirSync(empty, { recursive: true });
+    fs.mkdirSync(full);
+    fs.writeFileSync(path.join(full, 'keep.txt'), 'x');
+
+    const answer = await ask(rig.link.requestHelper('removeEmptyDirectories', { paths: [empty, path.join(home, 'a'), full, path.join(home, 'gone')] }));
+
+    expect(answer).toEqual({ removed: 2 });
+    expect(fs.existsSync(path.join(home, 'a'))).toBe(false);
+    expect(fs.existsSync(path.join(full, 'keep.txt'))).toBe(true);
+  });
+
   it('refuses to run a program in a folder outside the home', async () => {
     const rig = makeRig();
     await settle();

@@ -249,6 +249,28 @@ describe('adding a host', () => {
     expect(status).toMatchObject({ state: 'unreachable', detail: 'Kangentic does not include the program to install on a host.' });
   });
 
+  it('refuses an address that is already a host, so one machine never has two links taking it over from each other', async () => {
+    const rig = makeRig();
+    await rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+    const callsAfterFirst = rig.run.calls.length;
+
+    await expect(rig.admin.addHost({ name: 'Lab again', destination: 'lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT }))
+      .rejects.toThrow('already added as "Lab"');
+
+    expect(rig.hosts).toHaveLength(1);
+    expect(rig.run.calls).toHaveLength(callsAfterFirst);
+  });
+
+  it('refuses a second add of one address that starts before the first has made its row', async () => {
+    const rig = makeRig();
+    const first = rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+    const second = rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'config' }, expectedFingerprint: FINGERPRINT });
+
+    await expect(second).rejects.toThrow('already being added');
+    await first;
+    expect(rig.hosts).toHaveLength(1);
+  });
+
   it.each([
     ['an empty name', '', 'lab'],
     ['a name that is too long', 'x'.repeat(61), 'lab'],

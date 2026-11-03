@@ -358,6 +358,7 @@ export class HelperServer {
     readFile: (params) => this.readFile(params),
     pathPresence: (params) => this.pathPresence(params.paths),
     removeFiles: (params) => this.removeFiles(params.paths),
+    removeEmptyDirectories: (params) => this.removeEmptyDirectories(params.paths),
     runCommand: (params) => this.runCommand(params),
   };
 
@@ -562,6 +563,23 @@ export class HelperServer {
         removed += 1;
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+    }
+    return { removed };
+  }
+
+  /** Remove folders with nothing in them, in the order given. Anything else (not empty, not there) is left as it is. */
+  private async removeEmptyDirectories(paths: string[]): Promise<{ removed: number }> {
+    const targets = paths.map((requested) => this.homePath(requested));
+    let removed = 0;
+    for (const target of targets) {
+      try {
+        await fs.rmdir(target);
+        removed += 1;
+      } catch (error) {
+        const code = (error as NodeJS.ErrnoException).code;
+        if (code === 'ENOENT' || code === 'ENOTEMPTY' || code === 'EEXIST' || code === 'ENOTDIR') continue;
         throw error;
       }
     }

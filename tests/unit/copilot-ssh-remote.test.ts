@@ -169,6 +169,7 @@ describe('a Copilot on a remote host: what the relay pushes', () => {
       watchHooks: async () => undefined,
       unwatchHooks: async () => undefined,
       removeFiles: async () => undefined,
+      removeEmptyDirectories: async () => undefined,
     };
     const relay = new RemoteSessionRelay({ files });
     relays.push(relay);

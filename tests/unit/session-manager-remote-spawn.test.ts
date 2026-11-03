@@ -220,6 +220,7 @@ describe('spawning an agent session on a host', () => {
         watchHooks: async () => ({}),
         unwatchHooks: async () => ({}),
         removeFiles: async () => ({}),
+        removeEmptyDirectories: async () => ({}),
       },
     }));
 

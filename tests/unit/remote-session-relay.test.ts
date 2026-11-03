@@ -48,7 +48,7 @@ interface Rig {
   mcpCalls: string[];
 }
 
-async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[] } = {}): Promise<Rig> {
+async function makeRig(options: { extraFiles?: Record<string, string>; declareExtra?: string[]; bare?: boolean } = {}): Promise<Rig> {
   const helperRig = makeHelperRig(1, { homeDirectory: hostHome, baseEnv: { SHELL: '/bin/sh' } });
   const link = new RemoteLink({
     identity: { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' },
@@ -64,6 +64,7 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
     watchHooks: (_hostId, sessionId, directory, statusFile) => link.requestHelper('watchHooks', { sessionId, directory, ...(statusFile ? { statusFile } : {}) }),
     unwatchHooks: (_hostId, sessionId) => link.requestHelper('unwatchHooks', { sessionId }),
     removeFiles: (_hostId, paths) => link.requestHelper('removeFiles', { paths }),
+    removeEmptyDirectories: (_hostId, paths) => link.requestHelper('removeEmptyDirectories', { paths }),
   };
   const relay = new RemoteSessionRelay({ files });
   link.setEventListener((event) => {
@@ -99,6 +100,12 @@ async function makeRig(options: { extraFiles?: Record<string, string>; declareEx
   });
   inbox.start();
 
+  if (options.bare) {
+    // An agent with no settings, no MCP config and no hook script: nothing to push, but the hook folders are still made.
+    fs.rmSync(path.join(localSession, 'settings.json'));
+    fs.rmSync(path.join(localSession, 'mcp.json'));
+    fs.rmSync(wslHookPaths(localSession).script);
+  }
   for (const [relative, content] of Object.entries(options.extraFiles ?? {})) {
     const target = path.join(localSession, ...relative.split('/'));
     fs.mkdirSync(path.dirname(target), { recursive: true });
@@ -237,6 +244,8 @@ describe('releasing a session', () => {
 
     await waitFor(() => fs.readFileSync(rig.eventsPath, 'utf8').includes('"idle"'));
     expect(rig.relay.has('s1')).toBe(false);
+    // A hook that runs after the release finds the folder gone, so the folder is made again to publish into it.
+    fs.mkdirSync(path.join(rig.hostSession, 'wsl-hooks', 'inbox'), { recursive: true });
     fs.writeFileSync(path.join(rig.hostSession, 'wsl-hooks', 'inbox', '1700000000000000000-6.rec'), 'K1\nlate\n\n{}');
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(fs.readFileSync(rig.eventsPath, 'utf8')).not.toContain('late');
@@ -257,6 +266,33 @@ describe('releasing a session', () => {
       expect(fs.existsSync(path.join(rig.hostSession, name))).toBe(false);
     }
     expect(fs.existsSync(hostOwn)).toBe(true);
+  });
+
+  it('removes the hook folders of a session that pushed no files at all, as an agent with no hook script does', async () => {
+    const rig = await makeRig({ bare: true });
+    expect(fs.existsSync(path.join(rig.hostSession, 'wsl-hooks', 'inbox'))).toBe(true);
+
+    await rig.relay.release('s1');
+
+    expect(fs.existsSync(path.join(rig.hostSession, 'wsl-hooks'))).toBe(false);
+  });
+
+  it('leaves no folder behind for the session either, but never a folder with something of the host\'s in it', async () => {
+    const rig = await makeRig({
+      extraFiles: { 'copilot-config/config.json': '{}' },
+      declareExtra: ['copilot-config/config.json'],
+    });
+    // The hook script's own marker, which the relay did not push.
+    fs.writeFileSync(path.join(rig.hostSession, 'wsl-hooks', 'signal'), 'x');
+    await rig.relay.release('s1');
+    expect(fs.existsSync(rig.hostSession)).toBe(false);
+
+    const second = await makeRig();
+    const keep = path.join(second.hostSession, 'notes.txt');
+    fs.writeFileSync(keep, 'the host\'s own');
+    await second.relay.release('s1');
+    expect(fs.existsSync(keep)).toBe(true);
+    expect(fs.existsSync(path.join(second.hostSession, 'wsl-hooks'))).toBe(false);
   });
 });
 

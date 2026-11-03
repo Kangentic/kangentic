@@ -39,6 +39,7 @@ export interface RemoteSessionFiles {
   watchHooks(hostId: string, sessionId: string, directory: string, statusFile?: string): Promise<unknown>;
   unwatchHooks(hostId: string, sessionId: string): Promise<unknown>;
   removeFiles(hostId: string, paths: string[]): Promise<unknown>;
+  removeEmptyDirectories(hostId: string, paths: string[]): Promise<unknown>;
 }
 
 export interface RemoteSessionRegistration {
@@ -149,7 +150,7 @@ export class RemoteSessionRelay {
     if (pending.released) {
       // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
       await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
-      await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths);
+      await this.removePushedFiles(registration.hostId, registration.sessionId, pushedPaths, hostHooksDirectory);
       return;
     }
 
@@ -185,15 +186,31 @@ export class RemoteSessionRelay {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
     // The session is over: its settings and MCP config (which holds the MCP token) leave the host's session folder.
-    await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths);
+    await this.removePushedFiles(entry.hostId, sessionId, entry.pushedPaths, entry.hostHooksDirectory);
     if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
   }
 
-  /** Best-effort: a host out of reach keeps the files until the next session there, and nothing else depends on them. */
-  private async removePushedFiles(hostId: string, sessionId: string, paths: string[]): Promise<void> {
-    if (paths.length === 0) return;
+  /**
+   * Best-effort: a host out of reach keeps the files until the next session there, and nothing else
+   * depends on them. The folders the session made go too when nothing is left in them: the hook
+   * folders, then the session's own (a folder with anything in it stays).
+   */
+  private async removePushedFiles(hostId: string, sessionId: string, paths: string[], hooksDirectory?: string): Promise<void> {
+    // A session with no files of its own (an agent without a hook script) still made the hook folders.
+    if (paths.length === 0 && !hooksDirectory) return;
     try {
-      await this.options.files.removeFiles(hostId, paths);
+      // The hook script's own marker file is not one this relay pushed, so it is named here.
+      await this.options.files.removeFiles(hostId, hooksDirectory ? [...paths, `${hooksDirectory}/signal`] : paths);
+      if (hooksDirectory) {
+        const sessionFolder = hooksDirectory.replace(/\/wsl-hooks$/, '');
+        const folders = ['inbox', 'requests', 'responses'].map((folder) => `${hooksDirectory}/${folder}`);
+        // Deepest first, so a parent is empty by the time it is asked for. Each pushed file's own
+        // folder (an agent's config folder) goes the same way.
+        const fileFolders = [...new Set(paths.map((filePath) => filePath.slice(0, filePath.lastIndexOf('/'))))]
+          .filter((folder) => folder.startsWith(`${sessionFolder}/`))
+          .sort((left, right) => right.length - left.length);
+        await this.options.files.removeEmptyDirectories(hostId, [...folders, ...fileFolders, hooksDirectory, sessionFolder]);
+      }
     } catch (error) {
       this.options.log?.(`could not remove the session files from the host for ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     }

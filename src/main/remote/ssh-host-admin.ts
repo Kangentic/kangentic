@@ -55,6 +55,9 @@ export interface SshHostAdminDeps {
 }
 
 export class SshHostAdmin {
+  /** Addresses being added right now, so a second add of one cannot start before the first has made its row. */
+  private readonly adding = new Set<string>();
+
   constructor(private readonly deps: SshHostAdminDeps) {}
 
   detectClient(): Promise<SshClientStatus> {
@@ -75,6 +78,21 @@ export class SshHostAdmin {
     if (name.length === 0 || name.length > MAX_HOST_NAME_LENGTH) throw new Error(`Give the host a name of 1 to ${MAX_HOST_NAME_LENGTH} characters.`);
     assertSafeDestination(input.destination);
 
+    // One host per address. Two rows for one machine would run two links that take the host over from each
+    // other (one install, one owner at a time), each seeing "the peer ended the connection" again and again.
+    // The in-flight check covers a second add that starts before the first has made its row.
+    const existing = this.deps.hosting.hosts.list().find((candidate) => candidate.destination === input.destination);
+    if (existing) throw new Error(`${input.destination} is already added as "${existing.name}".`);
+    if (this.adding.has(input.destination)) throw new Error(`${input.destination} is already being added.`);
+    this.adding.add(input.destination);
+    try {
+      return await this.addNewHost(input, name);
+    } finally {
+      this.adding.delete(input.destination);
+    }
+  }
+
+  private async addNewHost(input: SshHostAddInput, name: string): Promise<SshHostStatus> {
     // The key the user was shown, or nothing: a host that changed its key meanwhile is refused here.
     await trustHostKey(input.destination, input.expectedFingerprint, this.deps.setup);
 

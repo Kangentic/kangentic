@@ -150,6 +150,11 @@ export class RemoteHostService {
     return this.helper(hostId, 'removeFiles', { paths });
   }
 
+  /** Remove folders that hold nothing (a finished session's hook folders). A folder with anything in it is left. */
+  removeEmptyDirectories(hostId: string, paths: string[]): Promise<HelperRequestMap['removeEmptyDirectories']['result']> {
+    return this.helper(hostId, 'removeEmptyDirectories', { paths });
+  }
+
   /** Run a program on the host to completion, through the user's shell, for a CLI's own probe. */
   runCommand(hostId: string, request: HelperRequestMap['runCommand']['params']): Promise<HelperRequestMap['runCommand']['result']> {
     return this.helper(hostId, 'runCommand', request);
