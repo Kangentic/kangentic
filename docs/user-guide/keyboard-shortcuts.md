@@ -26,7 +26,7 @@ General:
 - **Mod+Shift+E** - Toggle the project sidebar
 - **Mod+Shift+J** - Toggle the bottom terminal panel
 - **Mod+Shift+P** - Toggle the Command Terminal window
-- **Mod+Shift+B** inside the Command Terminal - Show or hide the focused terminal's Browser pane (a separate binding from the task window's, listed under Browser in Hotkeys)
+- **Mod+Shift+B** inside the Command Terminal - Show or hide the focused terminal's Browser pane (a separate binding from the task window's, listed under General in Hotkeys, beside Toggle Command Terminal)
 - **Ctrl+Tab** - Go to the next terminal in this project: each running agent in the order the bottom panel lists it, then each Command Terminal terminal. A workflow's own agent is skipped, so is an agent whose task window is in the detached Agent Monitor, and so is a project whose Command Terminal is popped out into its own window. From Backlog or Workflows it switches to the board first. It lands on the agent's task window when one is open, and otherwise on its panel tab. With the panel hidden in Settings, or while a paired phone streams that agent, it opens the agent's window
 - **Ctrl+Shift+Tab** - Go to the next terminal in any project, walking projects in sidebar order and switching project when the next terminal is in another
 - **Ctrl+\`** / **Ctrl+Shift+\`** - Open the next / previous project in sidebar order, collapsed groups included. The backtick key is matched by its position, so it is the same key on layouts where it types another character
