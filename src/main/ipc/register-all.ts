@@ -156,7 +156,8 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     // The host program this build carries: packaged beside the app, or built by `npm run build:host`.
     hostAsset: () => {
       const directory = app.isPackaged ? path.join(process.resourcesPath, 'host') : path.join(app.getAppPath(), 'dist', 'host');
-      const found = readHostAssets(directory, app.getVersion());
+      // An entry with a download address instead of a file is fetched into configDir on first use.
+      const found = readHostAssets(directory, app.getVersion(), { cacheDirectory: path.join(PATHS.configDir, 'host-assets') });
       if (found.problem) console.warn(`[remote] ${found.problem}`);
       return found.assets;
     },

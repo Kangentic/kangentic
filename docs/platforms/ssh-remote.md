@@ -57,7 +57,7 @@ Kangentic installs a small program on the host under `~/.kangentic/host/<version
 
 - The app streams its own copy over the connection (the host needs nothing from the internet), and the host checks the SHA-256 before it unpacks anything. A version already complete there is not sent again.
 - The host must be Linux on x86_64 or arm64 with glibc 2.28 or newer. Alpine and other musl hosts are refused with a sentence saying what the host is.
-- `npm run build:host` builds the program on any OS into `dist/host`: one tarball per CPU and a `manifest.json`. A development build reads it from there. The app refuses a manifest whose version is not its own.
+- `npm run build:host` builds the program on any OS into `dist/host`: one tarball per CPU and a `manifest.json`. A development build reads it from there. The app refuses a manifest whose version is not its own, whose file names leave the folder, whose checksums are not lowercase SHA-256, or whose download addresses are not https.
 
 ## Connection state
 
@@ -92,7 +92,7 @@ An agent that cannot run on a host fails the spawn with a sentence saying so.
 
 ## Known limits
 
-- **No packaged build carries the host program yet.** A development build uses `npm run build:host`. Until the release build includes it, a connect from an installed build ends with "This build of Kangentic does not include the program to install on a host", shown on the host's row. How it ships (inside the installer, or downloaded on first use against a checksum the app carries) is undecided.
+- **No release build is wired to the host program yet.** A development build uses `npm run build:host`. An installed build reads `resources/host/manifest.json` and, for an entry that names an `https://` address, downloads that one archive into `<config folder>/host-assets/<version>/` the first time a host of that CPU needs it, checks it against the manifest's SHA-256 (and size), and only then sends it, so the installer grows by a few hundred bytes instead of about 90 MB. The app side is built and tested. Nothing yet publishes the archives with the release or puts the manifest into the installer: `node scripts/build-host.mjs --url-base https://github.com/<owner>/<repo>/releases/download/v<version> --manifest-out <dir>` produces both, and the release workflow has to run it ahead of the packaging legs, attach the archives, and copy the manifest to `resources/host`. Until then a connect from an installed build ends with "This build of Kangentic does not include the program to install on a host", shown on the host's row.
 - **A host with `KillUserProcesses=yes` ends the daemon with the login session that started it.** Phase 0 measured this (`docs/audits/ssh-remote-phase-0-audit.md`): only linger plus `systemd-run --user` keeps it. Kangentic does not detect the setting or change the host, so on such a host the agents end when the session that installed the program ends, and recovery treats them as lost. Enabling linger is the host owner's call.
 - **`ssh` starts on the pty host's terminal thread** when a link dials or redials, which on Windows holds local terminals for one `CreateProcess`.
 - **A remote session has no process-tree watching.** The background-shell watcher, the transcript readers and the session-id filesystem pass read this computer's disk, so they are off for a remote session until the read mirror lands.

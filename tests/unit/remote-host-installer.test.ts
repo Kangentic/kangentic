@@ -132,6 +132,29 @@ describe('refusing a host', () => {
       expect(error.message).toContain('x86_64 and arm64');
     });
 
+    it('prepares only the asset the host\'s CPU picked, and only when the host does not already have that version', async () => {
+      const prepared: string[] = [];
+      const assets: HostAsset[] = BOTH.map((asset) => ({ ...asset, prepare: async () => { prepared.push(asset.arch); } }));
+
+      await installHost(fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') }).runner, assets, stream);
+      expect(prepared).toEqual(['arm64']);
+
+      // The host already has this version: nothing is fetched or sent.
+      prepared.length = 0;
+      const alreadyThere = fakeHost({ present: ok(`${ARM_SHA}\n`), probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
+      await installHost(alreadyThere.runner, assets, stream);
+      expect(prepared).toEqual([]);
+    });
+
+    it('does not send anything when preparing the archive fails, and says why', async () => {
+      const host = fakeHost();
+      const assets: HostAsset[] = [{ ...ASSET, prepare: async () => { throw new Error('Could not download the host program: example.test answered 404.'); } }];
+
+      await expect(installHost(host.runner, assets, stream)).rejects.toThrow('example.test answered 404');
+
+      expect(host.calls.some((call) => call.command.includes('cat > "$upload"'))).toBe(false);
+    });
+
     it('refuses a bad checksum on any entry before it runs anything on the host', async () => {
       const host = fakeHost();
       await expect(installHost(host.runner, [ASSET, { ...ASSET, arch: 'arm64', sha256: 'not-a-checksum' }], stream)).rejects.toThrow('checksum');

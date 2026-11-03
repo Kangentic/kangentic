@@ -7,6 +7,9 @@
 //   npm run build:host                      both CPUs, into dist/host
 //   node scripts/build-host.mjs --arch x64  one CPU
 //   node scripts/build-host.mjs --out <dir> somewhere else
+//   node scripts/build-host.mjs --url-base https://github.com/<owner>/<repo>/releases/download/v<version> \
+//        --manifest-out <dir>               also write the manifest ALONE (with a download address per
+//                                           archive) to <dir>, for a build that fetches the archives on first use
 //
 // It works on any OS, because node-pty ships the Linux prebuilds and Node is downloaded, not run. The only
 // network access is nodejs.org, for the Node tarball and its published checksums, and a mismatch stops the build.
@@ -37,7 +40,7 @@ const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..'
 const tarPath = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 
 function parseArguments(argumentList) {
-  const parsed = { arches: Object.keys(ARCHES), out: path.join(repoRoot, 'dist', 'host') };
+  const parsed = { arches: Object.keys(ARCHES), out: path.join(repoRoot, 'dist', 'host'), urlBase: null, manifestOut: null };
   for (let index = 0; index < argumentList.length; index += 1) {
     const argument = argumentList[index];
     if (argument === '--arch') {
@@ -45,9 +48,13 @@ function parseArguments(argumentList) {
       const unknown = parsed.arches.filter((arch) => !(arch in ARCHES));
       if (unknown.length > 0) throw new Error(`Unknown --arch ${unknown.join(', ')}. Known: ${Object.keys(ARCHES).join(', ')}`);
     } else if (argument === '--out') parsed.out = path.resolve(String(argumentList[(index += 1)]));
+    else if (argument === '--url-base') parsed.urlBase = String(argumentList[(index += 1)]).replace(/\/+$/, '');
+    else if (argument === '--manifest-out') parsed.manifestOut = path.resolve(String(argumentList[(index += 1)]));
     else throw new Error(`Unknown argument: ${argument}`);
   }
   if (parsed.arches.length === 0) throw new Error('--arch names no CPU');
+  if (parsed.manifestOut && !parsed.urlBase) throw new Error('--manifest-out writes a manifest with download addresses, so it needs --url-base.');
+  if (parsed.urlBase && !parsed.urlBase.startsWith('https://')) throw new Error('--url-base must be an https:// address: the app refuses any other.');
   return parsed;
 }
 
@@ -158,8 +165,16 @@ async function main() {
       const nodeTarball = await fetchNode(arch, cacheDirectory);
       assets.push(await buildArchive({ arch, version, outDirectory: options.out, workDirectory, nodeTarball }));
     }
-    fs.writeFileSync(path.join(options.out, 'manifest.json'), `${JSON.stringify({ version, node: NODE_VERSION, assets }, null, 2)}\n`);
+    const withUrls = options.urlBase ? assets.map((asset) => ({ ...asset, url: `${options.urlBase}/${asset.file}` })) : assets;
+    fs.writeFileSync(path.join(options.out, 'manifest.json'), `${JSON.stringify({ version, node: NODE_VERSION, assets: withUrls }, null, 2)}\n`);
     say(`wrote ${path.relative(repoRoot, options.out) || options.out}${path.sep}manifest.json`);
+    if (options.manifestOut) {
+      // The manifest alone, for a build that downloads the archives on first use: its installer carries
+      // a few hundred bytes of checksums instead of about 90 MB of archives.
+      fs.mkdirSync(options.manifestOut, { recursive: true });
+      fs.writeFileSync(path.join(options.manifestOut, 'manifest.json'), `${JSON.stringify({ version, node: NODE_VERSION, assets: withUrls }, null, 2)}\n`);
+      say(`wrote the manifest alone to ${options.manifestOut}`);
+    }
   } finally {
     fs.rmSync(workDirectory, { recursive: true, force: true });
   }

@@ -29,6 +29,12 @@ export interface HostAsset {
   sha256: string;
   arch: HostArch;
   filePath: string;
+  /**
+   * Makes `filePath` exist and be this asset, when the app carries only a manifest (a build that downloads
+   * the archive on first use). Called once, for the asset the host's CPU picked and before the upload, so
+   * a host never costs the download of the CPU it is not.
+   */
+  prepare?: () => Promise<void>;
 }
 
 export interface InstalledHost {
@@ -152,6 +158,8 @@ export async function installHost(
   const present = await run(`(test -f ${shellQuote(`${directory}/.complete`)} && cat ${shellQuote(`${directory}/.sha256`)}) 2>/dev/null; true`);
   if (present.stdout.trim() === asset.sha256) return { directory, relayCommand, installed: false };
 
+  // Only now, with the host's CPU known and this version missing there, is the archive worth having.
+  await asset.prepare?.();
   const upload = await run(installScript(asset.version, asset.sha256), { stdin: openAsset(asset.filePath), timeoutMs: UPLOAD_TIMEOUT_MS });
   if (upload.code === 65) throw new HostInstallError('checksum', upload.stderr.trim());
   if (upload.code !== 0) {
