@@ -3,7 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { OpenCodeDetector } from './detector';
 import { OpenCodeCommandBuilder } from './command-builder';
-import { OpenCodeSessionHistoryParser } from './session-history-parser';
+import { OpenCodeSessionHistoryParser, openCodeCredentialCount } from './session-history-parser';
 import { createOpenCodeCommandInjectionVerifier } from './command-injection-verifier';
 import {
   capOpenCodeRemoteEntries,
@@ -22,7 +22,7 @@ import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } fr
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
 import { installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
-import { isOpenCodeV2 } from './version';
+import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
 import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession } from './distro-sessions';
 import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
@@ -46,6 +46,9 @@ import type {
   SubmissionContextType,
   SubmissionVerifier,
   AgentCapabilities,
+  AgentExecutionServer,
+  AgentLiveTelemetryUnsupported,
+  RemoteServerStatus,
   ResolvedExecutionTarget,
 } from '../../../../shared/types';
 import { ActivityDetection } from '../../../../shared/types';
@@ -200,6 +203,19 @@ export class OpenCodeAdapter implements AgentAdapter {
   // covers (webp was not probed and takes the same normalization).
   readonly pastedImageNativeExtensions = ['png', 'jpg', 'jpeg', 'gif'];
 
+  /**
+   * OpenCode reports no token usage to Kangentic: no statusline, no
+   * `sessionHistory` reader, and its plugin streams activity only. Without
+   * this the card and the context bar showed "Starting agent..." for the whole
+   * session, on OpenCode 1 and 2 alike (seen in a preview).
+   */
+  readonly liveTelemetryUnsupported: AgentLiveTelemetryUnsupported = {
+    unavailableLabel: 'Telemetry: TUI only',
+    unavailableTitle:
+      'OpenCode does not stream live telemetry to Kangentic.\n'
+      + 'Its TUI shows the model, context and cost.',
+  };
+
   private readonly detector = new OpenCodeDetector();
   private readonly commandBuilder = new OpenCodeCommandBuilder();
   // Sessions holding the activity plugin, per project root. OpenCode
@@ -231,9 +247,16 @@ export class OpenCodeAdapter implements AgentAdapter {
       remoteModeCaveat:
         'The server is the authority for providers, models, and MCP tools in remote mode. '
         + 'The Kangentic MCP server and the activity-tracking plugin are not available for remote '
-        + 'OpenCode sessions - attach has no way to push local config into an already-running server.',
+        + 'OpenCode sessions - attach has no way to push local config into an already-running server. '
+        + 'Remote mode needs OpenCode 1 on both ends.',
     },
-    probeServer: probeOpenCodeServer,
+    // A local OpenCode 2 cannot attach (`OPENCODE_REMOTE_NEEDS_V1`), so the
+    // connection test says so before it reaches the server.
+    probeServer: async (server: AgentExecutionServer): Promise<RemoteServerStatus> => (
+      isOpenCodeV2(this.detector.getCachedVersion())
+        ? { reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 }
+        : probeOpenCodeServer(server)
+    ),
     knownTargets: (): Array<[string, ResolvedExecutionTarget]> => [...this.remoteTargetsByCwd],
     adoptTargets: (targets: ReadonlyArray<[string, ResolvedExecutionTarget]>): void => {
       // Main's entries are the whole truth: a cwd main cleared (a local
@@ -292,6 +315,13 @@ export class OpenCodeAdapter implements AgentAdapter {
       const dataHome = !place
         ? path.join(os.homedir(), '.local', 'share')
         : distroDataHome?.startsWith('/') ? hostPathForTarget(distroDataHome, place) : path.join(place.facts.homeUnc, '.local', 'share');
+      // OpenCode 2 keeps credentials in its database's `credential` table and
+      // imports a V1 `auth.json` into it at start (measured on 2.2.5), so a V2
+      // sign-in shows there first. A distro's database is never opened from
+      // Windows (`distro-sessions.ts`), so a distro V2 is judged by `auth.json`.
+      if (!place && isOpenCodeV2(this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath))) {
+        if (openCodeCredentialCount(path.join(dataHome, 'opencode', 'opencode.db')) > 0) return true;
+      }
       const authPath = path.join(dataHome, 'opencode', 'auth.json');
       const raw = fs.readFileSync(authPath, 'utf8');
       const parsed = JSON.parse(raw) as unknown;
@@ -340,7 +370,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     // Hold the project root until this session releases, so concurrent
     // sessions serialize their cleanup in `removeHooks`. Local mode only -
     // remote mode never installs the plugin (see command-builder.ts).
-    if (installsActivityPlugin({ eventsOutputPath: options.eventsOutputPath, cliVersion })) {
+    if (installsActivityPlugin({ eventsOutputPath: options.eventsOutputPath })) {
       this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
     }
     return command;

@@ -5,14 +5,16 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
+import { openCodeV2MessageEntry } from './v2-messages';
 
 /**
  * Parse an OpenCode session into agent-agnostic `TranscriptEntry[]` for the
  * MCP `get_transcript` structured format.
  *
  * Unlike the file-based agents, OpenCode persists every session in a shared
- * SQLite database (`~/.local/share/opencode/opencode.db`). Schema (verified
- * read-only against OpenCode on disk, 2026-06):
+ * SQLite database (`~/.local/share/opencode/opencode.db`). An OpenCode 2
+ * session is in `session_message` instead (`storeOf`, `v2-messages.ts`).
+ * OpenCode 1 schema (verified read-only against OpenCode on disk, 2026-06):
  *   - `message(id, session_id, time_created, time_updated, data)` where
  *     `data` is JSON `{ role: 'user'|'assistant', time, modelID, ... }`.
  *   - `part(id, message_id, session_id, time_created, time_updated, data)`
@@ -96,19 +98,57 @@ export interface OpenCodePartRow {
   data: string;
 }
 
-/** One message's place in its session: its key, its size (message plus parts), and where it starts. */
+/**
+ * One message's place in its session: its key, its size (message plus parts), and where it starts.
+ * `order` is the column the session's messages sort by: `time_created` for an
+ * OpenCode 1 session, `seq` for an OpenCode 2 one.
+ */
 interface MessageExtent {
   id: string;
-  timeCreated: number;
+  order: number;
   size: number;
   position: number;
 }
 
+/**
+ * Where a session's messages are stored. OpenCode 1 writes `message` and
+ * `part`. OpenCode 2 (measured on 2.2.5) keeps the same database, leaves those
+ * tables as they were, and writes a session's messages to `session_message`
+ * only, one row per message ordered by `seq`. A session is in exactly one.
+ */
+type MessageStore = 'v1' | 'v2';
+
+function hasRows(database: DatabaseType.Database, sql: string, sessionId: string): boolean {
+  try {
+    return database.prepare<[string], { found: number }>(sql).get(sessionId) !== undefined;
+  } catch {
+    return false; // No such table in this database.
+  }
+}
+
+function storeOf(database: DatabaseType.Database, sessionId: string): MessageStore {
+  if (hasRows(database, 'SELECT 1 AS found FROM message WHERE session_id = ? LIMIT 1', sessionId)) return 'v1';
+  return hasRows(database, 'SELECT 1 AS found FROM session_message WHERE session_id = ? LIMIT 1', sessionId) ? 'v2' : 'v1';
+}
+
 /** Every message of a session in order, sized from SQLite's own `length()`, without reading any data. */
-function messageExtents(database: DatabaseType.Database, sessionId: string): MessageExtent[] {
+function messageExtents(database: DatabaseType.Database, sessionId: string, store: MessageStore): MessageExtent[] {
+  if (store === 'v2') {
+    let position = 0;
+    return database
+      .prepare<[string], { id: string; order: number; size: number }>(
+        'SELECT id, seq AS "order", length(data) AS size FROM session_message WHERE session_id = ? ORDER BY seq ASC, id ASC',
+      )
+      .all(sessionId)
+      .map((message) => {
+        const extent = { id: message.id, order: message.order, size: message.size ?? 0, position };
+        position += extent.size;
+        return extent;
+      });
+  }
   const messages = database
-    .prepare<[string], { id: string; timeCreated: number; size: number }>(
-      'SELECT id, time_created AS timeCreated, length(data) AS size FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC',
+    .prepare<[string], { id: string; order: number; size: number }>(
+      'SELECT id, time_created AS "order", length(data) AS size FROM message WHERE session_id = ? ORDER BY time_created ASC, id ASC',
     )
     .all(sessionId);
   const partSizes = new Map<string, number>();
@@ -122,10 +162,27 @@ function messageExtents(database: DatabaseType.Database, sessionId: string): Mes
   let position = 0;
   return messages.map((message) => {
     const size = (message.size ?? 0) + (partSizes.get(message.id) ?? 0);
-    const extent = { id: message.id, timeCreated: message.timeCreated, size, position };
+    const extent = { id: message.id, order: message.order, size, position };
     position += size;
     return extent;
   });
+}
+
+/** An OpenCode 2 session's `session_message` rows `[first, last]`, mapped like an export's messages. */
+function readV2Messages(database: DatabaseType.Database, sessionId: string, first: MessageExtent, last: MessageExtent): TranscriptEntry[] {
+  const rows = database
+    .prepare<[string, number, string, number, string], { id: string; type: string; time_created: number; data: string }>(
+      `SELECT id, type, time_created, data FROM session_message
+       WHERE session_id = ? AND (seq, id) >= (?, ?) AND (seq, id) <= (?, ?)
+       ORDER BY seq ASC, id ASC`,
+    )
+    .all(sessionId, first.order, first.id, last.order, last.id);
+  const messages = rows.flatMap((row) => {
+    const data = tryParseJson(row.data);
+    const entry = isRecord(data) ? openCodeV2MessageEntry(row.id, row.type, row.time_created, data) : null;
+    return entry ? [entry] : [];
+  });
+  return mapOpenCodeRemoteEntries(messages);
 }
 
 /** Read and map the messages `extents[from, to)`, each entry stamped with its message's position. */
@@ -135,12 +192,22 @@ function readMessages(
   extents: ReadonlyArray<MessageExtent>,
   from: number,
   to: number,
+  store: MessageStore,
 ): TranscriptEntry[] {
   if (from >= to) return [];
   const first = extents[from];
   const last = extents[to - 1];
+  const positionById = new Map(extents.slice(from, to).map((extent) => [extent.id, extent.position]));
+  const stamp = (entries: TranscriptEntry[]): TranscriptEntry[] => {
+    for (const entry of entries) {
+      const position = positionById.get(entry.uuid);
+      if (position !== undefined) entry.origin = { conversationId: sessionId, position };
+    }
+    return entries;
+  };
+  if (store === 'v2') return stamp(readV2Messages(database, sessionId, first, last));
   const range = '(time_created, id) >= (?, ?) AND (time_created, id) <= (?, ?)';
-  const bounds = [first.timeCreated, first.id, last.timeCreated, last.id] as const;
+  const bounds = [first.order, first.id, last.order, last.id] as const;
   const messageRows = database
     .prepare<[string, number, string, number, string], OpenCodeMessageRow>(
       `SELECT id, time_created, data FROM message WHERE session_id = ? AND ${range} ORDER BY time_created ASC, id ASC`,
@@ -153,20 +220,14 @@ function readMessages(
        ) ORDER BY time_created ASC, id ASC`,
     )
     .all(sessionId, sessionId, ...bounds);
-  const positionById = new Map(extents.slice(from, to).map((extent) => [extent.id, extent.position]));
-  const entries = mapOpenCodeRows(messageRows, partRows);
-  for (const entry of entries) {
-    const position = positionById.get(entry.uuid);
-    if (position !== undefined) entry.origin = { conversationId: sessionId, position };
-  }
-  return entries;
+  return stamp(mapOpenCodeRows(messageRows, partRows));
 }
 
 /** A cursor names the message a stretch starts at; the end of the session has its own. */
 const END_CURSOR = 'o:end';
 
 function encodeMessageCursor(extent: MessageExtent | undefined): string {
-  return extent ? `o:${extent.timeCreated}:${encodeURIComponent(extent.id)}` : END_CURSOR;
+  return extent ? `o:${extent.order}:${encodeURIComponent(extent.id)}` : END_CURSOR;
 }
 
 /** The index a cursor names, the length for the end, or null for a message the session no longer has. */
@@ -174,7 +235,7 @@ function indexOfCursor(extents: ReadonlyArray<MessageExtent>, cursor: string | u
   if (cursor === END_CURSOR) return extents.length;
   const match = cursor ? /^o:(-?\d+):(.*)$/.exec(cursor) : null;
   if (!match) return null;
-  const timeCreated = Number(match[1]);
+  const order = Number(match[1]);
   let id: string;
   try {
     id = decodeURIComponent(match[2]);
@@ -182,20 +243,21 @@ function indexOfCursor(extents: ReadonlyArray<MessageExtent>, cursor: string | u
     // A malformed escape names no message: the caller answers `reset`.
     return null;
   }
-  const index = extents.findIndex((extent) => extent.id === id && extent.timeCreated === timeCreated);
+  const index = extents.findIndex((extent) => extent.id === id && extent.order === order);
   return index < 0 ? null : index;
 }
 
 /** The session's tail: its newest messages, at least one, within `parseWindowBytes()` of stored data. */
 export function readOpenCodeTailAtPath(dbPath: string, sessionId: string): OpenCodeTranscript {
   return withDatabase(dbPath, { entries: [], totalPosition: 0 }, (database) => {
-    const extents = messageExtents(database, sessionId);
+    const store = storeOf(database, sessionId);
+    const extents = messageExtents(database, sessionId, store);
     if (extents.length === 0) return { entries: [], totalPosition: 0 };
     const totalPosition = extents[extents.length - 1].position + extents[extents.length - 1].size;
     const budget = parseWindowBytes();
     let start = extents.length - 1;
     while (start > 0 && totalPosition - extents[start - 1].position <= budget) start -= 1;
-    const entries = readMessages(database, sessionId, extents, start, extents.length);
+    const entries = readMessages(database, sessionId, extents, start, extents.length, store);
     const tailStart = extents[start].position;
     prependTruncationMarker(entries, tailStart, totalPosition, {
       conversationId: sessionId,
@@ -222,7 +284,8 @@ export function readOpenCodeTranscriptPage(
   if (!fs.existsSync(dbPath)) return { status: 'unavailable', reason: 'file_missing' };
   const unavailable: TranscriptPageReadResult = { status: 'unavailable', reason: 'read_failed' };
   return withDatabase<TranscriptPageReadResult>(dbPath, unavailable, (database) => {
-    const extents = messageExtents(database, sessionId);
+    const store = storeOf(database, sessionId);
+    const extents = messageExtents(database, sessionId, store);
     if (extents.length === 0) return { status: 'unavailable', reason: 'not_found' };
     const sourceToken = `opencode:${extents[0].id}`;
     if (request.sourceToken && request.sourceToken !== sourceToken) return { status: 'reset' };
@@ -283,7 +346,7 @@ export function readOpenCodeTranscriptPage(
         totalPosition,
         reachedStart: from === 0,
         reachedEnd: to >= untilIndex,
-        entries: readMessages(database, sessionId, extents, from, to),
+        entries: readMessages(database, sessionId, extents, from, to, store),
       },
     };
   });

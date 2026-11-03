@@ -50,6 +50,15 @@ const EXTERNAL_SCRIPTS = [
     destDir: 'plugins/opencode',
     destFile: 'kangentic-activity.mjs',
   },
+  {
+    // OpenCode 2 does not run OpenCode 1 plugins, so a V2 session gets its own.
+    kind: 'plugin',
+    adapter: 'opencode',
+    name: 'kangentic-activity-v2',
+    src: 'src/main/agent/adapters/opencode/plugin/kangentic-activity-v2.mjs',
+    destDir: 'plugins/opencode',
+    destFile: 'kangentic-activity-v2.mjs',
+  },
 ];
 
 // Copy every registered external script into `<projectDir>/.vite/build/`,

@@ -28,6 +28,7 @@ import {
   OpenCodeCommandBuilder,
 } from '../../src/main/agent/adapters/opencode';
 import { isOpenCodeV2, openCodeMajorVersion } from '../../src/main/agent/adapters/opencode/version';
+import { loadBetterSqlite3 } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -338,6 +339,50 @@ describe('OpenCode Adapter', () => {
         path.join(__dirname, '..', 'fixtures', 'opencode-auth.json'),
         'utf8',
       );
+      // The project detected an OpenCode 1 just before; no test here runs a CLI.
+      vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('1.18.31');
+    });
+
+    // OpenCode 2 keeps sign-ins in its database's `credential` table, and
+    // imports a V1 auth.json there at start (measured on 2.2.5). A V2 user who
+    // signed in only through V2 has no auth.json, and was warned they were not.
+    describe('on OpenCode 2', () => {
+      let fakeHome: string;
+
+      function plantCredentials(count: number): void {
+        const DatabaseConstructor = loadBetterSqlite3();
+        if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+        const directory = path.join(fakeHome, '.local', 'share', 'opencode');
+        fs.mkdirSync(directory, { recursive: true });
+        const database = new DatabaseConstructor(path.join(directory, 'opencode.db'));
+        database.exec('CREATE TABLE credential (id TEXT PRIMARY KEY, integration_id TEXT, label TEXT, value TEXT)');
+        for (let index = 0; index < count; index += 1) {
+          database.prepare('INSERT INTO credential VALUES (?, ?, ?, ?)').run(`cred_${index}`, 'opencode', 'API key', 'secret');
+        }
+        database.close();
+      }
+
+      beforeEach(() => {
+        fakeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-v2-auth-'));
+        vi.spyOn(os, 'homedir').mockReturnValue(fakeHome);
+        vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+      });
+
+      afterEach(() => {
+        fs.rmSync(fakeHome, { recursive: true, force: true });
+      });
+
+      it('reads a sign-in from the database\'s credential table, with no auth.json', async () => {
+        plantCredentials(1);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(true);
+      });
+
+      it('falls back to auth.json, and reports no sign-in when neither has one', async () => {
+        plantCredentials(0);
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(false);
+        fs.writeFileSync(path.join(fakeHome, '.local', 'share', 'opencode', 'auth.json'), JSON.stringify({ anthropic: { type: 'api' } }));
+        expect(await adapter.probeAuth(LOCAL_CLI_PATH)).toBe(true);
+      });
     });
 
     afterEach(() => {
@@ -763,7 +808,7 @@ describe('OpenCode 2 spawns', () => {
       fs.rmSync(projectDir, { recursive: true, force: true });
     });
 
-    it('reads the detected version for the spawned path, and installs no V1 plugin for V2', () => {
+    it('reads the detected version for the spawned path, and installs and holds the V2 plugin, not the V1 file', () => {
       const versionSpy = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(V2);
       const adapter = new OpenCodeAdapter();
       const options = makeOptions({
@@ -783,8 +828,13 @@ describe('OpenCode 2 spawns', () => {
       expect(command).toContain('--standalone');
       expect(command).not.toContain('--agent');
       expect(configOf(env).default_agent).toBe('plan');
-      // OpenCode 2 does not run V1 plugins: nothing is installed, so nothing is held.
+      // OpenCode 2 does not run V1 plugins: it gets its own, as a directory entry.
+      const v2Plugin = path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
+      expect(fs.existsSync(v2Plugin)).toBe(true);
       expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(false);
+      // Held for the session like the V1 file, and gone once it releases.
+      adapter.removeHooks(projectDir, 'session-v2');
+      expect(fs.existsSync(v2Plugin)).toBe(false);
     });
   });
 });

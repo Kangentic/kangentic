@@ -328,6 +328,26 @@ function sessionIdExists(dbPath: string, sessionId: string): boolean {
 }
 
 /**
+ * How many saved credentials an OpenCode 2 database holds (`credential`, where
+ * V2 keeps provider sign-ins), or 0 when the file, the table or the native
+ * module is missing. Counts rows only; no credential value is read.
+ */
+export function openCodeCredentialCount(dbPath: string): number {
+  if (!fs.existsSync(dbPath)) return 0;
+  const DatabaseConstructor = loadBetterSqlite3();
+  if (!DatabaseConstructor) return 0;
+  let database: DatabaseType.Database | null = null;
+  try {
+    database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
+    return database.prepare<[], { count: number }>('SELECT COUNT(*) AS count FROM credential').get()?.count ?? 0;
+  } catch {
+    return 0;
+  } finally {
+    try { database?.close(); } catch { /* ignore */ }
+  }
+}
+
+/**
  * Resolve the absolute path to OpenCode's SQLite DB. The path is
  * fixed at `<homedir>/.local/share/opencode/opencode.db` on every
  * platform (verified on Windows 11 with OpenCode 1.14.25 - the docs

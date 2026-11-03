@@ -221,6 +221,45 @@ describe('opencode-hook-manager', () => {
     });
   });
 
+  // OpenCode 2 does not run OpenCode 1 plugins and discovers a local plugin as a
+  // directory with an `index` entry (measured on 2.2.5). OpenCode 1 reads
+  // plugins one level deep, so it never loads the directory copy.
+  describe('the OpenCode 2 plugin', () => {
+    function v2PluginPath(): string {
+      return path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity', 'index.js');
+    }
+
+    it('installs the V2 plugin as a directory entry, byte for byte, and not the V1 file', () => {
+      buildHooks(projectDir, true);
+      const source = path.resolve(__dirname, '../../src/main/agent/adapters/opencode/plugin/kangentic-activity-v2.mjs');
+      expect(fs.readFileSync(v2PluginPath()).equals(fs.readFileSync(source))).toBe(true);
+      expect(fs.readFileSync(v2PluginPath(), 'utf-8').split('\n', 1)[0]).toContain('// kangentic-activity');
+      expect(fs.existsSync(pluginPath())).toBe(false);
+    });
+
+    it('removes the directory copy and the folders it leaves empty', () => {
+      buildHooks(projectDir, true);
+      removeHooks(projectDir);
+      expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+    });
+
+    it('keeps a user file in that directory, and the directory with it', () => {
+      buildHooks(projectDir, true);
+      const userFile = path.join(path.dirname(v2PluginPath()), 'notes.md');
+      fs.writeFileSync(userFile, 'mine');
+      removeHooks(projectDir);
+      expect(fs.existsSync(v2PluginPath())).toBe(false);
+      expect(fs.readFileSync(userFile, 'utf-8')).toBe('mine');
+    });
+
+    it('hides the directory from git through .git/info/exclude', () => {
+      execSync('git init', { cwd: projectDir, stdio: 'ignore' });
+      buildHooks(projectDir, true);
+      const exclude = fs.readFileSync(path.join(projectDir, '.git', 'info', 'exclude'), 'utf-8');
+      expect(exclude.split(/\r?\n/)).toContain('.opencode/plugins/kangentic-activity/');
+    });
+  });
+
   describe('buildHooks git-exclude behavior', () => {
     const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.js';
 

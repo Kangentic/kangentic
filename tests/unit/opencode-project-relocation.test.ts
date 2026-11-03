@@ -100,6 +100,28 @@ describe('migrateOpenCodeProjectData', () => {
     expect(rows.projectDir.directory).toBe(NEW_PATH);
   });
 
+  // OpenCode 2 (2.2.5) keeps the database and writes its sessions to
+  // `session_v2`, with forward slashes in `directory`. Left alone, a relocated
+  // project's V2 sessions no longer matched the session poll's directory.
+  it('rewrites OpenCode 2\'s session_v2 and worktree directories, forward slashes included', async () => {
+    createDb((db) => {
+      db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT, path TEXT)');
+      db.exec('CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT, path TEXT)');
+      db.exec('CREATE TABLE worktree (project_id TEXT, directory TEXT PRIMARY KEY)');
+      db.prepare('INSERT INTO session_v2 VALUES (?, ?, ?)').run('v2', OLD_PATH.replace(/\\/g, '/'), '');
+      db.prepare('INSERT INTO worktree VALUES (?, ?)').run('p1', OLD_PATH);
+    });
+
+    await migrateOpenCodeProjectData(OLD_PATH, NEW_PATH);
+
+    const rows = queryDb((db) => ({
+      session: db.prepare('SELECT directory FROM session_v2').get() as { directory: string },
+      worktree: db.prepare('SELECT directory FROM worktree').get() as { directory: string },
+    }));
+    expect(path.resolve(rows.session.directory)).toBe(NEW_PATH);
+    expect(rows.worktree.directory).toBe(NEW_PATH);
+  });
+
   it('tolerates a missing column (session without a path column)', async () => {
     createDb((db) => {
       db.exec('CREATE TABLE session (id TEXT PRIMARY KEY, directory TEXT)');

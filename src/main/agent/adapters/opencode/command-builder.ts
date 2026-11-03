@@ -58,11 +58,11 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
  * Whether a spawn installs the activity plugin into the project's
  * `.opencode/plugins/`: a local spawn with an events pipeline. The builder
  * installs it and the adapter holds the project root for it, so both read
- * this one answer. OpenCode 2 does not run OpenCode 1 plugins, so a V2 spawn
- * installs nothing and its activity comes from the PTY.
+ * this one answer. Which plugin is the builder's to pick: OpenCode 2 does not
+ * run OpenCode 1 plugins, so a V2 spawn gets its own (`buildHooks`).
  */
-export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget' | 'cliVersion'>): boolean {
-  return Boolean(options.eventsOutputPath) && !options.executionTarget && !isOpenCodeV2(options.cliVersion);
+export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget'>): boolean {
+  return Boolean(options.eventsOutputPath) && !options.executionTarget;
 }
 
 /**
@@ -141,7 +141,7 @@ export class OpenCodeCommandBuilder {
     // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
     if (installsActivityPlugin(options)) {
       const projectRoot = options.projectRoot || options.cwd;
-      buildHooks(projectRoot);
+      buildHooks(projectRoot, openCode2);
     }
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];

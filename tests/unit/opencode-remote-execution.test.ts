@@ -19,7 +19,9 @@ import { describe, it, expect, vi } from 'vitest';
 import {
   OpenCodeAdapter,
   OpenCodeCommandBuilder,
+  OpenCodeDetector,
 } from '../../src/main/agent/adapters/opencode';
+import { OPENCODE_REMOTE_NEEDS_V1 } from '../../src/main/agent/adapters/opencode/version';
 import { OpenCodeSessionHistoryParser } from '../../src/main/agent/adapters/opencode/session-history-parser';
 import { mapOpenCodeRemoteEntries } from '../../src/main/agent/adapters/opencode/transcript-parser';
 import { probeOpenCodeServer, fetchOpenCodeSessionMessages, type FetchLike } from '../../src/main/agent/adapters/opencode/remote-client';
@@ -419,6 +421,37 @@ describe('probeOpenCodeServer', () => {
     const result = await probeOpenCodeServer({ url: null, auth: { kind: 'none' } }, fetchImpl);
     expect(result).toEqual({ reachable: false, reason: 'No server URL configured' });
     expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  // An OpenCode 2 server has no `/global/health`: it answers the path with its
+  // web UI's HTML page (measured on 2.2.5), so the JSON read throws. Remote mode
+  // speaks OpenCode 1's API; the test says that instead of a parse error.
+  it('reports that remote mode needs OpenCode 1 for a server that answers with a page', async () => {
+    const fetchImpl: FetchLike = vi.fn().mockResolvedValue({
+      ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'<\''); },
+    });
+    expect(await probeOpenCodeServer(server, fetchImpl)).toEqual({ reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 });
+  });
+
+  it('reports the same for a server that names an OpenCode 2 version', async () => {
+    const fetchImpl: FetchLike = vi.fn().mockResolvedValue({ ok: true, status: 200, json: async () => ({ healthy: true, version: '2.2.5' }) });
+    expect(await probeOpenCodeServer(server, fetchImpl)).toEqual({ reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 });
+  });
+});
+
+describe('remote mode with a local OpenCode 2', () => {
+  it('blocks the spawn with the reason, and the connection test answers it before the server is asked', async () => {
+    const versionSpy = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue('v2.2.5');
+    try {
+      const adapter = new OpenCodeAdapter();
+      expect(() => adapter.buildCommand(makeOptions({ executionTarget: REMOTE_TARGET }))).toThrow(OPENCODE_REMOTE_NEEDS_V1);
+      // Nothing is tracked for a spawn that never started.
+      expect(adapter.remoteExecution.knownTargets()).toEqual([]);
+      const probe = await adapter.remoteExecution.probeServer({ url: 'http://127.0.0.1:1', auth: { kind: 'none' } });
+      expect(probe).toEqual({ reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 });
+    } finally {
+      versionSpy.mockRestore();
+    }
   });
 });
 
