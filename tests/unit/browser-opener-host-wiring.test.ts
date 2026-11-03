@@ -85,7 +85,7 @@ function installedHost(): BrowserPaneOpenerHost {
     currentProjectId: AMBIENT_PROJECT_ID,
     currentProjectPath: '/mock/browser-host-wiring',
     configManager: { loadProjectOverrides: vi.fn(() => null) },
-    sessionManager: { hasLiveSessionForTask: vi.fn(() => false) },
+    sessionManager: { hasLiveSessionForTask: vi.fn(() => false), on: vi.fn() },
     mainWindow: { isDestroyed: () => false, webContents: { send: vi.fn() } },
   };
   registerBrowserHandlers(context as unknown as Parameters<typeof registerBrowserHandlers>[0]);

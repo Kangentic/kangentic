@@ -98,6 +98,8 @@ function makeContext() {
     },
     sessionManager: {
       getSessionProjectId: vi.fn(() => undefined),
+      // registerBrowserHandlers listens for a Command Terminal's removal.
+      on: vi.fn(),
     },
   };
 }
