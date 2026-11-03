@@ -159,15 +159,14 @@ export function killAllSessions<S extends ShutdownSession>(
       // Sealed first, as in kill(): a renderer's keystrokes stop reaching it
       // before the exit sequence, which the seal lets through, is written.
       ptyRef.sealUserInput();
+      session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
       if (childPid === null) {
         // A PTY on a remote host (#913). Nothing here may signal it, type into it, count it in the
         // report or wait for it: the drain polls local pids, and the host's helper ends the agent
         // from the plan the link sends in one frame (`RemoteLink.setQuitPlan`), on its own clock.
-        session.pty = null;
         context.endRemoteSession?.(session);
       } else {
         if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
-        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
         if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
           // The registry's timer does the kill; the listeners are detached just
           // below like every other row's, so the entry carries none.

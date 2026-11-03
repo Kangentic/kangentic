@@ -160,6 +160,9 @@ vi.mock('../../src/main/pty/session-manager', async () => {
       spawn = vi.fn();
       kill = vi.fn();
       enableTranscripts = vi.fn();
+      // registerAllIpc builds the SSH hosting (#913), which hands the session manager its relay and sends its host requests.
+      setRemoteSessionRelay = vi.fn();
+      remoteHostRequest = vi.fn();
       setEarlierRunsSource = vi.fn();
       getSessionProjectId = vi.fn((_sessionId: string): string | undefined => undefined);
       setMaxConcurrent = vi.fn();

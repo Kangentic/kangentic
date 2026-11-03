@@ -35,13 +35,17 @@ export interface SshClientPaths {
 export function defaultSshClientPaths(
   platform: NodeJS.Platform = process.platform,
   environment: NodeJS.ProcessEnv = process.env,
-  exists: (filePath: string) => boolean = fs.existsSync,
+  exists: (filePath: string) => boolean = (filePath) => fs.existsSync(filePath),
 ): SshClientPaths {
   if (platform === 'win32') {
     const directory = path.win32.join(environment.SystemRoot ?? 'C:\\Windows', 'System32', 'OpenSSH');
     const ssh = path.win32.join(directory, 'ssh.exe');
     const sshKeygen = path.win32.join(directory, 'ssh-keygen.exe');
-    if (exists(ssh) && exists(sshKeygen)) return { ssh, sshKeygen };
+    try {
+      if (exists(ssh) && exists(sshKeygen)) return { ssh, sshKeygen };
+    } catch {
+      // A file system that cannot answer must not stop the app from starting: the name on PATH is what a terminal runs.
+    }
   }
   return { ssh: 'ssh', sshKeygen: 'ssh-keygen' };
 }

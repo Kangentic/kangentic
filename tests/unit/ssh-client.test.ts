@@ -32,6 +32,12 @@ describe('which ssh Kangentic runs', () => {
       .toEqual({ ssh: 'ssh', sshKeygen: 'ssh-keygen' });
   });
 
+  it('falls back to the name on PATH, instead of throwing, when the file system cannot answer', () => {
+    const broken = () => { throw new Error('No "existsSync" export is defined on the "node:fs" mock'); };
+
+    expect(defaultSshClientPaths('win32', { SystemRoot: 'C:\\Windows' }, broken)).toEqual({ ssh: 'ssh', sshKeygen: 'ssh-keygen' });
+  });
+
   it('runs the name on PATH on macOS and Linux, never looking for a Windows folder', () => {
     let looked = false;
     const exists = () => { looked = true; return true; };
