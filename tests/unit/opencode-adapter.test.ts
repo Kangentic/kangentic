@@ -27,6 +27,7 @@ import {
   OpenCodeDetector,
   OpenCodeCommandBuilder,
 } from '../../src/main/agent/adapters/opencode';
+import { isOpenCodeV2, openCodeMajorVersion } from '../../src/main/agent/adapters/opencode/version';
 import type { SpawnCommandOptions } from '../../src/main/agent/agent-adapter';
 import type { PermissionMode } from '../../src/shared/types';
 
@@ -650,6 +651,141 @@ describe('OpenCodeAdapter - removeHooks holds deferral', () => {
 
     concurrentAdapter.removeHooks(projectDir, undefined);
     expect(fs.existsSync(pluginPath())).toBe(false);
+  });
+});
+
+/**
+ * OpenCode 2 (GitHub #720). Its TUI command rejects `--agent` and `--model`
+ * ("Unrecognized flag: --agent"), and without `--standalone` it joins one shared
+ * background service per user that never reads this spawn's
+ * `OPENCODE_CONFIG_CONTENT`. So a V2 spawn is `opencode --standalone`, and the
+ * agent and model ride in the inline config. Gated on the detected version: an
+ * OpenCode 1 spawn must come out exactly as before.
+ */
+describe('OpenCode 2 spawns', () => {
+  const V2 = 'v2.2.5';
+  const builder = new OpenCodeCommandBuilder();
+  const base = { opencodePath: '/usr/bin/opencode', taskId: 'task-001', cwd: '/home/dev/project' };
+  const mcp = { mcpServerEnabled: true, mcpServerUrl: 'http://127.0.0.1:51234/mcp/proj-abc', mcpServerToken: 'token-deadbeef' };
+  const configOf = (env: Record<string, string> | null): Record<string, unknown> => JSON.parse(env?.OPENCODE_CONFIG_CONTENT ?? 'null');
+
+  describe('openCodeMajorVersion', () => {
+    it('reads the major from each version shape the detector hands over', () => {
+      expect(openCodeMajorVersion('v2.2.5')).toBe(2); // `opencode v2.2.5` after the detector's prefix strip
+      expect(openCodeMajorVersion('opencode v2.2.5')).toBe(2);
+      expect(openCodeMajorVersion('2.0.0')).toBe(2);
+      expect(openCodeMajorVersion('1.18.31')).toBe(1);
+    });
+
+    it('reads nothing from no version or one it does not know, which means OpenCode 1', () => {
+      expect(openCodeMajorVersion(null)).toBeNull();
+      expect(openCodeMajorVersion('')).toBeNull();
+      expect(openCodeMajorVersion('dev build')).toBeNull();
+      expect(isOpenCodeV2(null)).toBe(false);
+      expect(isOpenCodeV2('dev build')).toBe(false);
+      expect(isOpenCodeV2('1.19.5')).toBe(false);
+      expect(isOpenCodeV2('v2.2.5')).toBe(true);
+      expect(isOpenCodeV2('3.0.0')).toBe(true);
+    });
+  });
+
+  describe('command', () => {
+    it('starts a fresh Build or Plan session with --standalone and the prompt, never --agent or --model', () => {
+      for (const permissionMode of ['acceptEdits', 'plan'] as PermissionMode[]) {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode, model: 'anthropic/claude-sonnet', prompt: 'fix the bug', cliVersion: V2 });
+        expect(command).toBe(`/usr/bin/opencode --standalone --prompt ${q('fix the bug')}`);
+      }
+    });
+
+    it('starts with --standalone alone when there is no prompt', () => {
+      const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', cliVersion: V2 });
+      expect(command).toBe('/usr/bin/opencode --standalone');
+    });
+
+    it('resumes with --standalone --session and no prompt', () => {
+      const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', resume: true, sessionId: 'ses_abc123def456', prompt: 'dropped', cliVersion: V2 });
+      expect(command).toBe('/usr/bin/opencode --standalone --session ses_abc123def456');
+    });
+
+    it('keeps the OpenCode 1 command for a V1 or unknown version', () => {
+      for (const cliVersion of ['1.18.31', null]) {
+        const command = builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', model: 'anthropic/claude-sonnet', prompt: 'fix the bug', cliVersion });
+        expect(command).toBe(`/usr/bin/opencode --agent plan --model anthropic/claude-sonnet --prompt ${q('fix the bug')}`);
+      }
+    });
+
+    it('blocks a remote-mode spawn with the reason, since attach is OpenCode 1\'s', () => {
+      const executionTarget = { url: 'http://10.0.0.5:4096', auth: { kind: 'none' as const }, workingDirectory: '/srv/project' };
+      expect(() => builder.buildOpenCodeCommand({ ...base, permissionMode: 'plan', executionTarget, cliVersion: V2 }))
+        .toThrow(/remote mode needs OpenCode 1/);
+    });
+  });
+
+  describe('env', () => {
+    it('names the agent, the model and the Kangentic MCP server on a fresh spawn', () => {
+      const plan = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: ' anthropic/claude-sonnet ', cliVersion: V2 }));
+      expect(plan.default_agent).toBe('plan');
+      expect(plan.model).toBe('anthropic/claude-sonnet');
+      expect(plan.mcp).toEqual({ kangentic: { type: 'remote', url: mcp.mcpServerUrl, enabled: true, headers: { 'X-Kangentic-Token': mcp.mcpServerToken } } });
+
+      const build = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'acceptEdits', cliVersion: V2 }));
+      expect(build.default_agent).toBe('build');
+      expect(build).not.toHaveProperty('model');
+    });
+
+    it('names no agent or model on a resume, so the session keeps the agent picked with Tab', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: 'anthropic/claude-sonnet', resume: true, sessionId: 'ses_abc123def456', cliVersion: V2 }));
+      expect(Object.keys(config)).toEqual(['mcp']);
+    });
+
+    it('still names the agent with MCP off, and gives no config when there is nothing to name', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, permissionMode: 'plan', cliVersion: V2 }));
+      expect(config).toEqual({ default_agent: 'plan' });
+      expect(builder.buildOpenCodeEnv({ ...base, permissionMode: 'default', cliVersion: V2 })).toBeNull();
+    });
+
+    it('keeps the OpenCode 1 config to the MCP entry alone', () => {
+      const config = configOf(builder.buildOpenCodeEnv({ ...base, ...mcp, permissionMode: 'plan', model: 'anthropic/claude-sonnet', cliVersion: '1.18.31' }));
+      expect(Object.keys(config)).toEqual(['mcp']);
+      expect(builder.buildOpenCodeEnv({ ...base, permissionMode: 'plan', cliVersion: '1.18.31' })).toBeNull();
+    });
+  });
+
+  describe('adapter wiring', () => {
+    let projectDir: string;
+
+    beforeEach(() => {
+      projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'kangtest-opencode-v2-'));
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      fs.rmSync(projectDir, { recursive: true, force: true });
+    });
+
+    it('reads the detected version for the spawned path, and installs no V1 plugin for V2', () => {
+      const versionSpy = vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(V2);
+      const adapter = new OpenCodeAdapter();
+      const options = makeOptions({
+        agentPath: '/opt/opencode2/bin/opencode',
+        cwd: projectDir,
+        projectRoot: projectDir,
+        ptySessionId: 'session-v2',
+        permissionMode: 'plan',
+        prompt: 'go',
+        eventsOutputPath: path.join(projectDir, 'events.jsonl'),
+      });
+
+      const command = adapter.buildCommand(options);
+      const env = adapter.buildEnv(options);
+
+      expect(versionSpy).toHaveBeenCalledWith('/opt/opencode2/bin/opencode');
+      expect(command).toContain('--standalone');
+      expect(command).not.toContain('--agent');
+      expect(configOf(env).default_agent).toBe('plan');
+      // OpenCode 2 does not run V1 plugins: nothing is installed, so nothing is held.
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity.js'))).toBe(false);
+    });
   });
 });
 

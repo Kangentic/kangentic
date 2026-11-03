@@ -47,11 +47,15 @@ export function loadBetterSqlite3(): typeof DatabaseType | null {
  *   CREATE TABLE `session` (
  *     `id` text PRIMARY KEY,           -- ses_<26 alphanumeric>
  *     `project_id` text NOT NULL,
- *     `directory` text NOT NULL,       -- absolute path, OS-native slashes
+ *     `directory` text NOT NULL,       -- absolute path (forward slashes on
+ *                                      --   Windows by 1.18 and in V2)
  *     `time_created` integer NOT NULL, -- epoch ms
  *     `time_updated` integer NOT NULL,
  *     ...
  *   )
+ *
+ * OpenCode 2 (2.2.5) keeps the same file and writes new sessions to
+ * `session_v2`, which has the same three columns (`SESSION_TABLES`).
  *
  * Why direct DB read instead of `opencode session list --format json`:
  *  - On Windows, npm publishes `opencode.cmd` (a shell shim).
@@ -127,15 +131,24 @@ export class OpenCodeSessionHistoryParser {
 
 const POLL_INTERVAL_MS = 500;
 
-// Verified-against version baked into the warning so future readers
-// know which OpenCode release we last observed the schema match.
-// Single source of truth - the class JSDoc above also mentions this
-// version for context; bump both together when re-verifying.
-const VERIFIED_AGAINST_OPENCODE_VERSION = '1.14.25';
+// Verified-against versions baked into the warning so future readers
+// know which OpenCode releases we last observed the schema match.
+// Single source of truth - the class JSDoc above also mentions these
+// versions for context; bump both together when re-verifying.
+const VERIFIED_AGAINST_OPENCODE_VERSION = '1.14.25 and 2.2.5';
 
-// Required columns on the `session` table. Missing any of these means
-// the parser's read path will fail silently in production.
+// Required columns on a session table (`session` or `session_v2`). Missing
+// any of these means the parser's read path will fail silently in production.
 const REQUIRED_SESSION_COLUMNS = ['id', 'directory', 'time_created'] as const;
+
+/**
+ * The tables a session row can be in. OpenCode 1 writes `session`.
+ * OpenCode 2 (measured on 2.2.5) migrates the same `opencode.db` in place:
+ * it leaves `session` as it was, copies its rows into `session_v2`, and
+ * writes every new session to `session_v2` only. An OpenCode 1 run after
+ * that writes `session` again, so both are read whichever version runs.
+ */
+const SESSION_TABLES = ['session_v2', 'session'] as const;
 
 // Process-lifetime guard: the canary fires at most once per process so
 // a long-running app doesn't spam logs on every poll. Reset by
@@ -168,10 +181,28 @@ export function verifyOpenCodeSchemaOnce(
   schemaCanaryRun = true;
 
   try {
-    const rows = database
-      .prepare<[], { name: string }>('PRAGMA table_info("session")')
-      .all();
+    const columnsOf = (table: string): Set<string> => new Set(
+      database.prepare<[], { name: string }>(`PRAGMA table_info("${table}")`).all().map((row) => row.name),
+    );
+    // Either session table with every column the read needs is enough.
+    const v2Columns = columnsOf('session_v2');
+    if (REQUIRED_SESSION_COLUMNS.every((column) => v2Columns.has(column))) return;
+    const v1Columns = columnsOf('session');
+    if (REQUIRED_SESSION_COLUMNS.every((column) => v1Columns.has(column))) return;
 
+    if (v2Columns.size > 0) {
+      const version = getAgentVersion?.() ?? null;
+      const versionSuffix = version ? ` (detected version: ${version})` : '';
+      const columnList = REQUIRED_SESSION_COLUMNS.filter((column) => !v2Columns.has(column)).map((column) => `\`${column}\``).join(', ');
+      console.warn(
+        `[opencode] opencode.db schema mismatch: missing column(s) ${columnList} in \`session_v2\` table${versionSuffix}. ` +
+          `Resume will fall back to fresh sessions until this is fixed. ` +
+          `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
+      );
+      return;
+    }
+
+    const rows = [...v1Columns].map((name) => ({ name }));
     if (rows.length === 0) {
       const version = getAgentVersion?.() ?? null;
       const versionSuffix = version ? ` (detected version: ${version})` : '';
@@ -227,14 +258,22 @@ function readMatchingSessionId(
     database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
     verifyOpenCodeSchemaOnce(database, getAgentVersion);
     // OpenCode opens its DB in WAL mode; we must NOT change journal
-    // mode from a read-only handle. Just read.
-    const statement = database.prepare<[number, number], SessionIdRow & { directory: string }>(
-      `SELECT id, directory FROM session
-       WHERE time_created >= ? AND time_created <= ?
-       ORDER BY time_created DESC
-       LIMIT 25`,
-    );
-    const rows = statement.all(createdFloorMs, createdCeilMs);
+    // mode from a read-only handle. Just read. A table this database does
+    // not have is skipped.
+    const rows: Array<SessionIdRow & { directory: string; time_created: number }> = [];
+    for (const table of SESSION_TABLES) {
+      try {
+        rows.push(...database.prepare<[number, number], SessionIdRow & { directory: string; time_created: number }>(
+          `SELECT id, directory, time_created FROM ${table}
+           WHERE time_created >= ? AND time_created <= ?
+           ORDER BY time_created DESC
+           LIMIT 25`,
+        ).all(createdFloorMs, createdCeilMs));
+      } catch {
+        // No such table (an OpenCode 1 database, or a fresh OpenCode 2 one).
+      }
+    }
+    rows.sort((left, right) => right.time_created - left.time_created);
     for (const row of rows) {
       if (normalizeCwdForCompare(row.directory) === normalizedCwd) {
         return row.id;
@@ -266,9 +305,15 @@ function sessionIdExists(dbPath: string, sessionId: string): boolean {
   let database: DatabaseType.Database | null = null;
   try {
     database = new DatabaseConstructor(dbPath, { readonly: true, fileMustExist: true });
-    const statement = database.prepare<[string], SessionIdRow>('SELECT id FROM session WHERE id = ? LIMIT 1');
-    const row = statement.get(sessionId);
-    return row !== undefined;
+    for (const table of SESSION_TABLES) {
+      try {
+        const row = database.prepare<[string], SessionIdRow>(`SELECT id FROM ${table} WHERE id = ? LIMIT 1`).get(sessionId);
+        if (row !== undefined) return true;
+      } catch {
+        // No such table in this database.
+      }
+    }
+    return false;
   } catch {
     return false;
   } finally {

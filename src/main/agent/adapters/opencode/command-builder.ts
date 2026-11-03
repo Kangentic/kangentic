@@ -4,6 +4,7 @@ import { interpolateTemplate } from '../../shared/template-utils';
 import type { CliTarget } from '../../shared/cli-target';
 import { kangenticMcpServer, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { buildHooks } from './hook-manager';
+import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
 import type { PermissionMode, ResolvedExecutionTarget } from '../../../../shared/types';
 
 export interface OpenCodeCommandOptions {
@@ -24,6 +25,11 @@ export interface OpenCodeCommandOptions {
   mcpServerToken?: string;
   model?: string;
   effort?: string;
+  /**
+   * The detected `opencode --version`, or null when detection has not run.
+   * Picks the OpenCode 1 or OpenCode 2 command line (`version.ts`).
+   */
+  cliVersion?: string | null;
   /** Present only when this project's OpenCode execution mode is 'remote'. */
   executionTarget?: ResolvedExecutionTarget;
   /**
@@ -49,10 +55,33 @@ export function openCodeKangenticMcpEntry(server: KangenticMcpServer): Record<st
 }
 
 /**
+ * Whether a spawn installs the activity plugin into the project's
+ * `.opencode/plugins/`: a local spawn with an events pipeline. The builder
+ * installs it and the adapter holds the project root for it, so both read
+ * this one answer. OpenCode 2 does not run OpenCode 1 plugins, so a V2 spawn
+ * installs nothing and its activity comes from the PTY.
+ */
+export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'eventsOutputPath' | 'executionTarget' | 'cliVersion'>): boolean {
+  return Boolean(options.eventsOutputPath) && !options.executionTarget && !isOpenCodeV2(options.cliVersion);
+}
+
+/**
  * Build the shell command string that spawns OpenCode in interactive
- * TUI mode. CLI surface (verified against /anomalyco/opencode docs):
+ * TUI mode. CLI surface, OpenCode 1 (verified against /anomalyco/opencode docs):
  *
  *   opencode [--session <id>] [--prompt <text>] [--model <provider/model>]
+ *
+ * OpenCode 2 (`commands.ts` at v2.2.5) has neither `--agent` nor `--model`
+ * on its TUI command, and by default joins or starts ONE background service
+ * per user account that reads `OPENCODE_CONFIG_CONTENT` only when it starts.
+ * So a V2 spawn is
+ *
+ *   opencode --standalone [--session <id> | --prompt <text>]
+ *
+ * `--standalone` gives the TUI a private `opencode serve --stdio` child that
+ * inherits this spawn's env and ends when the TUI's stdin pipe to it closes,
+ * which the OS does when the TUI dies. The agent and model ride in the
+ * inline config instead (`buildOpenCodeEnv`).
  *
  * Important shape constraints:
  *
@@ -96,7 +125,12 @@ export class OpenCodeCommandBuilder {
     // emits --model or installs the activity plugin (there is no local
     // project directory to write it into; the server's filesystem is not
     // ours to touch).
+    const openCode2 = isOpenCodeV2(options.cliVersion);
     if (options.executionTarget) {
+      // `attach` and the server API remote mode speaks are OpenCode 1's.
+      // Thrown, so the spawn is blocked with the reason rather than started
+      // with flags OpenCode 2 rejects.
+      if (openCode2) throw new Error(OPENCODE_REMOTE_NEEDS_V1);
       return buildOpenCodeAttachCommand(options, options.executionTarget, shell);
     }
 
@@ -105,12 +139,22 @@ export class OpenCodeCommandBuilder {
     // auto-discovers plugins from that directory at TUI startup, so no
     // CLI flag or `opencode.json` mutation is required. Mirrors the
     // `buildHooks` side effect in CodexCommandBuilder.buildCodexCommand.
-    if (options.eventsOutputPath) {
+    if (installsActivityPlugin(options)) {
       const projectRoot = options.projectRoot || options.cwd;
       buildHooks(projectRoot);
     }
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];
+
+    if (openCode2) {
+      parts.push('--standalone');
+      if (options.resume && options.sessionId) {
+        parts.push('--session', quoteArg(options.sessionId, shell));
+        return parts.join(' ');
+      }
+      if (options.prompt) parts.push('--prompt', quotePrompt(options.prompt, shell));
+      return parts.join(' ');
+    }
 
     if (options.resume && options.sessionId) {
       parts.push('--session', quoteArg(options.sessionId, shell));
@@ -137,13 +181,7 @@ export class OpenCodeCommandBuilder {
     }
 
     if (options.prompt) {
-      const needsDoubleQuoteReplacement = shell
-        ? !isUnixLikeShell(shell)
-        : process.platform === 'win32';
-      const safePrompt = needsDoubleQuoteReplacement
-        ? options.prompt.replace(/"/g, "'")
-        : options.prompt;
-      parts.push('--prompt', quoteArg(safePrompt, shell, { multiline: true }));
+      parts.push('--prompt', quotePrompt(options.prompt, shell));
     }
 
     return parts.join(' ');
@@ -166,9 +204,9 @@ export class OpenCodeCommandBuilder {
    *
    * This only wires MCP for a LOCAL spawn (`opencode [project]`), where
    * the process we spawn is the server itself and legitimately reads its
-   * own `OPENCODE_CONFIG_CONTENT` at startup. Returns `null` when MCP
-   * wiring is disabled or any of the required URL / token values are
-   * missing.
+   * own `OPENCODE_CONFIG_CONTENT` at startup. Returns `null` when there is
+   * nothing to say: MCP wiring is disabled or missing its URL or token, and
+   * (OpenCode 2 only) the spawn names no agent or model.
    */
   buildOpenCodeEnv(options: OpenCodeCommandOptions): Record<string, string> | null {
     // Remote mode (`options.executionTarget` set): the process Kangentic
@@ -184,18 +222,35 @@ export class OpenCodeCommandBuilder {
     // way for Kangentic to deliver its MCP tools to a remote OpenCode
     // session; see the `remoteModeCaveat` on the adapter.
     if (options.executionTarget) return null;
-    if (!options.mcpServerEnabled) return null;
-    if (!options.mcpServerUrl || !options.mcpServerToken) return null;
 
-    // A distro OpenCode on NAT networking cannot reach this machine's loopback:
-    // its server is the bridge, prepared in the session's directory, whose
-    // relay the spawn attaches with the session.
-    const place = options.cliTarget ?? null;
-    const server: KangenticMcpServer = place && options.eventsOutputPath
-      ? kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) })
-      : { kind: 'http', url: options.mcpServerUrl, token: options.mcpServerToken };
-    const inlineConfig = { mcp: { kangentic: openCodeKangenticMcpEntry(server) } };
+    const inlineConfig: Record<string, unknown> = {};
+    // OpenCode 2's TUI has no `--agent` or `--model`, so a fresh V2 spawn
+    // names them here: `default_agent` and `model` keep their V1 names in V2
+    // config, and the standalone server the TUI starts inherits this env.
+    // Measured on 2.2.5: `default_agent: "plan"` opens the TUI in Plan. A
+    // resume names neither, as the V1 command does, so the session keeps the
+    // agent the user last picked with Tab.
+    if (isOpenCodeV2(options.cliVersion) && !(options.resume && options.sessionId)) {
+      const agentName = mapPermissionModeToAgent(options.permissionMode);
+      if (agentName) inlineConfig.default_agent = agentName;
+      const model = options.model?.trim();
+      if (model) inlineConfig.model = model;
+    }
 
+    if (options.mcpServerEnabled && options.mcpServerUrl && options.mcpServerToken) {
+      // A distro OpenCode on NAT networking cannot reach this machine's loopback:
+      // its server is the bridge, prepared in the session's directory, whose
+      // relay the spawn attaches with the session.
+      const place = options.cliTarget ?? null;
+      const server: KangenticMcpServer = place && options.eventsOutputPath
+        ? kangenticMcpServer({ url: options.mcpServerUrl, token: options.mcpServerToken, place, directory: path.dirname(options.eventsOutputPath) })
+        : { kind: 'http', url: options.mcpServerUrl, token: options.mcpServerToken };
+      // OpenCode 2 reads this V1 shape (a `type` on `mcp.<name>`) and
+      // normalizes it to `mcp.servers.<name>` in memory (measured on 2.2.5).
+      inlineConfig.mcp = { kangentic: openCodeKangenticMcpEntry(server) };
+    }
+
+    if (Object.keys(inlineConfig).length === 0) return null;
     return { OPENCODE_CONFIG_CONTENT: JSON.stringify(inlineConfig) };
   }
 
@@ -249,12 +304,20 @@ function buildOpenCodeAttachCommand(
   }
 
   if (options.prompt) {
-    const needsDoubleQuoteReplacement = shell ? !isUnixLikeShell(shell) : process.platform === 'win32';
-    const safePrompt = needsDoubleQuoteReplacement ? options.prompt.replace(/"/g, "'") : options.prompt;
-    parts.push('--prompt', quoteArg(safePrompt, shell, { multiline: true }));
+    parts.push('--prompt', quotePrompt(options.prompt, shell));
   }
 
   return parts.join(' ');
+}
+
+/**
+ * A prompt as one `--prompt` argument. A non-Unix shell (cmd.exe, PowerShell)
+ * gets its double quotes swapped for single quotes first.
+ */
+function quotePrompt(prompt: string, shell?: string): string {
+  const needsDoubleQuoteReplacement = shell ? !isUnixLikeShell(shell) : process.platform === 'win32';
+  const safePrompt = needsDoubleQuoteReplacement ? prompt.replace(/"/g, "'") : prompt;
+  return quoteArg(safePrompt, shell, { multiline: true });
 }
 
 /**

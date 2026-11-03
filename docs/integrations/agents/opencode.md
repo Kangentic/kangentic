@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: OpenCode
-description: OpenCode's activity plugin copied into .opencode/plugins (tool calls, and question and permission waits), the --auto flag Kangentic does not pass, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, and remote mode through opencode attach with no plugin or MCP.
+description: OpenCode's activity plugin copied into .opencode/plugins (tool calls, and question and permission waits), the --auto flag Kangentic does not pass, session ids from an opencode.db SQLite poll or ses_ output scan, --prompt because the positional argument is a directory, OPENCODE_CONFIG_CONTENT for MCP, remote mode through opencode attach with no plugin or MCP, and OpenCode 2's --standalone launch with the agent and model in config.
 tags: [agents, adapter, opencode]
 sources:
   - resource: src/main/agent/adapters/opencode/opencode-adapter.ts
@@ -13,6 +13,7 @@ sources:
   - resource: src/main/agent/adapters/opencode/remote-client.ts
   - resource: src/main/agent/adapters/opencode/remote-client-v2.ts
   - resource: src/main/agent/adapters/opencode/distro-sessions.ts
+  - resource: src/main/agent/adapters/opencode/version.ts
 ---
 # OpenCode
 
@@ -34,9 +35,26 @@ Important shape constraints (verified against /anomalyco/opencode docs):
 - Resume uses `--session <id>` (alias `-s`) on the TUI command - not the `run` subcommand. A resume passes no `--prompt`. The TUI lists `--session` and `--prompt` side by side, but neither `opencode --help` nor the docs say the prompt runs on a session it continues, so the adapter declares `resumePromptDelivery: 'typed'` and Kangentic types a resume's message in once the TUI is ready (see [How the resume prompt arrives](../../architecture/sessions/resume.md#how-the-resume-prompt-arrives)).
 - Windows shells get embedded `"` characters in the prompt rewritten to `'` to keep the cmd.exe / PowerShell quoting parser happy.
 
+## OpenCode 2
+
+OpenCode 2 (`@opencode/cli`, 2.x) installs as `opencode` too, and its TUI command rejects `--agent` and `--model` ("Unrecognized flag: --agent", GitHub #720). Both majors are supported, picked by the detected version (`version.ts`: `opencode --version` prints `opencode v2.2.5` on V2). A version that cannot be read is treated as OpenCode 1. Checked against 2.2.5:
+
+```
+opencode --standalone [--session <id> | --prompt <text>]
+```
+
+- **`--standalone`.** Without it the V2 TUI joins or starts one background service per user account. That service reads `OPENCODE_CONFIG_CONTENT` only when it starts, so a TUI that joins it never gets the Kangentic MCP entry, and one that starts it leaves a detached service carrying the task's env. With it, the TUI runs a private `opencode serve --stdio` child that inherits the spawn's env and exits with the TUI. Measured: Ctrl+C ends both in about 1.7 s, and `opencode service status` stays `stopped`.
+- **Agent and model.** A fresh spawn puts `default_agent` (`plan` or `build`, from the same mapping as `--agent`) and the column's `model` in `OPENCODE_CONFIG_CONTENT` beside `mcp.kangentic`. `default_agent: "plan"` opens the TUI in Plan. A resume names neither, so the session keeps its agent. V2 reads the V1-shaped `mcp.kangentic` entry and normalizes it to `mcp.servers.kangentic`.
+- **MCP tools.** V2 offers MCP tools through its Code Mode `execute` tool and a tool catalog in the instructions, not as one tool each. The catalog lists `tools.kangentic.kangentic_*`, and the TUI's `/mcps` shows the server Connected.
+- **Activity.** V2 does not run V1 plugins: it tries the V1 file and logs "Plugin must export a default definition with an id and an effect or setup function". So a V2 spawn installs no plugin, and its activity comes from the PTY.
+- **Session ids.** V2 keeps `~/.local/share/opencode/opencode.db` and migrates it in place: it leaves the V1 `session`, `message` and `part` tables as they were, copies the V1 sessions into `session_v2`, and writes new sessions to `session_v2` and `session_message` only. An OpenCode 1 run afterwards writes `session` again. The session poll reads both tables.
+- **Answer runs** (auto-name, Knowledge Graph Ask): `run --agent plan --format json --standalone`, and the session delete takes `--standalone` too. V2 has no `--pure`. Its `run --format json` events have V1's shape. V2's built-in Plan agent allows shell commands (V1's refused them), so an answer run's inline config denies `shell` and `edit`. Measured: without the deny a scripted shell call wrote its file, with it V2 did not offer the shell tool.
+- **Model picker.** V2's root `--help` has no `--model`, so capability discovery reports the model override as supported on V2 without reading the help.
+- **Remote mode** needs OpenCode 1: `attach` and the server API remote mode uses are V1's. A V2 remote spawn is blocked with that reason.
+
 ## Permission Modes
 
-The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` (label "Plan", OpenCode's built-in read-only agent) and `acceptEdits` (label "Build", full tool access). The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. On a fresh spawn the mode sets OpenCode's `--agent`: `plan` gives `--agent plan`, `acceptEdits` and `bypassPermissions` give `--agent build`, and `default`, `dontAsk` and `auto` give no flag, deferring to the user's `default_agent`. A resume passes only `--session <id>`, because the saved session already has an agent and the user may have switched it with Tab. OpenCode 1.18.31's TUI does have an auto-approve flag, `--auto` ("auto-approve permissions that are not explicitly denied (dangerous!)"), which Kangentic does not pass: `bypassPermissions` still maps to `--agent build`, and auto-approval is the user's choice in OpenCode (the flag, or `opencode.json`). `bypassPermissions`, `default`, `dontAsk` and `auto` sit outside the `permissions` list and are still accepted by `mapPermissionModeToAgent` for mixed-agent projects. The default mode is `acceptEdits`.
+The `permissions` list exposes two entries in OpenCode's own vocabulary: `plan` (label "Plan", OpenCode's built-in read-only agent) and `acceptEdits` (label "Build", full tool access). The stored `PermissionMode` enum values are reused for compatibility, so a swimlane set to `acceptEdits` under Claude continues to mean "Build" under OpenCode. On a fresh OpenCode 1 spawn the mode sets OpenCode's `--agent` (on OpenCode 2, `default_agent` in the inline config): `plan` gives `--agent plan`, `acceptEdits` and `bypassPermissions` give `--agent build`, and `default`, `dontAsk` and `auto` give no flag, deferring to the user's `default_agent`. A resume passes only `--session <id>`, because the saved session already has an agent and the user may have switched it with Tab. OpenCode 1.18.31's TUI does have an auto-approve flag, `--auto` ("auto-approve permissions that are not explicitly denied (dangerous!)"), which Kangentic does not pass: `bypassPermissions` still maps to `--agent build`, and auto-approval is the user's choice in OpenCode (the flag, or `opencode.json`). `bypassPermissions`, `default`, `dontAsk` and `auto` sit outside the `permissions` list and are still accepted by `mapPermissionModeToAgent` for mixed-agent projects. The default mode is `acceptEdits`.
 
 ## Settings Merge
 
@@ -59,7 +77,7 @@ The plugin file is hidden from git via the shared `.git/info/exclude` mechanism 
 Not caller-owned (`supportsCallerSessionId = false`). Two capture pathways run concurrently and the first to succeed wins:
 
 - **`sessionId.fromOutput`:** `SessionIdScanner` strips ANSI escapes from each PTY chunk and matches against `(?:session(?:[ _-]?id)?|sid)` and `--session` flag forms. Accepts both OpenCode's native `ses_<16-64 alphanumeric>` shape (verified empirically on v1.14.25, e.g. `ses_2349b5c91ffeKd6qajuUTR4clq`) and canonical UUID format.
-- **`sessionId.fromFilesystem`:** Polls the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` (read-only, WAL-friendly handle) for a `session` row whose `directory` equals the spawn cwd and whose `time_created` falls within `[spawnedAt - 5s, spawnedAt + 30s]`. Polls every 500 ms for up to ~10 s. Direct DB read avoids ~200-500 ms `opencode` CLI spin-up per poll, and avoids the Windows `child_process.execFile` rejection of `.cmd` shims.
+- **`sessionId.fromFilesystem`:** Polls the OpenCode SQLite database at `~/.local/share/opencode/opencode.db` (read-only, WAL-friendly handle) for a `session` or `session_v2` row (OpenCode 2's table, see above) whose `directory` equals the spawn cwd and whose `time_created` falls within `[spawnedAt - 5s, spawnedAt + 30s]`. Polls every 500 ms for up to ~10 s. Direct DB read avoids ~200-500 ms `opencode` CLI spin-up per poll, and avoids the Windows `child_process.execFile` rejection of `.cmd` shims.
 
 ## WSL
 
@@ -76,7 +94,7 @@ The shapes were checked against this machine's OpenCode 1.18.31 and the distro's
 
 ## Remote Execution
 
-OpenCode is the only adapter that declares `remoteExecution` (see `remoteExecution?` in [Optional properties](optional-properties.md) and [Remote Execution](../../settings/app-config.md#remote-execution) for the config shape). When a project's mode for OpenCode is `remote`:
+OpenCode is the only adapter that declares `remoteExecution` (see `remoteExecution?` in [Optional properties](optional-properties.md) and [Remote Execution](../../settings/app-config.md#remote-execution) for the config shape). Remote mode speaks OpenCode 1's server API, so a remote spawn with OpenCode 2 detected is blocked with "OpenCode remote mode needs OpenCode 1". When a project's mode for OpenCode is `remote`:
 
 - **Command:** `command-builder.ts`'s `buildOpenCodeAttachCommand` emits `opencode attach <url> [--dir <serverPath>] [--username u] [--password p]` instead of the local TUI form. `--model` is never emitted - the server is the authority for providers and models. Resume uses `--session <id>` exactly as in local mode.
 - **Auth:** `probeAuth()` (the local `auth.json` check) is bypassed. `remoteExecution.probeServer` (`remote-client.ts`'s `probeOpenCodeServer`) hits `GET <url>/global/health` instead, surfaced via the `agent:probeExecutionServer` IPC channel and the Agent settings tab's "Test connection" button. An OpenCode 2 server answers that route with its web app's HTML, or with a 401 to any username but `opencode`. In either case the probe asks the server's `GET /api/info` as `opencode` and reports the server's version, because the local CLI and the server must run the same major.

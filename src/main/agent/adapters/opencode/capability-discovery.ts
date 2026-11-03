@@ -14,6 +14,7 @@ import { execAsync, execFileAsync } from '../../../utility-process/off-main-exec
 import { execCliForTarget, resolveCliTarget, type CliTarget } from '../../shared/cli-target';
 import { quoteCmdExecutable } from '../../../../shared/shell-quote';
 import type { AgentCapabilities } from '../../../../shared/types';
+import { isOpenCodeV2 } from './version';
 
 
 const HELP_TIMEOUT_MS = 5000;
@@ -45,8 +46,13 @@ async function readHelpText(cliPath: string, target: CliTarget | null): Promise<
  * (Plan/Build agents) rather than model/effort, so model override
  * support is likely limited. Returns supportsModelOverride: false
  * to let the TUI/config handle model selection.
+ *
+ * OpenCode 2's root help has no `--model` at all: its TUI takes the model
+ * from config, and a V2 spawn sets it there (`buildOpenCodeEnv`). So a V2
+ * CLI (`cliVersion`) supports the override without reading its help.
  */
-export async function discoverOpenCodeCapabilities(cliPath: string): Promise<AgentCapabilities> {
+export async function discoverOpenCodeCapabilities(cliPath: string, cliVersion?: string | null): Promise<AgentCapabilities> {
+  if (isOpenCodeV2(cliVersion)) return { supportsModelOverride: true, effortLevels: [] };
   // Best-effort: try to detect --model flag, but default to false
   let supportsModelOverride = false;
   try {
