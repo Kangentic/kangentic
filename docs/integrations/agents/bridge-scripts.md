@@ -1,13 +1,16 @@
 ---
 type: Reference
 title: Bridge scripts
-description: The four stateless Node bridge scripts that hooks and status lines run, status-bridge.js, event-bridge.js, plan-approval-bridge.js (decision file, fails closed, setMode reply) and background-shell-hint-bridge.js, with their inputs, outputs and supported agents.
+description: The five stateless Node bridge scripts that hooks and status lines run, status-bridge.js, event-bridge.js, plan-approval-bridge.js (decision file, fails closed, setMode reply), background-shell-hint-bridge.js and browser-policy-bridge.js (denies other browser servers while the Agent Browser is on), with their inputs, outputs and supported agents.
 tags: [agents, hooks, bridge-scripts]
 sources:
   - resource: src/main/agent/status-bridge.js
   - resource: src/main/agent/event-bridge.js
   - resource: src/main/agent/plan-approval-bridge.js
   - resource: src/main/agent/background-shell-hint-bridge.js
+  - resource: src/main/agent/browser-policy-bridge.js
+  - resource: src/main/agent/shared/browser-policy-hook.ts
+  - resource: src/main/agent/adapters/claude/browser-servers.ts
   - resource: src/main/agent/shared/directive-builders.ts
   - resource: src/main/agent/shared/plan-approval-hook.ts
   - resource: src/main/agent/shared/background-shell-hint-hook.ts
@@ -17,7 +20,7 @@ sources:
 ---
 # Bridge scripts
 
-Four standalone Node.js scripts in `src/main/agent/`:
+Five standalone Node.js scripts in `src/main/agent/`:
 
 ## `status-bridge.js`
 
@@ -58,4 +61,14 @@ Four standalone Node.js scripts in `src/main/agent/`:
 - **Prints nothing** for a foreground call, another tool, a flagged command, stdin over 1 MiB, or any error, and exits 0, so it never fails or blocks a tool.
 - **Supported by:** Claude Code (probed headless on 2026-10-20: the context reached the model for a Bash and a PowerShell `run_in_background` launch, both results carried `tool_response.backgroundTaskId`, and Claude runs one event's hooks in parallel, so the hint adds no wall time to a tool call), Qwen Code 0.25.3, Gemini CLI 0.64.0 and GitHub Copilot CLI 1.0.100 (each probed headless against a local stand-in for its model API, with a nonce in the reply found in the next model request)
 
-All four scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.
+## `browser-policy-bridge.js`
+
+- **Hook point:** a `PreToolUse` entry beside the event bridge's catch-all one, registered on every Claude spawn whatever the Agent Browser switch says (task #977). Its matcher (`browserPolicyMatcher`) is `mcp__(?!kangentic__).*(?:<name fragments>|<discovered servers>).*`, a superset of what it denies, so it never runs for Kangentic's own tools or a built-in. Claude matches hooks case-sensitively and the bridge compares fragments in any case, so each fragment is written in the matcher as a pattern that matches either case (`[Pp][Ll]...`).
+- **Input:** the hook payload on stdin, and a base64 spec (`BrowserPolicyHookSpec` in `src/main/agent/shared/browser-policy-hook.ts`): the tool name field, the MCP prefix and separator, the server names to deny, the name fragments (`playwright`, `puppeteer`, `chrome-devtools`, `claude-in-chrome`, `browsermcp`), Kangentic's global config file, and the reply. The server names come from the configs Claude loads, read at spawn by `adapters/claude/browser-servers.ts`: `.mcp.json` in the session's working directory, and `mcpServers` and `projects[<cwd>].mcpServers` in `~/.claude.json` (a WSL Claude's own home, keyed by the distro's path; on Windows the key is compared in any case). The `~/.claude.json` lists are cached until the file's size or modification time changes, since it runs to megabytes and a command is built on the main thread. A discovered server is matched against the whole tool name, so a name holding `__` is still denied. A server counts as a browser server by its package (`@playwright/mcp`, `chrome-devtools-mcp`, a puppeteer server, `@browsermcp/mcp`, browserbase) or its name, so a Playwright server the user named `site-checker` is caught. Claude in Chrome is always listed.
+- **Live switch:** the bridge reads `browserAutomation.enabled` from the global config file on every call. Turning the Agent Browser off in Settings frees a running session at once, and turning it on blocks at once, with no respawn. A missing file or key means on (the default); an unreadable or unparsable file answers nothing.
+- **Output:** for a denied server's tool, Claude's deny on stdout (`claudeBrowserPolicySpec` in `adapters/claude/hook-manager.ts`): `{"hookSpecificOutput":{"hookEventName":"PreToolUse","permissionDecision":"deny","permissionDecisionReason":<reason>}}`. The reason names the tool, points at `kangentic_browser_open_pane` and `saveToFile` (screenshots, page HTML through `_query_dom`, eval), and warns off a hand-written script.
+- **Prints nothing** for any other tool, a server named `kangentic`, the switch off, stdin over 1 MiB, or any error, and exits 0.
+- **Plan approval:** while the switch is on at spawn, the plan tool approval spec excludes every browser server's prefix, so the plan approval bridge never answers for one.
+- **Supported by:** Claude Code. Measured on 2.1.317 on Windows by `scripts/probe-claude-browser-deny.js`, against a local stand-in for the API: the deny held in default, acceptEdits, plan and bypassPermissions in `-p`, and in default and bypassPermissions in the interactive TUI with the shipped bridge, for the main agent and a subagent, and the model got the reason as an error tool result (`PreToolUse:<tool> hook error: <reason>`). No `PostToolUse` or `PostToolUseFailure` fires for a denied call, so the event bridge's `tool_start` stays open until the turn's Stop, which clears unmatched tool starts. Through the WSL hook transport main answers it with the bridge's own `browserPolicyReply` (reply kind `browser-policy`).
+
+All five scripts are stateless (no persistent process), read JSON from stdin, and exit. All writes are try/catch wrapped for non-fatal failures.

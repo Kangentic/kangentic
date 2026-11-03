@@ -118,6 +118,11 @@ contract was kept in sync across three files by prose comments alone.
   for the rest of the run. A caller never releases after it calls `spawn()`: from there
   `SessionManager` releases a spawn that never ran, and a spawn that failed after its PTY started
   keeps the hold for that PTY's exit, so the file is never stripped under a running agent.
+- Every file that calls `<receiver>.buildCommand(` also passes `browserAutomationEnabled` in its
+  command options, resolved from the config it already holds
+  (`resolveBrowserAutomationConfig(config.browserAutomation).enabled`). While the Agent Browser is
+  on it is the only browser an agent drives, and the Claude adapter turns that into
+  `--append-system-prompt` text and `--no-chrome` (task #977). A site that leaves it out spawns with no policy and no sign.
 - **Held messages are claimed only where an opening message is built.** A message held for a task
   with no running agent (`src/main/held-messages/`) goes into the next agent's opening message,
   after the column's own. `spawnAgent` and `resumeTaskSession` call `claimHeldMessages` and fold
@@ -143,7 +148,9 @@ contract was kept in sync across three files by prose comments alone.
   the scan cannot pass vacuously, (h) the same for `resumesEntry`, allowed only in
   `helpers/agent-spawn.ts` and `handlers/session-resume.ts`, and (i) any
   `<receiver>.buildCommand(` call site with no `ptySessionId` property between it and the file's
-  previous call site, or in a file that never calls `releaseCommandHold(`, and (j) any
+  previous call site, or in a file that never calls `releaseCommandHold(`, or with no
+  `browserAutomationEnabled` property in the same span whose value is
+  `resolveBrowserAutomationConfig(...)` or the engine's `appConfig.browserAutomationEnabled`, and (j) any
   `claimHeldMessages(` call outside `agent-spawn.ts`, `session-resume.ts` and the held-messages
   module, with a companion assertion that both builders still claim. That
   scan proves line order, not control flow; the runtime ordering

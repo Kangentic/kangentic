@@ -149,11 +149,18 @@ function exclusionsIn(list: unknown): McpRule[] {
  * or null when the hook may answer nothing: no allow rule names an MCP tool,
  * and a deny or ask rule names every input-judged built-in.
  */
-export function planToolApprovalRules(layers: Array<ClaudePermissionLists | undefined>): PlanToolApprovalRules | null {
+export function planToolApprovalRules(
+  layers: Array<ClaudePermissionLists | undefined>,
+  /**
+   * More tool prefixes the hook never answers: the browser servers the browser
+   * policy denies while the Agent Browser is on (task #977).
+   */
+  alwaysExcludedPrefixes: readonly string[] = [],
+): PlanToolApprovalRules | null {
   const tools = new Set<string>();
   const prefixes = new Set<string>();
   const excludedTools = new Set<string>();
-  const excludedPrefixes = new Set<string>([KANGENTIC_TOOLS_PREFIX]);
+  const excludedPrefixes = new Set<string>([KANGENTIC_TOOLS_PREFIX, ...alwaysExcludedPrefixes]);
   for (const layer of layers) {
     for (const rule of rulesIn(layer?.allow)) {
       if (rule.kind === 'tool') tools.add(rule.name);

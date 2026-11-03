@@ -24,7 +24,8 @@ vi.mock('../../src/main/agent/shared/bridge-utils', async (importOriginal) => {
 
 import { isKangenticHookCommand } from '../../src/main/agent/shared/hook-utils';
 import { buildBackgroundShellHintCommand } from '../../src/main/agent/shared/background-shell-hint-hook';
-import { CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL } from '../../src/main/agent/adapters/claude/hook-manager';
+import { CLAUDE_BACKGROUND_SHELL_HINT_SPEC, CLAUDE_BRIDGE_SHELL, claudeBrowserPolicySpec } from '../../src/main/agent/adapters/claude/hook-manager';
+import { buildBrowserPolicyCommand } from '../../src/main/agent/shared/browser-policy-hook';
 
 /** An install directory with no `.kangentic` or `/kangentic/` in it, and not the mocked shipped path. */
 const OTHER_APP_BUILD_DIRECTORY = '/opt/Other/build';
@@ -34,7 +35,7 @@ function base64Of(text: string): string {
   return Buffer.from(text, 'utf8').toString('base64');
 }
 
-// Pins `carriesKangenticHintSpec` in src/main/agent/shared/hook-utils.ts. The
+// Pins `carriesKangenticSpec` in src/main/agent/shared/hook-utils.ts. The
 // three negatives guard against over-matching: a rewrite that tests the raw
 // command for the tool name, that takes any hint bridge command as Kangentic's,
 // or that drops the decoded `includes(MARK_BACKGROUND_SERVICE_TOOL)` check after
@@ -67,6 +68,34 @@ describe('a background shell hint command is recognized by its spec, not by wher
     expect(command).not.toContain('KANGENTIC_EVENTS_PATH');
     expect(command).not.toContain('Program Files');
     expect(isKangenticHookCommand(command)).toBe(true);
+  });
+});
+
+// The browser policy hook (task #977) is recognized the same way: its spec names
+// the tool it points the agent at. A stale deny hook a user cannot see would
+// keep blocking their own Playwright server after Kangentic stopped managing it.
+describe('a browser policy command is recognized by its spec, not by where it points', () => {
+  const otherAppPolicyBridge = `${OTHER_APP_BUILD_DIRECTORY}/browser-policy-bridge.js`;
+
+  it('does not take a policy bridge command whose spec names no Kangentic tool for Kangentic\'s', () => {
+    const unrelatedSpec = base64Of(JSON.stringify({ reply: 'Use the company browser.' }));
+    expect(isKangenticHookCommand(`node '${otherAppPolicyBridge}' ${unrelatedSpec}`)).toBe(false);
+    expect(isKangenticHookCommand(`node '${otherAppPolicyBridge}'`)).toBe(false);
+  });
+
+  it('takes a real Kangentic policy spec from the same other-app path for Kangentic\'s', () => {
+    const spec = claudeBrowserPolicySpec(['claude-in-chrome'], '/opt/Other/config.json');
+    const command = buildBrowserPolicyCommand(CLAUDE_BRIDGE_SHELL, otherAppPolicyBridge, spec);
+
+    expect(command).not.toContain('.kangentic');
+    expect(command).not.toContain('/kangentic/');
+    expect(command).not.toContain('Program Files');
+    expect(isKangenticHookCommand(command)).toBe(true);
+  });
+
+  it('takes a command at the path this running app ships the bridge at for Kangentic\'s', () => {
+    const shipped = `${WINDOWS_BUILD_DIRECTORY}\\browser-policy-bridge.js`.replace(/\\/g, '/');
+    expect(isKangenticHookCommand(`node "${shipped}"`)).toBe(true);
   });
 });
 

@@ -1,5 +1,5 @@
 /**
- * Tests for the browser-verification section of buildServerInstructions
+ * Tests for the browser section of buildServerInstructions
  * (src/main/agent/mcp-http/server-instructions.ts).
  *
  * The `buildBrowserSection` helper, called inside `buildServerInstructions`,
@@ -116,20 +116,32 @@ describe('buildServerInstructions - browser section', () => {
   // Branch 1: static content - always present
   // -------------------------------------------------------------------------
 
-  it('always includes the BROWSER VERIFICATION header and guidance paragraph', () => {
+  it('always includes the BROWSER header and the policy', () => {
     // No panes registered - the static block must still appear.
     const instructions = buildServerInstructions(ACTIVE_RESOLVER);
 
-    expect(instructions).toContain('BROWSER VERIFICATION (kangentic_browser_* tools):');
-    // Guidance paragraph: the agent should prefer the browser tools over Playwright.
+    expect(instructions).toContain('BROWSER (kangentic_browser_* tools):');
     expect(instructions).toContain('kangentic_browser_list_panes');
-    // Steering away from a DIFFERENT browser, named by tool prefix rather
-    // than described. "A Chrome-extension browser MCP" asked the agent to
-    // infer which tools were meant; `mcp__claude-in-chrome__*` is a literal
-    // it can match. Reported from live use: agents reaching for Chrome when
-    // the user wanted the in-app pane.
+    // The Agent Browser is the only browser, for any page and any purpose
+    // (task #977). An agent capturing a production page for an artifact read
+    // the old verification-only wording as out of scope and drove Playwright.
+    expect(instructions).toContain('the only browser you drive');
+    expect(instructions).toContain('production');
+    expect(instructions).toContain('artifact');
+    // Other browsers named by tool prefix rather than described, so the agent
+    // has a literal to match. Playwright MCP was the tool family used in the
+    // report, and was named only as "a Playwright script" before.
+    expect(instructions).toContain('mcp__playwright__*');
     expect(instructions).toContain('mcp__claude-in-chrome__*');
+    expect(instructions).toContain('chrome-devtools or puppeteer MCP servers');
     expect(instructions).toContain('Playwright/Puppeteer/Selenium');
+    // "Unless the user names it" contradicts the deny hook, which cannot see
+    // what the user said, and the verification-only scoping is gone.
+    expect(instructions).not.toContain('explicitly names it');
+    expect(instructions).not.toContain('Do not drive the browser proactively');
+    expect(instructions).toContain('Open a browser only when the work needs one');
+    // The capture gap that pushed the agent to Playwright is advertised closed.
+    expect(instructions).toContain('saveToFile');
     // Open the pane, and do not treat "the user closed it" as a reason not to.
     expect(instructions).toContain('OPEN THE PANE.');
     // One surface per task, stated so the agent does not go looking for a
@@ -139,8 +151,6 @@ describe('buildServerInstructions - browser section', () => {
     // schema error instead of a browser.
     expect(instructions).toContain('exactly ONE browser surface');
     expect(instructions).not.toContain('isolated: true');
-    // Guard against proactive driving (the "do not drive" contract).
-    expect(instructions).toContain('Do not drive the browser proactively');
     // The way out of "no pane open" must be something the AGENT can do. This
     // used to point at the Browser pill, a UI affordance an agent cannot reach,
     // which left it no option but to stop and ask the user - the most common
@@ -153,23 +163,34 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('kangentic_browser_close_pane');
   });
 
-  it('omits the entire BROWSER VERIFICATION section when browser automation is disabled', () => {
+  it('omits the entire BROWSER section when browser automation is disabled', () => {
     // When the policy is off, the kangentic_browser_* tools are not registered,
     // so the section must not advertise tools the agent cannot call (and its
     // tokens are shed). The rest of the instructions are unaffected.
     fakeList.mockReturnValue([makePane({ taskId: 'task-abc' })]);
     const instructions = buildServerInstructions(ACTIVE_RESOLVER, false);
 
-    expect(instructions).not.toContain('BROWSER VERIFICATION');
+    expect(instructions).not.toContain('BROWSER (kangentic_browser_* tools)');
     expect(instructions).not.toContain('kangentic_browser_list_panes');
+    expect(instructions).not.toContain('mcp__playwright__*');
     expect(instructions).not.toContain('A Browser pane is currently open');
     // Non-browser content survives.
     expect(instructions).toContain('PROJECT ROUTING RULE');
   });
 
-  it('includes the BROWSER VERIFICATION section when browser automation is enabled', () => {
+  it('includes the BROWSER section when browser automation is enabled', () => {
     const instructions = buildServerInstructions(ACTIVE_RESOLVER, true);
-    expect(instructions).toContain('BROWSER VERIFICATION (kangentic_browser_* tools):');
+    expect(instructions).toContain('BROWSER (kangentic_browser_* tools):');
+  });
+
+  it('cuts a long pane URL so one pane cannot push the project list past the cap', () => {
+    const longUrl = `http://localhost:3000/${'segment/'.repeat(40)}`;
+    fakeList.mockReturnValue([makePane({ taskId: 'task-long', url: longUrl })]);
+
+    const instructions = buildServerInstructions(ACTIVE_RESOLVER);
+
+    expect(instructions).not.toContain(longUrl);
+    expect(instructions).toContain(`at ${longUrl.slice(0, 77)}... (task task-long)`);
   });
 
   it('adds no pane advertisement when the registry is empty', () => {
@@ -191,9 +212,7 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain(
       'A Browser pane is currently open at http://localhost:3000 (task task-abc).',
     );
-    expect(instructions).toContain(
-      'You can drive it now with the kangentic_browser_* tools - drive this pane, not a separate external browser.',
-    );
+    expect(instructions).toContain('Drive this pane, not a separate external browser.');
     // Must NOT also emit the multi-pane format.
     expect(instructions).not.toContain('Browser panes are currently open:');
   });
@@ -229,7 +248,7 @@ describe('buildServerInstructions - browser section', () => {
     expect(instructions).toContain('task task-1 (http://localhost:3000)');
     expect(instructions).toContain('task task-2');
     // Agent is told to pass sessionId or taskId to disambiguate.
-    expect(instructions).toContain('Drive a specific one with the kangentic_browser_* tools');
+    expect(instructions).toContain('Drive one by passing its handle as sessionId or its taskId');
     // Steering suffix: drive the in-app panes, not a separate external browser.
     expect(instructions).toContain('drive these panes, not a separate external browser');
     // Must NOT also emit the single-pane format.
