@@ -69,6 +69,9 @@ export interface PtyHostSpawnParams {
    *  for the host's loop counts against main's budget for the answer, so a
    *  retry's window counts it too (`retryWindowMs`). */
   sentAtMs?: number;
+  /** The SSH host this PTY runs on (#913), or absent for this computer. The link
+   *  hub routes on it; the local core never sees a spawn that carries one. */
+  hostId?: string;
 }
 
 /** A thrown error, flattened for the wire. */
@@ -407,7 +410,11 @@ export type PtyHostEvent =
   | { type: 'cliError'; processId: number; error: PtyHostError }
   | { type: 'cliExit'; processId: number; code: number | null; signal: string | null }
   /** Its stdio closed, after the last `cliData`; the run is over. */
-  | { type: 'cliClose'; processId: number; code: number | null; signal: string | null };
+  | { type: 'cliClose'; processId: number; code: number | null; signal: string | null }
+  /** An SSH host's connection changed state (#913). Only the link hub emits it, and it is its
+   *  own push: a drop is never an `exit`, because every agent on the host keeps running.
+   *  `detail` is the reason in the peer's or ssh's own words, null when there is none. */
+  | { type: 'remoteLink'; hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null };
 
 export type PtyHostReply =
   | { type: 'reply'; id: number; ok: true; result: unknown }

@@ -1115,6 +1115,11 @@ export class SessionManager extends EventEmitter {
       case 'trace':
         recordTerminalTrace(event.sessionId, event.event, event.detail, event.ts, 'pty-host');
         return;
+      case 'remoteLink':
+        // An SSH host's connection changed (#913). Its own event: a drop never ends a session, and the
+        // sessions on the host are neither marked exited nor respawned because of it.
+        this.emit('remote-link', { hostId: event.hostId, state: event.state, detail: event.detail });
+        return;
       case 'exit':
       case 'rawData':
       case 'rawExit':
