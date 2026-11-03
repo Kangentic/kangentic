@@ -71,13 +71,15 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   terminals, 50/50. A seam whose pair has no room above both floors (the panel at its minimum)
   shows no resize cursor or line and takes no drag; a seam never grows the panel. So the
   edge stops where the grid still fits,
-  and a terminal added (from anywhere) or a Restore grows the panel to fit, and the panel saves the
-  size it grew to, so the next Expand does not shrink it back. Nothing falls back to one terminal
+  and a terminal added (from anywhere) moves the panel to that count's place (below), grown to fit,
+  and a Restore grows the panel to fit and saves the size it grew to for the shape on screen, so
+  the next Expand does not shrink it back. Nothing falls back to one terminal
   expanded and Restore is never off: only an area smaller than the minimum (a small window, the
   detached window resized small) tiles the terminals under the floor. There is no per-terminal
   pop-out, float or maximize. The panel's
-  own place is `AppConfig.commandTerminalPanel` (fractions of the area between the title bar and
-  the status bar), it moves by its header and resizes live from its edges, and it maximizes. Its
+  own place is kept per grid shape in `AppConfig.commandTerminalPanelByShape` (fractions of the
+  area between the title bar and the status bar; see the GEOMETRY bullet), it moves by its header
+  and resizes live from its edges, and it maximizes. Its
   box is snapped to whole pixels (`toWholePixels`): the tiles are cut from the terminal area's
   whole-pixel client size, so a fractional panel left each tile a fraction of a pixel past the
   panel's clip, which cut off the bottom border that marks the focused terminal. A
@@ -104,7 +106,10 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   draws that frame once, here as for a maximize, a task window or the bottom panel: on screen,
   pinned to the bottom, where the frame still fills its new box, and not drawn where the box grew.
   Nothing holds the pointer meanwhile. Only a user's gesture holds; a change main or an agent
-  makes refits as it lands. Never add a Command-Terminal-only veil beside it.
+  makes refits as it lands. The one exception is a terminal ended from outside the panel (a
+  phone's Stop, its agent exiting): `closeCommandTerminalWindowInSlot` closes its window as a
+  layout change, because the count change moves the panel to that count's place, as a Stop from
+  the panel does. Never add a Command-Terminal-only veil beside it.
   A header drag swaps
   two terminals (`swap-drag.ts`): a picture of the pressed terminal (`window:captureRegion`,
   taken on the press) follows the pointer, upright, cut to the SMALLEST tile's width and height
@@ -304,9 +309,19 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   agree with the pill. The Changes panel embed passes the effective default base as
   `baseBranch`, never `"HEAD"`.
 - **GEOMETRY is global, POPULATION is per-project, and the reconcile runs BEFORE the layer
-  mounts.** The panel's place (`AppConfig.commandTerminalPanel`) and the terminals' layout
-  (`AppConfig.commandTerminalWorkspace`) are shared across all projects, but which slots get
-  windows is reconciled to the current project's live transient sessions on open
+  mounts.** The panel's place and the terminals' layout (`AppConfig.commandTerminalWorkspace`)
+  are shared across all projects. The place is kept per grid shape
+  (`AppConfig.commandTerminalPanelByShape`, `src/shared/command-terminal-panel.ts`): one
+  terminal, two, and three or four, which share one place because they share the 2 by 2 grid's
+  minimum. The shape comes from the tiled count, never from Expand. A shape with no place starts
+  from the nearest saved shape's center, then the single place from before shapes
+  (`commandTerminalPanel`, read and never written, so an update moves no panel), then the
+  default, grown around it to the grid's minimum inside the area. Every save writes only the
+  shape on screen (the rail's width change included) through `saveCommandTerminalPanelPlaces`,
+  which sends the whole map. A start or stop while the panel is open saves the new shape's place
+  and the one it left, if either had none, so stopping back returns to it. A start or stop runs
+  as a layout change, so the panel's move lands with the terminals holding their frames. But which
+  slots get windows is reconciled to the current project's live transient sessions on open
   (`reconcileCommandTerminalWindows` + `planCommandWindowReconciliation` in
   `command-window-reconcile.ts`). Project switching keeps every slot's PTY alive in the map, with
   no stash or restore. The reconcile closes carried-over windows whose slot has no live session
@@ -358,6 +373,14 @@ alternatives live in [docs/architecture/renderer/command-terminal.md](../../docs
   decides which slots get windows on open. `tests/unit/command-terminal-summary.test.ts` locks
   the shared count/tone selector, and `tests/unit/command-terminal-name.test.ts` the titles. All
   run in CI via `npm run test:unit`.
+- **Test (place per shape):** `tests/unit/command-terminal-panel-places.test.ts` runs the
+  resolver: the shape for each count (3 and 4 sharing), the own place, the nearest saved shape
+  ahead of the place from before shapes, the tie, the fallback that moves nothing, growth around
+  the center and the clamp. `config-manager.test.ts` pins the map's whole-write replace, and
+  `config-store-command-terminal-rail.test.ts` the merged whole-map save and the refetch preserve.
+  `command-terminal.spec.ts` places one terminal, adds a second (grown around that center),
+  moves it, stops back to the first place and adds back to the second, and opens a second
+  project's two terminals at the two-terminal place.
 - **Test (floor):** `tests/unit/command-terminal-grid-fit.test.ts` pins the grid's minimum at the
   630px floor for each count and while one is expanded, and `command-terminal.spec.ts` that two
   tile at 1920 with the panel's edge stopping where they still fit, that an expanded terminal's

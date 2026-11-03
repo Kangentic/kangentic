@@ -288,3 +288,95 @@ describe('fitCommandTerminalPanel', () => {
     }
   });
 });
+
+type PanelPlaces = Record<string, Panel>;
+type FitCommandTerminalPanelPlaces = (places: PanelPlaces | null, measure: Measure, railWidth?: number) => PanelPlaces | null;
+
+const fitCommandTerminalPanelPlacesSource = extractFunction(script, 'fitCommandTerminalPanelPlaces');
+
+function liftPanelPlacesFit(recordings: RecordingsIndex, clientWidth: number): FitCommandTerminalPanelPlaces {
+  const built = [
+    `var FIT_REFERENCE_FRAME_WIDTH = ${FIT_REFERENCE_FRAME_WIDTH};`,
+    `var WINDOW_FRAME_BORDER_PX = ${WINDOW_FRAME_BORDER_PX};`,
+    `var COMMAND_PANEL_BORDER_PX = ${COMMAND_PANEL_BORDER_PX};`,
+    `var COMMAND_RAIL_WIDTH_PX = ${COMMAND_RAIL_WIDTH_PX};`,
+    fitCommandTerminalPanelSource,
+    fitCommandTerminalPanelPlacesSource,
+    'return fitCommandTerminalPanelPlaces;',
+  ].join('\n');
+  const documentStub = { documentElement: { clientWidth } };
+  return new Function('recordings', 'document', built)(recordings, documentStub) as FitCommandTerminalPanelPlaces;
+}
+
+interface SeedConfig {
+  terminal?: unknown;
+  commandTerminalRail?: { width?: number; collapsed?: boolean };
+  commandTerminalPanelByShape?: PanelPlaces;
+  commandTerminalPanel?: Panel;
+}
+const commandRailWidthOfSource = extractFunction(script, 'commandRailWidthOf');
+const fitMarkedWindowsSource = extractFunction(script, 'fitMarkedWindows');
+const COMMAND_RAIL_COLLAPSED_WIDTH_PX = extractConstant(script, 'COMMAND_RAIL_COLLAPSED_WIDTH_PX');
+
+/** Runs the seed's own `fitMarkedWindows` over a mock state, with the DOM measurements stubbed. */
+function runFitMarkedWindows(recordings: RecordingsIndex, config: SeedConfig): SeedConfig {
+  const built = [
+    `var FIT_REFERENCE_FRAME_WIDTH = ${FIT_REFERENCE_FRAME_WIDTH};`,
+    `var WINDOW_FRAME_BORDER_PX = ${WINDOW_FRAME_BORDER_PX};`,
+    `var COMMAND_PANEL_BORDER_PX = ${COMMAND_PANEL_BORDER_PX};`,
+    `var COMMAND_RAIL_WIDTH_PX = ${COMMAND_RAIL_WIDTH_PX};`,
+    `var COMMAND_RAIL_COLLAPSED_WIDTH_PX = ${COMMAND_RAIL_COLLAPSED_WIDTH_PX};`,
+    'var windowsFitted = false;',
+    'function measuredTerminalCell() { return 8; }',
+    'function scrollbarGutterWidth() { return 15; }',
+    'function terminalPaddingWidth() { return 8; }',
+    extractFunction(script, 'fitLayoutBlob'),
+    fitCommandTerminalPanelSource,
+    fitCommandTerminalPanelPlacesSource,
+    commandRailWidthOfSource,
+    fitMarkedWindowsSource,
+    'fitMarkedWindows();',
+  ].join('\n');
+  new Function('recordings', 'document', 'mockState', built)(recordings, { documentElement: { clientWidth: 1024 } }, { config });
+  return config;
+}
+
+describe('fitMarkedWindows (the seed config wiring)', () => {
+  it('fits the marked place of commandTerminalPanelByShape, using the config rail, and leaves the old single panel key alone', () => {
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
+    const marked: Panel = { x: 0.1, y: 0.14, w: 0.5, h: 0.72, maximized: false, fitToRecording: 'sess-1' };
+    const config: SeedConfig = {
+      commandTerminalRail: { width: 360, collapsed: false },
+      commandTerminalPanelByShape: { one: marked },
+    };
+    runFitMarkedWindows(recordings, config);
+    const frameWidth = Math.max(1024, FIT_REFERENCE_FRAME_WIDTH);
+    const expectedWidth = (COMMAND_PANEL_BORDER_PX + 360 + WINDOW_FRAME_BORDER_PX + 15 + 8 + (120 + 0.5) * 8) / frameWidth;
+    const fitted = config.commandTerminalPanelByShape?.one;
+    expect(fitted).not.toHaveProperty('fitToRecording');
+    expect(fitted?.w).toBeCloseTo(expectedWidth, 10);
+    expect(fitted?.x).toBeCloseTo((1 - expectedWidth) / 2, 10);
+    expect(config).not.toHaveProperty('commandTerminalPanel');
+  });
+});
+
+describe('fitCommandTerminalPanelPlaces', () => {
+  it('fits each marked place of the panel per grid shape, passes the rest through, and copies the map', () => {
+    // The seed fits the per-shape map the scenes write (`commandTerminalPanelByShape`), so a
+    // marked shape gets the same width the single panel fit gives it.
+    const recordings: RecordingsIndex = { sessions: { 'sess-1': { cols: 120 } } };
+    const fitPlaces = liftPanelPlacesFit(recordings, 1024);
+    const fitOne = liftPanelFit(recordings, 1024);
+    const measure = () => ({ width: 8, gutter: 15, padding: 8 });
+    const marked: Panel = { x: 0.1, y: 0.14, w: 0.5, h: 0.72, maximized: false, fitToRecording: 'sess-1' };
+    const unmarked: Panel = { x: 0, y: 0, w: 1, h: 1, maximized: true };
+    const places: PanelPlaces = { one: marked, two: unmarked };
+    const result = fitPlaces(places, measure);
+    expect(result).not.toBe(places);
+    expect(result?.one).toEqual(fitOne(marked, measure));
+    expect(result?.one).not.toHaveProperty('fitToRecording');
+    expect(result?.two).toBe(unmarked);
+    expect(places.one.fitToRecording).toBe('sess-1');
+    expect(fitPlaces(null, neverMeasured)).toBeNull();
+  });
+});

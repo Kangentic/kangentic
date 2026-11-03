@@ -491,8 +491,9 @@ test.describe('Command Terminal rail', () => {
     await expect.poll(() => isManagerResizeGateOpen(page), { timeout: 3000 }).toBe(false);
   }
 
+  /** The two-terminal panel's saved place: the tests that read it tile two terminals. */
   const savedPanel = (page: Page) => page.evaluate(async () =>
-    ((await window.electronAPI.config.getGlobal()) as unknown as { commandTerminalPanel?: { w: number } | null }).commandTerminalPanel ?? null);
+    ((await window.electronAPI.config.getGlobal()) as unknown as { commandTerminalPanelByShape?: { two?: { w: number } } }).commandTerminalPanelByShape?.two ?? null);
 
   test('past the room beside the terminals, an edge drag pushes the panel out: the terminals keep their size and refit nothing', async () => {
     // An edge drag past the room, with a no-refit check: 5 s locally, so the 15 s

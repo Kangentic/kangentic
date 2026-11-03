@@ -335,8 +335,8 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
           variant: 'error',
         });
         // Drop just this window; the layer's count bridge hides the layer if it
-        // was the last one.
-        closeWindow(windowId);
+        // was the last one. The count changes, so the panel moves to its place.
+        changeLayout(() => closeWindow(windowId));
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -485,10 +485,10 @@ export function CommandTerminalWindow({ managedWindow, isMaximized }: CommandTer
       try {
         await spawnInSlot(grid, branch);
       } catch {
-        closeWindow(windowId);
+        changeLayout(() => closeWindow(windowId));
       }
     }
-  }, [slot, stopForRespawn, spawnInSlot, closeWindow, windowId]);
+  }, [slot, stopForRespawn, spawnInSlot, changeLayout, closeWindow, windowId]);
 
   // Take a resume the Earlier list asked of this slot, once the slot has a live
   // terminal. The list judged that terminal unused when it asked; if something

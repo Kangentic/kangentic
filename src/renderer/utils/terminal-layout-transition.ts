@@ -182,7 +182,10 @@ async function settle(landing: Landing): Promise<void> {
  * nothing would show the hold, and a hidden page draws no frames.
  *
  * Only a user's own gesture opens a landing: a restore, or a change an agent or
- * main starts, calls `change` directly.
+ * main starts, calls `change` directly. One exception: a Command Terminal that
+ * ends from outside the panel (a phone's Stop, its agent exiting) closes its
+ * window through a landing, since the count change moves the panel to that
+ * count's place as a Stop from the panel does.
  */
 export function runTerminalLayoutChange(scope: HTMLElement | null, change: () => void): void {
   if (!scope || !scope.isConnected || document.visibilityState === 'hidden') {

@@ -2086,6 +2086,16 @@ export function buildDemoPreConfig(options: {
         fitted.w = width;
         return fitted;
       }
+      // The panel keeps a place per grid shape; each marked place is fitted, the rest pass
+      // through as they are. The map is copied, not edited, for the same reason as a layout blob.
+      function fitCommandTerminalPanelPlaces(places, measure, railWidth) {
+        if (!places || typeof places !== 'object') return places;
+        var fitted = {};
+        Object.keys(places).forEach(function (shape) {
+          fitted[shape] = fitCommandTerminalPanel(places[shape], measure, railWidth);
+        });
+        return fitted;
+      }
       var windowsFitted = false;
       function fitMarkedWindows() {
         if (windowsFitted || !mockState) return;
@@ -2110,8 +2120,8 @@ export function buildDemoPreConfig(options: {
         // layer; they are fitted here all the same, since this is the one config every later read
         // returns.
         if (config.commandTerminalWorkspace) config.commandTerminalWorkspace = fitLayoutBlob(config.commandTerminalWorkspace, measure);
-        if (config.commandTerminalPanel) {
-          config.commandTerminalPanel = fitCommandTerminalPanel(config.commandTerminalPanel, measure, commandRailWidthOf(config.commandTerminalRail));
+        if (config.commandTerminalPanelByShape) {
+          config.commandTerminalPanelByShape = fitCommandTerminalPanelPlaces(config.commandTerminalPanelByShape, measure, commandRailWidthOf(config.commandTerminalRail));
         }
       }
       ['get', 'getGlobal'].forEach(function (method) {

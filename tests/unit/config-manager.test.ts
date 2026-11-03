@@ -619,6 +619,24 @@ describe('Config Manager -- commandTerminalPanel replace semantics', () => {
   });
 });
 
+describe('Config Manager: commandTerminalPanelByShape replace semantics', () => {
+  it('defaults to no places, and a write REPLACES the map so a shape the renderer dropped goes', async () => {
+    const cm = await createConfigManager();
+    expect(cm.load().commandTerminalPanelByShape).toEqual({});
+
+    const one = { x: 0.1, y: 0.05, w: 0.5, h: 0.6, maximized: false };
+    const two = { x: 0.05, y: 0.05, w: 0.9, h: 0.6, maximized: true };
+    cm.save({ commandTerminalPanelByShape: { one, two } });
+    expect(cm.load().commandTerminalPanelByShape).toEqual({ one, two });
+
+    // A merge would keep `two` here.
+    cm.save({ commandTerminalPanelByShape: { one } });
+    expect(cm.load().commandTerminalPanelByShape).toEqual({ one });
+    const raw = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
+    expect(raw.commandTerminalPanelByShape).toEqual({ one });
+  });
+});
+
 describe('Config Manager -- commandTerminalWorkspace replace semantics', () => {
   it('set({ commandTerminalWorkspace: null }) REPLACES the previous blob, not deep-merges it', async () => {
     // A realistic minimal serialized-workspace blob (shape mirrors SerializedWorkspace).

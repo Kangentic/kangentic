@@ -728,7 +728,7 @@ const SECOND_COMMAND_TERMINAL_SEED = `
       commandTerminalSlot: 'slot-2', commandTerminalBranch: 'main',
       commandTerminalLabel: null, isolatedSwimlaneId: null, agentSessionId: null,
     });
-    state.config.commandTerminalPanel = { x: 0, y: 0, w: 1, h: 1, maximized: false };
+    state.config.commandTerminalPanelByShape = { two: { x: 0, y: 0, w: 1, h: 1, maximized: false } };
   });
 `;
 

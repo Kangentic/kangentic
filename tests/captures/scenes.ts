@@ -489,7 +489,9 @@ function commandTerminalWorkspace() {
 }
 
 /**
- * Where the Command Terminal panel sits (`AppConfig.commandTerminalPanel`). `fitted` names the
+ * Where the Command Terminal panel sits, per grid shape (`AppConfig.commandTerminalPanelByShape`).
+ * The fitted scene shows one terminal, so it places the `one` shape; the tiled scene opens on one
+ * and adds a second, so it places both. `fitted` names the
  * contoso terminal session, so the seed (demo-dataset.ts, fitCommandTerminalPanel) widens the panel
  * until its one terminal is exactly as wide as that recording, for the same reason as the task
  * window (FITTED_FLOATING_GEOMETRY); the rect's width is only the fallback. It is that window's
@@ -500,10 +502,10 @@ function commandTerminalWorkspace() {
  */
 const FITTED_COMMAND_PANEL_GEOMETRY = { x: FITTED_FLOATING_GEOMETRY.x, y: 0.1, w: FITTED_FLOATING_GEOMETRY.w, h: 0.8 };
 
-function commandTerminalPanel(fitted: boolean) {
-  return fitted
-    ? { ...FITTED_COMMAND_PANEL_GEOMETRY, maximized: false, fitToRecording: SESSION_CONTOSO_TERMINAL }
-    : { ...MIDDLEWARE_FLOATING_GEOMETRY, maximized: true };
+function commandTerminalPanelPlaces(fitted: boolean) {
+  if (fitted) return { one: { ...FITTED_COMMAND_PANEL_GEOMETRY, maximized: false, fitToRecording: SESSION_CONTOSO_TERMINAL } };
+  const maximized = { ...MIDDLEWARE_FLOATING_GEOMETRY, maximized: true };
+  return { one: maximized, two: maximized };
 }
 
 /** The Changes panel open on one scope with the middleware session's routes.ts selected. */
@@ -1820,9 +1822,9 @@ export const SCENES: Record<string, SceneDefinition> = {
   'command-terminal': {
     name: 'command-terminal',
     reach: 'boot',
-    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the global commandTerminalPanel, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail shows no Earlier list, which is what the desktop shows a project in that state. The command-terminal-earlier scene shows the list, from conversations only it seeds.',
+    description: 'The Command Terminal panel over the blurred board, its one terminal on the contoso terminal session the dataset seeds. The layer\'s open state is component state, so it is one click on the title bar\'s toggle, which the choreography plays up to its pose; the panel\'s rect is the one-terminal place in the global commandTerminalPanelByShape, fitted so the terminal beside the rail is as wide as the session\'s recording, like the task window. The sample install has no ended terminal conversations, so the rail shows no Earlier list, which is what the desktop shows a project in that state. The command-terminal-earlier scene shows the list, from conversations only it seeds.',
     alt: 'The Command Terminal panel open over the blurred board, a rail with Add terminal beside a terminal running Claude Code in the project root, which has just summarized the repository and listed its npm scripts.',
-    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanelByShape: commandTerminalPanelPlaces(true) },
     ready: COMMAND_TERMINAL_WINDOW,
     // A person opening one: the pointer rests on the title bar's toggle, whose tip names the
     // Command Terminal with its shortcut, and clicks it. The open panel is the pose, so the
@@ -1847,7 +1849,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'Two Command Terminals side by side in the maximized panel, opened the way a person opens them: the toggle reattaches the contoso terminal session, then Add terminal starts a second beside it and boots the project default agent from the boot recorded at the tiled width. The first terminal switches to its own tiled recording as it narrows (the seed\'s layoutFor). The second terminal has no inline frame, so a still of this scene fetches that boot\'s final frame. The pair is the pose and the poster. The live cycle then names the second terminal with the pencil after its title, drags the seam between the two and double-clicks it to even them, drags the rail\'s edge in and back out, and folds the rail with Hide rail and opens it again. The panel is maximized, so the rail\'s room comes from the terminals rather than the panel. The name commits on a click into the terminal, since a choreography never presses Enter. The cut stops the second terminal, so its name goes with it.',
     alt: 'The Command Terminal panel with two terminals side by side, a repository summary on the left and a second Claude Code at its prompt on the right.',
-    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(false) },
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanelByShape: commandTerminalPanelPlaces(false) },
     // The second window's model pill, which the context bar shows only once the session's first
     // usage lands, a beat after its terminal mounts (the seed pushes it 1.2 s after the boot's
     // first output, as main's status-line push would): a still shot before that would show the
@@ -1901,7 +1903,7 @@ export const SCENES: Record<string, SceneDefinition> = {
     reach: 'boot',
     description: 'The Command Terminal panel as the command-terminal scene opens it, with Earlier conversations in its rail: ended contoso-web conversations (DEMO_COMMAND_TERMINAL_EARLIER), seeded only for this scene through the __mockCommandTerminalEarlier flag so every other Command Terminal figure keeps a rail with no Earlier list. Their names, first prompts and ended times are row metadata, timed from the page\'s own clock; one name is one a user typed. Search conversations is typed "checkout", which matches a name, a first prompt behind a name, and two conversations by their text alone under In conversations, each with its passage. That text is authored: no Command Terminal conversation in the sample install was recorded with a transcript. The matches are the pose and the poster. The live cycle then clears the search and right-clicks a row for its Resume, Rename and Remove menu, and the cut closes the menu and the panel without choosing.',
     alt: 'The Command Terminal panel with its rail searching earlier conversations for checkout: rows whose name or first prompt matches, then two more under In conversations, each with the passage of the conversation that matched, beside a terminal running Claude Code.',
-    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanel: commandTerminalPanel(true) },
+    config: { commandTerminalWorkspace: commandTerminalWorkspace(), commandTerminalPanelByShape: commandTerminalPanelPlaces(true) },
     seeds: { __mockCommandTerminalEarlier: true },
     // The In conversations heading, which shows only once the text search answers, 200 ms after
     // typing stops, so a still waits for both halves of the search.
