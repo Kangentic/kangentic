@@ -1,5 +1,14 @@
 # Log
 
+## 2026-11-03
+
+**New audit:** `audits/ssh-remote-phase-1-audit.md`, the Phase 1 results for running agent CLIs on a
+Linux host over SSH: the frame codec, resume endpoint, helper server and link under
+`src/main/remote/`, and the rig gate (`scripts/ssh-link-rig.mjs`) in which the real link survived 20
+of 20 killed `ssh` connections. It also records two pre-checks of the signed-off design: askpass
+receives only the first line of the host-key question on Windows, so the fingerprint comes from a
+probe, and a chosen key file is copied into Kangentic's folder.
+
 ## 2026-11-02
 
 **New audit:** `audits/ssh-remote-phase-0-audit.md`, the Phase 0 measurements for running agent CLIs

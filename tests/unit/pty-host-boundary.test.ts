@@ -184,9 +184,15 @@ describe('pty host out-of-process boundary', () => {
       findOutside(/\bnew InProcessPtyHostTransport\s*\(/, new Set(['src/main/pty/session-manager.ts'])),
       'Only SessionManager.createInProcessHost may run the host core in main.',
     ).toEqual([]);
+    // The SSH helper (#913) runs the same core on a Linux host, behind its resumable link. That is a
+    // process on another machine, not a second host in the app: main never holds this core.
     expect(
-      findOutside(/\bnew PtyHostCore\s*\(/, new Set(['src/main/pty/host/pty-host-entry.ts', 'src/main/pty/host/pty-host-client.ts'])),
-      'PtyHostCore is built by the utility host entry or the in-process transport, nowhere else.',
+      findOutside(/\bnew PtyHostCore\s*\(/, new Set([
+        'src/main/pty/host/pty-host-entry.ts',
+        'src/main/pty/host/pty-host-client.ts',
+        'src/main/remote/helper/helper-server.ts',
+      ])),
+      'PtyHostCore is built by the utility host entry, the in-process transport, or the SSH helper on a host, nowhere else.',
     ).toEqual([]);
   });
 

@@ -68,7 +68,10 @@ at the Windows timer floor.
   measured under load).
 - **One host, forked once, built in two places only.** `register-all.ts` constructs the
   `UtilityPtyHostTransport`; `SessionManager.createInProcessHost` is the only place the core runs in
-  main, as the unit tests' host and as the fallback after five host crashes.
+  main, as the unit tests' host and as the fallback after five host crashes. One more place builds
+  the core and it is not on this machine: the SSH helper's `HelperServer` (`src/main/remote/helper/`)
+  runs it on a Linux host behind a resumable link, for a remote project (#913). Main reaches that
+  core only through `RemoteLink`, a `PtyHostTransport`, and never holds it.
 - **A shell that exits on its own has its leftovers ended in the host (Windows).** The host core
   asks the agent the dead shell left running to exit through that shell's still-open console, then
   terminates what is left after the grace, by parentage and creation time (`dead-root-orphans.ts`,
