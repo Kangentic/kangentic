@@ -1,0 +1,79 @@
+{
+  "data": [
+    {
+      "id": "msg_19fee2a17001j6Io8jDYDeJV3g",
+      "time": {
+        "created": 1793684548119
+      },
+      "type": "agent-switched",
+      "agent": "build"
+    },
+    {
+      "id": "msg_19fee2a2f001lA4jOxJElHYhHz",
+      "time": {
+        "created": 1793684548143
+      },
+      "type": "model-switched",
+      "model": {
+        "id": "big-pickle",
+        "providerID": "opencode"
+      }
+    },
+    {
+      "id": "msg_19fee2a25001OBwKAofXOvu0lv",
+      "time": {
+        "created": 1793684548171
+      },
+      "text": "Read readme.txt, then try to read missing.txt (it does not exist), then tell me the absolute path of your working directory. Do not edit anything.",
+      "files": [],
+      "agents": [],
+      "type": "user"
+    },
+    {
+      "id": "msg_19fee2a530019E5q2uOkXTmA8D",
+      "time": {
+        "created": 1793684548181,
+        "completed": 1793684548344
+      },
+      "type": "assistant",
+      "agent": "build",
+      "model": {
+        "id": "big-pickle",
+        "providerID": "opencode",
+        "variant": "default"
+      },
+      "content": [],
+      "finish": "error",
+      "error": {
+        "type": "provider.free-limit",
+        "message": "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+        "status": 429,
+        "response": {
+          "body": "{\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go\"}}"
+        },
+        "retryAfterMs": 65853000
+      }
+    },
+    {
+      "id": "msg_19fee2afb001Go4i8CdswtUKqb",
+      "time": {
+        "created": 1793684548347
+      },
+      "type": "idle",
+      "outcome": "failed",
+      "error": {
+        "type": "provider.free-limit",
+        "message": "Free usage limit reached. Connect a provider or subscribe to OpenCode Go to keep going, or switch models.",
+        "status": 429,
+        "response": {
+          "body": "{\"type\":\"error\",\"error\":{\"type\":\"FreeUsageLimitError\",\"message\":\"Free usage limit reached. Free models work in OpenCode (https://opencode.ai); subscribe to OpenCode Go to keep going: https://opencode.ai/go\"}}"
+        },
+        "retryAfterMs": 65853000
+      }
+    }
+  ],
+  "cursor": {
+    "previous": "eyJpZCI6Im1zZ18xOWZlZTJhMTcwMDFqNklvOGpEWURlSlYzZyIsIm9yZGVyIjoiYXNjIiwiZGlyZWN0aW9uIjoicHJldmlvdXMifQ",
+    "next": "eyJpZCI6Im1zZ18xOWZlZTJhZmIwMDFHbzRpOENkc3d0VUtxYiIsIm9yZGVyIjoiYXNjIiwiZGlyZWN0aW9uIjoibmV4dCJ9"
+  }
+}
