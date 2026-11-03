@@ -503,14 +503,31 @@ describe('Event-derived activity state (part 1)', () => {
     expect(statesAfter).toHaveLength(0);
   });
 
-  it('compact event emits thinking activity', async () => {
+  it('compact event with no turn active changes nothing: an idle compaction is not a turn', async () => {
+    // The CLI compacts an idle session on its own. Counted as a turn it showed
+    // the session working for minutes and moved the turn a workflow's recovery
+    // had to read.
     const { session, eventsPath } = await spawnWithEvents();
+    const before = manager.getActivityCache()[session.id];
     const states = collectActivity(manager, session.id);
 
     appendEvent(eventsPath, { ts: Date.now(), type: EventType.Compact });
     await waitForWatcher();
 
-    expect(states).toContain('thinking');
+    expect(states).not.toContain('thinking');
+    expect(manager.getActivityCache()[session.id]).toBe(before);
+  });
+
+  it('compact event inside a turn keeps the session thinking', async () => {
+    const { session, eventsPath } = await spawnWithEvents();
+
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.ToolStart, tool: 'Read' });
+    await waitForWatcher();
+    expect(manager.getActivityCache()[session.id]).toBe('thinking');
+
+    appendEvent(eventsPath, { ts: Date.now(), type: EventType.Compact });
+    await waitForWatcher();
+
     expect(manager.getActivityCache()[session.id]).toBe('thinking');
   });
 
