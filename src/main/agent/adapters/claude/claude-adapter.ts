@@ -24,6 +24,7 @@ import { resolveBackgroundTaskOutputFile } from './background-task-output';
 import { reportTerminatedBackgroundShells } from './background-shell-transcript';
 import { reportRejectedPromptTools } from './permission-rejection-transcript';
 import { ensureClaudeSpawnConfig } from './trust-manager';
+import { ensureRemoteClaudeSpawnConfig } from './remote-trust';
 import { cliPathForTarget, hostPathForTarget, parseWslCliPath, peekCliTarget, placeFromStored, resolveCliTarget, type CliPlace, type CliTarget } from '../../shared/cli-target';
 import { migrateClaudeProjectData } from './project-relocation';
 import { removeHooks as removeClaudeHooks } from './hook-manager';
@@ -443,7 +444,12 @@ export class ClaudeAdapter implements AgentAdapter {
     // One pass over ~/.claude.json: the directory trusted, the kangentic MCP
     // server enabled, and 2.1.260's fullscreen diff panel kept closed at
     // launch (per spawn on purpose - see diff-panel.ts for why). A Claude in a
-    // WSL distro reads the distro's own file.
+    // WSL distro reads the distro's own file. A Claude on a remote host has its file edited on the
+    // host by the helper, and its settings pulled to the folders the builder reads (remote-trust.ts).
+    if (place?.kind === 'ssh') {
+      await ensureRemoteClaudeSpawnConfig(workingDirectory, place);
+      return;
+    }
     await ensureClaudeSpawnConfig(workingDirectory, place ?? null);
   }
 

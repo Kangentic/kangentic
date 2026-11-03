@@ -1,5 +1,4 @@
 import fs from 'node:fs';
-import os from 'node:os';
 import path from 'node:path';
 import { toForwardSlash, quoteArg, isUnixLikeShell } from '../../../../shared/paths';
 import { resolveBridgeScript } from '../../shared/bridge-utils';

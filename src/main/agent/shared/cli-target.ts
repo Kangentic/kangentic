@@ -2,6 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseWslUncPath, toForwardSlash, toWslPath } from '../../../shared/paths';
 import type { StoredCliTarget } from '../../../shared/types';
+import type { JsonPatchRequest, JsonPatchResult } from '../../remote/protocol/messages';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
@@ -48,6 +49,17 @@ export interface SshCliPlace {
   roots: ReadonlyArray<{ local: string; host: string }>;
   /** The CLI's path on the host, when known (a bare name is resolved by the host's own PATH). */
   linuxCliPath?: string;
+  /**
+   * The helper's file jobs, for the work an adapter does on the host's files before a spawn (its trust
+   * entry, the settings it merges). Never stored: a place read back from a session row has none.
+   */
+  files?: SshPlaceFiles;
+}
+
+/** What an adapter may ask of the host's files, through the helper. */
+export interface SshPlaceFiles {
+  readFile(hostPath: string): Promise<{ exists: boolean; content: string | null }>;
+  jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult>;
 }
 
 /** Narrowing for the many readers that only mean a WSL distro. */
