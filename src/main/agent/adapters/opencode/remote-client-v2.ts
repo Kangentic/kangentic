@@ -6,6 +6,13 @@ import type {
   TranscriptEntry,
 } from '../../../../shared/types';
 import { parseWindowBytes } from '../../shared/transcript-truncation';
+import {
+  authHeaders,
+  OPENCODE_V2_USERNAME,
+  openCodeMajorVersion,
+  trimTrailingSlash,
+  type FetchLike,
+} from './remote-client';
 
 /**
  * Client for an OpenCode 2 server's API, the remote-mode counterpart of
@@ -45,21 +52,13 @@ import { parseWindowBytes } from '../../shared/transcript-truncation';
  */
 
 /** The parts of the global `fetch` this module uses, injectable for tests. */
-export interface OpenCodeV2Fetch {
-  (url: string, init?: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    signal?: AbortSignal;
-  }): Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
-}
-
-/** OpenCode 2's fixed Basic auth username (`migrate-v1.mdx`, "Server authentication"). */
-export const OPENCODE_V2_USERNAME = 'opencode';
+export type OpenCodeV2Fetch = FetchLike;
 
 const REQUEST_TIMEOUT_MS = 10_000;
 const MESSAGE_PAGE_LIMIT = 100;
 const MAX_MESSAGE_PAGES = 20;
+/** The whole paging walk's limit, so a slow server cannot hold a transcript read for every page's timeout in turn. */
+const PAGING_DEADLINE_MS = 30_000;
 
 interface OpenCodeV2ToolContent {
   type: string;
@@ -91,27 +90,17 @@ export interface OpenCodeV2Message {
   text?: string;
   model?: { id?: string };
   content?: OpenCodeV2AssistantContent[];
-  [key: string]: unknown;
-}
-
-function trimTrailingSlash(url: string): string {
-  return url.endsWith('/') ? url.slice(0, -1) : url;
 }
 
 /**
  * Basic auth as `opencode:<password>`. The configured username is ignored,
  * because a V2 server rejects every other one. No password sends no header,
- * which the server answers with a 401.
+ * which the server answers with a 401. `bearerEnv` sends none either: OpenCode
+ * authenticates with Basic only, as `authHeaders` in `remote-client.ts` notes.
  */
 export function openCodeV2AuthHeaders(auth: AgentExecutionServerAuth): Record<string, string> {
   if (auth.kind !== 'basic' || !auth.password) return {};
-  const token = Buffer.from(`${OPENCODE_V2_USERNAME}:${auth.password}`, 'utf8').toString('base64');
-  return { Authorization: `Basic ${token}` };
-}
-
-function majorVersion(version: string): number | null {
-  const match = /^v?(\d+)\./i.exec(version.trim());
-  return match ? Number(match[1]) : null;
+  return authHeaders({ kind: 'basic', username: OPENCODE_V2_USERNAME, password: auth.password });
 }
 
 /**
@@ -133,10 +122,8 @@ export async function probeOpenCodeV2Server(
     if (response.status === 401 || response.status === 403) {
       // An OpenCode 1 server with its own username rejects `opencode`.
       if (server.auth.kind === 'basic' && server.auth.username && server.auth.username !== OPENCODE_V2_USERNAME) {
-        const openCode1Version = await openCode1ServerVersion(target, fetchImpl);
-        if (openCode1Version !== null) {
-          return { reachable: false, reason: `The server runs OpenCode ${openCode1Version}, and the local OpenCode is version 2` };
-        }
+        const mismatch = await openCode1MismatchStatus(target, fetchImpl);
+        if (mismatch) return mismatch;
       }
       const hasPassword = server.auth.kind === 'basic' && Boolean(server.auth.password);
       return {
@@ -146,15 +133,12 @@ export async function probeOpenCodeV2Server(
     }
     if (!response.ok) return { reachable: false, reason: `Server responded with HTTP ${response.status}` };
     const version = await versionFromBody(response);
-    if (version === null || majorVersion(version) === 1) {
-      // An OpenCode 1 server answers /api/info with its web app's HTML. Its
-      // own health route says which version it runs, which is the useful
-      // answer here: the local CLI and the server must be the same major.
-      const openCode1Version = await openCode1ServerVersion(target, fetchImpl);
-      if (openCode1Version !== null) {
-        return { reachable: false, reason: `The server runs OpenCode ${openCode1Version}, and the local OpenCode is version 2` };
-      }
-      return { reachable: false, reason: 'The server did not answer as an OpenCode 2 server' };
+    if (version === null || openCodeMajorVersion(version) === 1) {
+      // An OpenCode 1 server answers /api/info with its web app's HTML. The
+      // local CLI and the server must be the same major, so the probe names
+      // the server's version from its own health route.
+      const mismatch = await openCode1MismatchStatus(target, fetchImpl);
+      return mismatch ?? { reachable: false, reason: 'The server did not answer as an OpenCode 2 server' };
     }
     return { reachable: true, version };
   } catch (error) {
@@ -172,23 +156,26 @@ async function versionFromBody(response: { json(): Promise<unknown> }): Promise<
   }
 }
 
-/** The version an OpenCode 1 server reports on `GET /global/health`, or null for anything else. */
-async function openCode1ServerVersion(server: AgentExecutionServer & { url: string }, fetchImpl: OpenCodeV2Fetch): Promise<string | null> {
+/**
+ * The probe result for an OpenCode 1 server, named by the version it reports
+ * on `GET /global/health`, or null when that route does not answer as one.
+ */
+async function openCode1MismatchStatus(
+  server: AgentExecutionServer & { url: string },
+  fetchImpl: OpenCodeV2Fetch,
+): Promise<RemoteServerStatus | null> {
   try {
     // An OpenCode 1 server's username is its own setting, so this request
-    // carries the configured one, as the V1 client does.
-    const auth = server.auth;
-    const headers: Record<string, string> = auth.kind === 'basic' && auth.password
-      ? { Authorization: `Basic ${Buffer.from(`${auth.username}:${auth.password}`, 'utf8').toString('base64')}` }
-      : {};
+    // carries the configured one through the V1 client's own headers.
     const response = await fetchImpl(`${trimTrailingSlash(server.url)}/global/health`, {
       method: 'GET',
-      headers,
+      headers: authHeaders(server.auth),
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
     if (!response.ok) return null;
     const version = await versionFromBody(response);
-    return version !== null && majorVersion(version) === 1 ? version : null;
+    if (version === null || openCodeMajorVersion(version) !== 1) return null;
+    return { reachable: false, reason: `The server runs OpenCode ${version}, and the local OpenCode is version 2` };
   } catch {
     return null;
   }
@@ -232,6 +219,7 @@ async function fetchMessagesPage(
   server: AgentExecutionServer & { url: string },
   sessionId: string,
   cursor: string | null,
+  timeoutMs: number,
   fetchImpl: OpenCodeV2Fetch,
 ): Promise<MessagesPage | null> {
   const query = cursor
@@ -239,7 +227,7 @@ async function fetchMessagesPage(
     : `order=desc&limit=${MESSAGE_PAGE_LIMIT}`;
   const response = await fetchImpl(
     `${trimTrailingSlash(server.url)}/api/session/${encodeURIComponent(sessionId)}/message?${query}`,
-    { method: 'GET', headers: openCodeV2AuthHeaders(server.auth), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) },
+    { method: 'GET', headers: openCodeV2AuthHeaders(server.auth), signal: AbortSignal.timeout(timeoutMs) },
   );
   if (!response.ok) return null;
   const body = (await response.json()) as { data?: unknown; cursor?: { next?: unknown } } | null;
@@ -253,7 +241,7 @@ export interface OpenCodeV2SessionMessages {
   messages: OpenCodeV2Message[];
   /**
    * False when paging stopped before the history's end (the byte budget, the
-   * page cap, or a failed page). The mapper drops bookkeeping messages, so the
+   * page cap, the deadline, or a failed page). The mapper drops bookkeeping messages, so the
    * mapped entries can fit the transcript window although older messages were
    * left out, and the caller then adds the truncation notice itself.
    */
@@ -263,28 +251,33 @@ export interface OpenCodeV2SessionMessages {
 /**
  * A session's newest messages, oldest first: pages newest to oldest until the
  * pages hold `budgetBytes` of JSON (the transcript window the caller caps to),
- * the history ends, or `MAX_MESSAGE_PAGES` pages were read. A failure on the
- * first page returns no messages, per `parseTranscript`'s must-not-throw
- * contract; a failure on a later page keeps the newer pages already read.
+ * the history ends, `MAX_MESSAGE_PAGES` pages were read, or `PAGING_DEADLINE_MS`
+ * passed. Each page's timeout is the per-request one or the time left, whichever
+ * is shorter. A failure on the first page returns no messages, per
+ * `parseTranscript`'s must-not-throw contract; a failure on a later page keeps
+ * the newer pages already read.
  */
 export async function fetchOpenCodeV2SessionMessages(
   server: AgentExecutionServer,
   sessionId: string,
-  options: { budgetBytes?: number; maxPages?: number } = {},
+  options: { budgetBytes?: number; maxPages?: number; deadlineMs?: number } = {},
   fetchImpl: OpenCodeV2Fetch = fetch,
 ): Promise<OpenCodeV2SessionMessages> {
   if (!server.url) return { messages: [], complete: false };
   const target = { ...server, url: server.url };
   const budget = options.budgetBytes ?? parseWindowBytes();
   const maxPages = options.maxPages ?? MAX_MESSAGE_PAGES;
+  const deadline = Date.now() + (options.deadlineMs ?? PAGING_DEADLINE_MS);
   const newestFirst: OpenCodeV2Message[] = [];
   let bytes = 0;
   let cursor: string | null = null;
   let complete = false;
   for (let page = 0; page < maxPages; page += 1) {
+    const remainingMs = deadline - Date.now();
+    if (remainingMs <= 0) break;
     let result: MessagesPage | null;
     try {
-      result = await fetchMessagesPage(target, sessionId, cursor, fetchImpl);
+      result = await fetchMessagesPage(target, sessionId, cursor, Math.min(REQUEST_TIMEOUT_MS, remainingMs), fetchImpl);
     } catch {
       result = null;
     }
@@ -303,8 +296,15 @@ export async function fetchOpenCodeV2SessionMessages(
   return { messages: newestFirst.reverse(), complete };
 }
 
+function isObject<T extends object>(value: T | null | undefined): value is T {
+  return typeof value === 'object' && value !== null;
+}
+
 function toolInput(state: OpenCodeV2ToolState): unknown {
-  // A tool still streaming its arguments carries them as raw JSON text.
+  // A tool still streaming its arguments carries them as raw JSON text
+  // (`SessionMessageToolStateStreaming.input: string` in the SDK types). No
+  // recorded fixture holds one, because the state lasts only while the model
+  // writes the call.
   if (state.status === 'streaming' && typeof state.input === 'string') {
     try {
       return JSON.parse(state.input);
@@ -319,7 +319,10 @@ function toolContentText(content: OpenCodeV2ToolContent[] | undefined): string {
   if (!Array.isArray(content)) return '';
   return content
     .map((part) => {
+      if (!isObject(part)) return '';
       if (part.type === 'text' && typeof part.text === 'string') return part.text;
+      // `ToolFileContent` in the SDK types: `uri`, `mime` and an optional
+      // `name`. The recorded fixtures hold no file part.
       if (part.type === 'file') return part.name ?? part.uri ?? '';
       return '';
     })
@@ -355,11 +358,12 @@ export function mapOpenCodeV2Messages(messages: OpenCodeV2Message[]): Transcript
     const blocks: TranscriptBlock[] = [];
     const toolResults: TranscriptEntry[] = [];
     for (const part of message.content) {
+      if (!isObject(part)) continue;
       if (part.type === 'text' && typeof part.text === 'string') {
         if (part.text.trim().length > 0) blocks.push({ type: 'text', text: part.text });
       } else if (part.type === 'reasoning' && typeof part.text === 'string') {
         if (part.text.trim().length > 0) blocks.push({ type: 'thinking', text: part.text });
-      } else if (part.type === 'tool' && part.state) {
+      } else if (part.type === 'tool' && isObject(part.state)) {
         const toolUseId = typeof part.id === 'string' ? part.id : '';
         const name = typeof part.name === 'string' ? part.name : 'tool';
         blocks.push({ type: 'tool_use', id: toolUseId, name, input: toolInput(part.state) });
