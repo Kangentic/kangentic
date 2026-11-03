@@ -117,10 +117,18 @@ msgstr "{percent} %, {displayName}"
 msgid "{percent}%, {timeLeft}"
 msgstr "{percent} %, {timeLeft}"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs} ms"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 #, fuzzy
@@ -137,10 +145,18 @@ msgstr "Ein Aufruf ist fehlgeschlagen"
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "Ein schwebendes Panel mit dem Aktivitätsstatus und den letzten Übergängen jeder Sitzung, auch in .kangentic/debug geschrieben."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "Eine Voreinstellung wählt das Live- und das Verfeinerungsmodell für Sie aus. Mit „Benutzerdefiniert“ wählen Sie sie selbst."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
@@ -177,10 +193,18 @@ msgstr "Über {label}"
 msgid "Activity engine debug overlay"
 msgstr "Debug-Overlay der Aktivitäts-Engine"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Add host"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 #, fuzzy
 msgid "Add shortcut"
 msgstr "Verknüpfung hinzufügen"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Address"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -538,7 +562,12 @@ msgstr "Browserdaten gelöscht"
 msgid "Browser pane"
 msgstr "Browserbereich"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Build server"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Cancel"
 msgstr "Abbrechen"
@@ -577,6 +606,10 @@ msgstr "Vordergrund ändern"
 #, fuzzy
 msgid "Changes"
 msgstr "Änderungen"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Checking"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -765,6 +798,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "Telefon über Ende-zu-Ende-verschlüsseltes Relay verbinden."
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connected"
 msgstr "Verbunden"
@@ -776,6 +810,7 @@ msgid "Connected"
 msgstr "Verbunden"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Connecting…"
 msgstr "Verbindung wird hergestellt…"
@@ -790,6 +825,10 @@ msgstr "Kontextleiste"
 #, fuzzy
 msgid "Context window"
 msgstr "Kontextfenster"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Continue"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 #, fuzzy
@@ -1227,6 +1266,10 @@ msgstr "In einen Worktree zu kopierende Dateien"
 msgid "Finds your work by meaning and answers questions."
 msgstr "Findet Ihre Arbeit nach Bedeutung und beantwortet Fragen."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Fingerprint"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Flat file list"
@@ -1267,6 +1310,10 @@ msgstr "Schriftgröße"
 #, fuzzy
 msgid "Foreground"
 msgstr "Vordergrund"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Forget old key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1355,6 +1402,14 @@ msgstr "Push-to-Talk halten und in Terminal oder Textfeld sprechen."
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "Gedrückt halten zum Aufnehmen, loslassen zum Einfügen der Transkription. Neu belegen unter „Tastenkürzel“."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Host name"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hosts"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
@@ -1381,6 +1436,10 @@ msgstr "Anwendung von Änderungen an der gemeinsamen Board-Konfiguration."
 #, fuzzy
 msgid "How it works"
 msgstr "Funktionsweise"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "How Kangentic signs in"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 #, fuzzy
@@ -1527,10 +1586,18 @@ msgstr "Bewertet Bedingungen und Workflow-Schritte, benennt Aufgaben."
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic konnte die Einstellungsdatei nicht schreiben."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 #, fuzzy
@@ -1547,6 +1614,10 @@ msgstr "Kangentic führt {wslAgentList} über WSL aus."
 msgid "Kangentic turned this off after repeated failures."
 msgstr "Kangentic hat dies nach wiederholten Fehlern deaktiviert."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "Kangentic-operated relay"
@@ -1561,6 +1632,10 @@ msgstr "Nach dem Loslassen kurz weiter aufnehmen, damit das letzte Wort nicht ab
 #, fuzzy
 msgid "Keep editing"
 msgstr "Weiter bearbeiten"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Key file"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 #, fuzzy
@@ -1660,6 +1735,10 @@ msgstr "Begrenzen, wie viele Agenten gleichzeitig laufen können"
 msgid "Link node_modules"
 msgstr "node_modules verknüpfen"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 #, fuzzy
 msgid "Live model"
@@ -1691,6 +1770,10 @@ msgstr "Lokales Modell"
 #, fuzzy
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "Protokolliert jeden IPC-Aufruf in .kangentic/logs, ändernde Kanäle geschwärzt; standardmäßig nur in /preview aktiv."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Looking for ssh…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -1778,6 +1861,14 @@ msgstr "Verschieben..."
 msgid "Moving between task windows and arranging them."
 msgstr "Zwischen Aufgabenfenstern wechseln und sie anordnen."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "My SSH config"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Name"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "sort files by"
@@ -1830,6 +1921,10 @@ msgstr "Noch keine Geräte gekoppelt."
 #, fuzzy
 msgid "No Done tasks yet"
 msgstr "Noch keine erledigten Aufgaben"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "No hosts yet."
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 #, fuzzy
@@ -1988,14 +2083,23 @@ msgid "Pairing QR code"
 msgstr "QR-Code zum Koppeln"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Password"
 msgstr "Passwort"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Password for the host"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "Pfad auf dem Server für die Aufgaben dieses Projekts. Leer lassen, um das Standardverzeichnis des Servers zu verwenden"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Path to the private key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2243,7 +2347,12 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "Letzte"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Reconnect"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Reconnecting…"
 msgstr "Verbindung wird wiederhergestellt…"
@@ -2312,16 +2421,26 @@ msgid "Remote"
 msgstr "Remote"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Remove"
 msgstr "Entfernen"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Remove a task's worktree when the task completes."
 msgstr "Worktree einer Aufgabe entfernen, wenn die Aufgabe abgeschlossen ist."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Remove host"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Rename"
 msgstr "Umbenennen"
@@ -2435,6 +2554,7 @@ msgid "Save"
 msgstr "Speichern"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Save name"
 msgstr "Namen speichern"
@@ -2583,6 +2703,10 @@ msgstr "Zeigt einen PR als bereit an, wenn dein Admin-Bypass ihn trotz erforderl
 msgid "Side by side"
 msgstr "Nebeneinander"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "since {since}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 #, fuzzy
 msgid "since {sinceTime}"
@@ -2620,6 +2744,22 @@ msgstr "Quellcode eingebettet"
 msgid "Spawn stalled"
 msgstr "Start blockiert"
 
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "SSH"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "SSH client"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "ssh found"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "ssh not found"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
 msgctxt "diff scope"
@@ -2656,6 +2796,10 @@ msgstr ""
 #, fuzzy
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "Beendet, was ein Agent in seinem Ordner laufen ließ, wenn seine Aufgabe erledigt, zurück in To Do oder gelöscht ist oder sein Command Terminal endet."
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Stopped"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
@@ -2857,6 +3001,10 @@ msgstr "Das selbst gehostete Relay, das verwendet wird, wenn Relay auf Benutzerd
 msgid "The shell, font, cursor and colors every terminal uses."
 msgstr "Shell, Schriftart, Cursor und Farben für alle Terminals."
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 #, fuzzy
 msgid "The task's description"
@@ -2873,6 +3021,11 @@ msgstr "Design"
 #, fuzzy
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "Dieser Hotkey ist fest und kann nicht neu belegt werden"
+
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents. Trust it only if it matches the host."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
@@ -2937,10 +3090,18 @@ msgstr "Transkription"
 msgid "Transition and motion effects."
 msgstr "Übergangs- und Bewegungseffekte."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 #, fuzzy
 msgid "Try a different search term"
 msgstr "Anderen Suchbegriff versuchen"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Type"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
@@ -2949,6 +3110,7 @@ msgid "Underline"
 msgstr "Unterstrich"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 #, fuzzy
 msgid "Unreachable"
 msgstr "Nicht erreichbar"
@@ -2983,10 +3145,22 @@ msgstr "Zulässig: {TERMINAL_FONT_SIZE_MIN} bis {TERMINAL_FONT_SIZE_MAX}."
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "Ein Design für helles und ein anderes für dunkles Systemdesign verwenden."
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #, fuzzy
 msgid "Used / total tokens"
 msgstr "Verwendete / gesamte Tokens"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 #, fuzzy

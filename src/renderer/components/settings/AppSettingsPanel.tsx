@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef } from 'react';
 import type { ElementType } from 'react';
 import { useLingui } from '@lingui/react/macro';
-import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
+import { Bell, Bot, Brain, Bug, FolderCog, Gauge, GitBranch, GitCompare, Globe, Keyboard, Languages, LayoutGrid, Mic, MousePointerClick, Palette, Plug, Server, ShieldCheck, SlidersHorizontal, Smartphone, SquareKanban, Terminal, Workflow as WorkflowIcon, Zap } from 'lucide-react';
 import { useConfigStore } from '../../stores/config-store';
 import { useToastStore } from '../../stores/toast-store';
 import { describeIpcError, asSentence } from '../../lib/ipc-error';
@@ -25,6 +25,7 @@ import { McpServerTab } from './tabs/McpServerTab';
 import { BrowserAutomationTab } from './tabs/BrowserAutomationTab';
 import { NotificationsTab } from './tabs/NotificationsTab';
 import { MobileDevicesTab } from './tabs/MobileDevicesTab';
+import { SshTab } from './tabs/SshTab';
 import { KnowledgeGraphTab } from './tabs/KnowledgeGraphTab';
 import { WorkflowsTab } from './tabs/WorkflowsTab';
 import { PrivacyTab } from './tabs/PrivacyTab';
@@ -91,6 +92,7 @@ const TAB_ICONS: Record<string, ElementType> = {
   browserAutomation: MousePointerClick,
   notifications: Bell,
   mobile: Smartphone,
+  ssh: Server,
   privacy: ShieldCheck,
   developer: Bug,
 };
@@ -222,6 +224,7 @@ export function SettingsContent({ activeTab, isSearching, searchQuery, matchingT
       case 'browserAutomation': return <BrowserAutomationTab globalConfig={globalConfig} />;
       case 'notifications': return <NotificationsTab globalConfig={globalConfig} />;
       case 'mobile': return <MobileDevicesTab globalConfig={globalConfig} />;
+      case 'ssh': return <SshTab />;
       case 'knowledgeGraph': return <KnowledgeGraphTab globalConfig={globalConfig} />;
       case 'workflows': return <WorkflowsTab globalConfig={globalConfig} />;
       case 'privacy': return <PrivacyTab />;

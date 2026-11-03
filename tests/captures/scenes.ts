@@ -1114,6 +1114,15 @@ const SETTINGS_TABS_SCENES: Record<string, { ready: string; alt: string; focus?:
       { hover: '[data-testid="mobile-get-app-docs-link"]', ms: 1600 },
     ],
   },
+  // The sample install has no host, so the card shows its empty state and the Add host button, which
+  // the pointer rests on. Adding one asks a real machine for its key, which a visitor cannot answer.
+  ssh: {
+    ready: '[data-testid="ssh-hosts-card"]',
+    alt: 'Settings on the SSH tab: a Hosts card with no hosts yet and an Add host button, then an SSH client card showing the ssh program Kangentic connects with.',
+    choreography: [
+      { hover: '[data-testid="ssh-add-host"]', ms: 1600 },
+    ],
+  },
   // The tab scrolled down to the contact line and back up to its first card.
   privacy: {
     ready: '[data-testid="privacy-contact-email"]',

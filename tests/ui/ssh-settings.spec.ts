@@ -1,0 +1,200 @@
+/**
+ * UI tests for the SSH settings tab (#913).
+ *
+ * What only a browser proves here: the Add host flow's steps run inline in the card in order (details,
+ * the fingerprint the user must trust, how to sign in), a failed probe or add shows the system's words
+ * in place and keeps the form, a host row shows its live state and counts, and Remove asks first. The
+ * main process is the mock bridge, so the host key and the connection are stand-ins; the real flows are
+ * covered by the unit tier (`ssh-host-admin.test.ts`, `ssh-setup.test.ts`).
+ *
+ * What a user loses if it breaks: a host added without ever seeing its fingerprint, a password field
+ * that survives a failed attempt, or a host removed with one click.
+ */
+import { test, expect } from '@playwright/test';
+import { launchPage, createProject } from './helpers';
+import type { Browser, Page } from '@playwright/test';
+
+test.describe.configure({ mode: 'parallel' });
+
+let browser: Browser;
+let page: Page;
+
+test.beforeAll(async () => {
+  const result = await launchPage();
+  browser = result.browser;
+  page = result.page;
+  await createProject(page, `SSH Test ${Date.now()}`);
+});
+
+test.afterAll(async () => {
+  await browser?.close();
+});
+
+async function openSshTab() {
+  await page.locator('[data-testid="settings-button"]').click();
+  await page.locator('h2:has-text("Settings")').waitFor({ state: 'visible', timeout: 3000 });
+  await page.locator('[data-testid="settings-tab-ssh"]').click();
+  await expect(page.locator('[data-testid="ssh-hosts-card"]')).toBeVisible();
+}
+
+async function closeSettings() {
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await page.locator('h2:has-text("Settings")').waitFor({ state: 'hidden', timeout: 2000 });
+}
+
+async function resetMock() {
+  await page.evaluate(async () => {
+    const api = window.electronAPI.ssh;
+    for (const status of await api.listHosts()) await api.removeHost(status.host.id);
+    const mockWindow = window as unknown as Record<string, unknown>;
+    delete mockWindow.__mockSshProbeError;
+    delete mockWindow.__mockSshAddError;
+  });
+}
+
+test.beforeEach(async () => {
+  await resetMock();
+});
+
+test.afterEach(async () => {
+  await closeSettings();
+});
+
+test('shows an empty list and the ssh client it found', async () => {
+  await openSshTab();
+
+  await expect(page.locator('[data-testid="ssh-no-hosts"]')).toBeVisible();
+  await expect(page.locator('[data-testid="ssh-add-host"]')).toBeVisible();
+  await expect(page.locator('[data-testid="ssh-client-status-label"]')).toHaveText('ssh found');
+  await expect(page.locator('[data-testid="ssh-client-status-text"]')).toContainText('OpenSSH');
+});
+
+test('adds a host through the fingerprint step and shows it connected', async () => {
+  await openSshTab();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Build server');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('dev@build.example.test');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+
+  // The user sees the key before anything is trusted or added.
+  await expect(page.locator('[data-testid="ssh-add-fingerprint"]')).toContainText('SHA256:');
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
+
+  await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+  await expect(page.locator('[data-testid="ssh-add-signin"]')).toBeVisible();
+  await page.locator('[data-testid="ssh-add-submit"]').click();
+
+  const row = page.locator('[data-testid="ssh-host-row"]');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('[data-testid="ssh-host-name"]')).toHaveText('Build server');
+  await expect(row.locator('[data-testid="ssh-host-destination"]')).toHaveText('dev@build.example.test');
+  await expect(row.locator('[data-testid="ssh-host-connection"]')).toHaveText('Connected');
+  await expect(row.locator('[data-testid="ssh-host-project-count"]')).toHaveText('0 projects');
+  // The panel closes once the host is added.
+  await expect(page.locator('[data-testid="ssh-add-panel"]')).toHaveCount(0);
+});
+
+test('keeps the form and shows the reason when the host cannot be reached', async () => {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__mockSshProbeError = 'ssh: connect to host lab port 22: Connection timed out';
+  });
+  await openSshTab();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('lab');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+
+  await expect(page.locator('[data-testid="ssh-add-error"]')).toContainText('Connection timed out');
+  await expect(page.locator('[data-testid="ssh-add-name"]')).toHaveValue('Lab');
+  await expect(page.locator('[data-testid="ssh-add-trust"]')).toHaveCount(0);
+});
+
+test('clears the password after a refused add, and keeps the rest of the form', async () => {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__mockSshAddError = 'Permission denied (password).';
+  });
+  await openSshTab();
+  await page.locator('[data-testid="ssh-add-host"]').click();
+  await page.locator('[data-testid="ssh-add-name"]').fill('Lab');
+  await page.locator('[data-testid="ssh-add-destination"]').fill('lab');
+  await page.locator('[data-testid="ssh-add-continue"]').click();
+  await page.locator('[data-testid="ssh-add-trust-accept"]').click();
+  await page.locator('[data-testid="ssh-signin-password"]').click();
+  await page.locator('[data-testid="ssh-add-password"]').fill('wrong');
+  await page.locator('[data-testid="ssh-add-submit"]').click();
+
+  await expect(page.locator('[data-testid="ssh-add-error"]')).toContainText('Permission denied (password).');
+  await expect(page.locator('[data-testid="ssh-add-password"]')).toHaveValue('');
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
+});
+
+test('shows an unreachable host with ssh\'s words, and reconnecting clears it', async () => {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__mockSshHosts = [{
+      host: { id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '2026-11-03T00:00:00.000Z' },
+      state: 'unreachable',
+      detail: 'ssh: connect to host lab port 22: Connection timed out',
+      since: '2026-11-03T00:00:00.000Z',
+      projectCount: 2,
+    }];
+  });
+  await openSshTab();
+
+  const row = page.locator('[data-testid="ssh-host-row"]');
+  await expect(row.locator('[data-testid="ssh-host-connection"]')).toHaveText('Unreachable');
+  await expect(row.locator('[data-testid="ssh-host-error"]')).toContainText('Connection timed out');
+  await expect(row.locator('[data-testid="ssh-host-project-count"]')).toHaveText('2 projects');
+  await expect(row.locator('[data-testid="ssh-host-reconnect"]')).toBeVisible();
+  await expect(row.locator('[data-testid="ssh-host-forget-key"]')).toHaveCount(0);
+
+  await page.evaluate(() => {
+    delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+  });
+});
+
+test('offers Forget old key only when the host\'s key has changed', async () => {
+  await page.evaluate(() => {
+    (window as unknown as Record<string, unknown>).__mockSshHosts = [{
+      host: { id: 'h1', name: 'Lab', destination: 'lab', key_path: null, key_created: false, created_at: '2026-11-03T00:00:00.000Z' },
+      state: 'unreachable',
+      detail: '@@@ WARNING: REMOTE HOST IDENTIFICATION HAS CHANGED! @@@',
+      since: '2026-11-03T00:00:00.000Z',
+      projectCount: 0,
+    }];
+  });
+  await openSshTab();
+
+  await expect(page.locator('[data-testid="ssh-host-forget-key"]')).toBeVisible();
+
+  await page.evaluate(() => {
+    delete (window as unknown as Record<string, unknown>).__mockSshHosts;
+  });
+});
+
+test('asks before removing a host, and removing takes the row away', async () => {
+  await page.evaluate(async () => {
+    await window.electronAPI.ssh.addHost({
+      name: 'Lab',
+      destination: 'lab',
+      signIn: { method: 'config' },
+      expectedFingerprint: 'SHA256:x',
+    });
+  });
+  await openSshTab();
+  const row = page.locator('[data-testid="ssh-host-row"]');
+  await expect(row).toHaveCount(1);
+
+  const confirmDialog = () => page.locator('h3:has-text("Remove host")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
+
+  await row.locator('[data-testid="ssh-host-remove"]').click();
+  await expect(confirmDialog()).toContainText('Remove "Lab"?');
+  await confirmDialog().getByRole('button', { name: 'Cancel' }).click();
+  await expect(confirmDialog()).toHaveCount(0);
+  await expect(row).toHaveCount(1);
+
+  await row.locator('[data-testid="ssh-host-remove"]').click();
+  await confirmDialog().getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(row).toHaveCount(0);
+});

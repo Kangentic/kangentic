@@ -95,9 +95,17 @@ msgstr "{percent}%，{displayName}"
 msgid "{percent}%, {timeLeft}"
 msgstr "{percent}%，{timeLeft}"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{projectCount, plural, one {# project} other {# projects}}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "{releaseBufferMs} ms"
 msgstr "{releaseBufferMs} 毫秒"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "{removeProjectCount, plural, one {Remove \"{removeName}\"? Its # project leaves Kangentic and its agents are suspended. Nothing on the host is deleted.} other {Remove \"{removeName}\"? Its # projects leave Kangentic and their agents are suspended. Nothing on the host is deleted.}}"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "{toWrite, plural, one {# task} other {# tasks}}"
@@ -111,9 +119,17 @@ msgstr "呼叫失敗"
 msgid "A floating panel of each session's activity state and last transitions, also written to .kangentic/debug."
 msgstr "浮動面板顯示各工作階段的活動狀態與最近轉換，也會寫入 .kangentic/debug。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A name from your SSH config works too, which is how a jump host or a port is set."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "A preset picks the live and refinement models for you. Custom lets you pick them."
 msgstr "預設集會為你選擇即時與精修模型，自訂則可自行選擇。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "A private key file; Kangentic keeps a copy in its own folder"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "A relay you run"
@@ -143,9 +159,17 @@ msgstr "關於 {label}"
 msgid "Activity engine debug overlay"
 msgstr "活動引擎偵錯覆蓋層"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Add host"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
 msgid "Add shortcut"
 msgstr "新增快捷鍵"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Address"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Address of the running server (e.g. http://10.0.0.5:4096)"
@@ -435,7 +459,12 @@ msgstr "已清除瀏覽器資料"
 msgid "Browser pane"
 msgstr "瀏覽器窗格"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Build server"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Cancel"
 msgstr "取消"
 
@@ -466,6 +495,10 @@ msgstr "變更前景"
 #: src/renderer/components/settings/settings-tabs.ts
 msgid "Changes"
 msgstr "變更"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Checking"
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "Checking..."
@@ -618,6 +651,7 @@ msgid "Connect a phone over an end-to-end encrypted relay."
 msgstr "透過端對端加密的中繼連接手機。"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Connected"
 msgstr "已連線"
 
@@ -627,6 +661,7 @@ msgid "Connected"
 msgstr "已連線"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Connecting…"
 msgstr "正在連線…"
 
@@ -638,6 +673,10 @@ msgstr "上下文列"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Context window"
 msgstr "上下文視窗"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Continue"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/KnowledgeGraphTab.tsx
 msgid "Conversations"
@@ -992,6 +1031,10 @@ msgstr "要複製到工作樹的檔案"
 msgid "Finds your work by meaning and answers questions."
 msgstr "依語意尋找你的工作內容並回答問題。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Fingerprint"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Flat file list"
 msgstr "扁平檔案清單"
@@ -1024,6 +1067,10 @@ msgstr "字型大小"
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgid "Foreground"
 msgstr "前景"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Forget old key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Forwards encrypted traffic and never holds your keys."
@@ -1096,6 +1143,14 @@ msgstr "按住快速鍵說話，即可將語音輸入到終端機或文字欄位
 msgid "Hold to record; release to insert the transcription. Rebind it in Hotkeys."
 msgstr "按住錄音，放開後插入轉錄文字。可在快速鍵中重新綁定。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Host name"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Hosts"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 #: src/renderer/components/settings/settings-tabs.ts
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
@@ -1117,6 +1172,10 @@ msgstr "共用看板設定的變更套用方式。"
 #: src/renderer/components/settings/tabs/PrivacyTab.tsx
 msgid "How it works"
 msgstr "運作方式"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "How Kangentic signs in"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/GitTab.tsx
 msgid "How linked PRs are kept up to date."
@@ -1235,9 +1294,17 @@ msgstr "判斷條件與工作流程步驟，並為任務命名。"
 msgid "Kangentic could not write its settings file."
 msgstr "Kangentic 無法寫入設定檔。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic keeps a copy. A key with a passphrase must be in your SSH agent."
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Kangentic Mobile"
 msgstr "Kangentic Mobile"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic records it once. If the host's key ever changes, it refuses to connect."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/PerformanceTab.tsx
 msgid "Kangentic restarts to apply this. Running agents are suspended and resume after the restart."
@@ -1251,6 +1318,10 @@ msgstr "Kangentic 會從 WSL 執行 {wslAgentList}。"
 msgid "Kangentic turned this off after repeated failures."
 msgstr "Kangentic 因連續失敗已關閉此功能。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Kangentic uses your SSH config, agent and keys, the way a terminal does."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "Kangentic-operated relay"
 msgstr "Kangentic 營運的中繼"
@@ -1262,6 +1333,10 @@ msgstr "放開後再擷取一下，避免最後一個字被截斷。"
 #: src/renderer/components/settings/tabs/WorkflowAgentPromptField.tsx
 msgid "Keep editing"
 msgstr "繼續編輯"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Key file"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/HotkeysTab.tsx
 msgid "Keys for a task's Browser pane."
@@ -1344,6 +1419,10 @@ msgstr "限制同時執行的代理數量"
 msgid "Link node_modules"
 msgstr "連結 node_modules"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "Linux machines Kangentic runs agents on over SSH."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/DictationTab.tsx
 msgid "Live model"
 msgstr "即時模型"
@@ -1369,6 +1448,10 @@ msgstr "本機模型"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Logs each IPC call to .kangentic/logs with mutating channels redacted; on by default only in /preview."
 msgstr "將每次 IPC 呼叫記錄到 .kangentic/logs，並遮蔽會變更狀態的通道；預設僅在 /preview 開啟。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Looking for ssh…"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Max concurrent sessions"
@@ -1439,6 +1522,14 @@ msgstr "移動..."
 msgid "Moving between task windows and arranging them."
 msgstr "在任務視窗之間移動與排列。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "My SSH config"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Name"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
 msgid "Name"
@@ -1481,6 +1572,10 @@ msgstr "尚未配對任何裝置。"
 #: src/renderer/components/settings/tabs/index-sources.ts
 msgid "No Done tasks yet"
 msgstr "尚無已完成的任務"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "No hosts yet."
+msgstr ""
 
 #: src/renderer/components/settings/keybindings/KeyCaptureInput.tsx
 msgid "No key detected. It may be reserved by your OS or another app."
@@ -1610,12 +1705,21 @@ msgid "Pairing QR code"
 msgstr "配對 QR 碼"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Password"
 msgstr "密碼"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Password for the host"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Path on the server for this project's tasks. Leave blank to use the server's own default directory"
 msgstr "此專案任務在伺服器上的路徑，留空則用伺服器的預設目錄"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Path to the private key"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Pause any agent that has waited on you this many minutes, except one in a Command Terminal."
@@ -1816,7 +1920,12 @@ msgctxt "card preview"
 msgid "Recent"
 msgstr "近期"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Reconnect"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Reconnecting…"
 msgstr "正在重新連線…"
 
@@ -1872,14 +1981,24 @@ msgid "Remote"
 msgstr "遠端"
 
 #: src/renderer/components/settings/tabs/ShortcutsTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Remove"
 msgstr "移除"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Remove \"{removeName}\"? Kangentic stops connecting to it. Nothing on the host is deleted."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Remove a task's worktree when the task completes."
 msgstr "任務完成時移除其工作樹。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Remove host"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Rename"
 msgstr "重新命名"
 
@@ -1971,6 +2090,7 @@ msgid "Save"
 msgstr "儲存"
 
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Save name"
 msgstr "儲存名稱"
 
@@ -2090,6 +2210,10 @@ msgstr "當管理員略過設定可讓 PR 越過必要審查合併時，顯示�
 msgid "Side by side"
 msgstr "並排"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "since {since}"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/MobileDevicesTab.tsx
 msgid "since {sinceTime}"
 msgstr "自 {sinceTime} 起"
@@ -2119,6 +2243,22 @@ msgstr "原始碼已嵌入"
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Spawn stalled"
 msgstr "啟動停滯"
+
+#: src/renderer/components/settings/settings-tabs.ts
+msgid "SSH"
+msgstr ""
+
+#: src/renderer/components/settings/settings-registry.ts
+msgid "SSH client"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "ssh found"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "ssh not found"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "diff scope"
@@ -2150,6 +2290,10 @@ msgstr ""
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Stop what an agent left running in its folder when its task is done, back in To Do, or deleted, or its Command Terminal ends."
 msgstr "任務完成、退回待辦或刪除，或命令終端機結束時，停止代理留在其資料夾中仍在執行的程序。"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Stopped"
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Stops what a task left running after an idle or low-memory pause or before it finishes, saved in kangentic.json."
@@ -2314,6 +2458,10 @@ msgstr "中繼設為「自訂」時要連線的自架中繼伺服器。"
 msgid "The shell, font, cursor and colors every terminal uses."
 msgstr "所有終端機使用的 Shell、字型、游標與色彩。"
 
+#: src/renderer/components/settings/settings-registry.ts
+msgid "The ssh program on this computer that Kangentic connects with."
+msgstr ""
+
 #: src/renderer/components/settings/tabs/TaskTab.tsx
 msgid "The task's description"
 msgstr "任務的描述"
@@ -2327,6 +2475,11 @@ msgstr "佈景主題"
 #: src/renderer/components/settings/keybindings/HotkeyRow.tsx
 msgid "This hotkey is fixed and cannot be rebound"
 msgstr "此快速鍵固定，無法重新綁定"
+
+#. placeholder {0}: probe.hostname
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "This is the key {0} presents. Trust it only if it matches the host."
+msgstr ""
 
 #: src/renderer/components/settings/settings-registry.ts
 msgid "This project's path to the agent CLI (auto-detected if empty)"
@@ -2379,9 +2532,17 @@ msgstr "轉錄"
 msgid "Transition and motion effects."
 msgstr "轉場與動態效果。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Trust this key"
+msgstr ""
+
 #: src/renderer/components/settings/shared.tsx
 msgid "Try a different search term"
 msgstr "請嘗試其他搜尋字詞"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Type"
+msgstr ""
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"
@@ -2389,6 +2550,7 @@ msgid "Underline"
 msgstr "底線"
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
+#: src/renderer/components/settings/tabs/SshTab.tsx
 msgid "Unreachable"
 msgstr "無法連線"
 
@@ -2416,9 +2578,21 @@ msgstr "請使用 {TERMINAL_FONT_SIZE_MIN} 至 {TERMINAL_FONT_SIZE_MAX}。"
 msgid "Use one theme when the system is light and another when it is dark."
 msgstr "系統為淺色時使用一個佈景主題，深色時使用另一個。"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Use the password once to add a key Kangentic makes. It is never stored"
+msgstr ""
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Use your own ssh setup: its config, agent and keys, as a terminal does"
+msgstr ""
+
 #: src/renderer/components/settings/settings-registry.ts
 msgid "Used / total tokens"
 msgstr "已用 / 總 Token 數"
+
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Used once to add a key Kangentic makes for this host. It is never stored."
+msgstr ""
 
 #: src/renderer/components/settings/tabs/agent-execution-fields.tsx
 msgid "Username"
