@@ -78,6 +78,10 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     hostInfo: (hostId) => hostService.hostInfo(hostId),
     readFile: (hostId, hostPath) => hostService.readFile(hostId, hostPath),
     jsonPatch: (hostId, request) => hostService.jsonPatch(hostId, request),
+    writeFiles: (hostId, files) => hostService.writeFiles(hostId, files),
+    removeFiles: (hostId, paths) => hostService.removeFiles(hostId, paths),
+    pathPresence: (hostId, paths) => hostService.pathPresence(hostId, paths),
+    runCommand: (hostId, request) => hostService.runCommand(hostId, request),
     homeMirror: (hostId) => PATHS.remoteHomeMirror(hostId),
   }));
 

@@ -193,6 +193,55 @@ describe('files on the host', () => {
     expect(fs.existsSync(path.join(home, '..', `kangentic-climb-${process.pid}.txt`))).toBe(false);
   });
 
+  it('removes files the app wrote, counts what it removed, and does not mind one that is already gone', async () => {
+    const rig = makeRig();
+    await settle();
+    const first = path.join(home, '.cursor', 'mcp.json');
+    fs.mkdirSync(path.dirname(first), { recursive: true });
+    fs.writeFileSync(first, '{}');
+    const answer = await ask(rig.link.requestHelper('removeFiles', { paths: [first, path.join(home, 'never-there.json')] }));
+    expect(answer).toEqual({ removed: 1 });
+    expect(fs.existsSync(first)).toBe(false);
+    // Only the file goes: the folder a CLI may have made stays.
+    expect(fs.existsSync(path.dirname(first))).toBe(true);
+  });
+
+  it('refuses to remove a folder or anything outside the home, removing nothing it was also asked to', async () => {
+    const rig = makeRig();
+    await settle();
+    const keep = path.join(home, 'keep.json');
+    fs.writeFileSync(keep, '{}');
+    const folder = path.join(home, 'a-folder');
+    fs.mkdirSync(folder);
+    const outside = path.join(os.tmpdir(), `kangentic-outside-remove-${process.pid}.txt`);
+    fs.writeFileSync(outside, 'x');
+    try {
+      const outsideAttempt = rig.link.requestHelper('removeFiles', { paths: [keep, outside] });
+      const outsideRejected = expect(outsideAttempt).rejects.toThrow('not inside the home folder');
+      await settle();
+      await outsideRejected;
+      expect(fs.existsSync(keep)).toBe(true);
+      expect(fs.existsSync(outside)).toBe(true);
+
+      const folderAttempt = rig.link.requestHelper('removeFiles', { paths: [folder] });
+      const folderRejected = expect(folderAttempt).rejects.toThrow('is a folder');
+      await settle();
+      await folderRejected;
+      expect(fs.existsSync(folder)).toBe(true);
+    } finally {
+      fs.rmSync(outside, { force: true });
+    }
+  });
+
+  it('refuses to run a program in a folder outside the home', async () => {
+    const rig = makeRig();
+    await settle();
+    const attempt = rig.link.requestHelper('runCommand', { file: 'true', args: [], cwd: os.tmpdir(), timeoutMs: 1000 });
+    const rejected = expect(attempt).rejects.toThrow('not inside the home folder');
+    await settle();
+    await rejected;
+  });
+
   it('does not call a path absent when it cannot look, and refuses to look outside home', async () => {
     const rig = makeRig();
     await settle();

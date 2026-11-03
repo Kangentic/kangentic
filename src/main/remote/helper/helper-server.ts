@@ -23,6 +23,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
+import { runHostCommand } from './host-command';
 import { HookWatcher } from './hook-watcher';
 import { patchJsonFile, type JsonPatchRequest, type JsonPatchResult } from './json-patch';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
@@ -48,6 +49,8 @@ import {
   type HelperMethod,
   type HelperRequestMap,
   type HelperSessionRecord,
+  type HostCommandRequest,
+  type HostCommandResult,
   type HostFileWrite,
   type HostInfo,
   type HelperSnapshot,
@@ -354,6 +357,8 @@ export class HelperServer {
     unwatchHooks: (params) => this.hookWatcher.unwatch(params.sessionId).then(() => ({ watching: false as const })),
     readFile: (params) => this.readFile(params),
     pathPresence: (params) => this.pathPresence(params.paths),
+    removeFiles: (params) => this.removeFiles(params.paths),
+    runCommand: (params) => this.runCommand(params),
   };
 
   private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {
@@ -543,6 +548,36 @@ export class HelperServer {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { exists: false, content: null };
       throw error;
     }
+  }
+
+  /** Remove files, each checked to lie beneath the home first so a refused path removes nothing. A folder is refused, not emptied. */
+  private async removeFiles(paths: string[]): Promise<{ removed: number }> {
+    const targets = paths.map((requested) => this.homePath(requested));
+    let removed = 0;
+    for (const target of targets) {
+      try {
+        const stat = await fs.lstat(target);
+        if (stat.isDirectory()) throw new Error(`${target} is a folder, and only files are removed here`);
+        await fs.unlink(target);
+        removed += 1;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') continue;
+        throw error;
+      }
+    }
+    return { removed };
+  }
+
+  private async runCommand(request: HostCommandRequest): Promise<HostCommandResult> {
+    const home = this.hostInfo().home;
+    // Checked before anything starts: a folder outside the home is refused, not run in.
+    const cwd = request.cwd ? this.homePath(request.cwd) : home;
+    const baseEnv: NodeJS.ProcessEnv = {};
+    for (const [name, value] of Object.entries(this.options.baseEnv ?? process.env)) {
+      if (SESSION_ENV_NAMES.has(name) || SESSION_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
+      baseEnv[name] = value;
+    }
+    return runHostCommand(request, { shellPath: this.hostInfo().shellPath, cwd, baseEnv });
   }
 
   private async pathPresence(paths: string[]): Promise<Array<'present' | 'absent'>> {

@@ -17,7 +17,7 @@ import * as path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
 import { cliPathForTarget, isUnderLocalRoot, resolveCliTarget, type CliTarget, type SshCliPlace } from '../agent/shared/cli-target';
 import type { ProjectRemote, SpawnRemote } from '../../shared/types';
-import type { HelperRequestMap } from './protocol/messages';
+import type { HelperRequestMap, HostCommandRequest, HostCommandResult, HostFileWrite } from './protocol/messages';
 
 export type SshCliTarget = SshCliPlace & { linuxCliPath: string };
 
@@ -102,6 +102,10 @@ export interface RemoteLaunchResolverDeps {
   hostInfo(hostId: string): Promise<HelperRequestMap['hostInfo']['result']>;
   readFile(hostId: string, hostPath: string): Promise<HelperRequestMap['readFile']['result']>;
   jsonPatch(hostId: string, request: HelperRequestMap['jsonPatch']['params']): Promise<HelperRequestMap['jsonPatch']['result']>;
+  writeFiles(hostId: string, files: HostFileWrite[]): Promise<unknown>;
+  removeFiles(hostId: string, paths: string[]): Promise<unknown>;
+  pathPresence(hostId: string, paths: string[]): Promise<Array<'present' | 'absent'>>;
+  runCommand(hostId: string, request: HostCommandRequest): Promise<HostCommandResult>;
   /** This computer's mirror folder for a host's home. */
   homeMirror(hostId: string): string;
 }
@@ -125,6 +129,10 @@ export function createRemoteLaunchResolver(deps: RemoteLaunchResolverDeps): Remo
         files: {
           readFile: (hostPath) => deps.readFile(remote.hostId, hostPath),
           jsonPatch: (request) => deps.jsonPatch(remote.hostId, request),
+          writeFiles: (files) => deps.writeFiles(remote.hostId, files),
+          removeFiles: (paths) => deps.removeFiles(remote.hostId, paths),
+          pathPresence: (paths) => deps.pathPresence(remote.hostId, paths),
+          runCommand: (request) => deps.runCommand(remote.hostId, request),
         },
       };
       const resolvedCwd = path.resolve(cwd);

@@ -34,6 +34,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
+import { pullHostFilesFor, rememberHostFileSync } from '../remote/host-file-sync';
 import { resolveRemoteLaunch, resolveSpawnCli } from '../remote/remote-launch';
 import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
@@ -763,6 +764,9 @@ export class TransitionEngine {
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
     // for demo mode where the project has never been opened in Claude Code).
+    // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
+    // before it runs, pushed back after the command is built (#913). Null for any other spawn.
+    const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
     await adapter.ensureTrust(cwd, cliTarget);
     console.log(`[spawnAgent] Trust ensured for ${cwd}`);
 
@@ -1006,6 +1010,16 @@ export class TransitionEngine {
     const launch = await this.resolveLaunch({ ...launchBase, canResume, ptySessionId, agentSessionId, prompt });
     const { statusOutputPath, eventsOutputPath, shell, resumePromptKeptOff } = launch;
     const { command, extraEnv } = this.prepareLaunch(adapter, launch, ptySessionId, cwd, signal);
+    if (hostFiles) {
+      try {
+        await hostFiles.push();
+      } catch (error) {
+        // The host's files could not be written, so this command never reaches spawn() to own its hold.
+        releaseCommandHold(adapter, cwd, ptySessionId);
+        throw error;
+      }
+      rememberHostFileSync(ptySessionId, hostFiles);
+    }
 
     // Where an isolated column's pass begins, so the main conversation, resumed
     // after it, can be told the commits it made. Read before the spawn: the

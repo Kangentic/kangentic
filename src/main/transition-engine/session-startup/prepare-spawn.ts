@@ -8,6 +8,7 @@ import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
+import { pullHostFilesFor, rememberHostFileSync } from '../../remote/host-file-sync';
 import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
@@ -220,6 +221,9 @@ export async function prepareAgentSpawn(input: {
   const detectedCliPath = spawnCli.cliPath;
   const shell = shellForTarget(cliTarget) ?? input.resolvedShell;
 
+  // A CLI on a host edits its trust and hook files there: pulled into the folders the adapter edits
+  // before it runs, pushed back after the command is built (#913). Null for any other spawn.
+  const hostFiles = await pullHostFilesFor(adapter, cwd, cliTarget);
   await adapter.ensureTrust(cwd, cliTarget);
 
   // "Plan always wins, else task -> lane -> global" - the rule lives in
@@ -394,6 +398,16 @@ export async function prepareAgentSpawn(input: {
     // No caller will spawn this command, so nothing else releases its hold.
     releaseCommandHold(adapter, cwd, sessionRecordId);
     throw error;
+  }
+  if (hostFiles) {
+    try {
+      await hostFiles.push();
+    } catch (error) {
+      // The host's files could not be written, so no caller will spawn this command.
+      releaseCommandHold(adapter, cwd, sessionRecordId);
+      throw error;
+    }
+    rememberHostFileSync(sessionRecordId, hostFiles);
   }
 
   return {

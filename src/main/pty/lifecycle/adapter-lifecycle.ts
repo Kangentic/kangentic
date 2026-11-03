@@ -1,5 +1,6 @@
 import type { AgentParser, SessionAttachment, SessionContext } from '../../../shared/types';
 import { forgetPlanApprovalSpawn } from '../../plan-approval/plan-approval-spawns';
+import { settleHostFiles } from '../../remote/host-file-sync';
 
 /**
  * Minimal session shape required by the adapter lifecycle helpers. The
@@ -84,6 +85,10 @@ export function releaseCommandHold(
   } catch (error) {
     console.error(`[ADAPTER] Releasing the hold of session ${sessionId.slice(0, 8)} failed:`, error);
   }
+  // For a CLI on a host, the strip above edited this computer's copy of the host's files; the same
+  // change goes to the host (#913). Asynchronous and never throws, so a release stays synchronous.
+  // A session with nothing pulled has no entry, and this returns at once.
+  void settleHostFiles(sessionId);
 }
 
 /**

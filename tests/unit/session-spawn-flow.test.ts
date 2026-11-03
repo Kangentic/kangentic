@@ -2278,7 +2278,13 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       await performSpawn(remoteInput(), context);
 
       const env = lastSpawnParams(context).env;
-      expect(env).toEqual({ CLAUDE_CODE_NO_FLICKER: '1', KANGENTIC_TASK_ID: 'task-001', TERM: 'xterm-256color' });
+      // The hook folder on the host (the relay registers the same one) is the one variable that names a path.
+      expect(env).toEqual({
+        CLAUDE_CODE_NO_FLICKER: '1',
+        KANGENTIC_TASK_ID: 'task-001',
+        KANGENTIC_WSL_HOOK_DIR: '/home/dev/projects/api/.kangentic/sessions/s/wsl-hooks',
+        TERM: 'xterm-256color',
+      });
       expect(Object.keys(env)).not.toContain('PATH');
       expect(Object.keys(env)).not.toContain('USERPROFILE');
       expect(Object.keys(env)).not.toContain('SystemRoot');

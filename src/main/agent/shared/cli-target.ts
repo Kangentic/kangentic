@@ -2,7 +2,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { parseWslUncPath, toForwardSlash, toWslPath } from '../../../shared/paths';
 import type { StoredCliTarget } from '../../../shared/types';
-import type { JsonPatchRequest, JsonPatchResult } from '../../remote/protocol/messages';
+import type { HostCommandRequest, HostCommandResult, HostFileWrite, JsonPatchRequest, JsonPatchResult } from '../../remote/protocol/messages';
 import { childProcessEnv } from '../../shared/child-env';
 import { listInWslEnv } from '../../pty/process-tag/task-process-tag';
 import { execFileAsync } from '../../utility-process/off-main-exec';
@@ -60,6 +60,14 @@ export interface SshCliPlace {
 export interface SshPlaceFiles {
   readFile(hostPath: string): Promise<{ exists: boolean; content: string | null }>;
   jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult>;
+  /** Write files on the host, making their folders. Each path is beneath the host's home. */
+  writeFiles(files: HostFileWrite[]): Promise<unknown>;
+  /** Remove files on the host. A file that is not there is not an error. */
+  removeFiles(paths: string[]): Promise<unknown>;
+  /** Whether each path is there. Only this answer may call a path absent; a failed ask is an error. */
+  pathPresence(paths: string[]): Promise<Array<'present' | 'absent'>>;
+  /** Run a program on the host to completion and return what it printed (`HostCommandRequest`). */
+  runCommand(request: HostCommandRequest): Promise<HostCommandResult>;
 }
 
 export type CliPlace = WslCliPlace | SshCliPlace;
@@ -506,6 +514,40 @@ export function cliInvocationForTarget(
   };
 }
 
+/** A failed run on a host, shaped as `execFile`'s rejection is: callers read `stdout`, `stderr`, `code` and `killed`. */
+export class HostCommandError extends Error {
+  constructor(message: string, readonly stdout: string, readonly stderr: string, readonly code: number | string | null, readonly killed: boolean) {
+    super(message);
+    this.name = 'HostCommandError';
+  }
+}
+
+/**
+ * Run the CLI on its host to completion through the helper (`HostCommandRequest`), rejecting as `execFile`
+ * does: a non-zero exit carries its output, a timeout is `killed`, and a program that is not installed is an
+ * error naming it. The program is the CLI's name, found by the host's own shell; `options.cwd` is a folder on
+ * this computer's side of the path map.
+ */
+async function execCliOnHost(
+  target: SshCliPlace & { linuxCliPath: string },
+  cliArgs: readonly string[],
+  options: ExecCliForTargetOptions,
+): Promise<{ stdout: string; stderr: string }> {
+  const files = target.files;
+  if (!files) throw new Error('This host has no connection to run a command through.');
+  const result = await files.runCommand({
+    file: target.linuxCliPath,
+    args: [...cliArgs],
+    ...(options.cwd ? { cwd: cliPathForTarget(options.cwd, target) } : {}),
+    ...(options.env ? { env: options.env } : {}),
+    timeoutMs: options.timeout,
+  });
+  if (result.error) throw new HostCommandError(result.error, result.stdout, result.stderr, 'ENOENT', false);
+  if (result.timedOut) throw new HostCommandError(`${target.linuxCliPath} did not finish in ${Math.round(options.timeout / 1000)} s on the host.`, result.stdout, result.stderr, null, true);
+  if (result.code !== 0) throw new HostCommandError(`${target.linuxCliPath} exited with code ${result.code} on the host.`, result.stdout, result.stderr, result.code, false);
+  return { stdout: result.stdout, stderr: result.stderr };
+}
+
 export interface ExecCliForTargetOptions {
   /** The Windows directory to start in; the distro sees it as its `/mnt` path. */
   cwd?: string;
@@ -524,6 +566,7 @@ export function execCliForTarget(
   cliArgs: readonly string[],
   options: ExecCliForTargetOptions,
 ): Promise<{ stdout: string; stderr: string }> {
+  if (target.kind === 'ssh') return execCliOnHost(target, cliArgs, options);
   const invocation = cliInvocationForTarget(target, cliArgs, options.env);
   return execFileAsync(invocation.file, invocation.args, {
     // `WSL_UTF8` makes wsl.exe write its own messages (a missing distro) as UTF-8.

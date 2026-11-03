@@ -95,6 +95,30 @@ export interface HostFileWrite {
   mode?: number;
 }
 
+export interface HostCommandRequest {
+  /** The program: a name the user's shell finds on its PATH (such as `codex`), or an absolute path. */
+  file: string;
+  args: string[];
+  /** An absolute folder beneath the user's home. The user's home when absent. */
+  cwd?: string;
+  /** Added to the host's own environment for this run. */
+  env?: Record<string, string>;
+  /** Written to the program's standard input, which is then closed. */
+  stdin?: string;
+  /** The run is stopped, its whole process group, after this long. */
+  timeoutMs: number;
+}
+
+export interface HostCommandResult {
+  /** The exit code, or null when the run was stopped (`timedOut`) or never started (`error`). */
+  code: number | null;
+  stdout: string;
+  stderr: string;
+  timedOut: boolean;
+  /** Why the program could not start (it is not installed, the folder is not there). */
+  error?: string;
+}
+
 /**
  * What main cannot know of a host and must not guess: where the user's files are and which shell a
  * login shell spawn lands in. The shell decides how a typed command is quoted and cleared.
@@ -136,6 +160,14 @@ export interface HelperRequestMap {
   watchHooks: { params: { sessionId: string; directory: string; statusFile?: string }; result: { watching: true } };
   /** Stop, after sending what is already published. */
   unwatchHooks: { params: { sessionId: string }; result: { watching: false } };
+  /** Remove files the app wrote and a CLI should no longer find (its hooks, its MCP entry). A missing file is not an error. */
+  removeFiles: { params: { paths: string[] }; result: { removed: number } };
+  /**
+   * Run a program on the host to completion and return what it printed, for a CLI's own probe (its
+   * trust check, a chat id, a listing). It runs where the CLI is found, through the user's own shell,
+   * and is bounded by `timeoutMs`; a non-zero exit is an answer, not an error.
+   */
+  runCommand: { params: HostCommandRequest; result: HostCommandResult };
   /** Read one text file, for the files the app must see before it writes its own beside them. */
   readFile: { params: { path: string; maxBytes?: number }; result: { exists: boolean; content: string | null } };
   /** Whether each path is there. Only the helper may say a path is absent: this computer's copy proves nothing. */

@@ -22,7 +22,7 @@ import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
-import { placeFromStored } from '../../agent/shared/cli-target';
+import { localPathToHost, placeFromStored } from '../../agent/shared/cli-target';
 import type { RemoteSessionRegistration } from '../../remote/remote-session-relay';
 
 /**
@@ -245,6 +245,15 @@ export async function performSpawn(
   // A session on a remote host decides its shell, cwd, environment and quoting from the host, never
   // from this computer (remote-spawn.ts). Every local-only decision below branches on this one plan.
   const remotePlan = input.remote ? planRemoteSpawn(input, input.remote) : null;
+  // The folder on the host that this session's hooks publish into (the relay registers the same one).
+  // An agent whose hook script is a shared copy outside that folder (Codex, Gemini, Qwen, Grok) is
+  // told where to publish through this variable, as a WSL spawn is (below).
+  if (remotePlan && input.eventsOutputPath) {
+    const place = placeFromStored(input.cliTarget ?? null);
+    if (place?.kind === 'ssh') {
+      remotePlan.env[WSL_HOOK_DIRECTORY_ENV] = wslHookPaths(localPathToHost(path.dirname(input.eventsOutputPath), place.roots)).directory.replace(/\\/g, '/');
+    }
+  }
 
   // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI
   // installed in that distro), else the Terminal setting, as before. A remote

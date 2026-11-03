@@ -145,6 +145,16 @@ export class RemoteHostService {
     return this.helper(hostId, 'unwatchHooks', { sessionId });
   }
 
+  /** Remove files the app wrote on the host (an agent's hooks or MCP entry at the end of a session). */
+  removeFiles(hostId: string, paths: string[]): Promise<HelperRequestMap['removeFiles']['result']> {
+    return this.helper(hostId, 'removeFiles', { paths });
+  }
+
+  /** Run a program on the host to completion, through the user's shell, for a CLI's own probe. */
+  runCommand(hostId: string, request: HelperRequestMap['runCommand']['params']): Promise<HelperRequestMap['runCommand']['result']> {
+    return this.helper(hostId, 'runCommand', request);
+  }
+
   readFile(hostId: string, filePath: string, maxBytes?: number): Promise<HelperRequestMap['readFile']['result']> {
     return this.helper(hostId, 'readFile', { path: filePath, maxBytes });
   }
