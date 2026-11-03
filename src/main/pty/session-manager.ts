@@ -872,7 +872,8 @@ export class SessionManager extends EventEmitter {
       isSessionRunning: (sessionId) => this.registry.get(sessionId)?.status === 'running',
       getSessionRootPid: (sessionId) => {
         const session = this.registry.get(sessionId);
-        return session?.pty?.pid;
+        // A PTY on a remote host has no pid here, so the watcher has no tree to list (#913).
+        return session?.pty?.pid ?? undefined;
       },
       resolveBackgroundShellOutputFile: (sessionId, shellId) => {
         const session = this.registry.get(sessionId);
@@ -3645,7 +3646,8 @@ export class SessionManager extends EventEmitter {
     if (session?.pty) {
       const ptyRef = session.pty;
       // Read before nulling: the quit drain probes the child pid, not the wrapper.
-      const childPid = ptyRef.pid;
+      // A PTY on a remote host has none: the quit drain probes local pids only.
+      const childPid = ptyRef.pid ?? undefined;
       // A renderer's keystrokes stop reaching it now, and anything still
       // queued for it is dropped, as when they crossed this process and found
       // the handle nulled. The exit sequence below is written past the seal.

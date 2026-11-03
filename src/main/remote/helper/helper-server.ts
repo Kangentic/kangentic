@@ -130,6 +130,8 @@ export class HelperServer {
   private readonly coreToWire = new Map<number, number>();
   private readonly startedAt = new Date().toISOString();
   private nextCorePtyId = 1;
+  /** Keeps two writes to one target from sharing a staging file. */
+  private nextStagingSuffix = 1;
   private ownerInstallId: string | null = null;
   private ownerBootId: string | null = null;
   private ownerLabel = 'unknown';
@@ -403,7 +405,7 @@ export class HelperServer {
       const target = this.homePath(file.path);
       await fs.mkdir(path.dirname(target), { recursive: true });
       // Beside the file, then renamed in: a reader never sees half a settings file.
-      const staging = `${target}.${process.pid}.tmp`;
+      const staging = `${target}.${process.pid}.${this.nextStagingSuffix++}.tmp`;
       await fs.writeFile(staging, file.content, { encoding: 'utf8', mode: file.mode ?? 0o600 });
       await fs.chmod(staging, file.mode ?? 0o600);
       await fs.rename(staging, target);

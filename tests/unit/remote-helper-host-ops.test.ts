@@ -61,13 +61,22 @@ describe('starting a PTY on the host', () => {
     expect(args).toEqual(['-l']);
   });
 
-  it('falls back to sh when the host sets no shell, and leaves any other program alone', async () => {
+  it('falls back to sh when the host sets no shell', async () => {
     const rig = makeRig({ HOME: '/home/dev' });
     await settle();
     const first = rig.client.spawn({ ...spawnParams('s1', 'task-1'), file: HOST_LOGIN_SHELL, args: ['-i'] });
     await settle();
     await first;
     expect(rig.helperRig.spawnPty.mock.calls[0].slice(0, 2)).toEqual(['/bin/sh', ['-l', '-i']]);
+  });
+
+  it('leaves a program the spawn names, and its arguments, exactly as given', async () => {
+    const rig = makeRig();
+    await settle();
+    const spawning = rig.client.spawn({ ...spawnParams('s1', 'task-1'), file: '/usr/bin/env', args: ['-i', 'sh'] });
+    await settle();
+    await spawning;
+    expect(rig.helperRig.spawnPty.mock.calls[0].slice(0, 2)).toEqual(['/usr/bin/env', ['-i', 'sh']]);
   });
 
   it('starts the PTY from the host\'s environment, never this computer\'s, with the ssh session\'s variables left out', async () => {

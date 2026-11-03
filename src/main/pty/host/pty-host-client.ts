@@ -49,7 +49,13 @@ export interface PtyDisposable {
  */
 export interface PtyHandle {
   readonly ptyId: number;
-  readonly pid: number;
+  /**
+   * The process id on THIS machine, or null for a PTY that runs on a remote host (#913). There is
+   * deliberately no number to stand in for "none": 0 names Kangentic's own process group to
+   * `process.kill`, and -1 names every process the user owns. Anything that signals, waits on or
+   * lists by pid must handle null, and `tsc` fails the site that does not.
+   */
+  readonly pid: number | null;
   readonly cols: number;
   readonly rows: number;
   write(data: string): void;
@@ -132,7 +138,8 @@ export class RemotePty implements PtyHandle {
 
   constructor(
     readonly ptyId: number,
-    readonly pid: number,
+    /** Null for a PTY on a remote host: a pid there names nothing on this machine (see `PtyHandle.pid`). */
+    readonly pid: number | null,
     cols: number,
     rows: number,
     private readonly transport: Pick<PtyHostTransport, 'post'>,
@@ -158,6 +165,11 @@ export class RemotePty implements PtyHandle {
 
   get hasExited(): boolean {
     return this.exited;
+  }
+
+  /** Runs on a remote host (#913), so it has no pid here and a local host's death does not end it. */
+  get isOnRemoteHost(): boolean {
+    return this.pid === null;
   }
 
   write(data: string): void {
@@ -417,7 +429,7 @@ export class PtyHostClient {
     }
     const lostSessionIds: string[] = [];
     for (const { handle, listener } of this.takeLiveHandles()) {
-      stopTree(handle.pid);
+      if (handle.pid !== null) stopTree(handle.pid);
       handle.markExited();
       if (handle.sessionId) lostSessionIds.push(handle.sessionId);
       try {
@@ -458,7 +470,9 @@ export class PtyHostClient {
     if (!result.ok) {
       return { ok: false, error: fromPtyHostError(result.error), previousScrollback: result.previousScrollback };
     }
-    const handle = new RemotePty(ptyId, result.pid, params.cols, params.rows, this.transport, params.sessionId);
+    // A spawn on a remote host answers with a pid on THAT machine. Keeping it would let a local
+    // kill, wait or probe signal an unrelated process here, so the handle carries none (#913).
+    const handle = new RemotePty(ptyId, params.hostId === undefined ? result.pid : null, params.cols, params.rows, this.transport, params.sessionId);
     this.handles.set(ptyId, handle);
     return { ok: true, pty: handle };
   }
@@ -658,13 +672,19 @@ export class PtyHostClient {
    * Every PTY the host still runs, as handles: the host went away, and each of
    * these must be reported exited. Clears the routing.
    */
+  /**
+   * The PTYs a dead local host took with it. A PTY on a remote host (#913) is not one of them: the
+   * local host crashing says nothing of an agent running on another machine, whose end is reported by
+   * its own link once it reconciles (`remote-link.ts`), never by this.
+   */
   private takeLiveHandles(): Array<{ handle: RemotePty; listener: ((exitCode: number) => void) | undefined }> {
-    const live = [...this.handles.values()].map((handle) => ({
-      handle,
-      listener: this.exitListeners.get(handle.ptyId),
-    }));
-    this.handles.clear();
-    this.exitListeners.clear();
+    const live = [...this.handles.values()]
+      .filter((handle) => !handle.isOnRemoteHost)
+      .map((handle) => ({ handle, listener: this.exitListeners.get(handle.ptyId) }));
+    for (const { handle } of live) {
+      this.handles.delete(handle.ptyId);
+      this.exitListeners.delete(handle.ptyId);
+    }
     return live;
   }
 }

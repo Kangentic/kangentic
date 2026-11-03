@@ -45,6 +45,13 @@ export interface ShutdownContext<S extends ShutdownSession = ShutdownSession> {
   sessionFiles: SessionFileManager;
   firstOutputTracker: FirstOutputTracker;
   killPty: (ptyRef: PtyHandle) => boolean;
+  /**
+   * A session whose PTY runs on a remote host reaches the quit (#913). The quit signals, types into
+   * and waits for local processes only, so it hands the session here instead, and the link ends the
+   * agent from one plan frame the helper carries out on its own clock. Without it the session is
+   * dropped from the registry and the agent runs on until the next connect reconciles it.
+   */
+  endRemoteSession?: (session: S) => void;
 }
 
 /**
@@ -152,20 +159,28 @@ export function killAllSessions<S extends ShutdownSession>(
       // Sealed first, as in kill(): a renderer's keystrokes stop reaching it
       // before the exit sequence, which the seal lets through, is written.
       ptyRef.sealUserInput();
-      if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
-      session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
-      if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
-        // The registry's timer does the kill; the listeners are detached just
-        // below like every other row's, so the entry carries none.
-        deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });
-        deferredCount += 1;
+      if (childPid === null) {
+        // A PTY on a remote host (#913). Nothing here may signal it, type into it, count it in the
+        // report or wait for it: the drain polls local pids, and the host's helper ends the agent
+        // from the plan the link sends in one frame (`RemoteLink.setQuitPlan`), on its own clock.
+        session.pty = null;
+        context.endRemoteSession?.(session);
       } else {
-        context.killPty(ptyRef);
+        if (!closeIsGraceful) writeExitSequence(ptyRef, session.exitSequence);
+        session.pty = null; // prevent double-kill (conpty heap corruption on Windows)
+        if (deferYoung && !closeIsGraceful && isYoungSession(session)) {
+          // The registry's timer does the kill; the listeners are detached just
+          // below like every other row's, so the entry carries none.
+          deferredKills.schedule({ sessionId: session.id, ptyRef, pid: childPid });
+          deferredCount += 1;
+        } else {
+          context.killPty(ptyRef);
+        }
+        // Count the kill first, unconditionally. An unreadable pid means the drain
+        // has nothing to probe for this child, NOT that nothing was killed.
+        killedCount += 1;
+        if (Number.isInteger(childPid) && childPid > 0) pids.push(childPid);
       }
-      // Count the kill first, unconditionally. An unreadable pid means the drain
-      // has nothing to probe for this child, NOT that nothing was killed.
-      killedCount += 1;
-      if (Number.isInteger(childPid) && childPid > 0) pids.push(childPid);
     }
     // Detach our onData / onExit listeners so node-pty stops invoking the
     // callbacks on a later tick. Without this a final ConPTY chunk fires
