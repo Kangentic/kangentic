@@ -5,6 +5,7 @@ import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import { exportDistroOpenCodeSession } from './distro-sessions';
 import { placeFromStored, targetOfPlace } from '../../shared/cli-target';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
+import { openCodeV2MessageEntry } from './v2-messages';
 
 /**
  * OpenCode's `command-injection` verifier. CONFIRM-ONLY.
@@ -150,7 +151,7 @@ function queryForSubmittedText(
          ORDER BY time_created DESC LIMIT ${RECENT_MESSAGE_LIMIT}`,
       )
       .all(sessionId, sentAt - SENT_AT_TOLERANCE_MS);
-    if (messageRows.length === 0) return false;
+    if (messageRows.length === 0) return findInV2Messages(database, sessionId, text, sentAt);
 
     // Bounded to the messages just fetched. `part` holds one row per streamed
     // chunk for EVERY message in the session, so it grows with the whole
@@ -182,6 +183,33 @@ function queryForSubmittedText(
       }
     }
   }
+}
+
+/**
+ * An OpenCode 2 session writes its turns to `session_message`, one row per
+ * message with the user's text in `data.text` (measured on 2.2.5), and none to
+ * `message`. The same bounded read, mapped to `{ info, parts }` for the shared
+ * match. A database without the table (OpenCode 1 only) is a plain "not seen".
+ */
+function findInV2Messages(database: DatabaseType.Database, sessionId: string, text: string, sentAt: number): boolean {
+  let rows: Array<{ id: string; time_created: number; data: string }>;
+  try {
+    rows = database
+      .prepare<[string, number], { id: string; time_created: number; data: string }>(
+        `SELECT id, time_created, data FROM session_message
+         WHERE session_id = ? AND type = 'user' AND time_created >= ?
+         ORDER BY seq DESC LIMIT ${RECENT_MESSAGE_LIMIT}`,
+      )
+      .all(sessionId, sentAt - SENT_AT_TOLERANCE_MS);
+  } catch {
+    return false;
+  }
+  const messages = rows.reverse().flatMap((row) => {
+    const data = tryParseJson(row.data);
+    const entry = isRecord(data) ? openCodeV2MessageEntry(row.id, 'user', row.time_created, data) : null;
+    return entry ? [entry] : [];
+  });
+  return findOpenCodeSubmittedTextInMessages(messages, text, sentAt);
 }
 
 /**

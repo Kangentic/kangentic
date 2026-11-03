@@ -16,12 +16,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 const executed = vi.hoisted(() => [] as Array<{ file: string; args: string[] }>);
-const answers = vi.hoisted(() => ({ stdout: '' }));
+// `--version` answers on its own (the distro CLI's major picks the flags); every other run gets `stdout`.
+const answers = vi.hoisted(() => ({ stdout: '', version: '1.14.25' }));
 vi.mock('../../src/main/utility-process/off-main-exec', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../src/main/utility-process/off-main-exec')>();
   return {
     ...actual,
     execFileAsync: async (file: string, args: string[]) => {
+      if (args[args.length - 1] === '--version') return { stdout: answers.version, stderr: '' };
       executed.push({ file, args });
       return { stdout: answers.stdout, stderr: '' };
     },
@@ -40,7 +42,9 @@ vi.mock('../../src/main/agent/shared/wsl-distro', async (importOriginal) => {
 
 import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
 import {
+  __resetDistroVersionCacheForTests,
   captureDistroOpenCodeSessionId,
+  listDistroOpenCodeSessions,
   parseOpenCodeExport,
   parseOpenCodeSessionList,
   type DistroOpenCodeSession,
@@ -68,6 +72,8 @@ beforeEach(() => {
   Object.defineProperty(process, 'platform', { value: 'win32', configurable: true });
   executed.length = 0;
   answers.stdout = '';
+  answers.version = '1.14.25';
+  __resetDistroVersionCacheForTests();
   distroHome.path = makeDirectory('kangentic-opencode-wsl-home-');
 });
 
@@ -155,6 +161,30 @@ describe('an OpenCode session in a WSL distro', () => {
     expect(path.win32.basename(executed[0].file).toLowerCase()).toBe('wsl.exe');
     expect(executed[0].args.slice(-3)).toEqual(['export', SESSION_ID, '--pure']);
     expect(executed[0].args).toContain('/home/dev/.opencode/bin/opencode');
+  });
+
+  // OpenCode 2 in the distro: no `--pure` (it rejects unknown flags), the export
+  // is `session export`, and `--standalone` keeps each run off the distro user's
+  // shared background service. Its export prints a record per message.
+  it('asks an OpenCode 2 distro CLI with its own flags, and reads its per-message export', async () => {
+    answers.version = 'opencode v2.2.5';
+    answers.stdout = JSON.stringify({
+      info: { id: SESSION_ID },
+      messages: [
+        { id: 'msg_reminder', type: 'synthetic', time: { created: 1_000 }, text: '<system-reminder>' },
+        { id: 'msg_user', type: 'user', time: { created: 2_000 }, text: 'run the tests', files: [] },
+        { id: 'msg_assistant', type: 'assistant', time: { created: 3_000 }, model: { id: 'stub-model', providerID: 'stub' }, content: [{ type: 'text', text: 'All green.' }] },
+        { id: 'msg_idle', type: 'idle', time: { created: 3_100 }, outcome: 'succeeded' },
+      ],
+    });
+    const place = placeFromStored(toStoredCliTarget(targetOn('nat')));
+    const parsed = await new OpenCodeAdapter().parseTranscript(SESSION_ID, 'C:\\Users\\dev\\project', place);
+    expect(parsed.entries.map((entry) => entry.kind)).toEqual(['user', 'assistant']);
+    expect(executed[0].args.slice(-4)).toEqual(['session', 'export', SESSION_ID, '--standalone']);
+
+    answers.stdout = '[]';
+    await listDistroOpenCodeSessions(targetOn('nat'), 'C:\\Users\\dev\\project');
+    expect(executed[1].args.slice(-7)).toEqual(['session', 'list', '--format', 'json', '-n', '25', '--standalone']);
   });
 
   it('reads nothing for a session row from before the CLI path was kept', async () => {

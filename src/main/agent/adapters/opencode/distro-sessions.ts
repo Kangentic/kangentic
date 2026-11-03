@@ -1,5 +1,7 @@
 import { cliPathForTarget, execCliForTarget, type CliTarget } from '../../shared/cli-target';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
+import { openCodeV2CreatedMs, openCodeV2MessageEntry } from './v2-messages';
+import { isOpenCodeV2 } from './version';
 
 /**
  * An OpenCode installed in a WSL distro keeps its sessions in the distro's
@@ -18,6 +20,10 @@ import type { OpenCodeRemoteMessageEntry } from './remote-client';
  * `--pure` keeps the project's plugins out of these runs; both commands take it.
  * Each run starts with the session's cwd, which the distro sees as its `/mnt`
  * path, so OpenCode reads the same project the session did.
+ *
+ * OpenCode 2 (2.2.5): `session list` prints the same records, with
+ * `--standalone` in place of `--pure`; the export is `session export <id>
+ * --standalone` and prints a record per message (`parseOpenCodeExport`).
  */
 
 const LIST_TIMEOUT_MS = 15_000;
@@ -59,16 +65,28 @@ export function parseOpenCodeSessionList(stdout: string): DistroOpenCodeSession[
   }
 }
 
-/** `export`'s messages, or none for output that is not an export. Anything before its JSON (a log line) is skipped. */
+/**
+ * `export`'s messages, or none for output that is not an export. Anything before its JSON (a log line) is skipped.
+ * OpenCode 1 exports `{ info, parts }` entries. OpenCode 2's `session export`
+ * prints one record per message (`{ id, type, time, text | content }`), which
+ * `openCodeV2MessageEntry` turns into the same entry; its other records (a
+ * system reminder, an agent switch, a turn's end) are not conversation.
+ */
 export function parseOpenCodeExport(stdout: string): OpenCodeRemoteMessageEntry[] {
   const start = stdout.indexOf('{');
   if (start === -1) return [];
   try {
     const parsed: unknown = JSON.parse(stdout.slice(start));
     if (!isRecord(parsed) || !Array.isArray(parsed.messages)) return [];
-    return parsed.messages.filter((entry): entry is OpenCodeRemoteMessageEntry => (
-      isRecord(entry) && isRecord(entry.info) && typeof entry.info.id === 'string' && Array.isArray(entry.parts)
-    ));
+    return parsed.messages.flatMap((entry): OpenCodeRemoteMessageEntry[] => {
+      if (!isRecord(entry)) return [];
+      if (isRecord(entry.info) && typeof entry.info.id === 'string' && Array.isArray(entry.parts)) {
+        return [entry as unknown as OpenCodeRemoteMessageEntry];
+      }
+      if (typeof entry.id !== 'string' || typeof entry.type !== 'string') return [];
+      const converted = openCodeV2MessageEntry(entry.id, entry.type, openCodeV2CreatedMs(entry, 0), entry);
+      return converted ? [converted] : [];
+    });
   } catch {
     return [];
   }
@@ -83,11 +101,52 @@ function sameDistroDirectory(left: string, right: string): boolean {
     : trimmedLeft === trimmedRight;
 }
 
+const VERSION_TIMEOUT_MS = 15_000;
+
+/**
+ * Whether the distro's CLI is OpenCode 2, asked once per binary (`--version`)
+ * and kept for the run. Its runs take other flags: OpenCode 2 has no `--pure`,
+ * its `export` is `session export`, and without `--standalone` each run joins
+ * or starts the distro user's shared background service. A failed answer is
+ * not kept, so the next run asks again.
+ */
+const distroMajorCache = new Map<string, Promise<boolean>>();
+
+export function isDistroOpenCodeV2(
+  target: CliTarget,
+  exec: typeof execCliForTarget = execCliForTarget,
+): Promise<boolean> {
+  const key = `${target.distro}\u0000${target.linuxCliPath}`;
+  const cached = distroMajorCache.get(key);
+  if (cached) return cached;
+  const answer = exec(target, ['--version'], { timeout: VERSION_TIMEOUT_MS, maxBuffer: 64 * 1024 })
+    .then(({ stdout }) => isOpenCodeV2(stdout.trim()));
+  distroMajorCache.set(key, answer);
+  answer.catch(() => distroMajorCache.delete(key));
+  return answer;
+}
+
+/** Test-only: forget every distro CLI's version. */
+export function __resetDistroVersionCacheForTests(): void {
+  distroMajorCache.clear();
+}
+
+/** `session list`'s arguments for a CLI of the given major. */
+export function distroSessionListArgs(openCode2: boolean): string[] {
+  return ['session', 'list', '--format', 'json', '-n', String(LIST_COUNT), openCode2 ? '--standalone' : '--pure'];
+}
+
+/** The session export's arguments: top-level `export` on OpenCode 1, `session export` on OpenCode 2. */
+export function distroSessionExportArgs(sessionId: string, openCode2: boolean): string[] {
+  return openCode2 ? ['session', 'export', sessionId, '--standalone'] : ['export', sessionId, '--pure'];
+}
+
 /** The distro's newest sessions. Rejects as the run does. */
 export async function listDistroOpenCodeSessions(target: CliTarget, cwd: string): Promise<DistroOpenCodeSession[]> {
+  const openCode2 = await isDistroOpenCodeV2(target).catch(() => false);
   const { stdout } = await execCliForTarget(
     target,
-    ['session', 'list', '--format', 'json', '-n', String(LIST_COUNT), '--pure'],
+    distroSessionListArgs(openCode2),
     { cwd, timeout: LIST_TIMEOUT_MS, maxBuffer: LIST_MAX_BUFFER },
   );
   return parseOpenCodeSessionList(stdout);
@@ -130,9 +189,10 @@ export async function captureDistroOpenCodeSessionId(options: {
 /** A session's messages as the distro's CLI exports them. Rejects as the run does; none for an id not in an id's shape. */
 export async function exportDistroOpenCodeSession(target: CliTarget, sessionId: string, cwd: string): Promise<OpenCodeRemoteMessageEntry[]> {
   if (!isSessionId(sessionId)) return [];
+  const openCode2 = await isDistroOpenCodeV2(target).catch(() => false);
   const { stdout } = await execCliForTarget(
     target,
-    ['export', sessionId, '--pure'],
+    distroSessionExportArgs(sessionId, openCode2),
     { cwd, timeout: EXPORT_TIMEOUT_MS, maxBuffer: EXPORT_MAX_BUFFER },
   );
   return parseOpenCodeExport(stdout);

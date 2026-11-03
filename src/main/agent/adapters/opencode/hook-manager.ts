@@ -45,6 +45,15 @@ const PLUGIN_FILENAME = 'kangentic-activity.js';
 const LEGACY_PLUGIN_FILENAME = 'kangentic-activity.mjs';
 const PLUGIN_SENTINEL = '// kangentic-activity';
 const PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity.js';
+/**
+ * OpenCode 2's copy: a directory with an `index.js` entry, the shape OpenCode 2
+ * discovers a local plugin in (measured on 2.2.5). OpenCode 1 reads plugins
+ * one level deep, so it never loads this one, and OpenCode 2 only logs a
+ * warning for the OpenCode 1 file beside it.
+ */
+const V2_PLUGIN_DIRNAME = 'kangentic-activity';
+const V2_PLUGIN_ENTRY = 'index.js';
+const V2_PLUGIN_EXCLUDE_PATTERN = '.opencode/plugins/kangentic-activity/';
 
 /** Directory under a project root where OpenCode auto-loads plugins. */
 function pluginsDir(projectRoot: string): string {
@@ -53,6 +62,17 @@ function pluginsDir(projectRoot: string): string {
 
 function pluginPath(projectRoot: string): string {
   return path.join(pluginsDir(projectRoot), PLUGIN_FILENAME);
+}
+
+function v2PluginDir(projectRoot: string): string {
+  return path.join(pluginsDir(projectRoot), V2_PLUGIN_DIRNAME);
+}
+
+/** Where a plugin of the given major is installed, and the git exclude pattern that hides it. */
+function installLayout(projectRoot: string, openCode2: boolean): { directory: string; file: string; excludePattern: string } {
+  return openCode2
+    ? { directory: v2PluginDir(projectRoot), file: path.join(v2PluginDir(projectRoot), V2_PLUGIN_ENTRY), excludePattern: V2_PLUGIN_EXCLUDE_PATTERN }
+    : { directory: pluginsDir(projectRoot), file: pluginPath(projectRoot), excludePattern: PLUGIN_EXCLUDE_PATTERN };
 }
 
 /**
@@ -84,16 +104,22 @@ function removeKangenticPluginFile(file: string): boolean {
  * OpenCode sessions in the same project share one plugin file (held per
  * session in `OpenCodeAdapter.hookHolds`). Also deletes the `.mjs` copy an
  * earlier build installed, when its sentinel says Kangentic wrote it.
+ *
+ * `openCode2` installs OpenCode 2's plugin instead, as
+ * `.opencode/plugins/kangentic-activity/index.js`.
  */
-export function buildHooks(projectRoot: string): void {
-  const sourcePath = resolvePluginScript('opencode', 'kangentic-activity');
+export function buildHooks(projectRoot: string, openCode2 = false): void {
+  const sourcePath = openCode2
+    ? resolvePluginScript('opencode', 'kangentic-activity-v2')
+    : resolvePluginScript('opencode', 'kangentic-activity');
   if (!fs.existsSync(sourcePath)) {
     console.warn(`[opencode-hooks] Plugin source not found at ${sourcePath}; skipping install.`);
     return;
   }
 
-  const destinationDir = pluginsDir(projectRoot);
-  const destinationFile = pluginPath(projectRoot);
+  const layout = installLayout(projectRoot, openCode2);
+  const destinationDir = layout.directory;
+  const destinationFile = layout.file;
 
   try {
     fs.mkdirSync(destinationDir, { recursive: true });
@@ -102,7 +128,7 @@ export function buildHooks(projectRoot: string): void {
     return;
   }
 
-  removeKangenticPluginFile(path.join(destinationDir, LEGACY_PLUGIN_FILENAME));
+  removeKangenticPluginFile(path.join(pluginsDir(projectRoot), LEGACY_PLUGIN_FILENAME));
 
   let needsCopy = true;
   if (fs.existsSync(destinationFile)) {
@@ -133,7 +159,7 @@ export function buildHooks(projectRoot: string): void {
   // tracked `.gitignore` this used to append to (which dirtied the user's
   // checkout); a non-git directory is a silent no-op inside the helper.
   if (fs.existsSync(destinationFile)) {
-    ensureLocalGitExcludes(projectRoot, [PLUGIN_EXCLUDE_PATTERN]);
+    ensureLocalGitExcludes(projectRoot, [layout.excludePattern]);
   }
 }
 
@@ -147,13 +173,18 @@ export function buildHooks(projectRoot: string): void {
  * directories: leaves them in place if other files exist.
  */
 export function removeHooks(directory: string): void {
-  // The current copy and the `.mjs` an earlier build left; either may be there.
+  // The current copy, the `.mjs` an earlier build left, and OpenCode 2's
+  // directory copy; any of them may be there.
   const removedCurrent = removeKangenticPluginFile(pluginPath(directory));
   const removedLegacy = removeKangenticPluginFile(path.join(pluginsDir(directory), LEGACY_PLUGIN_FILENAME));
-  if (!removedCurrent && !removedLegacy) return;
+  const removedV2 = removeKangenticPluginFile(path.join(v2PluginDir(directory), V2_PLUGIN_ENTRY));
+  if (!removedCurrent && !removedLegacy && !removedV2) return;
 
   // Best-effort directory cleanup. Ignore errors: a non-empty directory
   // means the user has other plugins or assets we should not touch.
+  if (removedV2) {
+    try { fs.rmdirSync(v2PluginDir(directory)); } catch { /* not empty or already gone */ }
+  }
   try { fs.rmdirSync(pluginsDir(directory)); } catch { /* not empty or already gone */ }
   try { fs.rmdirSync(path.join(directory, '.opencode')); } catch { /* not empty or already gone */ }
 }
