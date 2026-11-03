@@ -750,6 +750,66 @@ export const DEMO_BACKLOG: DemoBacklogItem[] = [
   { id: 'backlog-ob-helm', projectId: PROJECT_BOUTIQUE, title: 'Publish the Helm chart to the OCI registry', description: 'The chart lives in the repo but is not pushed on release', priority: 1, labels: [], position: 1, external_source: null, external_id: null, external_url: null, createdDaysAgo: 11 },
 ];
 
+/** One ended contoso-web Command Terminal conversation the Earlier list shows (CommandTerminalHistoryEntry, timed relative to now). */
+export interface DemoCommandTerminalConversation {
+  agentSessionId: string;
+  /** The terminal's name when it ended, or null when nothing named it and its first prompt names the row. */
+  label: string | null;
+  firstPrompt: string;
+  agentName: string;
+  endedMinutesAgo: number;
+  /** What the `command_terminal` corpus holds for it: the text the Earlier search reads. AUTHORED, see below. */
+  text: string;
+}
+
+/**
+ * Ended Command Terminal conversations in contoso-web, newest first, for the Earlier list. Scene
+ * data, never the sample install: only a scene whose seeds set `__mockCommandTerminalEarlier` gets
+ * them (the seed's Earlier section below), because a rail with an Earlier list would change every
+ * Command Terminal figure already placed, the tiled one the site crops included.
+ *
+ * The rows are metadata like a task title: names, first prompts and when each ended. "Checkout
+ * flake on Firefox" is the one a user named; the others read as the Automation agent names a
+ * terminal, and the auth question kept no name, so its first prompt names it. The `text` is
+ * AUTHORED: no Command Terminal conversation in the sample install was recorded with a transcript,
+ * and a scene that shows an In conversations hit needs a passage to show. So the
+ * `command-terminal-earlier` scene says so in its description. The query that scene types,
+ * "checkout", reaches a name (the first row), a first prompt behind a name (the cart total), and
+ * two conversations by their text alone (the CI keys and the invoice PDF).
+ */
+export const DEMO_COMMAND_TERMINAL_EARLIER: DemoCommandTerminalConversation[] = [
+  {
+    agentSessionId: '6f1c2a9e-3b7d-4c55-9a0e-1d84b2f7c301', label: 'Checkout flake on Firefox', agentName: 'claude', endedMinutesAgo: 42,
+    firstPrompt: 'the checkout spec fails on Firefox about one run in five, find out why',
+    text: 'The checkout spec clicks Pay before the payment form has mounted its card field. Chromium renders it within the default timeout and Firefox sometimes does not, so the click lands on a disabled button. Waiting for the card field to be enabled instead of a fixed timeout fixed it in 40 local runs.',
+  },
+  {
+    agentSessionId: '0d9b47e2-85a1-4f3c-b6d2-7e19c0a4f512', label: 'Cart total rounding', agentName: 'claude', endedMinutesAgo: 1460,
+    firstPrompt: 'why is the cart total off by a cent at checkout?',
+    text: 'The cart adds each line price as a float and rounds once at the end, so three items at 19.99 with tax come out a cent high. Storing amounts in cents in src/lib/money.ts and rounding per line matches what the payment provider charges.',
+  },
+  {
+    agentSessionId: '9a2e5c71-4d08-4b6f-8c3a-52f1e9d7b623', label: null, agentName: 'claude', endedMinutesAgo: 2890,
+    firstPrompt: 'what does server/middleware/auth.ts check before a request reaches the routes?',
+    text: 'It reads the bearer token from the Authorization header, verifies its signature and expiry, and attaches the user to the request. Routes registered before it in server/routes.ts, the health check and the login route, skip it.',
+  },
+  {
+    agentSessionId: 'c4f80b13-6e2a-4a97-9d51-3b6ae0c8d734', label: 'Payment keys in CI', agentName: 'claude', endedMinutesAgo: 4410,
+    firstPrompt: 'set up the payment environment variables for the CI workflow',
+    text: 'The CI workflow now reads PAYMENT_TEST_KEY from the repository secrets and passes it to the e2e job only, so the checkout and refund specs run against the test account. Pull requests from forks do not get the secret, so those two specs skip there instead of failing.',
+  },
+  {
+    agentSessionId: '27b6d8f4-1c39-4e0a-a7f5-8e2c4b9d1045', label: 'Vite 8 build warnings', agentName: 'claude', endedMinutesAgo: 7350,
+    firstPrompt: 'clean up the build warnings after the Vite upgrade',
+    text: 'Two warnings were deprecated options in vite.config.ts and one was a dynamic import Rollup could not analyze. All three are gone and the build output is the same size.',
+  },
+  {
+    agentSessionId: 'e85a3f2d-9b14-4c7e-8f06-a1d72c5e3b56', label: 'Invoice PDF layout', agentName: 'claude', endedMinutesAgo: 12980,
+    firstPrompt: 'sketch how the billing page could export an invoice as a PDF',
+    text: 'The invoice can reuse the order summary the checkout confirmation already renders: render it server side to HTML, then print it to PDF in a route under server/routes.ts. The billing page only needs a Download link that calls that route with the order id.',
+  },
+];
+
 /**
  * Agents the sample install reports as installed: those the boards use, at the versions the
  * recordings were made on. `capabilities` is what each adapter's discovery reports for this
@@ -1168,6 +1228,8 @@ export function buildDemoPreConfig(options: {
     knowledgeGraphConfig: DEMO_KNOWLEDGE_GRAPH_CONFIG,
     knowledgeGraphStatus: DEMO_KNOWLEDGE_GRAPH_STATUS,
     backlog: DEMO_BACKLOG,
+    // Shown only by a scene that opts in (__mockCommandTerminalEarlier), read by seedEarlier below.
+    commandTerminalEarlier: DEMO_COMMAND_TERMINAL_EARLIER,
     labelColors: DEMO_LABEL_COLORS,
     agentOverrides: DEMO_AGENT_OVERRIDES,
     dictationInfo: DEMO_DICTATION_INFO,
@@ -1693,6 +1755,68 @@ export function buildDemoPreConfig(options: {
           });
         });
         return Promise.resolve(hits);
+      };
+
+      // The Command Terminal's Earlier list, for a scene that opts in with the
+      // __mockCommandTerminalEarlier seed (the sample install itself has no ended terminal
+      // conversations, so every other frame's rail shows none). A scene's seeds land after this
+      // script runs, so the flag is read on the first ask. The rows are timed from the page's own
+      // clock like every other row here, never from the build, since the rail prints how long ago
+      // each ended. The rows go into the mock's own store, so its rename and remove act on them as
+      // main would. Search reads the conversations' text the way the corpus answers: every word
+      // present, one hit per conversation with the passage around the first word, which the rail
+      // shows under its name. Like main, it also answers for a row the name already matched, and
+      // the rail drops that hit (useEarlierSearch), so only the text-only rows show under In
+      // conversations.
+      var earlierSeeded = false;
+      function seedEarlier() {
+        if (earlierSeeded || !window.__mockCommandTerminalEarlier) return;
+        earlierSeeded = true;
+        var entries = data.commandTerminalEarlier.map(function (conversation) {
+          return {
+            agentSessionId: conversation.agentSessionId, label: conversation.label, firstPrompt: conversation.firstPrompt,
+            agentName: conversation.agentName, endedAt: minutesAgo(conversation.endedMinutesAgo),
+          };
+        });
+        var history = window.__mockCommandTerminalHistory || {};
+        history[data.currentProjectId] = entries;
+        window.__mockCommandTerminalHistory = history;
+      }
+      // The passage the corpus answers with. Main's FTS5 snippet() keeps a window of 12 tokens
+      // (retrieval-store.ts) with the match a few words in. A 40-character lead would push the
+      // match off the end of the rail's narrow row. Ellipses mark a cut side, as main's do.
+      var EARLIER_SNIPPET_WORDS = 12;
+      var EARLIER_SNIPPET_LEAD_WORDS = 3;
+      function earlierSnippet(text, word) {
+        var words = text.split(/\\s+/);
+        var matchWordIndex = 0;
+        while (matchWordIndex < words.length && words[matchWordIndex].toLowerCase().indexOf(word) === -1) matchWordIndex += 1;
+        var start = Math.max(0, Math.min(matchWordIndex - EARLIER_SNIPPET_LEAD_WORDS, words.length - EARLIER_SNIPPET_WORDS));
+        var end = Math.min(words.length, start + EARLIER_SNIPPET_WORDS);
+        var snippet = (start > 0 ? '…' : '') + words.slice(start, end).join(' ') + (end < words.length ? '…' : '');
+        var matchStart = snippet.toLowerCase().indexOf(word);
+        return { snippet: snippet, matchStart: matchStart, matchEnd: matchStart + word.length };
+      }
+      var listEarlier = window.electronAPI.sessions.listCommandTerminalHistory;
+      window.electronAPI.sessions.listCommandTerminalHistory = function (projectId) {
+        seedEarlier();
+        return listEarlier(projectId);
+      };
+      window.electronAPI.sessions.searchCommandTerminalHistory = function (projectId, query) {
+        seedEarlier();
+        var words = String(query || '').trim().toLowerCase().split(/\\s+/).filter(function (word) { return word.length > 0; });
+        var listed = ((window.__mockCommandTerminalHistory || {})[projectId] || []).map(function (entry) { return entry.agentSessionId; });
+        var hits = [];
+        if (earlierSeeded && words.length > 0) {
+          data.commandTerminalEarlier.forEach(function (conversation) {
+            if (listed.indexOf(conversation.agentSessionId) === -1) return;
+            var lower = conversation.text.toLowerCase();
+            if (!words.every(function (word) { return lower.indexOf(word) !== -1; })) return;
+            var match = earlierSnippet(conversation.text, words[0]);
+            hits.push({ agentSessionId: conversation.agentSessionId, snippet: match.snippet, matchStart: match.matchStart, matchEnd: match.matchEnd });
+          });
+        }
+        return Promise.resolve({ indexingOff: false, hits: hits });
       };
 
       // Monitor rows are DERIVED from the sessions so the two views cannot disagree. The output

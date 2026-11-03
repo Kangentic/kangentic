@@ -444,6 +444,15 @@ rows stay 37 and only the width changes); `command-terminal-tiled` is the toggle
 terminal, so its second window is the boot the frame starts for a visitor. Both terminals of each
 are at native type at the rig's launch.
 
+The sample install has no ended Command Terminal conversations, so a rail shows no Earlier list.
+`command-terminal-earlier` opts into some with its `__mockCommandTerminalEarlier` seed: the seed
+serves `DEMO_COMMAND_TERMINAL_EARLIER` through the mock's own history store, timed from the
+page's clock, and answers the text search with a 12-word window around the match, the shape of
+main's FTS5 `snippet()`. The names, first prompts and times are row metadata. The conversation
+text is authored, because no Command Terminal conversation was recorded with a transcript, and the
+scene's description says so. Every other Command Terminal scene keeps the empty rail, the tiled
+poster the site crops included.
+
 The same rule gives the Browser and Changes scenes their narrow terminal. The panel is the
 subject there, and the width a native terminal needs truncates the address bar and the note
 field, or clips a split diff mid-line. Because the middleware session has a tiled recording, a
@@ -469,7 +478,8 @@ A scene says how, as data, in one of three fields, and `tests/unit/scene-registr
 scene that says none:
 
 - **`choreography`**, a list of steps the frame plays by itself, as a visitor would. The pointer
-  steps are `hover`, `click`, `contextmenu`, `drag` (to a target, or `by` a distance as fractions
+  steps are `hover`, `click`, `dblclick` (two clicks in place, the second with `detail: 2`, then
+  the `dblclick` event a browser sends), `contextmenu`, `drag` (to a target, or `by` a distance as fractions
   of the frame, and with `hold` to stay pressed), and `drop`, which lets go of a pose's held drag
   where it is, each pointing at a selector's centre or a point as fractions of the frame. The
   player stamps `data-demo-rest` on whatever is checked, selected or pressed when it reads the

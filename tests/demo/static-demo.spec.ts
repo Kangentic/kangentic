@@ -3230,7 +3230,9 @@ for (const scene of CUT_SCENES) {
         };
       };
       const ours = (node: Node): boolean => node instanceof Element && (node.closest('[data-demo-veil], [data-demo-cursor], .xterm') !== null);
-      const SHOWN = '[data-task-id], [role="dialog"], [data-dismissable-layer]';
+      // A menu is shown as much as a dialog is: a Command Terminal row's menu is a body portal with
+      // no dismissable-layer marker, so it is named here, or a reset that closes one reads as none.
+      const SHOWN = '[data-task-id], [role="dialog"], [role="menu"], [data-dismissable-layer]';
       // A dragged card, which plays its drop animation after the release; dnd-kit unmounts the
       // wrapper around it, so the overlay is looked for inside what came and went too.
       const OVERLAY = '.drag-overlay';
