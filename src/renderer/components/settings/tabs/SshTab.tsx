@@ -178,6 +178,8 @@ export function SshTab() {
         label={hostsHeading.label}
         description={hostsHeading.description}
         searchId={hostsHeading.searchId}
+        // Beta until it has run on a real host for Claude Code and Cursor (the decided bound on "production ready").
+        tag={t`Beta`}
         testId="ssh-hosts-card"
       >
         <CardTile className="flex flex-col gap-2.5" testId="ssh-hosts-tile">

@@ -496,6 +496,10 @@ msgstr "Zachowanie"
 msgid "Best accuracy"
 msgstr "Najwyższa dokładność"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Beta"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
 msgctxt "cursor style"

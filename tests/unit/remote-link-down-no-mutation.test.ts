@@ -4,8 +4,10 @@
  * where that is tested for the cold-open recovery pass (`resumeSuspendedSessions`):
  *
  * - A resume that cannot be prepared because the host cannot be asked keeps the conversation resumable.
- * - A spawn onto the host that fails keeps the record resumable, where a spawn on this computer that
- *   fails still retires it (the unchanged behavior).
+ *   This is the case a link that is down reaches: preparation needs the host's details first.
+ * - A spawn that THROWS for a remote task keeps the record resumable, where one on this computer that
+ *   throws still retires it. A PTY spawn that reaches the host and fails does not throw: it resolves with
+ *   an exited session (`handleSpawnFailure`), which is the same for a local task and not covered here.
  * - Neither touches the task row, spawns an agent beside the paused one, or demotes a worktree.
  *
  * What a user loses if it breaks: they close the laptop on a train, reopen Kangentic with the host out of
@@ -238,7 +240,7 @@ describe('startup recovery of a task on a host that cannot be reached', () => {
     expect(taskRepoUpdateMock).not.toHaveBeenCalled();
   });
 
-  it('keeps the conversation resumable when the spawn onto the host fails', async () => {
+  it('keeps the conversation resumable when the spawn onto the host throws', async () => {
     prepareAgentSpawnMock.mockResolvedValue(preparedSpawn(true));
     const sessionManager = makeSessionManager();
     sessionManager.spawn.mockRejectedValue(new Error('Kangentic has no connection to host-1 right now'));
@@ -252,7 +254,7 @@ describe('startup recovery of a task on a host that cannot be reached', () => {
     expect(taskRepoUpdateMock).not.toHaveBeenCalled();
   });
 
-  it('still retires the record when a spawn on this computer fails: the behavior a local project always had', async () => {
+  it('still retires the record when a spawn on this computer throws: the behavior a local project always had', async () => {
     prepareAgentSpawnMock.mockResolvedValue(preparedSpawn(false));
     const sessionManager = makeSessionManager();
     sessionManager.spawn.mockRejectedValue(new Error('spawn ENOENT'));

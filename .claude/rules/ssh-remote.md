@@ -71,7 +71,9 @@ process, a path tested against the wrong disk, an environment that overwrites th
   free of electron and the native modules it cannot load.
 - **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
   with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
-  to prepare or the spawn onto the host fails, and that a failed local spawn still retires its record.
+  to prepare (the case a down link reaches) or the spawn throws, and that a local spawn that throws
+  still retires its record. A PTY spawn that reaches the host and fails resolves as an exited session
+  for local and remote alike, and is not covered.
   **Gap:** the other board operations (prune, stale-resource cleanup, auto-spawn) have no remote
   test yet. A remote task has no worktree path for them to find absent, which is what keeps them
   from demoting it, and `pathPresence` over `existsSync` is otherwise held by review.

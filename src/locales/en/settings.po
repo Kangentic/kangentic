@@ -405,6 +405,10 @@ msgstr "Behavior"
 msgid "Best accuracy"
 msgstr "Best accuracy"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Beta"
+msgstr "Beta"
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"
 msgid "Block"

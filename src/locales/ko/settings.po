@@ -496,6 +496,10 @@ msgstr "동작"
 msgid "Best accuracy"
 msgstr "최고 정확도"
 
+#: src/renderer/components/settings/tabs/SshTab.tsx
+msgid "Beta"
+msgstr ""
+
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy
 msgctxt "cursor style"

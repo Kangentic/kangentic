@@ -669,9 +669,10 @@ export async function resumeSuspendedSessions(
       }
       try {
         if (input.remote && !isAbortError(result.reason)) {
-          // A spawn onto a host that failed is most often the host or its link, not the conversation:
-          // that lives on the host, and a retry after the link is back resumes it. Retiring would
-          // turn a paused card into an ended one for a fault that mends itself (#913).
+          // A spawn onto a host that threw is the host or its link, not the conversation: that lives on
+          // the host, and a retry after the link is back resumes it. Retiring would turn a paused card
+          // into an ended one for a fault that mends itself. (A PTY spawn that reaches the host and
+          // fails resolves as an exited session instead and does not come through here.)
           await withTaskLock(input.task.id, async () => keepResumableIfUnchanged(input.record, input.task));
         } else {
           retireRecord(sessionRepo, input.record.id);
