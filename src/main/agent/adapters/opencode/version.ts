@@ -24,5 +24,4 @@ export function isOpenCodeV2(version: string | null | undefined): boolean {
 
 /** The message a remote-mode spawn or connection test gives on OpenCode 2. */
 export const OPENCODE_REMOTE_NEEDS_V1 =
-  'OpenCode remote mode needs OpenCode 1. OpenCode 2 replaced the server API that remote mode uses; '
-  + 'switch this project to local mode, or point Kangentic at an OpenCode 1 install.';
+  'OpenCode remote mode needs OpenCode 1. OpenCode 2 replaced the server API that remote mode uses.';
