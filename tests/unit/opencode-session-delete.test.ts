@@ -12,7 +12,7 @@
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
-import { OpenCodeAdapter } from '../../src/main/agent/adapters/opencode';
+import { OpenCodeAdapter, OpenCodeDetector } from '../../src/main/agent/adapters/opencode';
 import { runCliForChat, stopAllCliRuns, stopCliRunsForChat } from '../../src/main/agent/shared/cli-print';
 import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 
@@ -73,9 +73,13 @@ function answerOutput(sessionId: string | null): string {
 
 let spawned: SpawnedRun[];
 let adapter: OpenCodeAdapter;
+/** The version the answer's caller detected just before (OpenCode 1 unless a test says otherwise). */
+let detectedVersion: string;
 
 beforeEach(() => {
   spawned = [];
+  detectedVersion = '1.18.31';
+  vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockImplementation(() => detectedVersion);
   adapter = new OpenCodeAdapter();
   setOffMainCliSpawner((command, args, options) => {
     const run = fakeRun();
@@ -87,6 +91,7 @@ beforeEach(() => {
 afterEach(() => {
   stopAllCliRuns();
   setOffMainCliSpawner(null);
+  vi.restoreAllMocks();
 });
 
 /**
@@ -200,5 +205,39 @@ describe('OpenCode answer: deleting the session it leaves behind', () => {
 
     expect(deletion.stdoutResume).toHaveBeenCalledTimes(1);
     expect(deletion.stderrResume).toHaveBeenCalledTimes(1);
+  });
+});
+
+// OpenCode 2 rejects `--pure`, and without `--standalone` its `run` and
+// `session delete` join or start the user's shared background service, which
+// never reads this run's inline config and would outlive it.
+describe('OpenCode answer on OpenCode 2', () => {
+  beforeEach(() => {
+    detectedVersion = 'v2.2.5';
+  });
+
+  it('runs on a private server with no --pure, and deletes the session on one too', async () => {
+    await answerInChat(answerOutput(SESSION_ID));
+
+    expect(spawned[0].args).toEqual(['run', '--agent', 'plan', '--format', 'json', '--standalone']);
+    expect(spawned[1].args).toEqual(['session', 'delete', SESSION_ID, '--standalone']);
+  });
+
+  it('denies shell and edits in the run\'s config, which V2\'s plan agent would otherwise allow', async () => {
+    await answerInChat(answerOutput(SESSION_ID));
+
+    const config = JSON.parse(spawned[0].options.env?.OPENCODE_CONFIG_CONTENT ?? '{}') as { permissions?: unknown };
+    expect(config.permissions).toEqual([
+      { action: 'shell', resource: '*', effect: 'deny' },
+      { action: 'edit', resource: '*', effect: 'deny' },
+    ]);
+  });
+
+  it('keeps OpenCode 1\'s flags and adds no config for an OpenCode 1 answer', async () => {
+    detectedVersion = '1.18.31';
+    await answerInChat(answerOutput(SESSION_ID));
+
+    expect(spawned[0].args).toEqual(['run', '--agent', 'plan', '--format', 'json', '--pure']);
+    expect(spawned[0].options.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined();
   });
 });

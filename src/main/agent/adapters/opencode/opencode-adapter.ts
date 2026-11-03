@@ -21,10 +21,11 @@ import { outsideChatRuns, spawnCli } from '../../shared/cli-print';
 import { runCliPrintAnswer, forwardStreamLines, ANSWER_STREAM_OUTPUT_BUDGET } from '../../shared/cli-answer';
 import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
-import { openCodeKangenticMcpEntry } from './command-builder';
+import { installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
+import { isOpenCodeV2 } from './version';
 import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession } from './distro-sessions';
 import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
-import { kangenticMcpServer, startRunMcpRelay } from '../../shared/kangentic-mcp-server';
+import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
 import type {
   AgentAdapter,
@@ -82,6 +83,43 @@ const LABELED_SESSION_ID_REGEX = new RegExp(
   'i',
 );
 const ANSI_ESCAPE_REGEX = /\x1b\[[0-9;?]*[a-zA-Z]/g;
+
+/**
+ * The answer run's arguments. OpenCode 1: `--pure` keeps external plugins out
+ * of an answer and still loads MCP servers. OpenCode 2 has no `--pure`, and its
+ * `run` joins or starts the user's shared background service unless told
+ * `--standalone`; that service would never read this run's inline config.
+ */
+export function openCodeAnswerArgs(model: string | null | undefined, openCode2: boolean): string[] {
+  return [
+    'run', '--agent', 'plan', '--format', 'json',
+    openCode2 ? '--standalone' : '--pure',
+    ...(model ? ['--model', model] : []),
+  ];
+}
+
+/** `session delete`, which on OpenCode 2 also needs its own private server. */
+export function openCodeSessionDeleteArgs(sessionId: string, openCode2: boolean): string[] {
+  return ['session', 'delete', sessionId, ...(openCode2 ? ['--standalone'] : [])];
+}
+
+/**
+ * The answer run's inline config, or null for none. OpenCode 1's built-in
+ * `plan` agent refuses edits and shell commands. OpenCode 2's (2.2.5) denies
+ * edits but allows shell, so a V2 run adds a deny for both: rules from config
+ * land after the agent's own (measured with `debug agents`), so they hold.
+ */
+export function openCodeAnswerConfig(server: KangenticMcpServer | null, openCode2: boolean): Record<string, unknown> | null {
+  const config: Record<string, unknown> = {};
+  if (openCode2) {
+    config.permissions = [
+      { action: 'shell', resource: '*', effect: 'deny' },
+      { action: 'edit', resource: '*', effect: 'deny' },
+    ];
+  }
+  if (server) config.mcp = { kangentic: openCodeKangenticMcpEntry(server) };
+  return Object.keys(config).length > 0 ? config : null;
+}
 
 /**
  * OpenCode CLI adapter (https://github.com/sst/opencode). OpenCode is a
@@ -213,6 +251,17 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.detector.invalidateCache();
   }
 
+  /**
+   * The version of the CLI at `cliPath` when the cache has none: a helper
+   * run's caller can keep a path across a detection reset that emptied the
+   * cache (`automation-agent.ts`'s own path cache), so that path is detected
+   * again. Callers read `getCachedVersion` first.
+   */
+  private async detectedVersion(cliPath: string): Promise<string | null> {
+    const info = await this.detector.detect(cliPath).catch(() => null);
+    return info?.version ?? null;
+  }
+
   async ensureTrust(_workingDirectory: string): Promise<void> {
     // OpenCode has no trust dialog - no pre-approval needed. See
     // `probeAuth` for the login-state check, which reads
@@ -258,10 +307,14 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   buildCommand(options: SpawnCommandOptions): string {
     const { agentPath, model, effort, ...rest } = options;
+    // Every spawn path runs `detect()` with this path just before, so the
+    // version is the one of the CLI this command starts.
+    const cliVersion = this.detector.getCachedVersion(agentPath);
     const command = this.commandBuilder.buildOpenCodeCommand({
       opencodePath: agentPath,
       model,
       effort,
+      cliVersion,
       ...rest,
     });
 
@@ -283,11 +336,11 @@ export class OpenCodeAdapter implements AgentAdapter {
     this.remoteTargetsByCwd.delete(options.cwd);
 
     // buildOpenCodeCommand copies the activity plugin into
-    // `<projectRoot>/.opencode/plugins/` whenever eventsOutputPath is set.
+    // `<projectRoot>/.opencode/plugins/` when `installsActivityPlugin` says so.
     // Hold the project root until this session releases, so concurrent
     // sessions serialize their cleanup in `removeHooks`. Local mode only -
     // remote mode never installs the plugin (see command-builder.ts).
-    if (options.eventsOutputPath) {
+    if (installsActivityPlugin({ eventsOutputPath: options.eventsOutputPath, cliVersion })) {
       this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
     }
     return command;
@@ -295,7 +348,7 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   buildEnv(options: SpawnCommandOptions): Record<string, string> | null {
     const { agentPath, ...rest } = options;
-    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, ...rest });
+    return this.commandBuilder.buildOpenCodeEnv({ opencodePath: agentPath, cliVersion: this.detector.getCachedVersion(agentPath), ...rest });
   }
 
   interpolateTemplate(template: string, variables: Record<string, string>): string {
@@ -519,7 +572,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
-    return discoverOpenCodeCapabilities(cliPath);
+    return discoverOpenCodeCapabilities(cliPath, this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath));
   }
 
   getInjectionSequence(_spec: SettingsChangeSpec): string[] {
@@ -547,9 +600,11 @@ export class OpenCodeAdapter implements AgentAdapter {
   /**
    * Answer a question from retrieved conversation passages (Knowledge Graph Ask).
    *
-   * OpenCode's built-in `plan` agent is read-only: no edits, no bash (the
-   * probe's file write and shell command were both refused). The prompt is
-   * piped, and a 61,584-character prompt answered from its middle row.
+   * OpenCode 1's built-in `plan` agent is read-only: no edits, no bash (the
+   * probe's file write and shell command were both refused). OpenCode 2's
+   * allows shell, so its run denies both in config (`openCodeAnswerConfig`).
+   * The prompt is piped (both majors read it from stdin), and a
+   * 61,584-character prompt answered from its middle row.
    *
    * No `-q`: with it the shipped call returned nothing at all. The spinner it
    * was meant to hide goes to stderr, so stdout is the answer either way.
@@ -561,8 +616,8 @@ export class OpenCodeAdapter implements AgentAdapter {
    * SEARCH is our server added through `OPENCODE_CONFIG_CONTENT`, which
    * OpenCode merges over the user's config for this process only, so nothing
    * is written anywhere. The plan agent called it without asking (measured on
-   * 1.18.31: 12 hits). `--pure` keeps external plugins out of an answer and
-   * still loads MCP servers.
+   * 1.18.31: 12 hits). The flags per major are in `openCodeAnswerArgs`; V2's
+   * `run --format json` events have V1's shape (measured on 2.2.5).
    *
    * The session each run leaves in OpenCode's database is deleted afterwards
    * (`opencode session delete`): the answer home is not a git repository, so
@@ -592,6 +647,10 @@ export class OpenCodeAdapter implements AgentAdapter {
     const server = retrieval
       ? kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: options?.runDirectory ?? cwd })
       : null;
+    // The cached version answers without an await, so the run starts in this
+    // tick as before; only a cache miss waits on a detection.
+    const openCode2 = isOpenCodeV2(this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath));
+    const inlineConfig = openCodeAnswerConfig(server, openCode2);
     const stopRelay = startRunMcpRelay(options?.runDirectory ?? cwd, server);
     let sessionId: string | null = null;
     try {
@@ -600,7 +659,7 @@ export class OpenCodeAdapter implements AgentAdapter {
         cliTarget,
         // The model flag is OMITTED when none is chosen: passing an
         // empty value is an error.
-        args: ['run', '--agent', 'plan', '--format', 'json', '--pure', ...(model ? ['--model', model] : [])],
+        args: openCodeAnswerArgs(model, openCode2),
         prompt,
         cwd,
         extractRaw: extractOpenCodeAnswer,
@@ -609,9 +668,7 @@ export class OpenCodeAdapter implements AgentAdapter {
           sessionId ??= openCodeSessionId(line);
           if (onEvent) for (const event of openCodeAnswerEvents(line)) onEvent(event);
         }),
-        ...(server
-          ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify({ mcp: { kangentic: openCodeKangenticMcpEntry(server) } }) } }
-          : {}),
+        ...(inlineConfig ? { env: { OPENCODE_CONFIG_CONTENT: JSON.stringify(inlineConfig) } } : {}),
       });
     } finally {
       stopRelay();
@@ -621,7 +678,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       // Its output is drained so a full pipe cannot stall it. It is not the
       // chat's run, so the chat ending right after the answer cannot stop it.
       if (sessionId && /^[\w-]+$/.test(sessionId)) {
-        const deleteArgs = ['session', 'delete', sessionId];
+        const deleteArgs = openCodeSessionDeleteArgs(sessionId, openCode2);
         const deletion = outsideChatRuns(() => spawnCli(cliPath, deleteArgs, cwd, undefined, cliTarget));
         deletion.on('error', () => undefined);
         // A delete that exits at once (the session already gone) can close the

@@ -47,6 +47,16 @@ describe('discoverOpenCodeCapabilities', () => {
     expect(capabilities.supportsModelOverride).toBe(false);
   });
 
+  // OpenCode 2's root help has no `--model`: its TUI takes the model from
+  // config, where a V2 spawn puts it. Reading the help alone would hide the
+  // model picker for every V2 user.
+  it('supports the model override on OpenCode 2, whose help has no --model', async () => {
+    setHelpOutput('Usage: opencode [directory]\n  --standalone  Run with a private server\n  --prompt      Prompt to use\n');
+    const capabilities = await discoverOpenCodeCapabilities('/usr/bin/opencode', 'v2.2.5');
+    expect(capabilities.supportsModelOverride).toBe(true);
+    expect(capabilities.effortLevels).toEqual([]);
+  });
+
   it('returns empty effortLevels (OpenCode uses agents, not effort)', async () => {
     setHelpOutput('  -m, --model Model\n');
     const capabilities = await discoverOpenCodeCapabilities('/usr/bin/opencode');
