@@ -779,6 +779,7 @@ export interface BackgroundShellServiceOutcome {
  *   - `timer:stuck-pending-tools`  - 5-min hatch for orphan tool_starts
  *   - `timer:stuck-subagent`       - 5-min hatch for a stuck subagentDepth
  *   - `event:bg-shell-service:mcp` - the agent marked background shells as services
+ *   - `event:bg-shell-ended:expired` - a holder's own time limit (a Monitor's `timeoutMs`) passed
  *   - `interrupted`                - Interrupted event reset everything
  */
 export type TransitionTrigger =

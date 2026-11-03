@@ -21,7 +21,7 @@ sources:
   - resource: src/renderer/components/board/activity-reason-text.ts
   - resource: src/renderer/components/board/agent-wait.ts
   - resource: src/shared/types.ts
-    title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind, SessionEvent.launchesSubagent
+    title: ActivityState, PermissionWaitKind, ActivityReason, ActivityDetectionStrategy, SessionEvent.toolId, SessionEvent.subagentId, SessionEvent.planMode, SessionEvent.waitKind, SessionEvent.launchesSubagent, SessionEvent.expiresAfterMs
 ---
 # Activity engine
 
@@ -113,7 +113,7 @@ Surrounding infrastructure:
 | `src/main/agent/adapters/claude/permission-rejection-transcript.ts` | Manual-deny detector (task #640): scans the durable transcript for a rejected `tool_result` no hook can report |
 | `src/main/activity-engine/plan-approval-gate.ts` | Runs first in `SessionTelemetry.ingestEvents`: drops or holds the permission idle of the plan prompt, and of an allowed tool the adapter's hook answers, for a plan Kangentic approves, and emits `plan_auto_approved` (see [Plan approval gate](event-types.md#plan-approval-gate)) |
 | `src/main/activity-engine/plan-mode-trail.ts` | Each session's reported plan-mode changes (`SessionEvent.planMode`), stamped at ingest, so the turn-end runner can ask whether a session had left plan mode by a past move |
-| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode`, `SessionEvent.launchesSubagent` |
+| `src/shared/types.ts` | `ActivityState`, `ActivityReason`, `EventType`, `SessionEvent.toolId`, `SessionEvent.subagentId`, `SessionEvent.planMode`, `SessionEvent.launchesSubagent`, `SessionEvent.expiresAfterMs` |
 
 ## ActivityState
 
