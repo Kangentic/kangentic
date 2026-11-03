@@ -211,7 +211,7 @@ describe('spawning an agent session on a host', () => {
     await waitFor(() => !rig.relay.has('s1'));
   });
 
-  it('fails the spawn with a sentence when the host has no connection, and starts nothing', async () => {
+  it('ends the spawn as an exited session, not a throw, when the host has no connection, and starts nothing', async () => {
     const rig = await makeRig();
     rig.manager.setRemoteSessionRelay(new RemoteSessionRelay({
       files: {
@@ -222,8 +222,12 @@ describe('spawning an agent session on a host', () => {
       },
     }));
 
-    await expect(spawnRemote(rig)).rejects.toThrow('Connection refused');
+    // A throw here left a promoted queue row `queued` for good, so a failed registration ends the session
+    // as an exited placeholder the board can show, with the host's words in its scrollback.
+    const session = await spawnRemote(rig);
 
+    expect(session.status).toBe('exited');
+    expect(session.exitCode).toBe(-1);
     expect(rig.helperRig.spawnPty).not.toHaveBeenCalled();
   });
 });

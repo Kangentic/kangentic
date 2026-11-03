@@ -83,8 +83,9 @@ msgid "Connected"
 msgstr "已连接"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "正在连接…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx

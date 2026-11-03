@@ -5436,6 +5436,9 @@ test.describe('Command Terminal', () => {
       }); } },
     ]) {
       test(`when main ${refusal.outcome} the window, the panel comes back with its terminal, and a toast says so`, async () => {
+        // Run first in its shard, so it pays Vite's cold compile of the whole renderer: 12.1 s and 12.6 s on a
+        // green main run against the default 15 s, and any new renderer module tipped it over.
+        test.setTimeout(30_000);
         const { browser, page } = await launchWithState(detachedPreConfig({ liveTerminal: false }));
         try {
           await openPanelWithOneTerminal(page);

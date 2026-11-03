@@ -98,8 +98,9 @@ msgid "Connected"
 msgstr "Připojeno"
 
 #: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
 msgid "Connecting…"
-msgstr ""
+msgstr "Připojování…"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx

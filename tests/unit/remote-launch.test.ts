@@ -7,6 +7,7 @@
  * to the host as its working directory.
  */
 import { describe, expect, it, vi } from 'vitest';
+import os from 'node:os';
 import path from 'node:path';
 import {
   RemoteAgentUnsupportedError,
@@ -17,7 +18,10 @@ import {
   type RemoteLaunchResolverDeps,
 } from '../../src/main/remote/remote-launch';
 
-const shellFolder = path.join('C:\\Users\\dev', 'remote-projects', 'p1');
+// A folder `path.resolve` leaves alone on every OS: the resolver resolves the working directory, and a
+// Windows drive path would be taken for a relative one on Linux.
+const devHome = path.join(os.tmpdir(), 'dev');
+const shellFolder = path.join(devHome, 'remote-projects', 'p1');
 const claude = { name: 'claude', displayName: 'Claude Code', remoteCliName: 'claude' };
 const codex = { name: 'codex', displayName: 'Codex', remoteCliName: undefined };
 
@@ -27,7 +31,7 @@ function makeDeps(overrides: Partial<RemoteLaunchResolverDeps> = {}): RemoteLaun
     hostInfo: vi.fn(async () => ({ home: '/home/dev', shellPath: '/usr/bin/fish', shellName: 'fish' })),
     readFile: vi.fn(async () => ({ exists: true, content: '{}' })),
     jsonPatch: vi.fn(async () => ({ applied: true as const, changed: true })),
-    homeMirror: (hostId) => path.join('C:\\Users\\dev', 'remote-homes', hostId),
+    homeMirror: (hostId) => path.join(devHome, 'remote-homes', hostId),
     ...overrides,
   };
 }
@@ -37,7 +41,7 @@ describe('a project that is not remote', () => {
     const deps = makeDeps();
     const resolver = createRemoteLaunchResolver(deps);
 
-    expect(await resolver.resolve({ projectPath: path.join('C:\\Users\\dev', 'local-project'), cwd: 'x', adapter: claude })).toBeNull();
+    expect(await resolver.resolve({ projectPath: path.join(devHome, 'local-project'), cwd: 'x', adapter: claude })).toBeNull();
     expect(await resolver.resolve({ projectPath: null, cwd: 'x', adapter: claude })).toBeNull();
     expect(await resolver.resolve({ projectPath: undefined, cwd: 'x', adapter: claude })).toBeNull();
     expect(deps.hostInfo).not.toHaveBeenCalled();
@@ -45,7 +49,7 @@ describe('a project that is not remote', () => {
 
   it('answers null for an agent with no remote support too: the check is for remote projects only', async () => {
     const resolver = createRemoteLaunchResolver(makeDeps());
-    expect(await resolver.resolve({ projectPath: path.join('C:\\Users\\dev', 'local-project'), cwd: 'x', adapter: codex })).toBeNull();
+    expect(await resolver.resolve({ projectPath: path.join(devHome, 'local-project'), cwd: 'x', adapter: codex })).toBeNull();
   });
 });
 
@@ -62,7 +66,7 @@ describe('a remote project', () => {
       shellName: 'fish',
       linuxCliPath: 'claude',
       roots: [{ local: shellFolder, host: '/home/dev/api' }],
-      localHome: path.join('C:\\Users\\dev', 'remote-homes', 'host-a'),
+      localHome: path.join(devHome, 'remote-homes', 'host-a'),
     });
     expect(launch?.remote).toEqual({ hostId: 'host-a', cwd: '/home/dev/api', shellName: 'fish' });
   });
@@ -78,7 +82,7 @@ describe('a remote project', () => {
   it('refuses a folder outside the project, so a path from this computer never becomes the host\'s working directory', async () => {
     const resolver = createRemoteLaunchResolver(makeDeps());
 
-    await expect(resolver.resolve({ projectPath: shellFolder, cwd: path.join('C:\\Users\\dev', 'elsewhere'), adapter: claude }))
+    await expect(resolver.resolve({ projectPath: shellFolder, cwd: path.join(devHome, 'elsewhere'), adapter: claude }))
       .rejects.toBeInstanceOf(RemoteFolderOutsideProjectError);
     await expect(resolver.resolve({ projectPath: shellFolder, cwd: `${shellFolder}-copy`, adapter: claude }))
       .rejects.toBeInstanceOf(RemoteFolderOutsideProjectError);

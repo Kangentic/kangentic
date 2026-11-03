@@ -2135,13 +2135,16 @@ describe('performSpawn - a session on a remote host (#913)', () => {
     vi.clearAllMocks();
   });
 
-  const shellFolder = 'C:\\Users\\dev\\remote-projects\\p1';
+  // Built with `path`, not a Windows literal: the flow takes `path.dirname` of these, and a drive path
+  // is one relative file name on Linux.
+  const shellFolder = path.join(os.tmpdir(), 'dev', 'remote-projects', 'p1');
+  const sessionFolder = path.join(shellFolder, '.kangentic', 'sessions', 's');
   const sshTarget = toStoredCliTarget({
     kind: 'ssh',
     hostId: 'host-a',
     home: '/home/dev',
     shellName: 'fish',
-    localHome: 'C:\\Users\\dev\\remote-homes\\host-a',
+    localHome: path.join(os.tmpdir(), 'dev', 'remote-homes', 'host-a'),
     roots: [{ local: shellFolder, host: hostPath }],
   });
 
@@ -2149,8 +2152,8 @@ describe('performSpawn - a session on a remote host (#913)', () => {
     return makeInput({
       cwd: shellFolder,
       env: { CLAUDE_CODE_NO_FLICKER: '1' },
-      statusOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\status.json`,
-      eventsOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\events.jsonl`,
+      statusOutputPath: path.join(sessionFolder, 'status.json'),
+      eventsOutputPath: path.join(sessionFolder, 'events.jsonl'),
       cliTarget: sshTarget,
       remote: { hostId: 'host-a', cwd: hostPath, shellName: 'fish' },
       ...overrides,
@@ -2173,8 +2176,8 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
         hostId: 'host-a',
         sessionId: makeInput().id,
-        localSessionDirectory: `${shellFolder}\\.kangentic\\sessions\\s`,
-        statusOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\status.json`,
+        localSessionDirectory: sessionFolder,
+        statusOutputPath: path.join(sessionFolder, 'status.json'),
         place: expect.objectContaining({ kind: 'ssh', hostId: 'host-a' }),
       }));
     });
