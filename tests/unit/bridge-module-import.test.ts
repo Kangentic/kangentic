@@ -1,5 +1,5 @@
 /**
- * Main loads the three hook bridges for a CLI installed in a WSL distro
+ * Main loads the four hook bridges for a CLI installed in a WSL distro
  * (`wsl-hook-inbox.ts` runs their exported logic), so loading one must touch
  * nothing in the process. Before the refactor, `event-bridge.js` replaced
  * `process.stdout.write` at load, which would have silenced main's own output,
@@ -13,7 +13,7 @@ import { createRequire } from 'node:module';
 import path from 'node:path';
 
 const requireFromHere = createRequire(__filename);
-const BRIDGES = ['event-bridge.js', 'plan-approval-bridge.js', 'background-shell-hint-bridge.js'];
+const BRIDGES = ['event-bridge.js', 'plan-approval-bridge.js', 'background-shell-hint-bridge.js', 'browser-policy-bridge.js'];
 
 describe('loading a hook bridge as a module', () => {
   it.each(BRIDGES)('%s leaves stdout and stdin alone and exports its logic', (bridge) => {
