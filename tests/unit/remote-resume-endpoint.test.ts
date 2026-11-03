@@ -242,6 +242,23 @@ describe('refusal', () => {
     expect(link.detached.join(' ')).toContain('another installation owns this host');
   });
 
+  it('leaves the owner connected when a stranger is turned away', async () => {
+    const owner = makeSide('link', { identity: { name: 'owner' } });
+    const helper = makeSide('helper', { vet: (identity) => (identity.name === 'owner' ? null : 'another installation owns this host') });
+    connect(owner, helper);
+    await settle();
+    const stranger = makeSide('link', { identity: { name: 'stranger' } });
+    connect(stranger, helper);
+    await settle();
+    expect(stranger.detached.join(' ')).toContain('another installation owns this host');
+    expect(helper.endpoint.connected).toBe(true);
+    expect(helper.detached).not.toContainEqual(expect.stringContaining('replaced'));
+    helper.endpoint.send({ n: 7 });
+    await settle();
+    expect(indexes(owner)).toEqual([7]);
+    expect(stranger.messages).toEqual([]);
+  });
+
   it('replaces an attached connection when a newer one arrives', async () => {
     const link = makeSide('link');
     const helper = makeSide('helper');

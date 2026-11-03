@@ -39,7 +39,8 @@ export interface GapInfo {
 export interface ResumeEndpointHandlers {
   onMessage(json: unknown, raw: Buffer): void;
   onAttached(info: { protocolVersion: number; peer: PeerHello }): void;
-  onDetached(reason: string): void;
+  /** A connection ended. `wasActive` is false for one that never got past its handshake. */
+  onDetached(reason: string, info: { wasActive: boolean }): void;
   onGap(info: GapInfo): void;
   /** A reason to refuse this peer. It is told, in words, and the connection ends. */
   vetPeer?(peer: PeerHello): string | null;
@@ -106,7 +107,11 @@ function parseHello(json: unknown): PeerHello | null {
 
 export class ResumeEndpoint {
   private readonly options: Required<ResumeEndpointOptions>;
-  private connection: Connection | null = null;
+  /** The connection frames flow over: its handshake passed and it replaced any earlier one. */
+  private active: Connection | null = null;
+  /** A connection still shaking hands. It replaces the active one only once its peer is vetted, so a
+   *  stranger that gets refused never knocks the owner off. */
+  private pending: Connection | null = null;
   private sendOffset = 0;
   private receiveOffset = 0;
   private retained: RetainedFrame[] = [];
@@ -117,7 +122,7 @@ export class ResumeEndpoint {
   }
 
   get connected(): boolean {
-    return this.connection?.ready === true;
+    return this.active !== null;
   }
 
   get stats(): { sendOffset: number; receiveOffset: number; retainedBytes: number; retainedFrames: number } {
@@ -139,13 +144,15 @@ export class ResumeEndpoint {
       const dropped = this.retained.shift() as RetainedFrame;
       this.retainedByteCount -= dropped.frame.length;
     }
-    const connection = this.connection;
-    if (connection?.ready) this.write(connection, frame);
+    if (this.active) this.write(this.active, frame);
   }
 
-  /** Start talking over a new connection. A connection already attached is replaced. */
+  /**
+   * Start talking over a new connection. It replaces the active one when its handshake
+   * passes, not before, and a connection still shaking hands is replaced by this one.
+   */
   attach(stream: Duplex): void {
-    if (this.connection) this.drop(this.connection, 'replaced by a newer connection');
+    if (this.pending) this.drop(this.pending, 'replaced by a newer connection attempt');
     const connection: Connection = {
       stream,
       decoder: new FrameDecoder({ expectedOffset: this.receiveOffset }),
@@ -157,7 +164,7 @@ export class ResumeEndpoint {
       timer: setInterval(() => this.tick(connection), Math.min(this.options.ackIntervalMs, this.options.heartbeatMs)),
     };
     connection.timer.unref?.();
-    this.connection = connection;
+    this.pending = connection;
     stream.on('data', (chunk: Buffer) => this.handleData(connection, chunk));
     stream.on('end', () => this.drop(connection, 'the peer ended the connection'));
     stream.on('close', () => this.drop(connection, 'the connection closed'));
@@ -169,9 +176,24 @@ export class ResumeEndpoint {
     }));
   }
 
-  /** End the current connection, if any. What was sent stays kept for the next one. */
+  /**
+   * Forget every frame kept for a replay. The stream's offset stays, so a peer that asks to
+   * resume is told, with a reset, that what it missed is gone. For a peer that is a different
+   * process from the one the kept frames were meant for.
+   */
+  discardRetained(): void {
+    this.retained = [];
+    this.retainedByteCount = 0;
+  }
+
+  /** End every connection. What was sent stays kept for the next one. */
   detach(reason = 'detached'): void {
-    if (this.connection) this.drop(this.connection, reason);
+    if (this.pending) this.drop(this.pending, reason);
+    if (this.active) this.drop(this.active, reason);
+  }
+
+  private isLive(connection: Connection): boolean {
+    return this.active === connection || this.pending === connection;
   }
 
   private write(connection: Connection, frame: Buffer): void {
@@ -183,7 +205,7 @@ export class ResumeEndpoint {
   }
 
   private handleData(connection: Connection, chunk: Buffer): void {
-    if (this.connection !== connection) return;
+    if (!this.isLive(connection)) return;
     let frames: DecodedFrame[];
     try {
       frames = connection.decoder.push(chunk);
@@ -193,7 +215,7 @@ export class ResumeEndpoint {
       return;
     }
     for (const frame of frames) {
-      if (this.connection !== connection) return;
+      if (!this.isLive(connection)) return;
       connection.lastReceivedAt = Date.now();
       this.handleFrame(connection, frame);
     }
@@ -217,7 +239,7 @@ export class ResumeEndpoint {
         } catch (error) {
           this.handlers.onError?.(error);
         }
-        if (this.connection === connection && connection.receivedSinceAck >= this.options.ackEveryBytes) this.sendAck(connection);
+        if (this.isLive(connection) && connection.receivedSinceAck >= this.options.ackEveryBytes) this.sendAck(connection);
         return;
       case FrameKind.ack:
         this.acknowledge(connection, frame.offset);
@@ -253,6 +275,12 @@ export class ResumeEndpoint {
       this.refuse(connection, refusal);
       return;
     }
+    // The peer is accepted: it takes over from the connection that was active, whatever that one's state.
+    // Under a dropped network the old connection stays open with no one reading it.
+    if (this.active) this.drop(this.active, 'replaced by a newer connection');
+    if (!this.isLive(connection)) return;
+    this.pending = null;
+    this.active = connection;
     connection.ready = true;
     connection.protocolVersion = version;
     if (!this.replay(connection, frame.offset)) return;
@@ -267,19 +295,19 @@ export class ResumeEndpoint {
       // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream is now.
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: this.sendOffset, json: { cause: 'peer-ahead' } }));
       this.handlers.onGap({ direction: 'outgoing', lostFrom: this.sendOffset, lostTo: peerResumeFrom, cause: 'peer-ahead' });
-      return this.connection === connection;
+      return this.isLive(connection);
     }
     if (peerResumeFrom < retainedStart) {
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: retainedStart, json: { cause: 'retention' } }));
       this.handlers.onGap({ direction: 'outgoing', lostFrom: peerResumeFrom, lostTo: retainedStart, cause: 'retention' });
-      if (this.connection !== connection) return false;
+      if (!this.isLive(connection)) return false;
     } else if (peerResumeFrom !== retainedStart) {
       this.refuse(connection, `the peer asked to resume at ${peerResumeFrom}, which is inside a frame`);
       return false;
     }
     for (const entry of this.retained) {
       this.write(connection, entry.frame);
-      if (this.connection !== connection) return false;
+      if (!this.isLive(connection)) return false;
     }
     return true;
   }
@@ -307,7 +335,7 @@ export class ResumeEndpoint {
   }
 
   private tick(connection: Connection): void {
-    if (this.connection !== connection) return;
+    if (!this.isLive(connection)) return;
     const now = Date.now();
     if (now - connection.lastReceivedAt > this.options.deadAfterMs) {
       this.drop(connection, `no frame from the peer for ${Math.round((now - connection.lastReceivedAt) / 1000)} s`);
@@ -315,21 +343,23 @@ export class ResumeEndpoint {
     }
     if (!connection.ready) return;
     if (connection.receivedSinceAck > 0) this.sendAck(connection);
-    if (this.connection === connection && now - connection.lastSentAt >= this.options.heartbeatMs) {
+    if (this.isLive(connection) && now - connection.lastSentAt >= this.options.heartbeatMs) {
       this.write(connection, encodeFrame({ kind: FrameKind.heartbeat, offset: 0 }));
     }
   }
 
   /** Tell the peer why, then end the connection. The reason reaches both sides' `onDetached`. */
   private refuse(connection: Connection, reason: string): void {
-    if (this.connection !== connection) return;
+    if (!this.isLive(connection)) return;
     connection.stream.write(encodeFrame({ kind: FrameKind.close, offset: 0, json: { reason } }));
     this.drop(connection, reason, true);
   }
 
   private drop(connection: Connection, reason: string, lingerForPeer = false): void {
-    if (this.connection !== connection) return;
-    this.connection = null;
+    if (!this.isLive(connection)) return;
+    const wasActive = this.active === connection;
+    if (wasActive) this.active = null;
+    else this.pending = null;
     clearInterval(connection.timer);
     if (lingerForPeer) {
       connection.stream.end();
@@ -337,6 +367,6 @@ export class ResumeEndpoint {
     } else {
       connection.stream.destroy();
     }
-    this.handlers.onDetached(reason);
+    this.handlers.onDetached(reason, { wasActive });
   }
 }
