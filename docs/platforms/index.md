@@ -13,6 +13,10 @@
 * [Windows](windows.md) - Windows-only behavior: the AUMID that ties the taskbar icon to the installer shortcut, core.longpaths for worktrees, why MAX_PATH rarely binds and where it does (ninja, CMake), and how CHROME_CRASHPAD_PIPE_NAME is kept from terminal children.
 * [macOS](macos.md) - macOS-only behavior: the hidden title bar and traffic lights, hardened runtime entitlements and notarization, and the custom node-pty spawn-helper that clears mach exception ports so terminal children do not report crashes to Kangentic's Crashpad.
 
+## Remote machines
+
+* [SSH remote hosts](ssh-remote.md) - Running agents on a Linux host over SSH: the trust model, adding a host without a terminal (fingerprint, password once, key file, SSH config), the program Kangentic installs on the host and how npm run build:host makes it, how a drop, a quit and a restart behave, how a remote project differs from a local one, which agents run there, and the known limits.
+
 ## Failure recovery
 
 * [GPU process failures](gpu-failures.md) - Why an unusable GPU process kills the browser process (Chromium's fallback ladder, Linux zygote launch failures), why --disable-gpu alone does not help, and how the --in-process-gpu recovery, gpu-health.json records and the graphicsAccelerationEnabled setting work.

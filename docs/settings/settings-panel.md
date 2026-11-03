@@ -21,7 +21,7 @@ The panel uses a VS Code-style layout: a sidebar with tab navigation on the left
 Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a `category`:
 
 - `'project'` tabs (General, Theme, Agent, Git, Browser, Shortcuts) hold per-project settings, save to `.kangentic/config.json` (Shortcuts to the board config files), and are hidden when no project is open.
-- `'system'` tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, Privacy, Developer) hold shared settings that apply across all projects, save to the global config, and stay fully usable with no project open. When no project is open, only the system tabs appear.
+- `'system'` tabs (Language, Board, Task, Changes, Terminal, Behavior, Performance, Hotkeys, Notifications, Workflows, Dictation, Knowledge Graph, MCP Server, Agent Browser, Mobile Devices, SSH, Privacy, Developer) hold shared settings that apply across all projects, save to the global config, and stay fully usable with no project open. When no project is open, only the system tabs appear.
 
 A thin full-bleed divider, not just the "System" text label, marks the Project/System boundary, because that split is behavioral (system tabs must work with no project open), not only organizational. There is no Global/Project scope toggle. When adding a setting, its `tabId` must match its persistence scope: see `.claude/rules/settings-tab-scope.md`, enforced by `tests/unit/settings-tab-scope-parity.test.ts`.
 

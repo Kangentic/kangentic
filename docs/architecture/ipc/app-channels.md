@@ -73,6 +73,22 @@ Machine-global (like Config), not project-scoped - backs the Mobile Devices sett
 | `mobile:getTerminalStreams` | invoke | The set of session ids a phone is streaming a terminal for - the set the bottom panel suspends its own terminals for. Seeds a renderer that mounts after the phone already subscribed (app start with a connected phone, window reload) |
 | `mobile:terminalStreamsChanged` | on | Event: the phone-streamed session id set changed; keeps the renderer's copy current between seeds |
 
+## SSH hosts (10 channels)
+Machine-global like the mobile bridge, so none takes a trailing `projectId`: a host serves every project and must be addable with no project open. Backs the SSH settings tab and the Add project chooser. See [SSH remote hosts](../../platforms/ssh-remote.md).
+
+| Channel | Pattern | Purpose |
+|---------|---------|---------|
+| `ssh:detectClient` | invoke | The `ssh` program on this computer: found, its version line, or the raw error |
+| `ssh:listHosts` | invoke | Every host with its connection state, the link's own words about it, when the state last changed, and how many projects live on it |
+| `ssh:probeHostKey` | invoke | Learn the key a host presents (type and fingerprint) without trusting it. Rejects with ssh's words when the host cannot be reached |
+| `ssh:addHost` | invoke | Add a host: re-verify the fingerprint the user saw, set up how Kangentic signs in (SSH config, key file copy, or a created key installed with a password used once), install the host program, connect. Undoes its steps on a failure |
+| `ssh:removeHost` | invoke | Remove a host with its projects (they stay on the host), end their agents, delete the key Kangentic made and take it off the host when reachable |
+| `ssh:renameHost` | invoke | Rename a host |
+| `ssh:reconnectHost` | invoke | Connect again now, installing the host program first if it is missing |
+| `ssh:forgetHostKey` | invoke | Forget a changed host key so the next connection asks again |
+| `ssh:probeRemoteFolder` | invoke | Whether a folder exists on a host, and whether it is a git repository, as the host's own program says. Rejects with the reason when it cannot say |
+| `ssh:hostsChanged` | on | Event: a host was added or removed, or its connection state moved |
+
 ## Notifications (2 channels)
 | Channel | Pattern | Purpose |
 |---------|---------|---------|

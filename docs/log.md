@@ -2,6 +2,16 @@
 
 ## 2026-11-03
 
+**New concept:** `platforms/ssh-remote.md`, how running agents on a Linux host over SSH works: the
+trust model, adding a host without a terminal, the program installed on the host and `npm run
+build:host`, drop, quit and restart behavior, remote projects, and the known limits. It also adds the
+`ssh:*` channels to `architecture/ipc/app-channels.md`, the `ssh_hosts` table and the two remote
+columns on `projects` to `database/storage-model.md` and `database/migrations.md`, and the SSH tab to
+`user-guide/settings.md`.
+
+**New audit:** `audits/ssh-remote-setup-audit.md`, the real Add host steps against a password-only
+sshd (`scripts/ssh-setup-rig.mjs`): 15 of 15 steps passed.
+
 **New audit:** `audits/ssh-remote-phase-1-audit.md`, the Phase 1 results for running agent CLIs on a
 Linux host over SSH: the frame codec, resume endpoint, helper server and link under
 `src/main/remote/`, and the rig gate (`scripts/ssh-link-rig.mjs`) in which the real link survived 20

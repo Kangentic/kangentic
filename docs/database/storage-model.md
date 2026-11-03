@@ -150,8 +150,32 @@ list needs.
 | default_effort | TEXT | | NULL |
 | group_id | TEXT | | NULL |
 | position | INTEGER | NOT NULL | 0 |
+| remote_host_id | TEXT | | NULL |
+| remote_path | TEXT | | NULL |
 | last_opened | TEXT | NOT NULL | |
 | created_at | TEXT | NOT NULL | |
+
+`remote_host_id` and `remote_path` are set together for a project whose repo is on an SSH host (see
+[SSH remote hosts](../platforms/ssh-remote.md)): the `ssh_hosts` row it runs on and the repo's folder there.
+Both are NULL for a project on this computer. For a remote project `path` is a local shell folder under
+Kangentic's config folder, not the repo.
+
+### ssh_hosts table
+
+A Linux machine Kangentic runs agents on over SSH. Holds no password and no key material.
+
+| Column | Type | Constraints | Default |
+|--------|------|-------------|---------|
+| id | TEXT | PRIMARY KEY | |
+| name | TEXT | NOT NULL | |
+| destination | TEXT | NOT NULL | |
+| key_path | TEXT | | NULL |
+| key_created | INTEGER | NOT NULL | 0 |
+| created_at | TEXT | NOT NULL | |
+
+`destination` is what `ssh` is given. `key_path` names a private key file in Kangentic's own folder, or is
+NULL when the host signs in through the user's SSH config. `key_created` is 1 when Kangentic made that key,
+so removing the host also deletes it and its line on the host.
 
 ### project_groups table
 
