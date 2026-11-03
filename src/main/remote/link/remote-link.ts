@@ -34,6 +34,7 @@ import {
   joinPortMessage,
   parseHelperMessage,
   splitPortMessage,
+  type HelperMethod,
   type HelperSessionRecord,
   type HelperSnapshot,
   type LinkToHelperMessage,
@@ -41,6 +42,7 @@ import {
   type RemoteMethod,
   type RemoteRequestParams,
   type RemoteRequestResult,
+  type SuspendPlan,
 } from '../protocol/messages';
 
 /** The one renderer id the helper's core knows. Real renderers are mapped onto it here. */
@@ -104,6 +106,9 @@ export class RemoteLink implements PtyHostTransport {
   private handlers: RemoteLinkHandlers = {};
   private nextRequestId = 1;
   private nextScrollbackId = 1;
+  /** The helper's owner epoch as the last snapshot reported it, sent back with the quit. */
+  private ownerEpoch = 0;
+  private quitPlan: (() => SuspendPlan[]) | null = null;
   private currentState: RemoteLinkState = 'connecting';
   private stopped = true;
   private everConnected = false;
@@ -200,12 +205,25 @@ export class RemoteLink implements PtyHostTransport {
     this.eventListener = listener;
   }
 
-  shutdown(): void {
-    this.stop();
+  /** What the app knows about ending each session, which the helper cannot: the adapters' exit sequences. */
+  setQuitPlan(provider: () => SuspendPlan[]): void {
+    this.quitPlan = provider;
+  }
+
+  /**
+   * The app is quitting. Sends the one `suspendAll` frame now, the quit being what the helper
+   * cannot learn later, and lets go of the connection once the helper answers or `exitWaitMs` has
+   * passed. Never blocks: the helper ends every session on its own clock, so a frame that never
+   * gets through leaves the agents running until the next connect suspends them or the lease ends.
+   */
+  shutdown(exitWaitMs = 1_300): void {
+    if (this.stopped) return;
+    const finish = (): void => this.stop();
+    this.requestHelper('suspendAll', { ownerEpoch: this.ownerEpoch, sessions: this.quitPlan?.() ?? [] }, exitWaitMs).then(finish, finish);
   }
 
   /** A request only the helper answers. */
-  requestHelper<M extends 'rebind' | 'snapshot'>(method: M, params: RemoteRequestParams<M>, timeoutMs?: number): Promise<RemoteRequestResult<M>> {
+  requestHelper<M extends HelperMethod>(method: M, params: RemoteRequestParams<M>, timeoutMs?: number): Promise<RemoteRequestResult<M>> {
     return this.requestRemote(method, params, timeoutMs) as Promise<RemoteRequestResult<M>>;
   }
 
@@ -279,6 +297,7 @@ export class RemoteLink implements PtyHostTransport {
       this.log(`snapshot failed: ${error instanceof Error ? error.message : String(error)}`);
       return;
     }
+    this.ownerEpoch = snapshot.ownerEpoch;
     this.handlers.onSnapshot?.(snapshot);
     const held = new Map(snapshot.sessions.map((record) => [record.sessionId, record]));
     const lost: string[] = [];

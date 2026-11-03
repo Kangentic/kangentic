@@ -15,6 +15,7 @@
 
 import type { PtyHostCommand, PtyHostError, PtyHostEvent, PtyHostMethod, PtyHostRequestMap } from '../../pty/host/protocol';
 import type { FromPtyHostPortMessage, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
+import type { ExitSequenceStep } from '../../../shared/types';
 
 /** One PTY the helper holds, as the link needs it to rebuild its own state. */
 export interface HelperSessionRecord {
@@ -38,11 +39,32 @@ export interface HelperSnapshot {
   sessions: HelperSessionRecord[];
 }
 
+/** How one session ends at quit, which only the app knows (it holds the adapters). */
+export interface SuspendPlan {
+  sessionId: string;
+  /** The adapter's keys and pauses, for an agent that is typed into. */
+  exitSequence?: ExitSequenceStep[];
+  /** The agent's console close or hangup is its own graceful exit, so nothing is typed into it. */
+  consoleCloseIsGraceful: boolean;
+}
+
+export interface SuspendAllParams {
+  /** The owner epoch the link last saw. A frame from an earlier quit that arrives late carries an old one. */
+  ownerEpoch: number;
+  sessions: SuspendPlan[];
+}
+
 /** Requests only the helper answers, beside the pty host's own. */
 export interface HelperRequestMap {
   /** Bind the link's id to a session the helper already holds. */
   rebind: { params: { sessionId: string; ptyId: number }; result: { ok: boolean } };
   snapshot: { params: Record<string, never>; result: HelperSnapshot };
+  /**
+   * The app is quitting: end every live session the way its adapter ends it, on the helper's own
+   * clock. One frame, because the app may be gone before a second one could be sent. Refused, with
+   * `ignored`, when the epoch is not the helper's current one.
+   */
+  suspendAll: { params: SuspendAllParams; result: { suspended: number; ignored: boolean } };
 }
 
 export type HelperMethod = keyof HelperRequestMap;

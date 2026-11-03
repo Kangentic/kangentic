@@ -25,10 +25,7 @@ const NODE_VERSION = 'v24.22.2';
 const NODE_TARBALL = `node-${NODE_VERSION}-linux-x64.tar.xz`;
 const NODE_BASE_URL = `https://nodejs.org/dist/${NODE_VERSION}`;
 const CONTAINER = 'kangentic-ssh-rig-link';
-const HOST_ROOT = '/home/dev/.kangentic/host';
-const REMOTE_NODE = `${HOST_ROOT}/node/bin/node`;
-const REMOTE_BUNDLE = `${HOST_ROOT}/app/host.js`;
-const REMOTE_RUN_DIR = `${HOST_ROOT}/run`;
+const REMOTE_RUN_DIR = '/home/dev/.kangentic/host/run';
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const options = parseArguments(process.argv.slice(2));
@@ -37,6 +34,8 @@ const sshPath = process.platform === 'win32'
   ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'OpenSSH', 'ssh.exe')
   : 'ssh';
 const sshKeygenPath = process.platform === 'win32' ? path.join(path.dirname(sshPath), 'ssh-keygen.exe') : 'ssh-keygen';
+// By full path on Windows: a bare `tar` can find Git's GNU tar, which reads "C:" as a remote host.
+const tarPath = process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 const nullConfig = process.platform === 'win32' ? 'NUL' : '/dev/null';
 const forwardSlash = (value) => value.replaceAll('\\', '/');
 
@@ -156,18 +155,34 @@ async function makeKey() {
   return keyPath;
 }
 
-async function startRig(keyPath, stage, nodeTarball) {
+async function startRig(keyPath) {
   await execute('docker', ['rm', '-f', CONTAINER]);
   const publicKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim();
   await docker('run', '-d', '--name', CONTAINER, '--init', '-p', `127.0.0.1:${options.port}:22`, '-e', `AUTHORIZED_KEY=${publicKey}`, 'kangentic-ssh-rig');
   await waitForSshd(options.port);
-  await docker('exec', '-u', 'dev', CONTAINER, 'mkdir', '-p', `${HOST_ROOT}/app`, `${HOST_ROOT}/node`);
-  await docker('cp', `${stage}${path.sep}.`, `${CONTAINER}:${HOST_ROOT}/app`);
-  await docker('cp', nodeTarball, `${CONTAINER}:/tmp/node.tar.xz`);
-  await docker('exec', '-u', 'root', CONTAINER, 'chown', '-R', 'dev:dev', '/home/dev/.kangentic');
-  await docker('exec', '-u', 'dev', CONTAINER, 'tar', '-xJf', '/tmp/node.tar.xz', '-C', `${HOST_ROOT}/node`, '--strip-components=1');
-  const version = (await docker('exec', '-u', 'dev', CONTAINER, REMOTE_NODE, '--version')).stdout.trim();
-  say(`rig up on ${options.port}, host node ${version}`);
+  say(`rig up on ${options.port}, nothing installed on it yet`);
+}
+
+/**
+ * The host asset as the release build will make it: a pinned Node, the helper bundle and node-pty's Linux
+ * prebuild in one tarball. Built here without Node's npm, headers or docs, and without its symlinks (an NTFS
+ * checkout cannot make them). The installer sets the execute bits, so the archive need not carry them.
+ */
+async function buildAsset(stage, nodeTarball) {
+  const assetRoot = path.join(workDirectory, 'asset-root');
+  fs.rmSync(assetRoot, { recursive: true, force: true });
+  fs.mkdirSync(path.join(assetRoot, 'node'), { recursive: true });
+  const excludes = ['*/lib/node_modules', '*/bin/npm', '*/bin/npx', '*/bin/corepack', '*/include', '*/share'].flatMap((pattern) => ['--exclude', pattern]);
+  const extracted = await execute(tarPath, ['-xJf', nodeTarball, '-C', path.join(assetRoot, 'node'), '--strip-components=1', ...excludes], { timeout: 300_000 });
+  if (extracted.code !== 0) throw new Error(`could not unpack the Node tarball: ${extracted.stderr}`);
+  fs.cpSync(stage, path.join(assetRoot, 'app'), { recursive: true });
+  const filePath = path.join(workDirectory, 'kangentic-host-rig-linux-x64.tar.gz');
+  fs.rmSync(filePath, { force: true });
+  const packed = await execute(tarPath, ['-czf', filePath, '-C', assetRoot, '.'], { timeout: 300_000 });
+  if (packed.code !== 0) throw new Error(`could not pack the host asset: ${packed.stderr}`);
+  const sha256 = createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
+  say(`built the host asset: ${(fs.statSync(filePath).size / 1e6).toFixed(1)} MB, sha256 ${sha256.slice(0, 12)}`);
+  return { version: '0.0.0-rig', sha256, arch: 'x64', filePath };
 }
 
 async function main() {
@@ -178,7 +193,8 @@ async function main() {
   const knownHosts = path.join(workDirectory, 'known_hosts');
   fs.rmSync(knownHosts, { force: true });
   try {
-    await startRig(keyPath, stage, nodeTarball);
+    const asset = await buildAsset(stage, nodeTarball);
+    await startRig(keyPath);
     const clientOptions = {
       sshPath,
       sshArgs: [
@@ -187,7 +203,7 @@ async function main() {
         '-o', 'StrictHostKeyChecking=accept-new', '-o', 'ConnectTimeout=5', '-o', 'ServerAliveInterval=2', '-o', 'ServerAliveCountMax=3',
         '-F', nullConfig, '-T', 'dev@127.0.0.1',
       ],
-      remoteCommand: `${REMOTE_NODE} ${REMOTE_BUNDLE} relay --dir ${REMOTE_RUN_DIR}`,
+      asset,
       drops: options.drops,
     };
     say(`running the client: ${options.drops} drops`);

@@ -31,6 +31,8 @@ import {
   type RendererPort,
 } from '../../pty/host/protocol';
 import type { FromPtyHostPortMessage, ToPtyHostPortMessage } from '../../../shared/pty-port-protocol';
+import type { ExitSequenceStep } from '../../../shared/types';
+import { writeExitSteps } from '../../pty/shutdown/exit-sequence';
 import { ResumeEndpoint, type PeerHello, type ResumeEndpointOptions } from '../protocol/resume-endpoint';
 import {
   joinPortMessage,
@@ -40,6 +42,7 @@ import {
   type HelperSnapshot,
   type HelperToLinkMessage,
   type PortBody,
+  type SuspendAllParams,
 } from '../protocol/messages';
 
 /** The one renderer the core sees: the link stands in for every renderer on this computer. */
@@ -63,7 +66,12 @@ interface LedgerEntry {
   pid: number;
   alive: boolean;
   exitCode: number | null;
+  /** The adapter's keys, from the spawn, for a quit that names no plan for this session. */
+  exitSequence: ExitSequenceStep[];
 }
+
+/** How long an agent that is typed into gets, after its keys, before it is killed. The young-session grace. */
+const EXIT_GRACE_MS = 1_500;
 
 /** The core's renderer port, over whichever link is attached. */
 class FramedPort implements RendererPort {
@@ -265,6 +273,7 @@ export class HelperServer {
   private runRequest(method: string, params: unknown): Promise<unknown> | unknown {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
     if (method === 'snapshot') return this.snapshot();
+    if (method === 'suspendAll') return this.suspendAll(params as SuspendAllParams);
     if (method === 'rebind') {
       const { sessionId, ptyId } = params as { sessionId: string; ptyId: number };
       return this.rebind(sessionId, ptyId);
@@ -301,9 +310,41 @@ export class HelperServer {
         pid: result.pid,
         alive: true,
         exitCode: null,
+        exitSequence: params.exitSequence ?? [],
       });
     }
     return result;
+  }
+
+  /**
+   * Quit: end every live session the way its adapter ends it, without waiting for the link. An agent
+   * whose console close is its graceful exit is hung up and nothing is typed into it. Any other gets
+   * its exit keys, with their pauses, and a kill once the keys and the grace have had their time.
+   */
+  private suspendAll(params: SuspendAllParams): { suspended: number; ignored: boolean } {
+    if (params.ownerEpoch !== this.ownerEpoch) {
+      this.log(`ignored a suspendAll for epoch ${params.ownerEpoch}, the owner epoch is ${this.ownerEpoch}`);
+      return { suspended: 0, ignored: true };
+    }
+    const plans = new Map(params.sessions.map((plan) => [plan.sessionId, plan]));
+    let suspended = 0;
+    for (const entry of this.ledger.values()) {
+      if (!entry.alive) continue;
+      suspended += 1;
+      const plan = plans.get(entry.sessionId);
+      const steps = plan?.exitSequence ?? entry.exitSequence;
+      const kill = (): void => {
+        if (entry.alive) this.core.handleCommand({ type: 'kill', ptyId: entry.corePtyId });
+      };
+      if (plan?.consoleCloseIsGraceful === true || steps.length === 0) {
+        kill();
+        continue;
+      }
+      writeExitSteps((data) => this.core.handleCommand({ type: 'write', ptyId: entry.corePtyId, data }), steps);
+      const pauses = steps.reduce<number>((total, step) => total + (typeof step === 'string' ? 0 : step.delayMs), 0);
+      setTimeout(kill, pauses + EXIT_GRACE_MS).unref?.();
+    }
+    return { suspended, ignored: false };
   }
 
   private rebind(sessionId: string, wirePtyId: number): { ok: boolean } {

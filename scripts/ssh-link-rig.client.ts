@@ -18,15 +18,20 @@ import type { RendererPort } from '../src/main/pty/host/protocol';
 import type { FromPtyHostPortMessage } from '../src/shared/pty-port-protocol';
 import { RemoteLink, type RemoteLinkState } from '../src/main/remote/link/remote-link';
 import { openSshStream } from '../src/main/remote/link/ssh-connection';
+import { createSshRunner } from '../src/main/remote/link/ssh-run';
+import { installHost, type HostAsset } from '../src/main/remote/link/host-installer';
 
 interface Options {
   sshPath: string;
   sshArgs: string[];
-  remoteCommand: string;
+  /** The host asset the installer sends. The rig builds it from the staged bundle and a pinned Node. */
+  asset: HostAsset;
   drops: number;
 }
 
 const options = JSON.parse(process.argv[2]) as Options;
+/** Set once the installer has said how to start the relay. */
+let remoteCommand = '';
 const streams: Duplex[] = [];
 const received: string[] = [];
 let state: RemoteLinkState = 'connecting';
@@ -44,7 +49,7 @@ const rendererPort: RendererPort = {
 const link = new RemoteLink({
   identity: { installId: 'ssh-link-rig', bootId: randomUUID(), label: 'the rig client' },
   connect: async () => {
-    const stream = openSshStream({ sshPath: options.sshPath, args: options.sshArgs, remoteCommand: options.remoteCommand });
+    const stream = openSshStream({ sshPath: options.sshPath, args: options.sshArgs, remoteCommand });
     streams.push(stream);
     return stream;
   },
@@ -86,6 +91,17 @@ function percentile(values: number[], fraction: number): number {
 }
 
 async function main(): Promise<void> {
+  // The installer first, as the add-host flow runs it: nothing is on the host yet. A second call must find the
+  // version complete and send nothing.
+  const run = createSshRunner({ sshPath: options.sshPath, args: options.sshArgs });
+  const installStarted = Date.now();
+  const first = await installHost(run, options.asset);
+  const installMs = Date.now() - installStarted;
+  const second = await installHost(run, options.asset, () => { throw new Error('the second install must not open the asset'); });
+  if (!first.installed || second.installed) throw new Error(`install was not idempotent: first ${first.installed}, second ${second.installed}`);
+  remoteCommand = first.relayCommand;
+  process.stderr.write(`[install] ${first.directory} in ${installMs} ms, second call sent nothing\n`);
+
   link.start();
   await waitFor('the first connection', () => state === 'connected', 30_000);
   client.post({ type: 'setRendererFocus', rendererId: 1, sessionIds: ['s1'] });

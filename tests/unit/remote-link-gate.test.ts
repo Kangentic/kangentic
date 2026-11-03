@@ -18,12 +18,14 @@ interface FakePty {
   feed(data: string): void;
   exit(exitCode: number): void;
   kill: ReturnType<typeof vi.fn>;
+  write: ReturnType<typeof vi.fn>;
 }
 
 function createFakePty(pid: number): FakePty {
   let dataListener: ((data: string) => void) | null = null;
   let exitListener: ((event: { exitCode: number }) => void) | null = null;
   const kill = vi.fn();
+  const write = vi.fn();
   const pty = {
     pid,
     cols: 120,
@@ -36,13 +38,13 @@ function createFakePty(pid: number): FakePty {
       exitListener = listener;
       return { dispose: () => { exitListener = null; } };
     },
-    write: vi.fn(),
+    write,
     resize: vi.fn(),
     kill,
     pause: vi.fn(),
     resume: vi.fn(),
   } as unknown as nodePty.IPty;
-  return { pty, feed: (data) => dataListener?.(data), exit: (exitCode) => exitListener?.({ exitCode }), kill };
+  return { pty, feed: (data) => dataListener?.(data), exit: (exitCode) => exitListener?.({ exitCode }), kill, write };
 }
 
 function spawnParams(sessionId: string, taskId: string): Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'> {
@@ -252,6 +254,64 @@ describe('a PTY in the helper, through the link', () => {
     const outcome = await second;
     expect(outcome.ok).toBe(false);
     expect(outcome.ok === false && outcome.error.message).toContain('already has a live PTY');
+  });
+});
+
+describe('quit', () => {
+  it('hangs up an agent whose console close is its graceful exit, and types nothing into it', async () => {
+    const rig = makeRig();
+    rig.link.start();
+    await settle();
+    await spawnSession(rig, 's1', 'task-1');
+    rig.link.setQuitPlan(() => [{ sessionId: 's1', consoleCloseIsGraceful: true, exitSequence: ['\x1b', '/exit\r'] }]);
+
+    rig.link.shutdown();
+    await settle();
+    expect(rig.fakes[0].kill).toHaveBeenCalledTimes(1);
+    expect(rig.fakes[0].write).not.toHaveBeenCalled();
+    expect(rig.link.state).toBe('stopped');
+  });
+
+  it('types an agent its exit keys with their pauses, then kills it after the grace', async () => {
+    const rig = makeRig();
+    rig.link.start();
+    await settle();
+    await spawnSession(rig, 's1', 'task-1');
+    rig.link.setQuitPlan(() => [{ sessionId: 's1', consoleCloseIsGraceful: false, exitSequence: ['\x1b', { delayMs: 200 }, '/exit\r'] }]);
+
+    rig.link.shutdown();
+    await settle(50);
+    expect(rig.fakes[0].write).toHaveBeenCalledWith('\x1b');
+    expect(rig.fakes[0].write).not.toHaveBeenCalledWith('/exit\r');
+    await settle(200);
+    expect(rig.fakes[0].write).toHaveBeenCalledWith('/exit\r');
+    expect(rig.fakes[0].kill).not.toHaveBeenCalled();
+    await settle(1600);
+    expect(rig.fakes[0].kill).toHaveBeenCalledTimes(1);
+  });
+
+  it('ignores a suspend from an earlier owner epoch', async () => {
+    const rig = makeRig();
+    rig.link.start();
+    await settle();
+    await spawnSession(rig, 's1', 'task-1');
+
+    const answer = rig.link.requestHelper('suspendAll', { ownerEpoch: 99, sessions: [{ sessionId: 's1', consoleCloseIsGraceful: true }] });
+    await settle();
+    expect(await answer).toEqual({ suspended: 0, ignored: true });
+    expect(rig.fakes[0].kill).not.toHaveBeenCalled();
+  });
+
+  it('lets go of the connection after a bounded wait when the helper never answers', async () => {
+    const rig = makeRig();
+    rig.link.start();
+    await settle();
+    rig.linkStreams.at(-1)?.destroy();
+    await settle(10);
+
+    rig.link.shutdown(500);
+    await settle(600);
+    expect(rig.link.state).toBe('stopped');
   });
 });
 
