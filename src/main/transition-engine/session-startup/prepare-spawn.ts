@@ -8,7 +8,7 @@ import type { McpHttpServerHandle } from '../../agent/mcp-http-server';
 import { appendCallerSession } from '../../agent/mcp-http/caller-url';
 import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import type { AppConfig, BoardProfile, PermissionMode, SpawnRemote, StoredCliTarget, Swimlane, Task } from '../../../shared/types';
-import { resolveRemoteLaunch } from '../../remote/remote-launch';
+import { resolveSpawnCli } from '../../remote/remote-launch';
 import type { TaskRepository } from '../../db/repositories/task-repository';
 import { runSpawnPreamble, resolveEffectivePermissionMode, projectModelDefaultsApply } from '../spawn-preamble';
 import { applyProfileToLane, findTaskProfile } from '../column-strategy';
@@ -25,7 +25,7 @@ import { resolveExecutionTarget } from '../../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../../agent/shared/launch-options';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
-import { resolveCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../../agent/shared/cli-target';
+import { shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
 import { releaseCommandHold } from '../../pty/lifecycle/adapter-lifecycle';
 
 /**
@@ -208,26 +208,16 @@ export async function prepareAgentSpawn(input: {
   const projectFallback = projectModelDefaultsApply(agent, input.projectDefaultAgent);
 
   const cliPathOverride = config.agent.cliPaths[agent] ?? null;
-  // A remote project runs its agent on a host (#913), as the board path resolves it: the CLI is the
-  // host's own and is never detected here.
-  const remoteLaunch = await resolveRemoteLaunch({ projectPath, cwd, adapter });
-  let detectedCliPath: string;
-  let cliTarget: CliTarget | null;
-  if (remoteLaunch) {
-    detectedCliPath = remoteLaunch.place.linuxCliPath;
-    cliTarget = remoteLaunch.place;
-  } else {
-    const detection = await adapter.detect(cliPathOverride);
-    if (!detection.found || !detection.path) {
-      trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
-      return { ok: false, reason: 'cli-not-found' };
-    }
-    detectedCliPath = detection.path;
-    // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
-    // once for this spawn, as the board path does. A distro CLI runs in that
-    // distro's shell, whatever the Terminal setting says.
-    cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
+  // The CLI and where it runs, decided as the board path decides it (`resolveSpawnCli`): a remote
+  // project's is the host's own (#913), never detected here; a distro CLI runs in that distro's shell,
+  // whatever the Terminal setting says.
+  const spawnCli = await resolveSpawnCli({ projectPath, cwd, adapter, cliPathOverride });
+  if (!spawnCli) {
+    trackEvent('spawn_failed', { agent, reason: 'cli_not_found' });
+    return { ok: false, reason: 'cli-not-found' };
   }
+  const { remoteLaunch, cliTarget } = spawnCli;
+  const detectedCliPath = spawnCli.cliPath;
   const shell = shellForTarget(cliTarget) ?? input.resolvedShell;
 
   await adapter.ensureTrust(cwd, cliTarget);

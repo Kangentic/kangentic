@@ -21,7 +21,8 @@ import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
 
-const NODE_VERSION = 'v24.22.2';
+// The release build's pin, so the rig tests the helper on the Node a host actually gets.
+import { NODE_VERSION } from './build-host.mjs';
 const NODE_TARBALL = `node-${NODE_VERSION}-linux-x64.tar.xz`;
 const NODE_BASE_URL = `https://nodejs.org/dist/${NODE_VERSION}`;
 const CONTAINER = 'kangentic-ssh-rig-link';

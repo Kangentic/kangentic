@@ -32,7 +32,7 @@ import {
   type RendererPort,
   type SeedFrameResult,
 } from './protocol';
-import type { RemoteHostRequest } from '../../remote/protocol/messages';
+import type { RemoteHostRequest, RemoteSessionRoute } from '../../remote/protocol/messages';
 import type { ScrollbackInvokeResult } from '../../../shared/pty-port-protocol';
 import type { StopProcessRequest, StopProcessResult, TaggedReapRequest, TaggedReapResult, TaskProbeRequest, TaskProbeResult } from '../process-tag/tagged-reap';
 import type { AgentExitWaitResult } from './exited-root-wait';
@@ -146,6 +146,8 @@ export class RemotePty implements PtyHandle {
     private readonly transport: Pick<PtyHostTransport, 'post'>,
     /** The session this PTY was spawned for, for host-loss reporting. */
     readonly sessionId: string = '',
+    /** The SSH host it runs on (#913), or null for a PTY on this computer. */
+    readonly hostId: string | null = null,
   ) {
     this.currentCols = cols;
     this.currentRows = rows;
@@ -455,6 +457,16 @@ export class PtyHostClient {
     return this.transport.request('remote', request);
   }
 
+  /**
+   * The live PTYs this client holds on one SSH host. A local host that restarts takes every link with it
+   * while these keep running there, so they are sent with the host's `addHost` to be routed again.
+   */
+  liveRemotePtys(hostId: string): RemoteSessionRoute[] {
+    return [...this.handles.values()]
+      .filter((handle) => handle.hostId === hostId && !handle.hasExited)
+      .map((handle) => ({ sessionId: handle.sessionId, ptyId: handle.ptyId }));
+  }
+
   async spawn(params: Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'>): Promise<PtyHostSpawnOutcome> {
     const ptyId = this.nextPtyId;
     this.nextPtyId += 1;
@@ -478,7 +490,7 @@ export class PtyHostClient {
     }
     // A spawn on a remote host answers with a pid on THAT machine. Keeping it would let a local
     // kill, wait or probe signal an unrelated process here, so the handle carries none (#913).
-    const handle = new RemotePty(ptyId, params.hostId === undefined ? result.pid : null, params.cols, params.rows, this.transport, params.sessionId);
+    const handle = new RemotePty(ptyId, params.hostId === undefined ? result.pid : null, params.cols, params.rows, this.transport, params.sessionId, params.hostId ?? null);
     this.handles.set(ptyId, handle);
     return { ok: true, pty: handle };
   }
@@ -664,7 +676,7 @@ export class PtyHostClient {
     }
     if (event.type === 'remoteSessions') {
       this.endLostRemoteSessions(event.lost);
-      // The adoptable ones are for whoever reconciles; main's session manager hears the event too.
+      // Main's session manager hears it too. The adoptable ones are reported, not adopted: nothing takes them on yet.
       this.eventHandler?.(event);
       return;
     }

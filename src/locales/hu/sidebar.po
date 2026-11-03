@@ -97,6 +97,10 @@ msgstr "Keresés törlése"
 msgid "Connected"
 msgstr "Csatlakozva"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Connecting…"
+msgstr ""
+
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #: src/renderer/components/sidebar/ProjectSidebar.tsx

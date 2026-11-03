@@ -21,13 +21,16 @@ export function HostChip({ hostId }: { hostId: string }) {
 
   const hostName = status.host.name;
   const state = status.state;
+  // The same words the SSH tab and the Add project chooser use for each state.
   const stateLabel = state === 'connected'
     ? t`Connected`
     : state === 'unreachable'
       ? t`Unreachable`
       : state === 'stopped'
         ? t`Stopped`
-        : t`Reconnecting…`;
+        : state === 'connecting'
+          ? t`Connecting…`
+          : t`Reconnecting…`;
   const unreachable = state === 'unreachable';
   const waiting = state === 'connecting' || state === 'reconnecting';
 

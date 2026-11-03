@@ -83,6 +83,21 @@ describe('mapping a path the CLI reported back', () => {
   it('does not match a sibling folder that shares a name prefix', () => {
     expect(hostPathToLocal('/home/dev/projects/api-old/a.ts', sshPlace().roots)).toBe('/home/dev/projects/api-old/a.ts');
   });
+
+  it('never maps a path that climbs out of a root through `..` into the shell folder', () => {
+    expect(hostPathToLocal('/home/dev/projects/api/../../secrets.txt', sshPlace().roots)).toBe('/home/dev/projects/api/../../secrets.txt');
+  });
+});
+
+describe('a path spelled differently', () => {
+  it('resolves `..` before matching a root, on the way to the host', () => {
+    expect(localPathToHost(`${shellFolder}\\src\\..\\README.md`, sshPlace().roots)).toBe('/home/dev/projects/api/README.md');
+  });
+
+  // Windows paths ignore case, so a working directory in other letter case is still under its root.
+  it.runIf(process.platform === 'win32')('matches a root whatever its letter case on Windows', () => {
+    expect(localPathToHost(`${shellFolder.toLowerCase()}\\src\\a.ts`, sshPlace().roots)).toBe('/home/dev/projects/api/src/a.ts');
+  });
 });
 
 describe('the place', () => {

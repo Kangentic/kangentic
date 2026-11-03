@@ -45,6 +45,8 @@ import {
   joinPortMessage,
   parseLinkMessage,
   splitPortMessage,
+  type HelperMethod,
+  type HelperRequestMap,
   type HelperSessionRecord,
   type HostFileWrite,
   type HostInfo,
@@ -103,6 +105,19 @@ interface LedgerEntry {
 /** How long an agent that is typed into gets, after its keys, before it is killed. The young-session grace. */
 const EXIT_GRACE_MS = 1_500;
 
+/** A spawn sent to the core and not answered yet. A kill or a quit can arrive for it before its answer. */
+interface PendingSpawn {
+  sessionId: string;
+  taskId: string | null;
+  /** A kill or a quit named it while it started: it is ended the moment it exists, and never kept alive. */
+  ended: boolean;
+}
+
+/** What answers each helper request. A method added to `HelperRequestMap` with no handler here fails `tsc`. */
+type HelperRequestHandlers = {
+  [M in HelperMethod]: (params: HelperRequestMap[M]['params'], raw: Buffer) => HelperRequestMap[M]['result'] | Promise<HelperRequestMap[M]['result']>;
+};
+
 /** The core's renderer port, over whichever link is attached. */
 class FramedPort implements RendererPort {
   private messageListener: ((messageEvent: { data: unknown }) => void) | null = null;
@@ -144,6 +159,8 @@ export class HelperServer {
   private readonly ledger = new Map<string, LedgerEntry>();
   private readonly wireToCore = new Map<number, number>();
   private readonly coreToWire = new Map<number, number>();
+  /** Spawns awaiting the core, by wire PTY id. */
+  private readonly pendingSpawns = new Map<number, PendingSpawn>();
   private readonly startedAt = new Date().toISOString();
   private nextCorePtyId = 1;
   /** Keeps two writes to one target from sharing a staging file. */
@@ -300,7 +317,12 @@ export class HelperServer {
   private handleCommand(command: PtyHostCommand): void {
     if ('ptyId' in command) {
       const corePtyId = this.wireToCore.get(command.ptyId);
-      if (corePtyId === undefined) return;
+      if (corePtyId === undefined) {
+        // The link gave up on a spawn still starting here (it timed out or dropped) and killed it.
+        const pending = this.pendingSpawns.get(command.ptyId);
+        if (pending && command.type === 'kill') pending.ended = true;
+        return;
+      }
       this.core.handleCommand({ ...command, ptyId: corePtyId });
       return;
     }
@@ -317,35 +339,34 @@ export class HelperServer {
     }
   }
 
+  private readonly helperHandlers: HelperRequestHandlers = {
+    hostInfo: () => this.hostInfo(),
+    rebind: ({ sessionId, ptyId }) => this.rebind(sessionId, ptyId),
+    snapshot: () => this.snapshot(),
+    suspendAll: (params) => this.suspendAll(params),
+    writeFiles: (params) => this.writeFiles(params),
+    writeFileRaw: (params, raw) => this.writeFiles({ files: [{ path: params.path, content: raw.toString('utf8'), ...(params.mode === undefined ? {} : { mode: params.mode }) }] }),
+    jsonPatch: (params) => this.jsonPatch(params),
+    watchHooks: (params) => {
+      this.hookWatcher.watch(params.sessionId, this.homePath(params.directory), params.statusFile ? this.homePath(params.statusFile) : null);
+      return { watching: true };
+    },
+    unwatchHooks: (params) => this.hookWatcher.unwatch(params.sessionId).then(() => ({ watching: false as const })),
+    readFile: (params) => this.readFile(params),
+    pathPresence: (params) => this.pathPresence(params.paths),
+  };
+
   private runRequest(method: string, params: unknown, raw: Buffer): Promise<unknown> | unknown {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
-    if (method === 'writeFileRaw') {
-      const request = params as { path: string; mode?: number };
-      return this.writeFiles({ files: [{ path: request.path, content: raw.toString('utf8'), ...(request.mode === undefined ? {} : { mode: request.mode }) }] });
-    }
-    if (method === 'snapshot') return this.snapshot();
-    if (method === 'suspendAll') return this.suspendAll(params as SuspendAllParams);
-    if (method === 'hostInfo') return this.hostInfo();
-    if (method === 'writeFiles') return this.writeFiles(params as { files: HostFileWrite[]; directories?: string[] });
-    if (method === 'jsonPatch') return this.jsonPatch(params as JsonPatchRequest);
-    if (method === 'watchHooks') {
-      const request = params as { sessionId: string; directory: string; statusFile?: string };
-      this.hookWatcher.watch(request.sessionId, this.homePath(request.directory), request.statusFile ? this.homePath(request.statusFile) : null);
-      return { watching: true };
-    }
-    if (method === 'unwatchHooks') {
-      return this.hookWatcher.unwatch((params as { sessionId: string }).sessionId).then(() => ({ watching: false }));
-    }
-    if (method === 'readFile') return this.readFile(params as { path: string; maxBytes?: number });
-    if (method === 'pathPresence') return this.pathPresence((params as { paths: string[] }).paths);
-    if (method === 'rebind') {
-      const { sessionId, ptyId } = params as { sessionId: string; ptyId: number };
-      return this.rebind(sessionId, ptyId);
-    }
     if (method === 'drainWrites') {
-      const corePtyId = this.wireToCore.get((params as { ptyId: number }).ptyId);
-      if (corePtyId === undefined) throw new Error(`no PTY is bound to wire id ${(params as { ptyId: number }).ptyId}`);
+      const wirePtyId = (params as PtyHostRequestMap['drainWrites']['params']).ptyId;
+      const corePtyId = this.wireToCore.get(wirePtyId);
+      if (corePtyId === undefined) throw new Error(`no PTY is bound to wire id ${wirePtyId}`);
       return this.core.handleRequest('drainWrites', { ptyId: corePtyId });
+    }
+    if (Object.prototype.hasOwnProperty.call(this.helperHandlers, method)) {
+      const handler = this.helperHandlers[method as HelperMethod] as (params: unknown, raw: Buffer) => unknown;
+      return handler(params, raw);
     }
     return this.core.handleRequest(method as PtyHostMethod, params as PtyHostRequestMap[PtyHostMethod]['params']);
   }
@@ -354,15 +375,36 @@ export class HelperServer {
     const live = params.taskId
       ? [...this.ledger.values()].find((entry) => entry.alive && entry.taskId === params.taskId && entry.sessionId !== params.sessionId)
       : undefined;
-    if (live) {
+    // A spawn for the same task still starting counts too: two that arrive together must not both pass.
+    const starting = params.taskId
+      ? [...this.pendingSpawns.values()].find((pending) => !pending.ended && pending.taskId === params.taskId && pending.sessionId !== params.sessionId)
+      : undefined;
+    if (live || starting) {
       return {
         ok: false,
-        error: { message: `refused: task ${params.taskId} already has a live PTY here (pid ${live.pid})`, code: 'SPAWN_REFUSED_LIVE' },
+        error: {
+          message: live
+            ? `refused: task ${params.taskId} already has a live PTY here (pid ${live.pid})`
+            : `refused: task ${params.taskId} already has a PTY starting here`,
+          code: 'SPAWN_REFUSED_LIVE',
+        },
         previousScrollback: '',
       };
     }
     const corePtyId = this.nextCorePtyId++;
-    const result = await this.core.handleRequest('spawn', { ...this.prepareSpawn(params), ptyId: corePtyId });
+    const pending: PendingSpawn = { sessionId: params.sessionId, taskId: params.taskId ?? null, ended: false };
+    this.pendingSpawns.set(params.ptyId, pending);
+    let result: PtyHostSpawnResult;
+    try {
+      result = await this.core.handleRequest('spawn', { ...this.prepareSpawn(params), ptyId: corePtyId });
+    } finally {
+      this.pendingSpawns.delete(params.ptyId);
+    }
+    if (result.ok && pending.ended) {
+      // Killed, or a quit came, while it started. No one holds it, so it ends now and is never ledgered alive.
+      this.core.handleCommand({ type: 'kill', ptyId: corePtyId });
+      return result;
+    }
     if (result.ok) {
       this.wireToCore.set(params.ptyId, corePtyId);
       this.coreToWire.set(corePtyId, params.ptyId);
@@ -392,6 +434,12 @@ export class HelperServer {
     }
     const plans = new Map(params.sessions.map((plan) => [plan.sessionId, plan]));
     let suspended = 0;
+    // A spawn still starting has no ledger entry yet: it is ended the moment it exists.
+    for (const pending of this.pendingSpawns.values()) {
+      if (pending.ended) continue;
+      pending.ended = true;
+      suspended += 1;
+    }
     for (const entry of this.ledger.values()) {
       if (!entry.alive) continue;
       suspended += 1;
@@ -473,9 +521,15 @@ export class HelperServer {
       await fs.mkdir(path.dirname(target), { recursive: true });
       // Beside the file, then renamed in: a reader never sees half a settings file.
       const staging = `${target}.${process.pid}.${this.nextStagingSuffix++}.tmp`;
-      await fs.writeFile(staging, file.content, { encoding: 'utf8', mode: file.mode ?? 0o600 });
-      await fs.chmod(staging, file.mode ?? 0o600);
-      await fs.rename(staging, target);
+      try {
+        await fs.writeFile(staging, file.content, { encoding: 'utf8', mode: file.mode ?? 0o600 });
+        await fs.chmod(staging, file.mode ?? 0o600);
+        await fs.rename(staging, target);
+      } catch (error) {
+        // A failed rename (the target is a folder, the disk is full) leaves no copy of a settings file behind.
+        await fs.rm(staging, { force: true }).catch(() => undefined);
+        throw error;
+      }
     }
     return { written: files.length };
   }

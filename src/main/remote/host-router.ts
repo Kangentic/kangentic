@@ -15,6 +15,7 @@ import { randomUUID } from 'node:crypto';
 import type { Duplex } from 'node:stream';
 import type { PtyHostCommand, PtyHostEvent, PtyHostMethod, PtyHostRequestMap, RendererPort } from '../pty/host/protocol';
 import type { PtyHostRequestOptions } from '../pty/host/pty-host-client';
+import { commandRoute } from './host-routes';
 import { HostUnreachableError, LinkHub } from './link/link-hub';
 import { openSshStream } from './link/ssh-connection';
 import type { HelperMethod, RemoteHostConnection, RemoteHostRequest, RemoteRequestParams } from './protocol/messages';
@@ -37,15 +38,6 @@ export interface HostRouterOptions {
   /** Overrides how soon a lost link redials, for a test. */
   reconnect?: { initialDelayMs?: number; maxDelayMs?: number };
 }
-
-/** Commands every host and the core both need to hear. */
-const SHARED_COMMANDS = new Set<PtyHostCommand['type']>([
-  'setRendererFocus',
-  'forgetRenderer',
-  'setTapped',
-  'releaseBackpressure',
-  'removeSession',
-]);
 
 function sshConnectionFor(connection: RemoteHostConnection): () => Promise<Duplex> {
   return async () => openSshStream({ sshPath: connection.sshPath, args: connection.args, remoteCommand: connection.remoteCommand });
@@ -79,7 +71,8 @@ export class HostRouter {
       this.hub.setQuitPlan(command.hostId, command.sessions);
       return;
     }
-    if (SHARED_COMMANDS.has(command.type)) {
+    const route = commandRoute(command);
+    if (route === 'every-host' || route === 'core-and-session') {
       this.core.handleCommand(command);
       this.hub.post(command);
       return;
@@ -114,7 +107,7 @@ export class HostRouter {
           connect: this.connectTo(request.connection),
           reconnect: this.options.reconnect,
           log: (line) => this.options.log?.(`[ssh ${request.hostId.slice(0, 8)}] ${line}`),
-        });
+        }, request.sessions ?? []);
         return { ok: true };
       case 'removeHost':
         this.hub.removeHost(request.hostId);

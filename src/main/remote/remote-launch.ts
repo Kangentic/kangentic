@@ -15,7 +15,7 @@
 
 import * as path from 'node:path';
 import type { AgentAdapter } from '../agent/agent-adapter';
-import { cliPathForTarget, isUnderLocalRoot, type SshCliPlace } from '../agent/shared/cli-target';
+import { cliPathForTarget, isUnderLocalRoot, resolveCliTarget, type CliTarget, type SshCliPlace } from '../agent/shared/cli-target';
 import type { ProjectRemote, SpawnRemote } from '../../shared/types';
 import type { HelperRequestMap } from './protocol/messages';
 
@@ -41,7 +41,8 @@ export interface RemoteLaunchResolver {
 /** An agent that has not been made to run on a host yet. */
 export class RemoteAgentUnsupportedError extends Error {
   constructor(readonly agentName: string, displayName: string) {
-    super(`${displayName} cannot run on a remote host yet. Use Claude Code for this project, or run this task on this computer.`);
+    // No agent is named as the alternative: which adapters run on a host is theirs to declare (`remoteCliName`).
+    super(`${displayName} cannot run on a remote host yet. Choose another agent for this project, or run this task on this computer.`);
     this.name = 'RemoteAgentUnsupportedError';
   }
 }
@@ -62,6 +63,37 @@ export function setRemoteLaunchResolver(resolver: RemoteLaunchResolver | null): 
 
 export async function resolveRemoteLaunch(input: RemoteLaunchInput): Promise<RemoteLaunch | null> {
   return current ? current.resolve(input) : null;
+}
+
+/** The CLI a spawn runs and where, or null when no local CLI was found. */
+export interface SpawnCli {
+  /** The CLI as it is run: a path here, or the adapter's name for it on the host. */
+  cliPath: string;
+  cliTarget: CliTarget | null;
+  /** Set for a remote project, whose CLI is the host's own. */
+  remoteLaunch: RemoteLaunch | null;
+  /** The detected local CLI's version, for the log; null on a host. */
+  version: string | null;
+}
+
+/**
+ * The CLI a spawn runs, as both spawn chokepoints decide it: on a remote project the host's own CLI,
+ * never detected here; otherwise the detected local CLI, and for a CLI installed in a WSL distro that
+ * distro. One decision in one place, so the board path and startup cannot drift apart. Each caller
+ * keeps its own logging and its own answer to a CLI that was not found.
+ */
+export async function resolveSpawnCli(input: {
+  projectPath: string | null | undefined;
+  cwd: string;
+  adapter: Pick<AgentAdapter, 'name' | 'displayName' | 'remoteCliName' | 'detect' | 'supportsWslCli'>;
+  cliPathOverride: string | null;
+}): Promise<SpawnCli | null> {
+  const remoteLaunch = await resolveRemoteLaunch({ projectPath: input.projectPath, cwd: input.cwd, adapter: input.adapter });
+  if (remoteLaunch) return { cliPath: remoteLaunch.place.linuxCliPath, cliTarget: remoteLaunch.place, remoteLaunch, version: null };
+  const detection = await input.adapter.detect(input.cliPathOverride);
+  if (!detection.found || !detection.path) return null;
+  const cliTarget = await resolveCliTarget(detection.path, input.adapter.supportsWslCli === true);
+  return { cliPath: detection.path, cliTarget, remoteLaunch: null, version: detection.version };
 }
 
 export interface RemoteLaunchResolverDeps {

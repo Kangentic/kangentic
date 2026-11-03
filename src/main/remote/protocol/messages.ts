@@ -156,9 +156,20 @@ export interface RemoteHostConnection {
   label: string;
 }
 
+/** A remote PTY main holds a handle for: its session and the PTY id main gave it. */
+export interface RemoteSessionRoute {
+  sessionId: string;
+  ptyId: number;
+}
+
 /** The operations on the links, as the single `remote` request of the pty host carries them. */
 export type RemoteHostRequest =
-  | { op: 'addHost'; hostId: string; connection: RemoteHostConnection }
+  /**
+   * Dial a host. A host already dialing or connected keeps its link and redials now. `sessions` are
+   * the PTYs main already holds on that host, sent when the process holding the links restarted, so
+   * their routes and the link's reconcile carry over instead of reading as adoptable.
+   */
+  | { op: 'addHost'; hostId: string; connection: RemoteHostConnection; sessions?: RemoteSessionRoute[] }
   | { op: 'removeHost'; hostId: string }
   | { op: 'helper'; hostId: string; method: HelperMethod; params: unknown; raw?: Uint8Array };
 
@@ -227,7 +238,12 @@ export function parseLinkMessage(json: unknown): LinkToHelperMessage | null {
 export function parseHelperMessage(json: unknown): HelperToLinkMessage | null {
   if (!isRecord(json)) return null;
   if (json.t === 'event' && isRecord(json.event) && typeof json.event.type === 'string') return json as unknown as HelperToLinkMessage;
-  if (json.t === 'reply' && typeof json.id === 'number' && typeof json.ok === 'boolean') return json as unknown as HelperToLinkMessage;
-  if (json.t === 'port' && isRecord(json.message)) return json as unknown as HelperToLinkMessage;
+  if (json.t === 'reply' && typeof json.id === 'number') {
+    // A failure must carry an error with a message: the link turns it into an Error for the caller.
+    if (json.ok === true) return json as unknown as HelperToLinkMessage;
+    if (json.ok === false && isRecord(json.error) && typeof json.error.message === 'string') return json as unknown as HelperToLinkMessage;
+    return null;
+  }
+  if (json.t === 'port' && isRecord(json.message) && typeof json.message.type === 'string') return json as unknown as HelperToLinkMessage;
   return null;
 }

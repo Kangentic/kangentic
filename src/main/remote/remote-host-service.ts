@@ -11,22 +11,10 @@
 import type { SpawnRemote, SshHost } from '../../shared/types';
 import { installHost, type HostAsset, type InstalledHost } from './link/host-installer';
 import { createSshRunner, type SshRunner } from './link/ssh-run';
-import type { HelperMethod, HelperRequestMap, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest } from './protocol/messages';
+import type { HelperMethod, HelperRequestMap, HostFileWrite, HostInfo, RemoteHostConnection, RemoteHostRequest, RemoteSessionRoute } from './protocol/messages';
+import { assertSafeDestination } from './ssh-client';
 
-/** A destination that `ssh` would read as an option, or that carries whitespace or control characters. */
-export class InvalidSshDestinationError extends Error {
-  constructor(readonly destination: string) {
-    super('The host address is not valid. Use a name from your SSH config, user@host, or an ssh:// address.');
-    this.name = 'InvalidSshDestinationError';
-  }
-}
-
-export function assertSafeDestination(destination: string): void {
-  // A leading dash is an `ssh` option (-oProxyCommand=...), not a destination.
-  if (destination.length === 0 || destination.startsWith('-') || /[\s\u0000-\u001f\u007f]/.test(destination)) {
-    throw new InvalidSshDestinationError(destination);
-  }
-}
+export { assertSafeDestination, InvalidSshDestinationError } from './ssh-client';
 
 /**
  * The `ssh` options every Kangentic connection starts with. BatchMode so nothing waits on a prompt
@@ -35,7 +23,8 @@ export function assertSafeDestination(destination: string): void {
  */
 export function sshArgsFor(host: Pick<SshHost, 'destination' | 'key_path'>): string[] {
   assertSafeDestination(host.destination);
-  const args = ['-o', 'BatchMode=yes', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no'];
+  // ConnectTimeout so a powered-off host fails in seconds, not after the TCP stack gives up.
+  const args = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=15', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=3', '-o', 'ForwardAgent=no'];
   if (host.key_path) args.push('-i', host.key_path, '-o', 'IdentitiesOnly=yes');
   args.push(host.destination);
   return args;
@@ -52,6 +41,8 @@ export interface RemoteHostServiceDeps {
   /** How this computer introduces itself to a host's helper. */
   identity: { installId: string; label: string };
   install?: (run: SshRunner, asset: HostAsset | readonly HostAsset[]) => Promise<InstalledHost>;
+  /** The PTYs main already holds on a host, sent with its `addHost` so a restarted pty host routes them again. */
+  liveSessions?: (hostId: string) => RemoteSessionRoute[];
   createRunner?: (config: { sshPath: string; args: string[] }) => SshRunner;
 }
 
@@ -93,8 +84,14 @@ export class RemoteHostService {
       installId: this.deps.identity.installId,
       label: this.deps.identity.label,
     };
-    await this.deps.send({ op: 'addHost', hostId, connection });
+    const sessions = this.deps.liveSessions?.(hostId) ?? [];
+    await this.deps.send({ op: 'addHost', hostId, connection, ...(sessions.length > 0 ? { sessions } : {}) });
     this.connected.add(hostId);
+  }
+
+  /** Every host this service has added, for re-adding them all after the process holding the links restarts. */
+  connectedHosts(): string[] {
+    return [...this.connected];
   }
 
   /** Stop dialing a host. Its agents keep running there. */
@@ -102,20 +99,6 @@ export class RemoteHostService {
     this.connected.delete(hostId);
     this.infoByHost.delete(hostId);
     await this.deps.send({ op: 'removeHost', hostId });
-  }
-
-  /** Connect every stored host at startup. One that fails does not stop the rest; its error is returned. */
-  async connectAll(): Promise<Array<{ hostId: string; error: Error | null }>> {
-    const results: Array<{ hostId: string; error: Error | null }> = [];
-    for (const host of this.deps.hosts.list()) {
-      try {
-        await this.connect(host.id);
-        results.push({ hostId: host.id, error: null });
-      } catch (error) {
-        results.push({ hostId: host.id, error: error instanceof Error ? error : new Error(String(error)) });
-      }
-    }
-    return results;
   }
 
   /** The host's home and login shell, asked once and kept until it is disconnected. */

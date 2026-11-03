@@ -42,7 +42,11 @@ export function createSshHostAdmin(context: IpcContext): SshHostAdmin | null {
 
 export function registerSshHostHandlers(context: IpcContext): SshHostAdmin | null {
   const admin = createSshHostAdmin(context);
-  if (!admin || !context.remoteHosting) return null;
+  if (!admin || !context.remoteHosting) {
+    // Said once here, or every SSH tab call fails as Electron's bare "No handler registered".
+    console.warn('[remote] SSH hosts are unavailable: no remote hosting was set up, so no ssh handler is registered.');
+    return null;
+  }
   // The project handlers prepare a remote project through it.
   context.remoteHosting.admin = admin;
 

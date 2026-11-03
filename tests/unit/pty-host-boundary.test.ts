@@ -161,7 +161,7 @@ describe('pty host out-of-process boundary', () => {
       // duration, 20 to 40 ms idle and up to 454 ms under disk load (the figure above), which
       // pauses local terminals for that long. The accepted interim of hosting the hub in this
       // process (one renderer port serves local and remote); the fix is to start ssh on the spawn
-      // worker, tracked for the PR before it leaves draft.
+      // worker, named as the known cost in .claude/rules/pty-host-out-of-process.md.
       'src/main/remote/link/ssh-connection.ts': 'ssh for a remote host\'s link, on dial and redial only; known to hold the thread for one CreateProcess (see above)',
     };
     for (const devBuild of [false, true]) {

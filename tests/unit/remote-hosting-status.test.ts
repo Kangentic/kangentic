@@ -19,7 +19,8 @@ vi.mock('../../src/main/db/repositories/ssh-host-repository', () => ({
 }));
 
 import { createRemoteHosting } from '../../src/main/remote/remote-hosting';
-import { setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import { RemoteAgentUnsupportedError, resolveRemoteLaunch, setRemoteLaunchResolver } from '../../src/main/remote/remote-launch';
+import * as path from 'node:path';
 
 function makeSessionManager() {
   const emitter = new EventEmitter();
@@ -73,6 +74,52 @@ describe('a link reporting its state', () => {
     // The link was retrying underneath the whole time, and its success clears the verdict.
     sessionManager.emit('remote-link', { hostId: 'host-1', state: 'connected', detail: null });
     expect(hosting.status.get('host-1')?.state).toBe('connected');
+  });
+});
+
+describe('resolving a project path to its remote', () => {
+  // An adapter with no remoteCliName makes the resolver throw once it has found a remote, so the throw
+  // proves the project list lookup found the remote without needing a live host.
+  const adapterWithoutRemoteCli = { name: 'claude', displayName: 'Claude Code', remoteCliName: undefined };
+  const remoteProjectPath = path.resolve(path.join('mock', 'shells', 'Remote-Project'));
+  const localProjectPath = path.resolve(path.join('mock', 'projects', 'local-project'));
+
+  function hostingWithProjects() {
+    return createRemoteHosting({
+      sessionManager: makeSessionManager() as never,
+      projects: () => ({
+        list: () => [
+          { id: 'project-remote', path: remoteProjectPath, remote: { hostId: 'host-1', path: '/home/dev/app' } },
+          { id: 'project-local', path: localProjectPath, remote: null },
+        ] as never,
+      }),
+      log: () => undefined,
+    });
+  }
+
+  it('finds the remote of the project whose shell folder is the path, and none for a local project', async () => {
+    hostingWithProjects();
+
+    await expect(resolveRemoteLaunch({ projectPath: remoteProjectPath, cwd: remoteProjectPath, adapter: adapterWithoutRemoteCli }))
+      .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
+    await expect(resolveRemoteLaunch({ projectPath: localProjectPath, cwd: localProjectPath, adapter: adapterWithoutRemoteCli }))
+      .resolves.toBeNull();
+    await expect(resolveRemoteLaunch({ projectPath: path.resolve(path.join('mock', 'elsewhere')), cwd: localProjectPath, adapter: adapterWithoutRemoteCli }))
+      .resolves.toBeNull();
+  });
+
+  it.runIf(process.platform === 'win32')('matches a remote project path regardless of letter case on Windows', async () => {
+    hostingWithProjects();
+
+    await expect(resolveRemoteLaunch({ projectPath: remoteProjectPath.toUpperCase(), cwd: remoteProjectPath, adapter: adapterWithoutRemoteCli }))
+      .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
+  });
+
+  it.runIf(process.platform !== 'win32')('treats a path differing only in case as another folder off Windows', async () => {
+    hostingWithProjects();
+
+    await expect(resolveRemoteLaunch({ projectPath: remoteProjectPath.toUpperCase(), cwd: remoteProjectPath, adapter: adapterWithoutRemoteCli }))
+      .resolves.toBeNull();
   });
 });
 

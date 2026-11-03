@@ -51,13 +51,16 @@ const DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 
 export function readHostAssets(directory: string, appVersion: string, options: HostAssetsOptions = {}): HostAssetsResult {
   const manifestPath = path.join(directory, 'manifest.json');
-  let manifest: { version?: unknown; assets?: unknown };
+  let parsed: unknown;
   try {
-    manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8')) as typeof manifest;
+    parsed = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
   } catch (error) {
     const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
     return { assets: [], problem: missing ? `No host program: ${manifestPath} does not exist.` : `The host program's manifest could not be read: ${(error as Error).message}` };
   }
+  // Valid JSON that is not an object (`null`, a number) is malformed too, read as "no host program".
+  if (typeof parsed !== 'object' || parsed === null) return { assets: [], problem: 'The host program manifest is not an object.' };
+  const manifest = parsed as { version?: unknown; assets?: unknown };
   if (manifest.version !== appVersion) {
     return { assets: [], problem: `The host program is for version ${String(manifest.version)}, and this app is ${appVersion}.` };
   }
@@ -65,13 +68,19 @@ export function readHostAssets(directory: string, appVersion: string, options: H
 
   const assets: HostAsset[] = [];
   const problems: string[] = [];
-  for (const entry of manifest.assets as ManifestEntry[]) {
+  for (const candidateEntry of manifest.assets as unknown[]) {
+    if (typeof candidateEntry !== 'object' || candidateEntry === null) {
+      problems.push('an entry is not an object');
+      continue;
+    }
+    const entry = candidateEntry as ManifestEntry;
     const arch = ARCHES.find((candidate) => candidate === entry.arch);
     if (!arch) {
       problems.push(`an entry names the CPU ${String(entry.arch)}`);
       continue;
     }
-    if (typeof entry.file !== 'string' || entry.file !== path.basename(entry.file) || entry.file.length === 0) {
+    // `path.basename` keeps `.` and `..`, and reads a backslash as a separator only on Windows, so both are refused outright.
+    if (typeof entry.file !== 'string' || entry.file.length === 0 || entry.file === '.' || entry.file === '..' || /[\\/]/.test(entry.file)) {
       problems.push(`the ${arch} entry's file name is not a plain file name`);
       continue;
     }

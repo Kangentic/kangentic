@@ -1,6 +1,6 @@
 import { promises as fs } from 'node:fs';
 import * as path from 'node:path';
-import { cliPathForTarget, hostPathToLocal, type SshCliPlace } from '../../shared/cli-target';
+import { cliPathForTarget, type SshCliPlace } from '../../shared/cli-target';
 import type { JsonPatchOp } from '../../../remote/protocol/messages';
 
 const LOG_TAG = '[CLAUDE_REMOTE_TRUST]';
@@ -46,27 +46,32 @@ export async function ensureRemoteClaudeSpawnConfig(workingDirectory: string, pl
   if (!files) throw new Error('This host has no connection to edit its Claude files through.');
 
   const directoryOnHost = cliPathForTarget(path.resolve(workingDirectory), place);
-  const result = await files.jsonPatch({
+  const patched = files.jsonPatch({
     path: `${place.home}/.claude.json`,
     lockDirectory: `${place.home}/.claude.json.lock`,
     ops: remoteClaudeSpawnPatch(directoryOnHost),
   });
+
+  // Each pull is its own round trip to the host and none depends on another or on the patch, so they
+  // run together: one round trip's wait per spawn instead of five or more in a row.
+  const pulls: Array<{ hostPath: string; localPath: string }> = [
+    { hostPath: `${place.home}/.claude/settings.json`, localPath: path.join(place.localHome, '.claude', 'settings.json') },
+  ];
+  for (const root of place.roots) {
+    pulls.push({ hostPath: `${root.host}/.claude/settings.json`, localPath: path.join(root.local, '.claude', 'settings.json') });
+    pulls.push({ hostPath: `${root.host}/.claude/settings.local.json`, localPath: path.join(root.local, '.claude', 'settings.local.json') });
+  }
+  // A worktree keeps its own "always allow" grants, which the merged settings carry on resume.
+  const worktreeLocal = path.join(path.resolve(workingDirectory), '.claude', 'settings.local.json');
+  if (!pulls.some((pull) => pull.localPath === worktreeLocal)) {
+    pulls.push({ hostPath: cliPathForTarget(worktreeLocal, place), localPath: worktreeLocal });
+  }
+  const [result] = await Promise.all([patched, ...pulls.map((pull) => pullFile(place, pull.hostPath, pull.localPath))]);
   if (!result.applied) {
     if (result.reason === 'bad-patch') throw new Error(`The host's Claude settings could not be edited: ${result.reason}.`);
     // The CLI's own policy on a lock that stays held, and on a file that is not what it should be: skip,
     // and the session shows one trust prompt, which costs less than a write that could lose the user's state.
     console.warn(`${LOG_TAG} Skipping the trust edit on host ${place.hostId}: ${result.reason}`);
-  }
-
-  await pullFile(place, `${place.home}/.claude/settings.json`, path.join(place.localHome, '.claude', 'settings.json'));
-  for (const root of place.roots) {
-    await pullFile(place, `${root.host}/.claude/settings.json`, path.join(root.local, '.claude', 'settings.json'));
-    await pullFile(place, `${root.host}/.claude/settings.local.json`, path.join(root.local, '.claude', 'settings.local.json'));
-  }
-  // A worktree keeps its own "always allow" grants, which the merged settings carry on resume.
-  const worktreeLocal = path.join(path.resolve(workingDirectory), '.claude', 'settings.local.json');
-  if (!place.roots.some((root) => path.join(root.local, '.claude', 'settings.local.json') === worktreeLocal)) {
-    await pullFile(place, cliPathForTarget(worktreeLocal, place), worktreeLocal);
   }
 }
 
@@ -79,13 +84,9 @@ async function pullFile(place: SshCliPlace, hostPath: string, localPath: string)
     await fs.rm(localPath, { force: true });
     return;
   }
+  // An unchanged copy is not rewritten, so its modification time keeps meaning something to a watcher.
+  const existing = await fs.readFile(localPath, 'utf8').catch(() => null);
+  if (existing === answer.content) return;
   await fs.mkdir(path.dirname(localPath), { recursive: true });
   await fs.writeFile(localPath, answer.content, 'utf8');
-}
-
-/** Where a host path of the session's lands on this computer, for a reader: the shell folder or the home mirror. */
-export function localCopyOfHostPath(hostPath: string, place: SshCliPlace): string {
-  const underRoots = hostPathToLocal(hostPath, place.roots);
-  if (underRoots !== hostPath) return underRoots;
-  return hostPath.startsWith(`${place.home}/`) ? path.join(place.localHome, ...hostPath.slice(place.home.length).split('/').filter(Boolean)) : hostPath;
 }

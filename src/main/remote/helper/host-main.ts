@@ -1,7 +1,7 @@
 /**
  * The program that runs on the host for #913: `node host.js daemon` or `node host.js relay`.
- * A Linux program, built by esbuild as its own bundle (`.vite/build/kangentic-host.js`), with
- * node-pty beside it. It imports nothing of electron or better-sqlite3
+ * A Linux program, built by esbuild as its own bundle (`app/host.js` in the host asset that
+ * `scripts/build-host.mjs` packs), with node-pty beside it. It imports nothing of electron or better-sqlite3
  * (`tests/unit/remote-helper-boundary.test.ts`).
  *
  * - `daemon` owns the PTYs. It listens on a unix socket in a private folder and hands every
@@ -157,6 +157,6 @@ if (command === 'daemon') {
     process.exit(1);
   });
 } else {
-  process.stderr.write('usage: node kangentic-host.js daemon|relay [--dir <folder>]\n');
+  process.stderr.write(`usage: node ${path.basename(process.argv[1] ?? 'host.js')} daemon|relay [--dir <folder>]\n`);
   process.exit(2);
 }

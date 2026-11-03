@@ -476,9 +476,17 @@ class MirrorAgent {
 
   /** A new folder may already hold files by the time its watch is on, so it is listed after the watch. */
   async rescanDirectory(directory) {
-    let entries;
-    try { entries = await fsPromises.readdir(directory, { withFileTypes: true }); } catch { return; }
+    // Watch first, then list: a file made between the two is then in the listing or in an event.
     this.watchDirectory(directory);
+    let entries;
+    try {
+      entries = await fsPromises.readdir(directory, { withFileTypes: true });
+    } catch {
+      // The folder is gone again; its watcher has nothing to watch.
+      this.watchers.get(directory)?.close();
+      this.watchers.delete(directory);
+      return;
+    }
     for (const entry of entries) {
       const entryPath = path.join(directory, entry.name);
       if (entry.isDirectory()) await this.rescanDirectory(entryPath);

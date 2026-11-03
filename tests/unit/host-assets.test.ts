@@ -96,6 +96,25 @@ describe('reading the host program', () => {
     expect(found.problem).toContain('not a lowercase SHA-256');
     expect(found.problem).toContain('listed-but-absent.tar.gz is listed but missing');
   });
+
+  it('reads a manifest of null, or a null entry, as a problem, never a throw', () => {
+    fs.writeFileSync(path.join(directory, 'manifest.json'), 'null');
+    expect(readHostAssets(directory, '0.52.0')).toEqual({ assets: [], problem: 'The host program manifest is not an object.' });
+
+    write({ ...goodManifest, assets: [null, goodManifest.assets[0]] });
+    const found = readHostAssets(directory, '0.52.0');
+    expect(found.assets.map((asset) => asset.arch)).toEqual(['x64']);
+    expect(found.problem).toContain('an entry is not an object');
+  });
+
+  it('refuses a file name of . or .., which would name the folder or its parent', () => {
+    write({ ...goodManifest, assets: [{ arch: 'x64', file: '..', sha256: SHA_X64 }, { arch: 'arm64', file: '.', sha256: SHA_ARM }] });
+
+    const found = readHostAssets(directory, '0.52.0');
+
+    expect(found.assets).toEqual([]);
+    expect(found.problem).toContain('not a plain file name');
+  });
 });
 
 describe('a build that carries only the manifest and downloads the archive on first use', () => {

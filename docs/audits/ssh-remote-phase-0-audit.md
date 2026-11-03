@@ -209,9 +209,9 @@ of 120), a renamed slug folder (46 of 120), a cold mirror (120 of 120) and link-
 injected lag, so 279 is not a field rate, but natural lag alone produced false `expired`. A gone
 file must be proved on the host, and link-down means `unknown`.
 
-Two sites in the code must be covered. `resume-conversation-guard.ts:203` calls `isConfirmedMissing`
-on a raw reported path, and a Linux path on Windows stats `ENOENT`, so an unrouted path reads as
-missing. Line 196 returns `expired` from a `cli_target` mismatch with no disk read, so
+Two sites in the code must be covered. `assessResumeConversation` (`resume-conversation-guard.ts`) calls
+`isConfirmedMissing` on a raw reported path, and a Linux path on Windows stats `ENOENT`, so an unrouted
+path reads as missing. Its `cli_target` identity check returns `expired` from a mismatch with no disk read, so
 `isSameCliPlace` for an ssh place must compare the host id only. Both are read from code, not run.
 
 ### inotify and Windows paths

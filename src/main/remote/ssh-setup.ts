@@ -18,8 +18,9 @@ import * as fs from 'node:fs/promises';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import { childProcessEnv } from '../shared/child-env';
-import { assertSafeDestination } from './remote-host-service';
-import { defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
+import { killChildTreeNow } from '../shared/child-tree-stop';
+import { posixShellCommand } from './link/ssh-run';
+import { assertSafeDestination, defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
 
 export interface RunResult {
   code: number | null;
@@ -36,16 +37,30 @@ export type RunProgram = (file: string, args: string[], options?: ExecFileOption
  * that stays open leaves it waiting after the command has finished: found by running Add host in the real
  * app, where the key was added on the host and `ssh` then sat until the 60 s kill (the rig's own helper
  * closed stdin, so it never showed).
+ *
+ * The timeout stops the child's whole tree, as `ssh-run.ts` does: `execFile`'s own timeout signals only
+ * `ssh` itself, and a ProxyCommand or jump-host hop it started would keep running.
  */
 export const runProgram: RunProgram = (file, args, options = {}) => new Promise((resolve, reject) => {
-  const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
+  const { timeout, ...execOptions } = options;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let timedOut = false;
+  const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...execOptions }, (error, stdout, stderr) => {
+    if (timer) clearTimeout(timer);
     const spawnFailure = error as (NodeJS.ErrnoException & { code?: string | number }) | null;
-    if (spawnFailure && typeof spawnFailure.code === 'string' && spawnFailure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+    if (!timedOut && spawnFailure && typeof spawnFailure.code === 'string' && spawnFailure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
       reject(spawnFailure);
       return;
     }
-    resolve({ code: error ? (typeof spawnFailure?.code === 'number' ? spawnFailure.code : null) : 0, stdout: String(stdout), stderr: String(stderr) });
+    const code = timedOut ? null : error ? (typeof spawnFailure?.code === 'number' ? spawnFailure.code : null) : 0;
+    resolve({ code, stdout: String(stdout), stderr: String(stderr) });
   });
+  if (timeout !== undefined && timeout > 0) {
+    timer = setTimeout(() => {
+      timedOut = true;
+      killChildTreeNow(child, { leadsGroup: false });
+    }, timeout);
+  }
   // A child that exits before this runs has already closed its end; the error is the child's, not ours.
   child.stdin?.on('error', () => undefined);
   child.stdin?.end();
@@ -180,18 +195,21 @@ export function pickKnownHostsEntry(text: string, token: string): { keyType: str
  * question, which holds no fingerprint, so the fingerprint comes from here (Phase 0 measured 44 ms
  * direct and 245 ms through a jump host, and it matched the host's own key).
  */
-export async function probeHostKey(destination: string, deps: SshSetupDeps): Promise<HostKeyProbe> {
-  const target = await resolveTarget(destination, deps);
+export async function probeHostKey(destination: string, deps: SshSetupDeps, resolved?: ResolvedTarget): Promise<HostKeyProbe> {
+  const target = resolved ?? await resolveTarget(destination, deps);
   const scratch = path.join(deps.temporaryDirectory, `kangentic-probe-${randomBytes(6).toString('hex')}`);
   await fs.mkdir(scratch, { recursive: true, mode: 0o700 });
   const known = path.join(scratch, 'known_hosts');
+  // `ssh` reads a known-hosts option as a list split on whitespace, so a temp folder under a profile
+  // with a space in its name is quoted, which its config parser honors.
+  const knownOption = /\s/.test(known) ? `"${known}"` : known;
   try {
     await deps.run(deps.sshPath, [
       ...(deps.sshOptions ?? []),
       '-o', 'BatchMode=yes',
       '-o', 'StrictHostKeyChecking=no',
-      '-o', `UserKnownHostsFile=${known}`,
-      '-o', `GlobalKnownHostsFile=${known}`,
+      '-o', `UserKnownHostsFile=${knownOption}`,
+      '-o', `GlobalKnownHostsFile=${knownOption}`,
       '-o', 'HashKnownHosts=no',
       '-o', 'PreferredAuthentications=none',
       '-o', 'ConnectTimeout=10',
@@ -221,7 +239,7 @@ export async function probeHostKey(destination: string, deps: SshSetupDeps): Pro
  */
 export async function trustHostKey(destination: string, shownFingerprint: string, deps: SshSetupDeps): Promise<HostKeyProbe> {
   const target = await resolveTarget(destination, deps);
-  const probe = await probeHostKey(destination, deps);
+  const probe = await probeHostKey(destination, deps, target);
   if (probe.fingerprint !== shownFingerprint) {
     throw new Error('The host presented a different key than the one you were shown, so nothing was trusted. Try again, and compare the fingerprint.');
   }
@@ -282,9 +300,10 @@ export async function importHostKey(hostId: string, sourcePath: string, deps: Ss
   const directory = hostKeyDirectory(deps.configDirectory, hostId);
   await fs.mkdir(directory, { recursive: true, mode: 0o700 });
   const target = path.join(directory, 'id_imported');
-  const content = await fs.readFile(sourcePath, 'utf8');
+  // A key saved on Windows can carry CRLF line ends, which a POSIX OpenSSH refuses as an invalid format.
+  const content = (await fs.readFile(sourcePath, 'utf8')).replace(/\r\n/g, '\n');
   if (!/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(content)) throw new Error('That file is not a private key.');
-  if (/ENCRYPTED/.test(content.split(/\r?\n/).slice(0, 4).join('\n'))) {
+  if (/ENCRYPTED/.test(content.split('\n').slice(0, 4).join('\n')) || isEncryptedOpenSshKey(content)) {
     throw new Error('That key has a passphrase, and Kangentic never asks for one. Add it to ssh-agent, or let Kangentic make its own key.');
   }
   await fs.rm(target, { force: true });
@@ -292,6 +311,22 @@ export async function importHostKey(hostId: string, sourcePath: string, deps: Ss
   // `ssh.exe` accepts because only the user and the system can read it.
   await fs.writeFile(target, content.endsWith('\n') ? content : `${content}\n`, { mode: 0o600 });
   return target;
+}
+
+/**
+ * Whether a key in OpenSSH's own format (`BEGIN OPENSSH PRIVATE KEY`, the default since OpenSSH 7.8)
+ * has a passphrase. Such a key never says ENCRYPTED in its text: the cipher's name sits inside the
+ * base64 body, right after the `openssh-key-v1` magic, and is `none` for a key with no passphrase.
+ */
+export function isEncryptedOpenSshKey(content: string): boolean {
+  const match = content.match(/-----BEGIN OPENSSH PRIVATE KEY-----([\s\S]*?)-----END OPENSSH PRIVATE KEY-----/);
+  if (!match) return false;
+  const blob = Buffer.from(match[1].replace(/\s+/g, ''), 'base64');
+  const magic = 'openssh-key-v1\0';
+  if (blob.length < magic.length + 4 || blob.toString('latin1', 0, magic.length) !== magic) return false;
+  const nameLength = blob.readUInt32BE(magic.length);
+  const cipherName = blob.toString('latin1', magic.length + 4, magic.length + 4 + nameLength);
+  return cipherName !== 'none';
 }
 
 /** Remove the keys Kangentic holds for a host. */
@@ -314,11 +349,22 @@ export function askpassProgram(platform: NodeJS.Platform): { fileName: string; c
   return { fileName: 'askpass.sh', content: '#!/bin/sh\nprintf \'%s\\n\' "$KANGENTIC_SSH_PASSWORD"\n' };
 }
 
-/** The command that adds a key to the host's authorized_keys once. Only a validated key goes into it. */
+/**
+ * The command that adds a key to the host's authorized_keys once, run through sh whatever the login
+ * shell. Only a validated key goes into it, and `PUBLIC_KEY_PATTERN` admits no quote, `$`, backtick or
+ * backslash, so double quotes hold it. A file whose last line has no newline (a hand edit) gets one
+ * first, or the key would be glued onto that line and neither would work.
+ */
 export function installKeyCommand(publicKey: string): string {
   if (!isValidPublicKey(publicKey)) throw new Error('That is not a public key Kangentic can add.');
   const line = publicKey.trim();
-  return `umask 077; mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; grep -qxF '${line}' ~/.ssh/authorized_keys || printf '%s\\n' '${line}' >> ~/.ssh/authorized_keys`;
+  const file = '~/.ssh/authorized_keys';
+  return posixShellCommand([
+    'umask 077',
+    'mkdir -p ~/.ssh',
+    `touch ${file}`,
+    `grep -qxF "${line}" ${file} || { if [ -s ${file} ] && [ -n "$(tail -c 1 ${file})" ]; then echo >> ${file}; fi; echo "${line}" >> ${file}; }`,
+  ].join('; '));
 }
 
 /**
@@ -367,9 +413,16 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
   }
 }
 
-/** Take a key out of a host's authorized_keys, signing in with that key. Best effort: the host may be unreachable. */
+/**
+ * Take a key out of a host's authorized_keys, signing in with that key. Best effort: the host may be
+ * unreachable. The file is rewritten only when grep finished: exit 0 (lines kept) or 1 (no line left).
+ * Exit 2 (a read error, a full disk) leaves a short temporary file, which must never replace the user's keys.
+ */
 export function removeKeyCommand(publicKey: string): string {
   if (!isValidPublicKey(publicKey)) throw new Error('That is not a public key Kangentic can remove.');
   const line = publicKey.trim();
-  return `f=~/.ssh/authorized_keys; [ -f "$f" ] && grep -vxF '${line}' "$f" > "$f.kangentic.tmp"; [ -f "$f.kangentic.tmp" ] && cat "$f.kangentic.tmp" > "$f"; rm -f "$f.kangentic.tmp"`;
+  return posixShellCommand([
+    'f=~/.ssh/authorized_keys',
+    `if [ -f "$f" ]; then grep -vxF "${line}" "$f" > "$f.kangentic.tmp"; status=$?; if [ "$status" -le 1 ]; then cat "$f.kangentic.tmp" > "$f"; fi; rm -f "$f.kangentic.tmp"; fi`,
+  ].join('; '));
 }

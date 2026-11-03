@@ -58,6 +58,9 @@ export class SshHostRepository {
   delete(id: string): void {
     const db = getGlobalDb();
     writeTransaction(db, () => {
+      // Their dev-server ports go back to the pool first, as ProjectRepository.delete does for one
+      // project: nothing sweeps a reservation whose project is gone.
+      db.prepare('DELETE FROM dev_ports WHERE project_id IN (SELECT id FROM projects WHERE remote_host_id = ?)').run(id);
       db.prepare('DELETE FROM projects WHERE remote_host_id = ?').run(id);
       db.prepare('DELETE FROM ssh_hosts WHERE id = ?').run(id);
       const remaining = db.prepare('SELECT id FROM projects ORDER BY position ASC').all() as Array<{ id: string }>;

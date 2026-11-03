@@ -1,6 +1,6 @@
 /**
  * An `ssh` child's stdio as one duplex stream, for the link (#913). The link is given this as its
- * connection to a host: `ssh <options> <destination> node kangentic-host.js relay` is the byte
+ * connection to a host: `ssh <options> <destination> sh -c '... node app/host.js relay ...'` is the byte
  * pipe, and the resume layer turns it into a session that survives it dying.
  *
  * - The child is never `detached`. On Windows a detached `ssh` opens a visible console for a jump

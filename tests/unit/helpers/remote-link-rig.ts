@@ -79,8 +79,7 @@ export interface HelperRigOptions {
 }
 
 /** A helper whose node-pty hands out the queued fakes in order. */
-export function makeHelperRig(fakeCount = 1, firstPidOrOptions: number | HelperRigOptions = 4242, legacyEndpoint?: HelperRigOptions['endpoint']): HelperRig {
-  const options: HelperRigOptions = typeof firstPidOrOptions === 'number' ? { firstPid: firstPidOrOptions, endpoint: legacyEndpoint } : firstPidOrOptions;
+export function makeHelperRig(fakeCount = 1, options: HelperRigOptions = {}): HelperRig {
   const fakes = Array.from({ length: fakeCount }, (_, index) => createFakePty((options.firstPid ?? 4242) + index));
   const queue = [...fakes];
   const spawnPty = vi.fn(() => {

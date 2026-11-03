@@ -34,7 +34,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
-import { resolveRemoteLaunch } from '../remote/remote-launch';
+import { resolveRemoteLaunch, resolveSpawnCli } from '../remote/remote-launch';
 import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
@@ -737,26 +737,16 @@ export class TransitionEngine {
     // A remote project runs its agent on a host (#913): the CLI is not detected here, it is the host's
     // own, named by the adapter. The launch is the path map to the host and the descriptor performSpawn
     // takes. Null for a project on this computer, which goes on exactly as before.
-    const remoteLaunch = await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd, adapter });
-    let detectedCliPath: string;
-    let cliTarget: CliTarget | null;
-    if (remoteLaunch) {
-      detectedCliPath = remoteLaunch.place.linuxCliPath;
-      cliTarget = remoteLaunch.place;
-      console.log(`[spawnAgent] ${agentName} runs on host ${remoteLaunch.remote.hostId.slice(0, 8)} as ${detectedCliPath}`);
-    } else {
-      console.log(`[spawnAgent] Detecting ${agentName} CLI...`);
-      const detection = await adapter.detect(cliPathOverride);
-      if (!detection.found || !detection.path) {
-        throw new AgentCliNotFoundError(agentName, adapter.displayName);
-      }
-      console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
-      detectedCliPath = detection.path;
-      // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
-      // once for this spawn. A distro CLI runs in that distro's shell, whatever
-      // the Terminal setting says.
-      cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
-    }
+    // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
+    // once for this spawn. A distro CLI runs in that distro's shell, whatever
+    // the Terminal setting says.
+    const spawnCli = await resolveSpawnCli({ projectPath: appConfig.projectPath, cwd, adapter, cliPathOverride });
+    if (!spawnCli) throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    const { remoteLaunch, cliTarget } = spawnCli;
+    const detectedCliPath = spawnCli.cliPath;
+    console.log(remoteLaunch
+      ? `[spawnAgent] ${agentName} runs on host ${remoteLaunch.remote.hostId.slice(0, 8)} as ${detectedCliPath}`
+      : `[spawnAgent] ${agentName} CLI found at ${detectedCliPath} (v${spawnCli.version})`);
     // A handoff points the receiving agent at the prior session's file; a CLI
     // in a WSL distro opens it by the path the distro sees.
     if (cliTarget && handoffPromptPrefix) {
@@ -1328,8 +1318,16 @@ export class TransitionEngine {
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.firstPromptMayBeTyped) return null;
     // A remote project's agent starts through the main path only: its files must reach the host before
-    // it runs, and an agent started ahead of its worktree's setup script would have neither.
-    if (await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd: input.worktreePath, adapter }).catch(() => ({}))) return null;
+    // it runs, and an agent started ahead of its worktree's setup script would have neither. A resolve
+    // that fails (an agent no host can run, a host that did not answer) starts nothing early either:
+    // the main path then reports it.
+    let remoteProject: boolean;
+    try {
+      remoteProject = (await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd: input.worktreePath, adapter })) !== null;
+    } catch {
+      remoteProject = true;
+    }
+    if (remoteProject) return null;
     if (this.sessionManager.getFreeAgentSlots() <= 0 || this.sessionManager.hasSessionForTask(task.id)) return null;
     if (this.sessionManager.columnBlocks({ taskId: task.id, projectId: appConfig.projectId })) return null;
 

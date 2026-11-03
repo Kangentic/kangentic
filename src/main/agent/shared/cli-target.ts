@@ -62,6 +62,8 @@ export interface SshPlaceFiles {
   jsonPatch(request: JsonPatchRequest): Promise<JsonPatchResult>;
 }
 
+export type CliPlace = WslCliPlace | SshCliPlace;
+
 /** Narrowing for the many readers that only mean a WSL distro. */
 export function isWslPlace(place: CliPlace | null | undefined): place is WslCliPlace {
   return place?.kind === 'wsl';
@@ -71,45 +73,63 @@ export function isSshPlace(place: CliPlace | null | undefined): place is SshCliP
   return place?.kind === 'ssh';
 }
 
+type SshRoot = SshCliPlace['roots'][number];
+
+/** A local path with forward slashes, `..` resolved, and no trailing slash. */
+function normalizedLocal(localPath: string): string {
+  return path.posix.normalize(toForwardSlash(localPath)).replace(/(.)\/+$/, '$1');
+}
+
+/** A local path as roots are compared: on Windows case-folded too, since its file system ignores case. */
+function comparableLocal(localPath: string): string {
+  const normalized = normalizedLocal(localPath);
+  return process.platform === 'win32' ? normalized.toLowerCase() : normalized;
+}
+
+/** A host path with `..` resolved and no trailing slash, so a path that climbs out of a root is not under it. */
+function normalizedHost(hostPath: string): string {
+  return path.posix.normalize(hostPath).replace(/(.)\/+$/, '$1');
+}
+
+/** The root a path lies in or names, the longest when roots nest; null when it is under none. */
+function longestRoot(roots: SshCliPlace['roots'], side: 'local' | 'host', candidate: string): SshRoot | null {
+  const key = side === 'local' ? comparableLocal(candidate) : normalizedHost(candidate);
+  let best: SshRoot | null = null;
+  let bestLength = -1;
+  for (const root of roots) {
+    const rootKey = side === 'local' ? comparableLocal(root.local) : normalizedHost(root.host);
+    const inside = key === rootKey || key.startsWith(`${rootKey}/`);
+    if (inside && rootKey.length > bestLength) {
+      best = root;
+      bestLength = rootKey.length;
+    }
+  }
+  return best;
+}
+
 /** A local path as the host names it, by the longest matching root; a path under no root is left as given. */
 export function localPathToHost(localPath: string, roots: SshCliPlace['roots']): string {
-  const normalized = toForwardSlash(localPath);
-  let best: { local: string; host: string } | null = null;
-  for (const root of roots) {
-    const localRoot = toForwardSlash(root.local).replace(/\/+$/, '');
-    const inside = normalized === localRoot || normalized.startsWith(`${localRoot}/`);
-    if (inside && (!best || localRoot.length > toForwardSlash(best.local).replace(/\/+$/, '').length)) best = root;
-  }
+  const normalized = normalizedLocal(localPath);
+  const best = longestRoot(roots, 'local', localPath);
   if (!best) return normalized;
-  const localRoot = toForwardSlash(best.local).replace(/\/+$/, '');
-  const hostRoot = best.host.replace(/\/+$/, '');
-  return `${hostRoot}${normalized.slice(localRoot.length)}`;
+  return `${normalizedHost(best.host)}${normalized.slice(normalizedLocal(best.local).length)}`;
 }
 
 /** Whether a local path is a root or inside one, so `localPathToHost` names it on the host. */
 export function isUnderLocalRoot(localPath: string, roots: SshCliPlace['roots']): boolean {
-  const normalized = toForwardSlash(localPath);
-  return roots.some((root) => {
-    const localRoot = toForwardSlash(root.local).replace(/\/+$/, '');
-    return normalized === localRoot || normalized.startsWith(`${localRoot}/`);
-  });
+  return longestRoot(roots, 'local', localPath) !== null;
 }
 
 /** A host path as this computer's mirror folder names it, or the path unchanged when it is under no root. */
 export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): string {
-  let best: { local: string; host: string } | null = null;
-  for (const root of roots) {
-    const hostRoot = root.host.replace(/\/+$/, '');
-    const inside = hostPath === hostRoot || hostPath.startsWith(`${hostRoot}/`);
-    if (inside && (!best || hostRoot.length > best.host.replace(/\/+$/, '').length)) best = root;
-  }
+  const best = longestRoot(roots, 'host', hostPath);
   if (!best) return hostPath;
-  return path.join(best.local, ...hostPath.slice(best.host.replace(/\/+$/, '').length).split('/').filter(Boolean));
+  const rest = normalizedHost(hostPath).slice(normalizedHost(best.host).length);
+  return path.join(best.local, ...rest.split('/').filter(Boolean));
 }
-export type CliPlace = WslCliPlace | SshCliPlace;
 
 export type CliTarget = CliPlace & {
-  /** The CLI's path as the distro sees it: `/home/dev/.local/bin/claude`. */
+  /** The CLI's path where it runs: in the distro, or on the SSH host (`/home/dev/.local/bin/claude`). */
   linuxCliPath: string;
 };
 

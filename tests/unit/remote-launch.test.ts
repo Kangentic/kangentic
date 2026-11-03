@@ -88,7 +88,7 @@ describe('a remote project', () => {
     const resolver = createRemoteLaunchResolver(makeDeps());
 
     await expect(resolver.resolve({ projectPath: shellFolder, cwd: shellFolder, adapter: codex }))
-      .rejects.toThrow('Codex cannot run on a remote host yet. Use Claude Code for this project');
+      .rejects.toThrow('Codex cannot run on a remote host yet. Choose another agent for this project');
     await expect(resolver.resolve({ projectPath: shellFolder, cwd: shellFolder, adapter: codex }))
       .rejects.toBeInstanceOf(RemoteAgentUnsupportedError);
   });

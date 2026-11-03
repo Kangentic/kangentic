@@ -18,7 +18,7 @@
 
 import { createReadStream } from 'node:fs';
 import type { Readable } from 'node:stream';
-import type { SshRunner } from './ssh-run';
+import { posixShellCommand, type SshRunner } from './ssh-run';
 
 export type HostArch = 'x64' | 'arm64';
 
@@ -61,14 +61,8 @@ const VERSION_PATTERN = /^[0-9A-Za-z][0-9A-Za-z._-]*$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/;
 const UPLOAD_TIMEOUT_MS = 10 * 60_000;
 
-const PROBE_COMMAND = [
-  'printf \'%s\\n\' "$(uname -s)" "$(uname -m)" "$HOME"',
-  '(getconf GNU_LIBC_VERSION 2>/dev/null || echo none)',
-].join('; ');
-
-function shellQuote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
+// One line each: the OS, the CPU, the home folder, the C library. Run through sh, since the login shell may not be one.
+const PROBE_COMMAND = posixShellCommand('uname -s; uname -m; echo "$HOME"; getconf GNU_LIBC_VERSION 2>/dev/null || echo none');
 
 function archOf(machine: string): HostArch | null {
   if (machine === 'x86_64' || machine === 'amd64') return 'x64';
@@ -89,35 +83,40 @@ function validate(asset: HostAsset): void {
   if (!SHA256_PATTERN.test(asset.sha256)) throw new HostInstallError('failed', 'The host asset checksum is not a SHA-256 in lowercase hex.');
 }
 
-/** The script that receives the upload on stdin. Only validated values are put in it. */
+/**
+ * The script that receives the upload on stdin, as a command any login shell runs through sh. Only
+ * validated values are put in it (`VERSION_PATTERN`, `SHA256_PATTERN`), so double quotes hold them.
+ * A step that fails under `set -e` leaves no upload and no `.partial` folder behind: the trap removes
+ * both, and after the final `mv` there is nothing left for it to find.
+ */
 function installScript(version: string, sha256: string): string {
-  const v = shellQuote(version);
-  const s = shellQuote(sha256);
-  return [
+  return posixShellCommand([
     'set -e',
     'umask 077',
     'base="$HOME/.kangentic/host"',
     'mkdir -p "$base"',
-    `version=${v}`,
-    `expected=${s}`,
+    `version="${version}"`,
+    `expected="${sha256}"`,
     'upload="$base/$version.upload"',
+    'cleanup() { rm -f "$upload"; rm -rf "$base/$version.partial"; }',
+    'trap cleanup EXIT',
     'cat > "$upload"',
     'actual=$(sha256sum "$upload" | cut -d" " -f1)',
-    'if [ "$actual" != "$expected" ]; then rm -f "$upload"; echo "checksum mismatch: expected $expected, got $actual" >&2; exit 65; fi',
+    'if [ "$actual" != "$expected" ]; then echo "checksum mismatch: expected $expected, got $actual" >&2; exit 65; fi',
     'rm -rf "$base/$version.partial"',
     'mkdir -p "$base/$version.partial"',
     'tar -xzf "$upload" -C "$base/$version.partial"',
     'rm -f "$upload"',
     // The archive may have been built where files carry no execute bit (an NTFS checkout), so the modes are set here.
     'chmod 755 "$base/$version.partial/node/bin/node"',
-    'find "$base/$version.partial/app" -type f \\( -name "*.node" -o -name spawn-helper \\) -exec chmod 755 {} +',
+    'find "$base/$version.partial/app" -type f "(" -name "*.node" -o -name spawn-helper ")" -exec chmod 755 {} +',
     'test -x "$base/$version.partial/node/bin/node"',
     'test -f "$base/$version.partial/app/host.js"',
-    'printf "%s\\n" "$expected" > "$base/$version.partial/.sha256"',
+    'echo "$expected" > "$base/$version.partial/.sha256"',
     'touch "$base/$version.partial/.complete"',
     'rm -rf "$base/$version"',
     'mv "$base/$version.partial" "$base/$version"',
-  ].join('\n');
+  ].join('; '));
 }
 
 /**
@@ -152,10 +151,12 @@ export async function installHost(
   if (!home.startsWith('/')) throw new HostInstallError('failed', `The host's home directory "${home}" is not an absolute path.`);
 
   const directory = `${home}/.kangentic/host/${asset.version}`;
-  const runDirectory = `${home}/.kangentic/host/run`;
-  const relayCommand = `${shellQuote(`${directory}/node/bin/node`)} ${shellQuote(`${directory}/app/host.js`)} relay --dir ${shellQuote(runDirectory)}`;
+  // The scripts name the home as `$HOME`, which sh expands on the host to the folder the probe printed,
+  // so no host path is ever quoted here (a home such as /home/o'brien needs none).
+  const hostDirectory = `"$HOME/.kangentic/host/${asset.version}"`;
+  const relayCommand = posixShellCommand(`exec "$HOME/.kangentic/host/${asset.version}/node/bin/node" "$HOME/.kangentic/host/${asset.version}/app/host.js" relay --dir "$HOME/.kangentic/host/run"`);
 
-  const present = await run(`(test -f ${shellQuote(`${directory}/.complete`)} && cat ${shellQuote(`${directory}/.sha256`)}) 2>/dev/null; true`);
+  const present = await run(posixShellCommand(`test -f ${hostDirectory}/.complete && cat ${hostDirectory}/.sha256 2>/dev/null; true`));
   if (present.stdout.trim() === asset.sha256) return { directory, relayCommand, installed: false };
 
   // Only now, with the host's CPU known and this version missing there, is the archive worth having.

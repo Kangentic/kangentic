@@ -419,21 +419,37 @@ export async function performSpawn(
   // A session on a remote host: its files go to the host and the host starts sending its hook
   // files BEFORE the agent exists, since the agent's first hook can fire in its first second. A
   // failure here fails the spawn with the host's own words: an agent whose hooks have nowhere to
-  // publish would run with no activity and no plan approval.
+  // publish would run with no activity and no plan approval. A registration the host refuses or never
+  // answers is that failure too, reported as a failed spawn (an exited placeholder with the host's
+  // words), never thrown: a throw here left a promoted queue row `queued` for good.
+  //
+  // Every way out of the spawn after this point releases the registration once, through releaseRemote.
+  let remoteReleased = false;
+  const releaseRemote = (): void => {
+    if (!remotePlan || remoteReleased) return;
+    remoteReleased = true;
+    void context.remoteSessions?.release(id);
+  };
+  let registrationError: Error | null = null;
   if (remotePlan) {
     const place = placeFromStored(input.cliTarget ?? null);
     if (place?.kind !== 'ssh' || !context.remoteSessions || !input.statusOutputPath) {
       throw new Error('This session needs its host connection and its session folder, and one is missing.');
     }
-    await context.remoteSessions.register({
-      hostId: remotePlan.hostId,
-      sessionId: id,
-      place,
-      localSessionDirectory: path.dirname(input.statusOutputPath),
-      statusOutputPath: input.statusOutputPath,
-    });
-    if (context.isSpawnCancelled?.(id)) {
-      void context.remoteSessions.release(id);
+    try {
+      await context.remoteSessions.register({
+        hostId: remotePlan.hostId,
+        sessionId: id,
+        place,
+        localSessionDirectory: path.dirname(input.statusOutputPath),
+        statusOutputPath: input.statusOutputPath,
+      });
+    } catch (error) {
+      registrationError = error instanceof Error ? error : new Error(String(error));
+      releaseRemote();
+    }
+    if (!registrationError && context.isSpawnCancelled?.(id)) {
+      releaseRemote();
       abandonCancelledSpawn(id, null, context);
     }
   }
@@ -441,7 +457,7 @@ export async function performSpawn(
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
-  const spawnOutcome = await context.host.spawn({
+  const spawnOutcome = registrationError ? { ok: false as const, error: registrationError, previousScrollback: '' } : await context.host.spawn({
     sessionId: id,
     projectId: carryoverSource?.projectId || input.projectId,
     agentName: input.agentParser ? (input.agentName ?? adapterNameOf(input.agentParser)) : null,
@@ -460,12 +476,12 @@ export async function performSpawn(
   });
 
   // A remote session whose PTY did not start has no use for the host's watcher.
-  if (remotePlan && !spawnOutcome.ok) void context.remoteSessions?.release(id);
+  if (!spawnOutcome.ok) releaseRemote();
 
   // Torn down during the host round trip. Ahead of every outcome branch: a
   // failed spawn's placeholder would bring back a row a remove() announced gone.
   if (context.isSpawnCancelled?.(id)) {
-    if (remotePlan) void context.remoteSessions?.release(id);
+    releaseRemote();
     abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
   }
 
@@ -474,6 +490,7 @@ export async function performSpawn(
   // and the host's own shutdown kills no session PTY. Started milliseconds
   // ago, the agent has not reached its boot canary, so no grace is owed.
   if (spawnOutcome.ok && isShuttingDown()) {
+    releaseRemote();
     safeKillPty(spawnOutcome.pty);
     throw new Error('Cannot spawn session during shutdown');
   }
@@ -764,7 +781,7 @@ export async function performSpawn(
     // the PTY exits, but fs.watch hasn't fired the callback yet.
     context.statusFileReader.flushPendingEvents(id);
     // The host sent the session's last hook files ahead of this exit; its watcher is done.
-    if (remotePlan) void context.remoteSessions?.release(id);
+    releaseRemote();
 
     // Release this session's hold on what its adapter wrote, so hooks don't
     // accumulate across sessions. Keyed by this session's id: a late exit of a

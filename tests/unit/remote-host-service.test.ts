@@ -121,21 +121,10 @@ describe('connect', () => {
     await expect(unsafe.service.connect('host-a')).rejects.toBeInstanceOf(InvalidSshDestinationError);
   });
 
-  it('connects every stored host at startup and reports the one that failed without stopping the rest', async () => {
-    let installs = 0;
-    const { service } = makeService({
-      install: async () => {
-        installs += 1;
-        if (installs === 1) throw new Error('Connection refused');
-        return { directory: '/d', relayCommand: 'node relay.js', installed: false };
-      },
-    });
-
-    const results = await service.connectAll();
-
-    expect(results.map((result) => [result.hostId, result.error?.message ?? null])).toEqual([['host-a', 'Connection refused'], ['host-b', null]]);
-    expect(service.isConnected('host-a')).toBe(false);
-    expect(service.isConnected('host-b')).toBe(true);
+  it('gives every connection a connect timeout, so a host that is off fails in seconds', () => {
+    const args = sshArgsFor(host());
+    expect(args).toContain('ConnectTimeout=15');
+    expect(args.at(-1)).toBe(host().destination);
   });
 });
 

@@ -42,7 +42,7 @@ import { disposeAdapterAttachment, releaseCommandHold, removeAdapterHooks } from
 import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
-import type { RemoteHostRequest, SuspendPlan } from '../remote/protocol/messages';
+import type { RemoteHostRequest, RemoteSessionRoute, SuspendPlan } from '../remote/protocol/messages';
 import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
@@ -1163,9 +1163,12 @@ export class SessionManager extends EventEmitter {
         this.emit('remote-hook-file', event);
         return;
       case 'remoteSessions':
-        // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable
-        // ones are live agents on a host that this app holds no row for; whoever reconciles hears them.
-        this.emit('remote-sessions-adoptable', { hostId: event.hostId, adoptable: event.adoptable });
+        // The lost ones already ended through their exit listeners (PtyHostClient). The adoptable ones
+        // are live agents on a host this app holds no row for. Nothing adopts them yet, so they are
+        // logged and left running; the next quit's `suspendAll` ends them on the helper's own clock.
+        if (event.adoptable.length > 0) {
+          console.warn(`[remote] host ${event.hostId.slice(0, 8)} runs ${event.adoptable.length} session(s) this app holds no row for`);
+        }
         return;
       case 'exit':
       case 'rawData':
@@ -1227,6 +1230,11 @@ export class SessionManager extends EventEmitter {
   /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
   remoteHostRequest(request: RemoteHostRequest): Promise<unknown> {
     return this.host.remote(request);
+  }
+
+  /** The live PTYs held on one SSH host, which its `addHost` carries after the pty host restarted. */
+  liveRemotePtys(hostId: string): RemoteSessionRoute[] {
+    return this.host.liveRemotePtys(hostId);
   }
 
   /** Run a one-shot child process in the pty host (`off-main-exec.ts`). */

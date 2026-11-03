@@ -37,7 +37,7 @@ listed at the end.
 | Resume endpoint | Outlives any one connection. Keeps sent frames until acknowledged, replays from the offset in the peer's hello, and answers what it cannot replay with a `reset` the peer reports as a gap. A new connection stays pending until the peer passes the owner's check, so a refused stranger never knocks the owner off. |
 | Helper server | The unchanged `PtyHostCore` behind the endpoint. Maps the link's PTY ids onto the core's, refuses a second spawn for a task with a live PTY, and turns another installation away while it owns a connection or a running session. |
 | Link | Implements the pty host's own `PtyHostTransport`, so `PtyHostClient` sits on it unchanged. A drop is a state, never an exit. After every attach it reads the helper's snapshot and reconciles exits, lost sessions and adoptable ones. |
-| Host program | `node kangentic-host.js daemon` and `relay`: the daemon starts as its own session, binds a relative socket name behind an abstract-socket lock, and the relay starts it on demand. |
+| Host program | `node app/host.js daemon` and `relay`: the daemon starts as its own session, binds a relative socket name behind an abstract-socket lock, and the relay starts it on demand. |
 | `ssh` stream | An `ssh` child's stdio as one duplex stream, never detached, killed by pid with its tree, with `ssh`'s own stderr as the error. |
 
 Not wired into the app: `RoutedPtyHost` stays out of `register-all` and `SessionManager` until Phase 2.

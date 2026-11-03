@@ -20,7 +20,9 @@ import type {
   SshHostStatus,
   SshRemoteFolderProbe,
 } from '../../shared/types';
-import { assertSafeDestination } from './remote-host-service';
+import { childProcessEnv } from '../shared/child-env';
+import { sshArgsFor } from './remote-host-service';
+import { assertSafeDestination } from './ssh-client';
 import type { RemoteHosting } from './remote-hosting';
 import {
   createHostKey,
@@ -192,23 +194,23 @@ export class SshHostAdmin {
   private async takeKeyOffHost(destination: string, keyPath: string, label: string): Promise<void> {
     try {
       const publicKey = (await fs.readFile(`${keyPath}.pub`, 'utf8')).trim();
+      // The same options as every connection (`sshArgsFor`), and the same scrubbed environment as every setup step.
       await this.deps.setup.run(this.deps.setup.sshPath, [
         ...(this.deps.setup.sshOptions ?? []),
-        '-i', keyPath,
-        '-o', 'IdentitiesOnly=yes',
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=10',
-        destination,
+        ...sshArgsFor({ destination, key_path: keyPath }),
         removeKeyCommand(publicKey),
-      ], { timeout: 30_000 });
+      ], { env: childProcessEnv(), timeout: 30_000 });
     } catch (error) {
       // The key stays in the host's authorized_keys, which its owner can edit by hand.
       this.deps.log?.(`[remote] could not take the key off ${label}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
-  /** Delete a remote project's shell folder, only ever inside the folder remote projects live in. */
-  private async removeShellFolder(shellFolder: string): Promise<void> {
+  /**
+   * Delete a remote project's shell folder, only ever inside the folder remote projects live in. The folder
+   * is Kangentic's own, unlike a local project's, so a project delete and a failed create remove it too.
+   */
+  async removeShellFolder(shellFolder: string): Promise<void> {
     const root = path.resolve(this.deps.remoteProjectsRoot);
     const target = path.resolve(shellFolder);
     if (target === root || !target.startsWith(root + path.sep)) return;

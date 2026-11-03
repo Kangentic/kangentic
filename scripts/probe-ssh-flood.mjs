@@ -451,12 +451,14 @@ async function runClient(options, onWindow = () => {}) {
   while (pendingKeystrokes.size > 0 && performance.now() < drainDeadlineMs) await delay(20);
   const childCpuEnd = await childCpuEndRead;
 
+  // Every link is stopped, and its stats collected, before any closes: the ssh2 channel cells share one
+  // connection, and closing the first link ends it for the second, whose stop then reaches nothing.
   for (const link of links) {
     const stopped = new Promise((resolve) => statsWaiters.push(resolve));
     link.write(encodeFrame(0, FrameType.stop, Buffer.alloc(0)));
     await Promise.race([stopped, delay(5000)]);
-    link.close();
   }
+  for (const link of links) link.close();
 
   const sorted = [...latencies].sort((left, right) => left - right);
   const sortedFromDue = [...dueLatencies].sort((left, right) => left - right);

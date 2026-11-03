@@ -69,6 +69,24 @@ export class HostStatusBook {
     this.options.onChange?.(hostId);
   }
 
+  /**
+   * A link's own report of its state. A link redials every few seconds and reports `reconnecting` on
+   * each failed try, so once a host has been marked unreachable those reports keep it there, with the
+   * newest reason: otherwise the chip and the strip would flip back every cycle of one outage. Only
+   * `connected` or `stopped` from the link ends it, or a `set` from a setup step or a Reconnect.
+   */
+  noteLink(hostId: string, state: SshHostConnectionState, detail: string | null): void {
+    const previous = this.statuses.get(hostId);
+    if (previous?.state === 'unreachable' && (state === 'connecting' || state === 'reconnecting')) {
+      if (detail !== null && detail !== previous.detail) {
+        this.statuses.set(hostId, { ...previous, detail });
+        this.options.onChange?.(hostId);
+      }
+      return;
+    }
+    this.set(hostId, state, detail);
+  }
+
   /** Forget a host that was removed. */
   remove(hostId: string): void {
     this.cancelTimer(hostId);

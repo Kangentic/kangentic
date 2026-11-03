@@ -35,7 +35,7 @@ function makeHubRig(hostIds: string[] = ['host-a', 'host-b']): HubRig {
   const client = new PtyHostClient(hub);
   const rig: HubRig = { hub, client, hosts: {}, events: [] };
   client.setEventHandler((event) => rig.events.push(event));
-  hostIds.forEach((hostId, index) => addHost(rig, hostId, makeHelperRig(1, 4242 + index * 100)));
+  hostIds.forEach((hostId, index) => addHost(rig, hostId, makeHelperRig(1, { firstPid: 4242 + index * 100 })));
   teardown.push(() => { for (const hostId of hostIds) hub.removeHost(hostId); });
   return rig;
 }

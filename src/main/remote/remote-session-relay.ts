@@ -52,8 +52,12 @@ type HookFileEvent = Extract<PtyHostEvent, { type: 'hookFile' }>;
 const INBOX_NAME = /^\d{19}-\d+\.rec$/;
 const REQUEST_NAME = /^\d{19}-\d+\.req$/;
 const RESPONSE_NAME = /^\d{19}-\d+\.res$/;
-/** Above this a response goes in the frame's raw part, not its JSON body. */
-const RESPONSE_JSON_LIMIT_CHARS = 100_000;
+/**
+ * Above this many bytes of JSON-encoded text a response goes in the frame's raw part, not its JSON
+ * body. Counted in bytes after escaping, as the frame's cap is: three-byte text of 100k characters
+ * would otherwise be 300 KB in a body capped at 256 KiB.
+ */
+const RESPONSE_JSON_LIMIT_BYTES = 100_000;
 const RESPONSE_POLL_MS = 100;
 
 interface Registered extends RemoteSessionRegistration {
@@ -65,6 +69,8 @@ interface Registered extends RemoteSessionRegistration {
   inFlight: Set<string>;
   /** The last send failure logged, so one that repeats every poll is logged once. */
   lastFailure: string | null;
+  /** A release has begun, so a second one waits on nothing and asks the host nothing. */
+  releasing: boolean;
 }
 
 export interface RemoteSessionRelayOptions {
@@ -74,6 +80,8 @@ export interface RemoteSessionRelayOptions {
 
 export class RemoteSessionRelay {
   private readonly sessions = new Map<string, Registered>();
+  /** Registrations still pushing files, so a release that arrives meanwhile is kept, not lost. */
+  private readonly registering = new Map<string, { released: boolean }>();
 
   constructor(private readonly options: RemoteSessionRelayOptions) {}
 
@@ -88,24 +96,39 @@ export class RemoteSessionRelay {
    * and no plan approval, so the spawn must fail and say why.
    */
   async register(registration: RemoteSessionRegistration): Promise<void> {
-    const localHooks = wslHookPaths(registration.localSessionDirectory);
-    const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
-    const hostHooks = wslHookPaths(toHost(registration.localSessionDirectory));
-    const hostHooksDirectory = toPosix(hostHooks.directory);
+    // A second registration of one id replaces the first rather than leaving its timer running.
+    await this.release(registration.sessionId);
+    const pending = { released: false };
+    this.registering.set(registration.sessionId, pending);
+    let hostHooksDirectory: string;
+    let localHooks: ReturnType<typeof wslHookPaths>;
+    try {
+      localHooks = wslHookPaths(registration.localSessionDirectory);
+      const toHost = (localPath: string): string => localPathToHost(localPath, registration.place.roots);
+      const hostHooks = wslHookPaths(toHost(registration.localSessionDirectory));
+      hostHooksDirectory = toPosix(hostHooks.directory);
 
-    const files: HostFileWrite[] = [];
-    for (const [name, mode] of [['settings.json', 0o600], ['mcp.json', 0o600]] as const) {
-      const content = await readIfPresent(path.join(registration.localSessionDirectory, name));
-      if (content !== null) files.push({ path: toHost(path.join(registration.localSessionDirectory, name)), content, mode });
+      const files: HostFileWrite[] = [];
+      for (const [name, mode] of [['settings.json', 0o600], ['mcp.json', 0o600]] as const) {
+        const content = await readIfPresent(path.join(registration.localSessionDirectory, name));
+        if (content !== null) files.push({ path: toHost(path.join(registration.localSessionDirectory, name)), content, mode });
+      }
+      const script = await readIfPresent(localHooks.script);
+      if (script !== null) files.push({ path: toPosix(toHost(localHooks.script)), content: script, mode: 0o755 });
+      await this.options.files.writeFiles(
+        registration.hostId,
+        files,
+        ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
+      );
+      await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
+    } finally {
+      this.registering.delete(registration.sessionId);
     }
-    const script = await readIfPresent(localHooks.script);
-    if (script !== null) files.push({ path: toPosix(toHost(localHooks.script)), content: script, mode: 0o755 });
-    await this.options.files.writeFiles(
-      registration.hostId,
-      files,
-      ['inbox', 'requests', 'responses'].map((folder) => `${hostHooksDirectory}/${folder}`),
-    );
-    await this.options.files.watchHooks(registration.hostId, registration.sessionId, hostHooksDirectory, toPosix(toHost(registration.statusOutputPath)));
+    if (pending.released) {
+      // Released while its files were being pushed (the spawn was torn down): the host stops watching now.
+      await this.options.files.unwatchHooks(registration.hostId, registration.sessionId).catch(() => undefined);
+      return;
+    }
 
     const entry: Registered = {
       ...registration,
@@ -114,6 +137,7 @@ export class RemoteSessionRelay {
       forwarding: false,
       inFlight: new Set(),
       lastFailure: null,
+      releasing: false,
       timer: setInterval(() => void this.forwardResponses(registration.sessionId), RESPONSE_POLL_MS),
     };
     entry.timer.unref?.();
@@ -122,15 +146,21 @@ export class RemoteSessionRelay {
 
   /** Stop forwarding and ask the host to stop watching, after it sends what is published. Never throws. */
   async release(sessionId: string): Promise<void> {
+    const pending = this.registering.get(sessionId);
+    if (pending) {
+      pending.released = true;
+      return;
+    }
     const entry = this.sessions.get(sessionId);
-    if (!entry) return;
+    if (!entry || entry.releasing) return;
+    entry.releasing = true;
     clearInterval(entry.timer);
     // The registration stays until the host has answered: the records it flushes on the way out
     // arrive first, and `deliver` drops what it has no registration for.
     await this.options.files.unwatchHooks(entry.hostId, sessionId).catch((error: unknown) => {
       this.options.log?.(`could not stop the host watching ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
-    this.sessions.delete(sessionId);
+    if (this.sessions.get(sessionId) === entry) this.sessions.delete(sessionId);
   }
 
   /**
@@ -187,7 +217,7 @@ export class RemoteSessionRelay {
         try {
           const content = await fs.readFile(file, 'utf8');
           const target = `${entry.hostHooksDirectory}/responses/${name}`;
-          if (content.length > RESPONSE_JSON_LIMIT_CHARS) {
+          if (Buffer.byteLength(JSON.stringify(content), 'utf8') > RESPONSE_JSON_LIMIT_BYTES) {
             await this.options.files.writeFileRaw(entry.hostId, target, content, 0o600);
           } else {
             await this.options.files.writeFiles(entry.hostId, [{ path: target, content, mode: 0o600 }]);

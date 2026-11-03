@@ -112,4 +112,18 @@ describe('remote projects', () => {
     expect(remaining.map((project) => project.position)).toEqual([0, 1]);
     expect(hosts.list().map((host) => host.name)).toEqual(['new-box']);
   });
+
+  it('returns the dev-server ports of a removed host\'s projects to the pool, and keeps every other project\'s', () => {
+    const doomed = hosts.create({ name: 'old-box', destination: 'old-box' });
+    const onHost = projects.create({ name: 'on-old', path: '/shell/a', remote: { hostId: doomed.id, path: '/a' } });
+    const local = projects.create({ name: 'local', path: '/code/local' });
+    const reserve = db.prepare('INSERT INTO dev_ports (port, project_id, task_id, allocated_at) VALUES (?, ?, ?, ?)');
+    reserve.run(5173, onHost.id, 'task-a', new Date().toISOString());
+    reserve.run(5174, local.id, 'task-b', new Date().toISOString());
+
+    hosts.delete(doomed.id);
+
+    const ports = db.prepare('SELECT port FROM dev_ports ORDER BY port').all() as Array<{ port: number }>;
+    expect(ports.map((row) => row.port)).toEqual([5174]);
+  });
 });

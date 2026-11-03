@@ -25,7 +25,7 @@ Each tab in `SETTINGS_TABS` (`settings-tabs.ts`) declares a `category`:
 
 A thin full-bleed divider, not just the "System" text label, marks the Project/System boundary, because that split is behavioral (system tabs must work with no project open), not only organizational. There is no Global/Project scope toggle. When adding a setting, its `tabId` must match its persistence scope: see `.claude/rules/settings-tab-scope.md`, enforced by `tests/unit/settings-tab-scope-parity.test.ts`.
 
-System tabs are grouped again into three sidebar tiers (`tier` on each tab): Core (Language through Notifications, unlabeled, directly under the System header), Advanced (Workflows through Mobile Devices), and Other (Privacy, Developer). Tiers must stay contiguous; `settings-tab-scope-parity.test.ts` enforces it. Order within each group (Project, and each System tier) is curated by frequency and concept rather than alphabetical, since the search bar already covers lookup by name. The comment above `SETTINGS_TABS` says why.
+System tabs are grouped again into three sidebar tiers (`tier` on each tab): Core (Language through Notifications, unlabeled, directly under the System header), Advanced (Workflows through SSH), and Other (Privacy, Developer). Tiers must stay contiguous; `settings-tab-scope-parity.test.ts` enforces it. Order within each group (Project, and each System tier) is curated by frequency and concept rather than alphabetical, since the search bar already covers lookup by name. The comment above `SETTINGS_TABS` says why.
 
 ## What each tab holds
 

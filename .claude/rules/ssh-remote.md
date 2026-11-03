@@ -84,5 +84,5 @@ process, a path tested against the wrong disk, an environment that overwrites th
 ## Scope
 
 The link, helper, router and host service under `src/main/remote/`, the remote branches of the spawn
-flow, client and quit path, and the host table. The renderer's connection indicators and the Add host
-flow are covered by the UI conventions once they exist.
+flow, client and quit path, and the host table. The renderer's connection indicators (the host chip, the
+board strip) and the SSH tab's Add host flow follow the UI conventions, like any other renderer surface.

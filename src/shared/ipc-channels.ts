@@ -329,7 +329,7 @@ export const IPC = {
   MOBILE_GET_TERMINAL_STREAMS: 'mobile:getTerminalStreams',
   MOBILE_TERMINAL_STREAMS_CHANGED: 'mobile:terminalStreamsChanged',
 
-  // SSH hosts (#913) -- machine-global (like mobile), not project-scoped.
+  // SSH hosts (#913) - machine-global (like mobile), not project-scoped.
   SSH_DETECT_CLIENT: 'ssh:detectClient',
   SSH_LIST_HOSTS: 'ssh:listHosts',
   SSH_PROBE_HOST_KEY: 'ssh:probeHostKey',

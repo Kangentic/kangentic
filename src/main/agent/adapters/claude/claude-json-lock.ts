@@ -60,7 +60,7 @@ export function isClaudeJsonLockError(error: unknown): error is ClaudeJsonLockEr
  */
 export function claudeJsonPath(place: CliPlace | null = null): string {
   // For a host this is this computer's mirror of it, never the host's own file: the host's is edited
-  // through its helper (`ensureRemoteClaudeTrust`), so no writer here may treat this path as it.
+  // through its helper (`ensureRemoteClaudeSpawnConfig`), so no writer here may treat this path as it.
   return path.join(cliHomeDir(place), '.claude.json');
 }
 

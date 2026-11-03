@@ -426,8 +426,8 @@ export type PtyHostEvent =
   | { type: 'remoteLink'; hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }
   /** What a link found on connect that the app must settle (#913). `lost` are sessions the app held
    *  alive that the host no longer has; `adoptable` are live ones the app holds no row for. A
-   *  `lost` session is over, so it ends as an exit does; an `adoptable` one is reconciled by the
-   *  startup recovery path, never adopted blindly. */
+   *  `lost` session is over, so it ends as an exit does. An `adoptable` one is logged and left
+   *  running: nothing adopts it yet, and the next quit's `suspendAll` ends it on the helper's clock. */
   | { type: 'remoteSessions'; hostId: string; lost: string[]; adoptable: HelperSessionRecord[] }
   /** A hook file a remote agent published on its host, sent once (#913). Kangentic writes it into the
    *  same folder on its own disk, where the WSL hook transport's inbox reads it. `status` is the

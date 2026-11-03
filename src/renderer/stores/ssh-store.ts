@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { useProjectStore } from './project-store';
+import { describeIpcError } from '../lib/ipc-error';
 import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostStatus, SshRemoteFolderProbe } from '../../shared/types';
 
 /**
@@ -18,11 +19,6 @@ if (import.meta.hot) {
   });
 }
 
-/**
- * Backs the SSH settings tab and the Add project chooser (#913). Machine-global, not project-scoped:
- * a host serves every project, and must be addable with no project open. Main pushes a change whenever
- * a host's connection state moves; `useSshHostsSync` turns each push into `loadHosts`.
- */
 /** Which step of Add project is open: nothing, the This computer / host chooser, or a host's folder form. */
 export type AddProjectDialogState =
   | { kind: 'closed' }
@@ -30,6 +26,10 @@ export type AddProjectDialogState =
   | { kind: 'remote'; hostId: string };
 
 interface SshStore {
+  /**
+   * Transient UI state. An edit of this file in dev re-creates the store and closes an open Add project
+   * dialog; that reset is accepted, since nothing is lost but an unsent form.
+   */
   addProjectDialog: AddProjectDialogState;
   openAddProjectChooser: () => void;
   openAddRemoteProject: (hostId: string) => void;
@@ -38,6 +38,8 @@ interface SshStore {
   hosts: SshHostStatus[];
   /** False until the first list arrives, so a surface can tell "no hosts" from "not asked yet". */
   hostsLoaded: boolean;
+  /** Why the last list could not be read, or null. */
+  hostsError: string | null;
   client: SshClientStatus | null;
 
   loadHosts: () => Promise<void>;
@@ -51,6 +53,14 @@ interface SshStore {
   probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
 }
 
+/**
+ * Backs the SSH settings tab and the Add project chooser (#913). Machine-global, not project-scoped:
+ * a host serves every project, and must be addable with no project open. Main pushes a change whenever
+ * a host's connection state moves; `useSshHostsSync` turns each push into `loadHosts`.
+ *
+ * The two loads never reject: a failure is state the tab shows. So a mutation that succeeded in main
+ * is never reported as failed because the list after it could not be read.
+ */
 export const useSshStore = create<SshStore>((set, get) => ({
   addProjectDialog: { kind: 'closed' },
   openAddProjectChooser: () => set({ addProjectDialog: { kind: 'chooser' } }),
@@ -59,20 +69,29 @@ export const useSshStore = create<SshStore>((set, get) => ({
 
   hosts: [],
   hostsLoaded: false,
+  hostsError: null,
   client: null,
 
   loadHosts: async () => {
     latestHostsRequestId += 1;
     const requestId = latestHostsRequestId;
-    const hosts = await window.electronAPI.ssh.listHosts();
-    // A newer fetch was issued while this one was in flight; its reply is the current truth.
-    if (requestId !== latestHostsRequestId) return;
-    set({ hosts, hostsLoaded: true });
+    try {
+      const hosts = await window.electronAPI.ssh.listHosts();
+      // A newer fetch was issued while this one was in flight; its reply is the current truth.
+      if (requestId !== latestHostsRequestId) return;
+      set({ hosts, hostsLoaded: true, hostsError: null });
+    } catch (error) {
+      if (requestId !== latestHostsRequestId) return;
+      set({ hostsError: describeIpcError(error) });
+    }
   },
 
   loadClient: async () => {
-    const client = await window.electronAPI.ssh.detectClient();
-    set({ client });
+    try {
+      set({ client: await window.electronAPI.ssh.detectClient() });
+    } catch (error) {
+      set({ client: { found: false, version: null, error: describeIpcError(error) } });
+    }
   },
 
   probeHostKey: (destination) => window.electronAPI.ssh.probeHostKey(destination),

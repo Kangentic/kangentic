@@ -38,6 +38,18 @@ export interface SshRunnerConfig {
 
 const DEFAULT_TIMEOUT_MS = 60_000;
 
+/**
+ * A POSIX sh script as a remote command every login shell passes to sh unchanged. sshd hands the
+ * command to the user's login shell, and fish, nushell and csh each read sh syntax their own way
+ * (`set -e` erases a variable in fish, `(...)` is command substitution there). Wrapped in single
+ * quotes with no single quote, backslash or newline inside, the script is one literal argument to
+ * `sh -c` in all of them: nothing inside is an escape in any of them, and csh refuses a quoted newline.
+ */
+export function posixShellCommand(script: string): string {
+  if (/['\\\n\r]/.test(script)) throw new Error('A script sent to a host holds no single quote, backslash or newline.');
+  return `sh -c '${script}'`;
+}
+
 export function createSshRunner(config: SshRunnerConfig): SshRunner {
   const spawnProcess = config.spawnProcess ?? spawn;
   return (remoteCommand, options = {}) => new Promise<SshRunResult>((resolve, reject) => {

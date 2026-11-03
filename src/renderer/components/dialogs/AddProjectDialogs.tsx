@@ -1,8 +1,9 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { CircleAlert, Laptop, Loader2, Server } from 'lucide-react';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { SshHostConnectionState } from '../../../shared/types';
 import { useAddProject } from '../../hooks/useAddProject';
+import { describeIpcError } from '../../lib/ipc-error';
 import { useProjectStore } from '../../stores/project-store';
 import { useSshStore } from '../../stores/ssh-store';
 import { ReportedError } from '../settings/shared';
@@ -22,11 +23,6 @@ import { BaseDialog } from './BaseDialog';
 function lastPathSegment(folderPath: string): string {
   const segments = folderPath.trim().split('/').filter((segment) => segment.length > 0 && segment !== '~');
   return segments[segments.length - 1] ?? '';
-}
-
-function errorText(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  return raw.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
 }
 
 function useStateLabel(): (state: SshHostConnectionState) => string {
@@ -108,6 +104,14 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
   const [nameDraft, setNameDraft] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // Cancel and Escape stay enabled while the host is asked, so an answer can arrive after this form closed.
+  const openRef = useRef(true);
+  useEffect(() => {
+    openRef.current = true;
+    return () => {
+      openRef.current = false;
+    };
+  }, []);
 
   const name = nameDraft ?? lastPathSegment(folder);
   const canAdd = folder.trim().length > 0 && name.trim().length > 0 && !busy;
@@ -119,16 +123,21 @@ function AddRemoteProjectForm({ hostId }: { hostId: string }) {
       // The folder is checked on the host first, so a typo reads as one, and a host that cannot be
       // reached reads as that (its own words), never as a missing folder.
       const probe = await probeRemoteFolder(hostId, folder);
+      // Cancelled while the host answered: nothing is added.
+      if (!openRef.current) return;
       if (!probe.exists) {
         setError(t`${probe.path} does not exist on ${host?.host.name ?? ''}.`);
         setBusy(false);
         return;
       }
       const project = await createProject({ name: name.trim(), path: '', remote: { hostId, path: probe.path } });
+      // Cancelled while it was created: the project is in the sidebar, and the user is not moved to it.
+      if (!openRef.current) return;
       closeAddProjectDialog();
       await openProject(project.id);
     } catch (caught) {
-      setError(errorText(caught));
+      if (!openRef.current) return;
+      setError(describeIpcError(caught));
       setBusy(false);
     }
   }

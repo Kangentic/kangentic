@@ -53,6 +53,32 @@ describe('a host that does not come up', () => {
     expect(book.get('h1')?.state).toBe('unreachable');
   });
 
+  it('stays unreachable through the link\'s later redials, taking each new reason, until it connects', () => {
+    const { book } = makeBook(20_000);
+    book.noteLink('h1', 'reconnecting', 'Connection timed out');
+    vi.advanceTimersByTime(21_000);
+    const since = book.get('h1')?.since;
+    expect(book.get('h1')?.state).toBe('unreachable');
+
+    // The link fails its next try, as it does every few seconds of one outage.
+    book.noteLink('h1', 'reconnecting', 'No route to host');
+    vi.advanceTimersByTime(5_000);
+    expect(book.get('h1')).toMatchObject({ state: 'unreachable', detail: 'No route to host', since });
+
+    book.noteLink('h1', 'connected', null);
+    expect(book.get('h1')?.state).toBe('connected');
+  });
+
+  it('shows a Reconnect the user asked for as connecting, even from unreachable', () => {
+    const { book } = makeBook(20_000);
+    book.noteLink('h1', 'reconnecting', 'Connection timed out');
+    vi.advanceTimersByTime(21_000);
+
+    book.set('h1', 'connecting');
+
+    expect(book.get('h1')?.state).toBe('connecting');
+  });
+
   it('is cleared the moment the link connects, and a second outage starts a fresh clock', () => {
     const { book } = makeBook(20_000);
     book.set('h1', 'reconnecting');

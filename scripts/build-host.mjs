@@ -62,12 +62,31 @@ function say(line) {
   process.stdout.write(`[build-host] ${line}\n`);
 }
 
+/** Runs a program. `stderr` falls back to the start error (a missing `tar`, the timeout's kill), so a failure always says why. */
 function execute(command, args, { timeout = 300_000 } = {}) {
   return new Promise((resolve) => {
     execFile(command, args, { windowsHide: true, timeout, maxBuffer: 64 * 1024 * 1024 }, (error, stdout, stderr) => {
-      resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout, stderr });
+      const reason = String(stderr).trim() || (error ? error.message : '');
+      resolve({ code: error ? (typeof error.code === 'number' ? error.code : 1) : 0, stdout, stderr: reason });
     });
   });
+}
+
+/**
+ * `--out` is emptied before the build, so it must be a folder this script owns: never the repository
+ * itself, a folder above it, or a folder of other files that holds no manifest from an earlier build.
+ */
+function assertSafeOutDirectory(outDirectory) {
+  const resolved = path.resolve(outDirectory);
+  const relativeToRepo = path.relative(resolved, repoRoot);
+  if (resolved === repoRoot || (relativeToRepo !== '' && !relativeToRepo.startsWith('..') && !path.isAbsolute(relativeToRepo))) {
+    throw new Error(`--out ${outDirectory} is the repository or a folder above it, and the build empties --out first.`);
+  }
+  if (!fs.existsSync(resolved)) return;
+  const entries = fs.readdirSync(resolved);
+  if (entries.length > 0 && !entries.includes('manifest.json')) {
+    throw new Error(`--out ${outDirectory} holds files that are not an earlier host build, and the build empties --out first.`);
+  }
 }
 
 async function download(url, destination) {
@@ -155,6 +174,7 @@ async function buildArchive({ arch, version, outDirectory, workDirectory, nodeTa
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   const version = JSON.parse(fs.readFileSync(path.join(repoRoot, 'package.json'), 'utf8')).version;
+  assertSafeOutDirectory(options.out);
   fs.rmSync(options.out, { recursive: true, force: true });
   fs.mkdirSync(options.out, { recursive: true });
   const cacheDirectory = path.join(repoRoot, 'node_modules', '.cache', 'kangentic-host', NODE_VERSION);
@@ -180,7 +200,10 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  process.stderr.write(`[build-host] ${error instanceof Error ? error.message : String(error)}\n`);
-  process.exit(1);
-});
+// Run only as a script, so the SSH rigs can import NODE_VERSION without starting a build.
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  main().catch((error) => {
+    process.stderr.write(`[build-host] ${error instanceof Error ? error.message : String(error)}\n`);
+    process.exit(1);
+  });
+}

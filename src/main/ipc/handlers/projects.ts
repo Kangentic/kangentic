@@ -1047,10 +1047,17 @@ export function registerProjectHandlers(context: IpcContext): void {
       input = await admin.prepareRemoteProject(requested);
     }
     // Explicit input wins; the inherited defaults only fill what it left unset.
-    const project = context.projectRepo.create({
-      ...getLastProjectAgentDefaults(context.projectRepo, input.path),
-      ...input,
-    });
+    let project: Project;
+    try {
+      project = context.projectRepo.create({
+        ...getLastProjectAgentDefaults(context.projectRepo, input.path),
+        ...input,
+      });
+    } catch (error) {
+      // The shell folder the remote branch just made belongs to no project now.
+      if (requested.remote) await context.remoteHosting?.admin?.removeShellFolder(input.path).catch(() => undefined);
+      throw error;
+    }
     // Initialize the project database (creates tables + default swimlanes)
     getProjectDb(project.id);
     // Clone settings from the last modified project (or global defaults if none).
@@ -1067,6 +1074,9 @@ export function registerProjectHandlers(context: IpcContext): void {
       await cleanupProject(context, id, project.path);
     }
     context.projectRepo.delete(id);
+    // A remote project's local folder is Kangentic's own shell folder, never the user's: it goes too.
+    // Nothing on the host is touched.
+    if (project?.remote) await context.remoteHosting?.admin?.removeShellFolder(project.path).catch(() => undefined);
   });
 
   ipcMain.handle(IPC.PROJECT_OPEN, async (_, id) => {

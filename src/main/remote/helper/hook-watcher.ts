@@ -33,20 +33,21 @@ export interface HookFileEvent {
 export interface HookWatcherOptions {
   emit: (event: HookFileEvent) => void;
   intervalMs?: number;
-  /** The most JSON characters a content may take once escaped, below the frame cap. */
-  maxContentJsonChars?: number;
+  /** The most bytes a content may take once JSON-escaped and UTF-8 encoded, below the frame cap. */
+  maxContentJsonBytes?: number;
 }
 
 const DEFAULT_INTERVAL_MS = 100;
-/** The frame's JSON cap is 256 KiB; the event around the content takes a little. */
-const DEFAULT_MAX_CONTENT_JSON_CHARS = 200_000;
+/** The frame's JSON cap is 256 KiB of bytes (`MAX_FRAME_JSON_BYTES`); the event around the content takes a little. */
+const DEFAULT_MAX_CONTENT_JSON_BYTES = 200_000;
 const RECORD_EXTENSION: Record<'inbox' | 'requests', string> = { inbox: '.rec', requests: '.req' };
 
 interface Watched {
   directory: string;
   statusFile: string | null;
   statusSignature: string | null;
-  scanning: boolean;
+  /** The scan running now, so a poll joins it and `unwatch` can wait for it before its last pass. */
+  current: Promise<void> | null;
   /** Files already sent whose removal failed, so they are not sent twice. */
   sent: Set<string>;
 }
@@ -56,8 +57,12 @@ export function publishedNames(names: readonly string[], extension: string): str
   return names.filter((name) => !name.startsWith('.') && name.endsWith(extension)).sort();
 }
 
-function escapedLength(text: string): number {
-  return JSON.stringify(text).length;
+/**
+ * The bytes a text takes in a frame's JSON body. Bytes, not characters: `JSON.stringify` leaves non-ASCII
+ * text unescaped, so 200k characters of three-byte text would be 600 KB against a 256 KiB cap.
+ */
+function escapedBytes(text: string): number {
+  return Buffer.byteLength(JSON.stringify(text), 'utf8');
 }
 
 /**
@@ -66,12 +71,13 @@ function escapedLength(text: string): number {
  * Strings are cut down until the whole fits, which keeps the object's shape and the tool name; if
  * that cannot be done the stdin is dropped and the header alone is sent.
  */
-export function fitHookRecord(content: string, maxJsonChars: number): string {
-  if (escapedLength(content) <= maxJsonChars) return content;
+export function fitHookRecord(content: string, maxJsonBytes: number): string {
+  if (escapedBytes(content) <= maxJsonBytes) return content;
   let headerEnd = -1;
   for (let line = 0; line < 3; line += 1) {
     headerEnd = content.indexOf('\n', headerEnd + 1);
-    if (headerEnd < 0) return content.slice(0, Math.max(0, Math.floor(maxJsonChars / 8)));
+    // Six bytes covers the widest a character can grow escaped (`\uXXXX`) or encoded (four UTF-8 bytes).
+    if (headerEnd < 0) return content.slice(0, Math.max(0, Math.floor(maxJsonBytes / 6)));
   }
   const header = content.slice(0, headerEnd + 1);
   const stdin = content.slice(headerEnd + 1);
@@ -83,7 +89,7 @@ export function fitHookRecord(content: string, maxJsonChars: number): string {
   }
   for (const limit of [20_000, 2_000, 200, 20]) {
     const trimmed = JSON.stringify(trimStrings(parsed, limit));
-    if (escapedLength(header + trimmed) <= maxJsonChars) return header + trimmed;
+    if (escapedBytes(header + trimmed) <= maxJsonBytes) return header + trimmed;
   }
   return header;
 }
@@ -105,7 +111,7 @@ export class HookWatcher {
 
   /** Start watching a session's hook folder (the one holding `inbox/` and `requests/`), and its status file. */
   watch(sessionId: string, directory: string, statusFile: string | null = null): void {
-    this.watched.set(sessionId, { directory, statusFile, statusSignature: null, scanning: false, sent: new Set() });
+    this.watched.set(sessionId, { directory, statusFile, statusSignature: null, current: null, sent: new Set() });
     if (!this.timer) {
       this.timer = setInterval(() => void this.scanAll(), this.options.intervalMs ?? DEFAULT_INTERVAL_MS);
       this.timer.unref?.();
@@ -116,6 +122,9 @@ export class HookWatcher {
   async unwatch(sessionId: string): Promise<void> {
     const entry = this.watched.get(sessionId);
     if (!entry) return;
+    // A poll may be mid-scan, past its folder listing: a record published since would be missed by it.
+    // So the running scan finishes, and then one full pass more runs.
+    if (entry.current) await entry.current;
     await this.scan(sessionId, entry);
     this.watched.delete(sessionId);
     if (this.watched.size === 0 && this.timer) {
@@ -142,9 +151,16 @@ export class HookWatcher {
     await Promise.all([...this.watched].map(([sessionId, entry]) => this.scan(sessionId, entry)));
   }
 
-  private async scan(sessionId: string, entry: Watched): Promise<void> {
-    if (entry.scanning) return;
-    entry.scanning = true;
+  private scan(sessionId: string, entry: Watched): Promise<void> {
+    if (entry.current) return entry.current;
+    const running = this.runScan(sessionId, entry).finally(() => {
+      if (entry.current === running) entry.current = null;
+    });
+    entry.current = running;
+    return running;
+  }
+
+  private async runScan(sessionId: string, entry: Watched): Promise<void> {
     try {
       for (const folder of ['inbox', 'requests'] as const) {
         await this.scanFolder(sessionId, entry, folder);
@@ -153,8 +169,6 @@ export class HookWatcher {
     } catch (error) {
       // A folder the session removed under us, or an unreadable file: the next poll tries again.
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') console.warn(`[hook-watcher] ${sessionId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      entry.scanning = false;
     }
   }
 
@@ -171,7 +185,7 @@ export class HookWatcher {
           sessionId,
           folder,
           name,
-          content: fitHookRecord(content, this.options.maxContentJsonChars ?? DEFAULT_MAX_CONTENT_JSON_CHARS),
+          content: fitHookRecord(content, this.options.maxContentJsonBytes ?? DEFAULT_MAX_CONTENT_JSON_BYTES),
         });
         entry.sent.add(key);
       }
@@ -190,7 +204,7 @@ export class HookWatcher {
     if (content === null) return;
     entry.statusSignature = signature;
     // The newest status replaces the last, so an over-size one is dropped rather than trimmed into a broken JSON.
-    if (escapedLength(content) > (this.options.maxContentJsonChars ?? DEFAULT_MAX_CONTENT_JSON_CHARS)) return;
+    if (escapedBytes(content) > (this.options.maxContentJsonBytes ?? DEFAULT_MAX_CONTENT_JSON_BYTES)) return;
     this.options.emit({ sessionId, folder: 'status', name: path.basename(entry.statusFile), content });
   }
 }

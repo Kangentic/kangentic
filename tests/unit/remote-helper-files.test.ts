@@ -173,6 +173,15 @@ describe('fitHookRecord', () => {
     expect(JSON.stringify(fitted).length).toBeLessThanOrEqual(200_000);
   });
 
+  it('counts bytes, so multi-byte text that fits in characters is still trimmed to the frame cap', () => {
+    // 90k three-byte characters: under 200k characters escaped, but about 270 KB, past a 256 KiB frame.
+    const record = `${header}${JSON.stringify({ tool_name: 'Write', tool_input: { content: '字'.repeat(90_000) } })}`;
+    expect(JSON.stringify(record).length).toBeLessThan(200_000);
+    const fitted = fitHookRecord(record, 200_000);
+    expect(fitted).not.toBe(record);
+    expect(Buffer.byteLength(JSON.stringify(fitted), 'utf8')).toBeLessThanOrEqual(200_000);
+  });
+
   it('sends the header alone when the stdin is not JSON and will not fit', () => {
     const record = `${header}${'y'.repeat(500_000)}`;
     expect(fitHookRecord(record, 200_000)).toBe(header);

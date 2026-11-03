@@ -73,7 +73,9 @@ const DEFAULTS = {
   ackIntervalMs: 500,
   heartbeatMs: 5_000,
   deadAfterMs: 20_000,
-  maxWritableBytes: 4 * 1024 * 1024,
+  // Above the retention limit with room to spare: a replay writes every retained frame at once, and
+  // a cap below what it may replay would end the very connection it is replaying onto, every time.
+  maxWritableBytes: 16 * 1024 * 1024,
 } as const;
 
 /** How long a refused connection gets to carry the reason before it is cut. */
@@ -248,7 +250,7 @@ export class ResumeEndpoint {
         const lostFrom = this.receiveOffset;
         this.receiveOffset = frame.offset;
         const cause = (frame.json as { cause?: string } | undefined)?.cause === 'peer-ahead' ? 'peer-ahead' : 'retention';
-        this.handlers.onGap({ direction: 'incoming', lostFrom, lostTo: frame.offset, cause });
+        this.safely(() => this.handlers.onGap({ direction: 'incoming', lostFrom, lostTo: frame.offset, cause }));
         return;
       }
       case FrameKind.close:
@@ -270,7 +272,14 @@ export class ResumeEndpoint {
       this.refuse(connection, `no protocol version in common (this side ${this.options.protocol.min} to ${this.options.protocol.max}, the peer ${peer.protocol.min} to ${peer.protocol.max})`);
       return;
     }
-    const refusal = this.handlers.vetPeer?.(peer) ?? null;
+    let refusal: string | null;
+    try {
+      refusal = this.handlers.vetPeer?.(peer) ?? null;
+    } catch (error) {
+      // A check that cannot answer is a refusal, never an accepted stranger.
+      this.handlers.onError?.(error);
+      refusal = 'this side could not check the peer';
+    }
     if (refusal) {
       this.refuse(connection, refusal);
       return;
@@ -284,7 +293,16 @@ export class ResumeEndpoint {
     connection.ready = true;
     connection.protocolVersion = version;
     if (!this.replay(connection, frame.offset)) return;
-    this.handlers.onAttached({ protocolVersion: version, peer });
+    this.safely(() => this.handlers.onAttached({ protocolVersion: version, peer }));
+  }
+
+  /** A handler that throws is reported, never thrown out of the stream's data listener. */
+  private safely(call: () => void): void {
+    try {
+      call();
+    } catch (error) {
+      this.handlers.onError?.(error);
+    }
   }
 
   /** Send the peer what it has not got, from the offset its hello named. False when the connection was dropped. */
@@ -294,12 +312,12 @@ export class ResumeEndpoint {
     if (peerResumeFrom > this.sendOffset) {
       // The peer remembers bytes this side never produced: this side restarted. Tell it where the stream is now.
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: this.sendOffset, json: { cause: 'peer-ahead' } }));
-      this.handlers.onGap({ direction: 'outgoing', lostFrom: this.sendOffset, lostTo: peerResumeFrom, cause: 'peer-ahead' });
+      this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: this.sendOffset, lostTo: peerResumeFrom, cause: 'peer-ahead' }));
       return this.isLive(connection);
     }
     if (peerResumeFrom < retainedStart) {
       this.write(connection, encodeFrame({ kind: FrameKind.reset, offset: retainedStart, json: { cause: 'retention' } }));
-      this.handlers.onGap({ direction: 'outgoing', lostFrom: peerResumeFrom, lostTo: retainedStart, cause: 'retention' });
+      this.safely(() => this.handlers.onGap({ direction: 'outgoing', lostFrom: peerResumeFrom, lostTo: retainedStart, cause: 'retention' }));
       if (!this.isLive(connection)) return false;
     } else if (peerResumeFrom !== retainedStart) {
       this.refuse(connection, `the peer asked to resume at ${peerResumeFrom}, which is inside a frame`);
@@ -367,6 +385,6 @@ export class ResumeEndpoint {
     } else {
       connection.stream.destroy();
     }
-    this.handlers.onDetached(reason, { wasActive });
+    this.safely(() => this.handlers.onDetached(reason, { wasActive }));
   }
 }

@@ -22,7 +22,7 @@
  * damaged length can never park the stream behind bytes that will not come. A frame
  * whose kind has the high bit set is sequenced: its offset is where it starts in the
  * sender's stream, a receiver requires each one to continue exactly where the last
- * ended, and a resume replays from an acknowledged offset (`resume-stream.ts`). The
+ * ended, and a resume replays from an acknowledged offset (`resume-endpoint.ts`). The
  * other kinds are per-connection control frames. Their offset field means what their
  * kind says (the resume point in a hello, the offset acknowledged in an ack).
  *

@@ -50,6 +50,7 @@ const SSH_BINARY = path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32'
 const STREAM_CLOSE_WAIT_MS = 200;
 const AGENT_CLOSE_WAIT_MS = 3000;
 const POLLER_HEARTBEAT = 'heartbeat';
+const PROBE_SECTIONS = ['window', 'batch', 'kill', 'matrix', 'mux'];
 
 const options = parseArguments(process.argv.slice(2));
 if (process.platform !== 'win32') {
@@ -71,7 +72,7 @@ function parseArguments(argumentList) {
     work: process.env.KANGENTIC_PROBE_WORK,
     rigKey: process.env.KANGENTIC_PROBE_RIG_KEY,
     deps: process.env.KANGENTIC_PROBE_DEPS,
-    only: ['window', 'batch', 'kill', 'matrix', 'mux'],
+    only: [...PROBE_SECTIONS],
     runs: 20,
     keep: false,
   };
@@ -87,6 +88,14 @@ function parseArguments(argumentList) {
   }
   if (!parsed.work || !parsed.rigKey || !parsed.deps) {
     throw new Error('--work, --rig-key and --deps are required. See the header comment.');
+  }
+  // Checked before the rig is built, so a typo costs nothing.
+  const unknownSections = parsed.only.filter((name) => !PROBE_SECTIONS.includes(name));
+  if (unknownSections.length > 0) throw new Error(`--only names no section ${unknownSections.map((name) => JSON.stringify(name)).join(', ')}. The sections are ${PROBE_SECTIONS.join(', ')}.`);
+  // The work folder and the rig key land unquoted in ssh config lines and ProxyCommand strings, which
+  // ssh splits at a space, so a probe run there would record failures that are only the path's.
+  for (const [flag, value] of [['--work', parsed.work], ['--rig-key', parsed.rigKey]]) {
+    if (/\s/.test(path.resolve(value))) throw new Error(`${flag} ${value} has a space in its path; use a folder without one.`);
   }
   return parsed;
 }

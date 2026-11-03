@@ -5,65 +5,14 @@
  * duplex pairs, with a fake node-pty. The same path over a real `ssh` is the rig's gate.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { duplexPair, type Duplex } from 'node:stream';
+import type { Duplex } from 'node:stream';
 import type * as nodePty from 'node-pty';
 import { HelperServer } from '../../src/main/remote/helper/helper-server';
 import { RemoteLink, type RemoteLinkState } from '../../src/main/remote/link/remote-link';
 import { PtyHostClient } from '../../src/main/pty/host/pty-host-client';
-import type { PtyHostEvent, PtyHostSpawnParams } from '../../src/main/pty/host/protocol';
+import type { PtyHostEvent } from '../../src/main/pty/host/protocol';
 import { createFakeRendererPort, receivedOutput, type FakeRendererPort } from './helpers/fake-renderer-port';
-
-interface FakePty {
-  pty: nodePty.IPty;
-  feed(data: string): void;
-  exit(exitCode: number): void;
-  kill: ReturnType<typeof vi.fn>;
-  write: ReturnType<typeof vi.fn>;
-}
-
-function createFakePty(pid: number): FakePty {
-  let dataListener: ((data: string) => void) | null = null;
-  let exitListener: ((event: { exitCode: number }) => void) | null = null;
-  const kill = vi.fn();
-  const write = vi.fn();
-  const pty = {
-    pid,
-    cols: 120,
-    rows: 30,
-    onData: (listener: (data: string) => void) => {
-      dataListener = listener;
-      return { dispose: () => { dataListener = null; } };
-    },
-    onExit: (listener: (event: { exitCode: number }) => void) => {
-      exitListener = listener;
-      return { dispose: () => { exitListener = null; } };
-    },
-    write,
-    resize: vi.fn(),
-    kill,
-    pause: vi.fn(),
-    resume: vi.fn(),
-  } as unknown as nodePty.IPty;
-  return { pty, feed: (data) => dataListener?.(data), exit: (exitCode) => exitListener?.({ exitCode }), kill, write };
-}
-
-function spawnParams(sessionId: string, taskId: string): Omit<PtyHostSpawnParams, 'ptyId' | 'sentAtMs'> {
-  return {
-    sessionId,
-    projectId: 'project-1',
-    agentName: null,
-    transient: false,
-    file: 'mock-agent',
-    args: [],
-    cwd: '/home/dev/project',
-    env: {},
-    cols: 120,
-    rows: 30,
-    carryoverFromSessionId: null,
-    agentSessionIdKnown: false,
-    taskId,
-  };
-}
+import { createFakePty, dialHelper as dial, spawnParams, type FakePty } from './helpers/remote-link-rig';
 
 const IDENTITY = { installId: 'install-a', bootId: 'boot-1', label: 'a test computer' };
 const FAST_RECONNECT = { initialDelayMs: 100, maxDelayMs: 400 };
@@ -100,16 +49,6 @@ function makeHelper(fakes: FakePty[], endpoint?: ConstructorParameters<typeof He
   });
   teardown.push(() => helper.dispose());
   return helper;
-}
-
-/** Joins a link's stream to a helper the way a socket does: ending one end ends the other. */
-function dial(rigState: { helper: HelperServer; linkStreams: Duplex[] }): Duplex {
-  const [linkSide, helperSide] = duplexPair();
-  linkSide.on('close', () => helperSide.destroy());
-  helperSide.on('close', () => linkSide.destroy());
-  rigState.helper.accept(helperSide);
-  rigState.linkStreams.push(linkSide);
-  return linkSide;
 }
 
 function makeRig(options: { fakeCount?: number; helperEndpoint?: ConstructorParameters<typeof HelperServer>[0]['endpoint'] } = {}): Rig {

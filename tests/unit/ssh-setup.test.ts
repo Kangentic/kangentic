@@ -56,7 +56,7 @@ function makeRun(options: { keyLineHost?: string; keyBlob?: string; probeWritesN
     if (args[0] === '-V') return { code: 0, stdout: '', stderr: 'OpenSSH_9.5p1, OpenSSL 3.2.0\n' };
     const knownIndex = args.findIndex((arg) => arg.startsWith('UserKnownHostsFile='));
     if (knownIndex >= 0 && !options.probeWritesNothing) {
-      const file = args[knownIndex].slice('UserKnownHostsFile='.length);
+      const file = args[knownIndex].slice('UserKnownHostsFile='.length).replace(/^"|"$/g, '');
       fs.writeFileSync(file, `${options.keyLineHost ?? 'lab.example.test'} ssh-ed25519 ${options.keyBlob ?? KEY_BLOB}\n`);
       return { code: 255, stdout: '', stderr: 'dev@lab.example.test: Permission denied (publickey).' };
     }
@@ -237,6 +237,34 @@ describe('the key Kangentic signs in with', () => {
     fs.writeFileSync(protectedKey, '-----BEGIN RSA PRIVATE KEY-----\nProc-Type: 4,ENCRYPTED\nDEK-Info: AES-128-CBC,AB\n\nabc\n-----END RSA PRIVATE KEY-----\n');
     await expect(importHostKey(hostId, protectedKey, deps)).rejects.toThrow('passphrase');
   });
+
+  /** An OpenSSH-format key body: the magic, then the cipher's name as a length-prefixed string. */
+  function openSshKeyText(cipherName: string): string {
+    const name = Buffer.from(cipherName, 'latin1');
+    const length = Buffer.alloc(4);
+    length.writeUInt32BE(name.length);
+    const blob = Buffer.concat([Buffer.from('openssh-key-v1\0', 'latin1'), length, name, Buffer.alloc(24)]);
+    return `-----BEGIN OPENSSH PRIVATE KEY-----\n${blob.toString('base64')}\n-----END OPENSSH PRIVATE KEY-----\n`;
+  }
+
+  it('refuses a passphrase key in OpenSSH\'s own format, which never says ENCRYPTED in its text', async () => {
+    const deps = makeDeps(makeRun());
+    const hostId = '3f2a9c1e-0d4b-4c7a-9a1e-5b6c7d8e9f01';
+    const protectedKey = path.join(scratch, 'id_ed25519_protected');
+    fs.writeFileSync(protectedKey, openSshKeyText('aes256-ctr'));
+    await expect(importHostKey(hostId, protectedKey, deps)).rejects.toThrow('passphrase');
+
+    const plainKey = path.join(scratch, 'id_ed25519_plain');
+    fs.writeFileSync(plainKey, openSshKeyText('none'));
+    await expect(importHostKey(hostId, plainKey, deps)).resolves.toContain('id_imported');
+  });
+
+  it('writes the copy with LF line ends, which a POSIX ssh needs, when the chosen file has CRLF', async () => {
+    const source = path.join(scratch, 'crlf-key');
+    fs.writeFileSync(source, openSshKeyText('none').replace(/\n/g, '\r\n'));
+    const copy = await importHostKey('3f2a9c1e-0d4b-4c7a-9a1e-5b6c7d8e9f01', source, makeDeps(makeRun()));
+    expect(fs.readFileSync(copy, 'utf8')).not.toContain('\r');
+  });
 });
 
 describe('a public key', () => {
@@ -266,8 +294,48 @@ describe('a public key', () => {
   it('is added once: the command checks for the line before appending, and leaves the file private', () => {
     const command = installKeyCommand(PUBLIC_KEY);
     expect(command).toContain('umask 077');
-    expect(command).toContain(`grep -qxF '${PUBLIC_KEY}'`);
+    expect(command).toContain(`grep -qxF "${PUBLIC_KEY}"`);
     expect(command).toContain('>> ~/.ssh/authorized_keys');
+  });
+
+  it('is sent as one sh -c argument that any login shell passes through unchanged', () => {
+    for (const command of [installKeyCommand(PUBLIC_KEY), removeKeyCommand(PUBLIC_KEY)]) {
+      expect(command.startsWith("sh -c '")).toBe(true);
+      expect(/['\\\n\r]/.test(command.slice("sh -c '".length, -1))).toBe(false);
+    }
+  });
+
+  // The commands run for real under sh, against a temporary home. POSIX only: Windows has no sh.
+  describe.skipIf(process.platform === 'win32')('run under sh', () => {
+    async function runOnHost(command: string, hostHome: string): Promise<void> {
+      const inner = command.slice("sh -c '".length, -1);
+      const result = await runProgram('sh', ['-c', inner], { env: { ...process.env, HOME: hostHome }, timeout: 15_000 });
+      expect(result.code).toBe(0);
+    }
+
+    it('puts the key on its own line when authorized_keys ends without a newline, and adds it only once', async () => {
+      const hostHome = path.join(scratch, 'host-home');
+      fs.mkdirSync(path.join(hostHome, '.ssh'), { recursive: true });
+      const keysFile = path.join(hostHome, '.ssh', 'authorized_keys');
+      fs.writeFileSync(keysFile, 'ssh-rsa AAAAB3NzaC1yc2E me@laptop');
+
+      await runOnHost(installKeyCommand(PUBLIC_KEY), hostHome);
+      await runOnHost(installKeyCommand(PUBLIC_KEY), hostHome);
+
+      expect(fs.readFileSync(keysFile, 'utf8')).toBe(`ssh-rsa AAAAB3NzaC1yc2E me@laptop\n${PUBLIC_KEY}\n`);
+    });
+
+    it('takes the key out and keeps every other line', async () => {
+      const hostHome = path.join(scratch, 'host-home-remove');
+      fs.mkdirSync(path.join(hostHome, '.ssh'), { recursive: true });
+      const keysFile = path.join(hostHome, '.ssh', 'authorized_keys');
+      fs.writeFileSync(keysFile, `ssh-rsa AAAAB3NzaC1yc2E me@laptop\n${PUBLIC_KEY}\n`);
+
+      await runOnHost(removeKeyCommand(PUBLIC_KEY), hostHome);
+
+      expect(fs.readFileSync(keysFile, 'utf8')).toBe('ssh-rsa AAAAB3NzaC1yc2E me@laptop\n');
+      expect(fs.existsSync(`${keysFile}.kangentic.tmp`)).toBe(false);
+    });
   });
 });
 
@@ -340,6 +408,12 @@ describe('running a program for ssh', () => {
     const result = await runProgram(process.execPath, ['-e', "process.stdin.on('end', () => console.log('eof')); process.stdin.resume();"], { timeout: 15_000 });
 
     expect(result).toEqual({ code: 0, stdout: 'eof\n', stderr: '' });
+  });
+
+  it('stops a program that outlives its time limit and reports no exit code', async () => {
+    const result = await runProgram(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], { timeout: 500 });
+
+    expect(result.code).toBeNull();
   });
 });
 

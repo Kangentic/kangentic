@@ -15,7 +15,7 @@
  *   every real renderer port whose visible set holds the session, and routes a scrollback answer
  *   to the renderer that asked.
  *
- * Imports nothing of electron. The utility process that hosts it (Phase 2) owns the wiring.
+ * Imports nothing of electron. It runs in the pty host process, built and routed by `LinkHub` behind `HostRouter`.
  */
 
 import type { Duplex } from 'node:stream';
@@ -118,6 +118,10 @@ export class RemoteLink implements PtyHostTransport {
   private cycleWaiter: (() => void) | null = null;
   private cycleAttached = false;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Ends the wait between dials early, for `redialNow` and `stop`. */
+  private retryWake: (() => void) | null = null;
+  /** Counts `start` calls, so a loop a `stop` left mid-await ends when a later `start` has begun another. */
+  private loopGeneration = 0;
 
   constructor(private readonly options: RemoteLinkOptions) {
     this.endpoint = new ResumeEndpoint(
@@ -149,17 +153,44 @@ export class RemoteLink implements PtyHostTransport {
   start(): void {
     if (!this.stopped) return;
     this.stopped = false;
-    void this.connectLoop();
+    this.loopGeneration += 1;
+    void this.connectLoop(this.loopGeneration);
   }
 
   /** Stop dialing and let go of the connection. Every agent keeps running on the host. */
   stop(): void {
     this.stopped = true;
     this.shutdownInFlight = false;
-    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.endRetryWait();
     this.endpoint.detach('the link stopped');
     this.failPending(new Error('the link stopped'));
     this.setState('stopped', null);
+  }
+
+  /** Dial now instead of after the backoff (the user asked to reconnect). A connected link is left alone. */
+  redialNow(): void {
+    if (this.stopped) {
+      this.start();
+      return;
+    }
+    this.endRetryWait();
+  }
+
+  /**
+   * Take on sessions this app already holds handles for, as when the process holding the links
+   * restarted. The reconcile after the next connect then rebinds each to its PTY on the host, or
+   * reports it lost, instead of calling it adoptable.
+   */
+  adoptSessions(routes: readonly { sessionId: string; ptyId: number }[]): void {
+    for (const route of routes) this.sessions.set(route.sessionId, { ptyId: route.ptyId, alive: true });
+  }
+
+  private endRetryWait(): void {
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+    const wake = this.retryWake;
+    this.retryWake = null;
+    wake?.();
   }
 
   // PtyHostTransport
@@ -183,6 +214,8 @@ export class RemoteLink implements PtyHostTransport {
   attachRendererPort(rendererId: number, port: RendererPort): void {
     this.rendererPorts.set(rendererId, port);
     port.on('message', (messageEvent) => {
+      // A removed host's link still hears the port; it must not keep every keystroke in its retention.
+      if (this.stopped) return;
       const { body, raw } = splitPortMessage(messageEvent.data as ToPtyHostPortMessage);
       this.endpoint.send({ t: 'port', message: body } satisfies LinkToHelperMessage, raw);
     });
@@ -227,7 +260,15 @@ export class RemoteLink implements PtyHostTransport {
       this.shutdownInFlight = false;
       this.stop();
     };
-    this.requestHelper('suspendAll', { ownerEpoch: this.ownerEpoch, sessions: this.quitPlan?.() ?? [] }, exitWaitMs).then(finish, finish);
+    let sessions: SuspendPlan[];
+    try {
+      sessions = this.quitPlan?.() ?? [];
+    } catch (error) {
+      // The helper still ends every session by its own recorded exit sequence.
+      this.log(`the quit plan could not be read: ${String(error)}`);
+      sessions = [];
+    }
+    this.requestHelper('suspendAll', { ownerEpoch: this.ownerEpoch, sessions }, exitWaitMs).then(finish, finish);
   }
 
   /** True from the quit frame being sent until the link lets go. */
@@ -257,16 +298,17 @@ export class RemoteLink implements PtyHostTransport {
     this.options.log?.(line);
   }
 
-  private async connectLoop(): Promise<void> {
+  private async connectLoop(generation: number): Promise<void> {
     const initialDelayMs = this.options.reconnect?.initialDelayMs ?? 250;
     const maxDelayMs = this.options.reconnect?.maxDelayMs ?? 10_000;
+    const superseded = (): boolean => this.stopped || generation !== this.loopGeneration;
     let failures = 0;
-    while (!this.stopped) {
+    while (!superseded()) {
       this.setState(this.everConnected ? 'reconnecting' : 'connecting', null);
       this.cycleAttached = false;
       try {
         const stream = await this.options.connect();
-        if (this.stopped) {
+        if (superseded()) {
           stream.destroy();
           return;
         }
@@ -278,11 +320,13 @@ export class RemoteLink implements PtyHostTransport {
         this.setState('reconnecting', error instanceof Error ? error.message : String(error));
       }
       failures = this.cycleAttached ? 0 : failures + 1;
-      if (this.stopped) return;
+      if (superseded()) return;
       const delay = Math.min(maxDelayMs, initialDelayMs * 2 ** Math.min(failures, 10));
       await new Promise<void>((resolve) => {
+        this.retryWake = resolve;
         this.retryTimer = setTimeout(resolve, delay);
       });
+      this.retryWake = null;
     }
   }
 

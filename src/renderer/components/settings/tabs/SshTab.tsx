@@ -1,10 +1,11 @@
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Check, CircleAlert, Loader2, Pencil, Plus, RefreshCw, Server, Trash2, X } from 'lucide-react';
 import type { I18n } from '@lingui/core';
 import { msg, plural } from '@lingui/core/macro';
 import { Trans, useLingui } from '@lingui/react/macro';
 import type { SshHostConnectionState, SshHostKeyProbe, SshHostStatus, SshSignIn } from '../../../../shared/types';
 import { formatDateTime, formatShortDateTime } from '../../../lib/datetime';
+import { describeIpcError } from '../../../lib/ipc-error';
 import { useSshStore } from '../../../stores/ssh-store';
 import { INPUT_CLASS, ReportedError } from '../shared';
 import { SettingsCard, CardTile, CardStatusRow } from '../settings-card';
@@ -47,15 +48,11 @@ function connectionDisplay(state: SshHostConnectionState, i18n: I18n): { label: 
   }
 }
 
-function errorText(error: unknown): string {
-  const raw = error instanceof Error ? error.message : String(error);
-  // Electron wraps a handler's throw as "Error invoking remote method 'x': Error: <message>".
-  return raw.replace(/^Error invoking remote method '[^']*': (?:Error: )?/, '');
-}
-
 export function SshTab() {
   const { t, i18n } = useLingui();
   const hosts = useSshStore((state) => state.hosts);
+  const hostsLoaded = useSshStore((state) => state.hostsLoaded);
+  const hostsError = useSshStore((state) => state.hostsError);
   const client = useSshStore((state) => state.client);
   const loadHosts = useSshStore((state) => state.loadHosts);
   const loadClient = useSshStore((state) => state.loadClient);
@@ -83,19 +80,26 @@ export function SshTab() {
   const [renameDraft, setRenameDraft] = useState('');
   const [rowError, setRowError] = useState<{ hostId: string; message: string } | null>(null);
   const [removeTarget, setRemoveTarget] = useState<SshHostStatus | null>(null);
+  /**
+   * Counts Add host sessions. Cancel can run while a probe or an add is in flight, and the answer must
+   * then land nowhere: not reopen the form on the trust step, not write an error into a closed one.
+   */
+  const addSessionRef = useRef(0);
 
   useEffect(() => {
+    // Neither load rejects: a failure is store state shown below.
     void loadHosts();
     void loadClient();
   }, [loadHosts, loadClient]);
 
-  const signInOptions: SegmentedControlOption<SignInMethod>[] = [
+  const signInOptions = useMemo<SegmentedControlOption<SignInMethod>[]>(() => [
     { value: 'config', label: t`My SSH config`, tip: t`Use your own ssh setup: its config, agent and keys, as a terminal does`, testId: 'ssh-signin-config' },
     { value: 'key-file', label: t`Key file`, tip: t`A private key file; Kangentic keeps a copy in its own folder`, testId: 'ssh-signin-key-file' },
     { value: 'create-key', label: t`Password`, tip: t`Use the password once to add a key Kangentic makes. It is never stored`, testId: 'ssh-signin-password' },
-  ];
+  ], [t]);
 
   function resetAdd(): void {
+    addSessionRef.current += 1;
     setStep('closed');
     setName('');
     setDestination('');
@@ -108,20 +112,25 @@ export function SshTab() {
   }
 
   async function handleContinue(): Promise<void> {
+    const session = addSessionRef.current;
     setBusy(true);
     setAddError(null);
     try {
-      setProbe(await probeHostKey(destination.trim()));
+      const learned = await probeHostKey(destination.trim());
+      if (session !== addSessionRef.current) return;
+      setProbe(learned);
       setStep('trust');
     } catch (error) {
-      setAddError(errorText(error));
+      if (session !== addSessionRef.current) return;
+      setAddError(describeIpcError(error));
     } finally {
-      setBusy(false);
+      if (session === addSessionRef.current) setBusy(false);
     }
   }
 
   async function handleAdd(): Promise<void> {
     if (!probe) return;
+    const session = addSessionRef.current;
     setBusy(true);
     setAddError(null);
     const signIn: SshSignIn = signInMethod === 'key-file'
@@ -131,11 +140,12 @@ export function SshTab() {
         : { method: 'config' };
     try {
       await addHost({ name: name.trim(), destination: destination.trim(), signIn, expectedFingerprint: probe.fingerprint });
-      resetAdd();
+      if (session === addSessionRef.current) resetAdd();
     } catch (error) {
+      if (session !== addSessionRef.current) return;
       // The password is not kept past a failed attempt.
       setPassword('');
-      setAddError(errorText(error));
+      setAddError(describeIpcError(error));
       setBusy(false);
     }
   }
@@ -145,7 +155,7 @@ export function SshTab() {
     try {
       await action();
     } catch (error) {
-      setRowError({ hostId, message: errorText(error) });
+      setRowError({ hostId, message: describeIpcError(error) });
     }
   }
 
@@ -183,7 +193,8 @@ export function SshTab() {
         testId="ssh-hosts-card"
       >
         <CardTile className="flex flex-col gap-2.5" testId="ssh-hosts-tile">
-          {hosts.length === 0 && step === 'closed' ? (
+          {hostsError ? <ReportedError error={hostsError} testId="ssh-hosts-load-error" /> : null}
+          {hostsLoaded && hosts.length === 0 && step === 'closed' ? (
             <p className="text-sm text-fg-faint" data-testid="ssh-no-hosts"><Trans>No hosts yet.</Trans></p>
           ) : null}
 

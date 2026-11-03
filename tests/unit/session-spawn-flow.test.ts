@@ -2179,14 +2179,38 @@ describe('performSpawn - a session on a remote host (#913)', () => {
       }));
     });
 
-    it('starts no PTY, and says why, when the host could not be reached', async () => {
+    it('starts no PTY, and fails the spawn with the host\'s words, when the host could not be reached', async () => {
+      // A failed spawn, not a throw: a throw left a promoted queue row `queued` for good, while the
+      // failure path ends it as an exited placeholder the board can show.
       const context = makeContext();
       vi.mocked(context.remoteSessions!.register).mockRejectedValue(new Error('Connection refused'));
+      vi.mocked(handleSpawnFailure).mockClear();
 
-      await expect(performSpawn(remoteInput(), context)).rejects.toThrow('Connection refused');
+      await performSpawn(remoteInput(), context);
 
       expect(context.host.spawn).not.toHaveBeenCalled();
-      expect(context.registry.get(makeInput().id!)).toBeUndefined();
+      expect(handleSpawnFailure).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(handleSpawnFailure).mock.calls[0][0].message).toBe('Connection refused');
+      expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+    });
+
+    it('is released once when a quit begins while the host starts the PTY', async () => {
+      const context = makeContext();
+      const spawnThroughHost = PtyHostClient.prototype.spawn.bind(context.host);
+      vi.mocked(context.host.spawn).mockImplementationOnce(async (params) => {
+        const outcome = await spawnThroughHost(params);
+        shutdownState.shuttingDown = true;
+        return outcome;
+      });
+
+      try {
+        await expect(performSpawn(remoteInput(), context)).rejects.toThrow('Cannot spawn session during shutdown');
+      } finally {
+        shutdownState.shuttingDown = false;
+      }
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledTimes(1);
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
     });
 
     it('is released when the PTY did not start', async () => {

@@ -40,15 +40,37 @@ describe('installing the helper', () => {
 
     expect(installed).toEqual({
       directory: '/home/dev/.kangentic/host/0.52.0',
-      relayCommand: "'/home/dev/.kangentic/host/0.52.0/node/bin/node' '/home/dev/.kangentic/host/0.52.0/app/host.js' relay --dir '/home/dev/.kangentic/host/run'",
+      relayCommand: `sh -c 'exec "$HOME/.kangentic/host/0.52.0/node/bin/node" "$HOME/.kangentic/host/0.52.0/app/host.js" relay --dir "$HOME/.kangentic/host/run"'`,
       installed: true,
     });
     expect(host.calls).toHaveLength(3);
     const upload = host.calls[2];
     expect(upload.options?.stdin).toBe(assetStream);
-    expect(upload.command).toContain(`expected='${SHA}'`);
-    expect(upload.command).toContain("version='0.52.0'");
+    expect(upload.command).toContain(`expected="${SHA}"`);
+    expect(upload.command).toContain('version="0.52.0"');
   });
+
+  it('sends every command as one sh -c argument any login shell passes through unchanged', async () => {
+    // sshd hands the command to the login shell, and fish, nushell and csh read sh syntax their own
+    // way. Inside single quotes with no quote, backslash or newline, each of them passes it to sh as is.
+    const host = fakeHost();
+    const installed = await installHost(host.runner, ASSET, stream);
+    const commands = [...host.calls.map((call) => call.command), installed.relayCommand];
+    for (const command of commands) {
+      expect(command.startsWith("sh -c '")).toBe(true);
+      expect(command.endsWith("'")).toBe(true);
+      expect(/['\\\n\r]/.test(command.slice("sh -c '".length, -1))).toBe(false);
+    }
+  });
+
+  it('removes the upload and the half-unpacked folder when a step fails', async () => {
+    const host = fakeHost();
+    await installHost(host.runner, ASSET, stream);
+    const script = host.calls[2].command;
+    expect(script).toContain('trap cleanup EXIT');
+    expect(script.indexOf('trap cleanup EXIT')).toBeLessThan(script.indexOf('cat > "$upload"'));
+  });
+
 
   it('checks the checksum before it unpacks, and renames only a verified, complete version into place', async () => {
     const host = fakeHost();
@@ -72,10 +94,12 @@ describe('installing the helper', () => {
     expect((await installHost(host.runner, ASSET, stream)).installed).toBe(true);
   });
 
-  it('quotes a home directory that holds a quote', async () => {
+  it('names a home directory that holds a quote through $HOME, never its text', async () => {
     const host = fakeHost({ probe: ok("Linux\nx86_64\n/home/o'brien\nglibc 2.39\n"), present: ok(`${SHA}\n`) });
     const installed = await installHost(host.runner, ASSET, stream);
-    expect(installed.relayCommand).toContain("'/home/o'\\''brien/.kangentic/host/0.52.0/node/bin/node'");
+    expect(installed.directory).toBe("/home/o'brien/.kangentic/host/0.52.0");
+    expect(installed.relayCommand).toContain('"$HOME/.kangentic/host/0.52.0/node/bin/node"');
+    expect(installed.relayCommand).not.toContain('brien');
   });
 });
 
@@ -121,8 +145,8 @@ describe('refusing a host', () => {
       await installHost(intel.runner, [...BOTH].reverse(), (filePath) => { opened.push(filePath); return stream(); });
 
       expect(opened).toEqual(['/mock/kangentic-host-0.52.0-linux-arm64.tar.gz', '/mock/kangentic-host-0.52.0-linux-x64.tar.gz']);
-      expect(arm.calls[2].command).toContain(`expected='${ARM_SHA}'`);
-      expect(intel.calls[2].command).toContain(`expected='${SHA}'`);
+      expect(arm.calls[2].command).toContain(`expected="${ARM_SHA}"`);
+      expect(intel.calls[2].command).toContain(`expected="${SHA}"`);
     });
 
     it('names the CPUs it does carry when the host has another', async () => {

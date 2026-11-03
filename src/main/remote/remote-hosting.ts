@@ -32,7 +32,7 @@ export interface RemoteHosting {
   admin: SshHostAdmin | null;
   /** Connect one host, recording the outcome. A setup failure becomes `unreachable` with its words and does not throw. */
   connectHost(hostId: string): Promise<void>;
-  /** Connect every stored host, one after another, logging what could not be reached. */
+  /** Connect every stored host at once, recording what could not be reached. A host that is off delays no other. */
   connectAll(): Promise<void>;
 }
 
@@ -41,7 +41,7 @@ export interface RemoteHostingDeps {
   projects: () => Pick<ProjectRepository, 'list'>;
   /** The program installed on a host: this build's, with its checksum, or null when the build carries none. */
   hostAsset?: () => HostAsset | readonly HostAsset[] | null;
-  /** The `ssh` program; a name on the PATH by default, which is how every platform finds its own. */
+  /** The `ssh` program; `defaultSshClientPaths().ssh` by default (Windows' own OpenSSH where it exists). */
   sshPath?: string;
   /** Told after a host's connection state changes, so the window can redraw. */
   onHostsChanged?: (hostId: string) => void;
@@ -63,13 +63,14 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     send: (request) => deps.sessionManager.remoteHostRequest(request),
     asset: deps.hostAsset ?? (() => null),
     identity: { installId: readInstallId(PATHS.configDir), label: os.hostname() },
+    liveSessions: (hostId) => deps.sessionManager.liveRemotePtys(hostId),
   });
   const relay = new RemoteSessionRelay({ files: hostService, log });
   deps.sessionManager.setRemoteSessionRelay(relay);
   const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
   // A link reports its own state; a drop is a state here, never the end of a session.
   deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
-    status.set(event.hostId, event.state, event.detail);
+    status.noteLink(event.hostId, event.state, event.detail);
   });
 
   setRemoteLaunchResolver(createRemoteLaunchResolver({
@@ -91,6 +92,13 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     }
   };
 
+  // The links live in the pty host process, so a restart of it took every one with it while the agents
+  // kept running on their hosts. Each host is added again with the PTYs main still holds there, and the
+  // new link's reconcile rebinds them to their sessions on the host.
+  deps.sessionManager.on('pty-host-restarted', () => {
+    for (const hostId of hostService.connectedHosts()) void connectHost(hostId);
+  });
+
   return {
     hosts,
     hostService,
@@ -99,7 +107,8 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     admin: null,
     connectHost,
     async connectAll() {
-      for (const host of hosts.list()) await connectHost(host.id);
+      // connectHost never throws, so one host that fails or hangs holds up no other.
+      await Promise.all(hosts.list().map((host) => connectHost(host.id)));
     },
   };
 }

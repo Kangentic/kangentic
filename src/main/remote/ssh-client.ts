@@ -12,6 +12,21 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
+/** A destination that `ssh` would read as an option, or that carries whitespace or control characters. */
+export class InvalidSshDestinationError extends Error {
+  constructor(readonly destination: string) {
+    super('The host address is not valid. Use a name from your SSH config, user@host, or an ssh:// address.');
+    this.name = 'InvalidSshDestinationError';
+  }
+}
+
+export function assertSafeDestination(destination: string): void {
+  // A leading dash is an `ssh` option (-oProxyCommand=...), not a destination.
+  if (destination.length === 0 || destination.startsWith('-') || /[\s\u0000-\u001f\u007f]/.test(destination)) {
+    throw new InvalidSshDestinationError(destination);
+  }
+}
+
 export interface SshClientPaths {
   ssh: string;
   sshKeygen: string;
