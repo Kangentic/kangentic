@@ -19,6 +19,7 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { childProcessEnv } from '../shared/child-env';
 import { assertSafeDestination } from './remote-host-service';
+import { defaultSshClientPaths, nativePathFromSsh } from './ssh-client';
 
 export interface RunResult {
   code: number | null;
@@ -28,9 +29,16 @@ export interface RunResult {
 
 export type RunProgram = (file: string, args: string[], options?: ExecFileOptions & { env?: NodeJS.ProcessEnv; timeout?: number }) => Promise<RunResult>;
 
-/** `execFile` that resolves with the exit status instead of rejecting on one, and never opens a window. */
+/**
+ * `execFile` that resolves with the exit status instead of rejecting on one, and never opens a window.
+ *
+ * Stdin is closed at once. Windows' `ssh` forwards its stdin to the remote command, and an `execFile` pipe
+ * that stays open leaves it waiting after the command has finished: found by running Add host in the real
+ * app, where the key was added on the host and `ssh` then sat until the 60 s kill (the rig's own helper
+ * closed stdin, so it never showed).
+ */
 export const runProgram: RunProgram = (file, args, options = {}) => new Promise((resolve, reject) => {
-  execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
+  const child = execFile(file, args, { windowsHide: true, encoding: 'utf8', maxBuffer: 4 * 1024 * 1024, ...options }, (error, stdout, stderr) => {
     const spawnFailure = error as (NodeJS.ErrnoException & { code?: string | number }) | null;
     if (spawnFailure && typeof spawnFailure.code === 'string' && spawnFailure.code !== 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
       reject(spawnFailure);
@@ -38,6 +46,9 @@ export const runProgram: RunProgram = (file, args, options = {}) => new Promise(
     }
     resolve({ code: error ? (typeof spawnFailure?.code === 'number' ? spawnFailure.code : null) : 0, stdout: String(stdout), stderr: String(stderr) });
   });
+  // A child that exits before this runs has already closed its end; the error is the child's, not ours.
+  child.stdin?.on('error', () => undefined);
+  child.stdin?.end();
 });
 
 export interface SshSetupDeps {
@@ -55,9 +66,10 @@ export interface SshSetupDeps {
 }
 
 export function defaultSshSetupDeps(configDirectory: string): SshSetupDeps {
+  const client = defaultSshClientPaths();
   return {
-    sshPath: 'ssh',
-    sshKeygenPath: 'ssh-keygen',
+    sshPath: client.ssh,
+    sshKeygenPath: client.sshKeygen,
     run: runProgram,
     configDirectory,
     temporaryDirectory: os.tmpdir(),
@@ -100,7 +112,7 @@ export interface ResolvedTarget {
   userKnownHostsFile: string;
 }
 
-export function parseSshConfigDump(text: string, homeDirectory: string): ResolvedTarget {
+export function parseSshConfigDump(text: string, homeDirectory: string, platform: NodeJS.Platform = process.platform): ResolvedTarget {
   const values = new Map<string, string>();
   for (const line of text.split(/\r?\n/)) {
     const space = line.indexOf(' ');
@@ -113,7 +125,8 @@ export function parseSshConfigDump(text: string, homeDirectory: string): Resolve
     hostname,
     port: Number(values.get('port') ?? '22') || 22,
     user: values.get('user') ?? null,
-    userKnownHostsFile: expandHome(knownHosts, homeDirectory),
+    // An MSYS ssh on Windows names it `/c/Users/dev/.ssh/known_hosts`, which Node would read as `C:\c\Users\...`.
+    userKnownHostsFile: nativePathFromSsh(expandHome(knownHosts, homeDirectory), platform),
   };
 }
 
@@ -127,7 +140,7 @@ export async function resolveTarget(destination: string, deps: SshSetupDeps): Pr
   assertSafeDestination(destination);
   const result = await deps.run(deps.sshPath, [...(deps.sshOptions ?? []), '-G', destination], { env: childProcessEnv(), timeout: 15_000 });
   if (result.code !== 0) throw new Error(result.stderr.trim() || 'ssh could not read that address.');
-  return parseSshConfigDump(result.stdout, deps.homeDirectory);
+  return parseSshConfigDump(result.stdout, deps.homeDirectory, deps.platform);
 }
 
 /** The token a known_hosts line names a host by: the name, or `[name]:port` off the default port. */
@@ -326,6 +339,9 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
       '-o', 'BatchMode=no',
       '-o', 'PreferredAuthentications=password,keyboard-interactive',
       '-o', 'PubkeyAuthentication=no',
+      // The key was pinned when the user trusted it. An unpinned host fails here at once, where the
+      // default would ask a host-key question through askpass and wait until the 60 s kill.
+      '-o', 'StrictHostKeyChecking=yes',
       '-o', 'NumberOfPasswordPrompts=1',
       '-o', 'ConnectTimeout=15',
       destination,
@@ -340,7 +356,12 @@ export async function installPublicKeyWithPassword(destination: string, publicKe
       }),
       timeout: 60_000,
     });
-    if (result.code !== 0) throw new Error(result.stderr.trim() || 'The host did not accept that password.');
+    if (result.code !== 0) {
+      // ssh's own words when it printed any. With none, say what happened rather than guess a cause.
+      throw new Error(result.stderr.trim() || (result.code === null
+        ? 'The ssh program did not finish within 60 seconds and was stopped.'
+        : `The ssh program exited with code ${result.code} and printed no message.`));
+    }
   } finally {
     await fs.rm(scratch, { recursive: true, force: true }).catch(() => undefined);
   }

@@ -77,17 +77,22 @@ export class SshHostAdmin {
     await trustHostKey(input.destination, input.expectedFingerprint, this.deps.setup);
 
     const host = this.deps.hosting.hosts.create({ name, destination: input.destination });
+    let createdKeyPath: string | null = null;
     try {
       if (input.signIn.method === 'key-file') {
         const copy = await importHostKey(host.id, input.signIn.keyFilePath, this.deps.setup);
         this.deps.hosting.hosts.setKey(host.id, copy, false);
       } else if (input.signIn.method === 'create-key') {
         const pair = await createHostKey(host.id, this.deps.setup);
+        createdKeyPath = pair.privateKeyPath;
         await installPublicKeyWithPassword(input.destination, pair.publicKey, input.signIn.password, this.deps.setup);
         this.deps.hosting.hosts.setKey(host.id, pair.privateKeyPath, true);
       }
     } catch (error) {
-      // Nothing of this host is kept: no row, and no key made for it.
+      // Nothing of this host is kept: no row, and no key made for it. A step that failed after the key
+      // reached the host (a timeout while ssh was still running, say) would leave its line in
+      // authorized_keys with no copy here to ever remove it, so take it off while the key still exists.
+      if (createdKeyPath) await this.takeKeyOffHost(input.destination, createdKeyPath, input.name.trim());
       this.deps.hosting.hosts.delete(host.id);
       await deleteHostKeys(host.id, this.deps.setup).catch(() => undefined);
       throw error;
@@ -125,7 +130,7 @@ export class SshHostAdmin {
       await this.deps.removeProject(project);
       await this.removeShellFolder(project.path);
     }
-    if (host.key_created && host.key_path) await this.removeKeyFromHost(host);
+    if (host.key_created && host.key_path) await this.takeKeyOffHost(host.destination, host.key_path, host.name);
     await this.deps.hosting.hostService.disconnect(hostId).catch((error: unknown) => {
       this.deps.log?.(`[remote] could not stop the link for ${hostId.slice(0, 8)}: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -180,20 +185,25 @@ export class SshHostAdmin {
     await service.writeFiles(hostId, [{ path: excludeFile, content: `${existing}${separator}.kangentic/\n`, mode: 0o644 }]);
   }
 
-  private async removeKeyFromHost(host: SshHost): Promise<void> {
+  /**
+   * Take a key Kangentic made off a host, signing in with that key. Best effort, and never throws: the
+   * host may be off, or the key may never have got there.
+   */
+  private async takeKeyOffHost(destination: string, keyPath: string, label: string): Promise<void> {
     try {
-      const publicKey = (await fs.readFile(`${host.key_path}.pub`, 'utf8')).trim();
+      const publicKey = (await fs.readFile(`${keyPath}.pub`, 'utf8')).trim();
       await this.deps.setup.run(this.deps.setup.sshPath, [
-        '-i', host.key_path!,
+        ...(this.deps.setup.sshOptions ?? []),
+        '-i', keyPath,
         '-o', 'IdentitiesOnly=yes',
         '-o', 'BatchMode=yes',
         '-o', 'ConnectTimeout=10',
-        host.destination,
+        destination,
         removeKeyCommand(publicKey),
       ], { timeout: 30_000 });
     } catch (error) {
-      // The host may be off. The key stays in its authorized_keys, which the user can remove by hand.
-      this.deps.log?.(`[remote] could not take the key off ${host.name}: ${error instanceof Error ? error.message : String(error)}`);
+      // The key stays in the host's authorized_keys, which its owner can edit by hand.
+      this.deps.log?.(`[remote] could not take the key off ${label}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

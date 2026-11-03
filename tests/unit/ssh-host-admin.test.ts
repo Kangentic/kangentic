@@ -204,6 +204,30 @@ describe('adding a host', () => {
     expect(rig.connectHost).not.toHaveBeenCalled();
   });
 
+  it('tries to take the key it made off the host when the add fails, signing in with that key, before deleting its own copy', async () => {
+    const rig = makeRig({ installFails: true });
+
+    await expect(rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'create-key', password: 'wrong' }, expectedFingerprint: FINGERPRINT }))
+      .rejects.toThrow('Permission denied');
+
+    // The install may have reached the host before it failed (a timeout leaves it unknown), and
+    // nothing here could remove the line once the local key is gone.
+    const removal = rig.run.calls.find((call) => call.args.some((arg) => arg.includes('grep -vxF')));
+    expect(removal?.args).toEqual(expect.arrayContaining(['IdentitiesOnly=yes', 'BatchMode=yes']));
+    expect(removal?.args[removal.args.indexOf('-i') + 1]).toMatch(/ssh/);
+  });
+
+  it('does not try to take a key off the host when the add used no key of its own', async () => {
+    const rig = makeRig();
+    const notAKey = path.join(scratch, 'notes.txt');
+    fs.writeFileSync(notAKey, 'hello');
+
+    await expect(rig.admin.addHost({ name: 'Lab', destination: 'lab', signIn: { method: 'key-file', keyFilePath: notAKey }, expectedFingerprint: FINGERPRINT }))
+      .rejects.toThrow();
+
+    expect(rig.run.calls.some((call) => call.args.some((arg) => arg.includes('grep -vxF')))).toBe(false);
+  });
+
   it('leaves no host behind when a chosen key file is not a key', async () => {
     const rig = makeRig();
     const notAKey = path.join(scratch, 'notes.txt');

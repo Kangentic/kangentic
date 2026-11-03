@@ -16,6 +16,7 @@ import type { SessionManager } from '../pty/session-manager';
 import type { HostAsset } from './link/host-installer';
 import { readInstallId } from './install-identity';
 import { HostStatusBook } from './host-status';
+import { defaultSshClientPaths } from './ssh-client';
 import type { SshHostAdmin } from './ssh-host-admin';
 import { createRemoteLaunchResolver, setRemoteLaunchResolver } from './remote-launch';
 import { RemoteHostService } from './remote-host-service';
@@ -57,7 +58,7 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   const log = deps.log ?? ((line: string) => console.log(line));
   const hosts = new SshHostRepository();
   const hostService = new RemoteHostService({
-    sshPath: deps.sshPath ?? 'ssh',
+    sshPath: deps.sshPath ?? defaultSshClientPaths().ssh,
     hosts,
     send: (request) => deps.sessionManager.remoteHostRequest(request),
     asset: deps.hostAsset ?? (() => null),

@@ -30,6 +30,12 @@ Kangentic can run an agent on a Linux machine over SSH. The repo, the agent, its
 
 A host is trusted like this computer. Its agents get the same MCP tools as a local agent, across every project, over a relay on this computer: the token never leaves, and nothing about a host is allowlisted. Adding a host is the trust step, and removing it ends its access. A host's agents can reach every project on the board, as a local agent can.
 
+## The ssh program
+
+Kangentic runs the `ssh` on this computer. On Windows it prefers Windows' own OpenSSH (`System32\OpenSSH`) over whichever `ssh` is first on PATH, because Git for Windows' build is an MSYS program that names its files `/c/Users/dev/.ssh/known_hosts`, which a Windows program reads as `C:\c\Users\dev\...`. That mistake once pinned a host key into a folder created at the drive root, so `ssh` found no pin and waited on a host-key question nobody could answer. Both programs read the same `~/.ssh` folder. Where Windows' OpenSSH is missing, the name on PATH is used and an MSYS-style path is converted back. Elsewhere the name on PATH is what a terminal would run.
+
+Every `ssh` Kangentic starts for setup has its stdin closed. Windows' `ssh` forwards stdin to the remote command, and an open pipe left it waiting after the command had finished.
+
 ## Adding a host
 
 Settings > SSH > Add host runs in the card, with no terminal.
@@ -43,7 +49,7 @@ Settings > SSH > Add host runs in the card, with no terminal.
 
 Kangentic never asks for a passphrase. A key with a passphrase must be in the user's SSH agent, or the host takes the password step. A reconnect never prompts: `ssh` runs with `BatchMode=yes`, so a host that needs input fails with ssh's own words, shown as given.
 
-A step that fails undoes the steps before it. A host whose only problem is that it cannot be connected stays in the list with the reason, so it can be fixed and retried.
+A step that fails undoes the steps before it. When the password step fails, Kangentic also tries to take the key it made off the host before deleting its own copy, because the key may have reached the host before the failure. A host whose only problem is that it cannot be connected stays in the list with the reason, so it can be fixed and retried.
 
 ## The program on the host
 

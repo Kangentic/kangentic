@@ -46,6 +46,27 @@ System32 `ssh.exe` (OpenSSH for Windows 9.5p2) and Docker Desktop.
 | Trust the host again and sign in | Signed in |
 | Delete the key with the host | Gone |
 
+## The same steps in the real app
+
+The rig drives the library functions with System32's `ssh` and a scratch config. A second run drove the
+real app (`/preview`) against the same sshd and found two bugs the rig could not:
+
+- **A path from Git's `ssh`.** The `ssh` first on this machine's PATH was Git for Windows' MSYS build.
+  `ssh -G` reported `userknownhostsfile /c/Users/dev/.ssh/known_hosts`, the trust step wrote there as
+  `C:\c\Users\dev\.ssh\known_hosts`, `ssh` found no pin, and the password step waited on a host-key
+  question until its 60 s stop. Fixed twice over: Windows' own OpenSSH is preferred, and an MSYS-style
+  path is converted back.
+- **An open stdin pipe.** With the path fixed, the password step still stopped at 60 s on some runs,
+  after the key had reached the host. Closing the child's stdin ended it. The failure also left the key
+  on the host, so a failed add now tries to take it off first.
+
+After both fixes, from a clean start in the app: the fingerprint matched the rig's, Add host took about
+three seconds, the host program from `npm run build:host` installed and the link connected, a project
+added on `/home/dev` showed its chip, stopping the sshd turned the chip to a spinner and then, after
+about 20 seconds, to a red warning with the board strip offering Reconnect, and starting it again
+brought the link back to Connected on its own. Removing the host took its project out of the sidebar,
+closed the open board and deleted the key Kangentic made. No agent was started: the rig has no agent.
+
 ## What this does not cover
 
 - A jump host, a certificate, a FIDO key and an `ssh-agent` key, which the user's SSH config handles and

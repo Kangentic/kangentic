@@ -29,6 +29,7 @@ import {
   pickKnownHostsEntry,
   probeHostKey,
   removeKeyCommand,
+  runProgram,
   trustHostKey,
   type RunProgram,
   type SshSetupDeps,
@@ -314,5 +315,45 @@ describe('using a password once', () => {
     const run = makeRun();
     await expect(installPublicKeyWithPassword('-oProxyCommand=x', PUBLIC_KEY, 'pw', makeDeps(run))).rejects.toThrow('address is not valid');
     expect(run.calls).toEqual([]);
+  });
+
+  it('refuses an unpinned host at once instead of asking a host-key question through askpass and waiting', async () => {
+    const run = makeRun();
+
+    await installPublicKeyWithPassword('dev@lab', PUBLIC_KEY, 'pw', makeDeps(run));
+
+    expect(run.calls.at(-1)!.args).toEqual(expect.arrayContaining(['StrictHostKeyChecking=yes']));
+  });
+
+  it('says what happened when ssh printed nothing: a stop at the time limit, or an exit code', async () => {
+    const stopped = (async () => ({ code: null, stdout: '', stderr: '' })) as unknown as RunProgram;
+    const silent = (async () => ({ code: 255, stdout: '', stderr: '' })) as RunProgram;
+
+    await expect(installPublicKeyWithPassword('dev@lab', PUBLIC_KEY, 'pw', makeDeps(stopped))).rejects.toThrow('The ssh program did not finish within 60 seconds');
+    await expect(installPublicKeyWithPassword('dev@lab', PUBLIC_KEY, 'pw', makeDeps(silent))).rejects.toThrow('The ssh program exited with code 255 and printed no message');
+  });
+});
+
+describe('running a program for ssh', () => {
+  it('closes its stdin, so a program that waits for the end of its input finishes (ssh does, on Windows)', async () => {
+    // A real child, not a fake: the whole point is what an open pipe does to a real process.
+    const result = await runProgram(process.execPath, ['-e', "process.stdin.on('end', () => console.log('eof')); process.stdin.resume();"], { timeout: 15_000 });
+
+    expect(result).toEqual({ code: 0, stdout: 'eof\n', stderr: '' });
+  });
+});
+
+describe('an ssh that names its files the MSYS way (Git for Windows)', () => {
+  it('reads /c/Users/dev/.ssh/known_hosts as the Windows path it is, never C:\\c\\Users\\dev', () => {
+    const dump = 'hostname lab.example.test\nport 2262\nuserknownhostsfile /c/Users/dev/.ssh/known_hosts /c/Users/dev/.ssh/known_hosts2\n';
+
+    expect(parseSshConfigDump(dump, 'C:\\Users\\dev', 'win32').userKnownHostsFile).toBe('C:\\Users\\dev\\.ssh\\known_hosts');
+  });
+
+  it('leaves a path alone on every other platform, where /c/ is a real folder', () => {
+    const dump = 'hostname lab.example.test\nuserknownhostsfile /c/Users/dev/.ssh/known_hosts\n';
+
+    expect(parseSshConfigDump(dump, '/home/dev', 'linux').userKnownHostsFile).toBe('/c/Users/dev/.ssh/known_hosts');
+    expect(parseSshConfigDump(dump, '/Users/dev', 'darwin').userKnownHostsFile).toBe('/c/Users/dev/.ssh/known_hosts');
   });
 });
