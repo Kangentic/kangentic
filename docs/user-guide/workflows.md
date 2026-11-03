@@ -146,8 +146,14 @@ every workflow task is told about. When a turn ends with the step not done:
 - **It ends on the Needs owner line.** You get a notice with the question, at once, and nothing is
   typed for you. This needs no Automation agent.
 - **Work it started is still running**: a background command, or a subagent still going past the
-  turn. Kangentic reads this from the agent's own tool events, not from what its reply says. It is
-  left alone for an hour. When that work wakes the agent, the turn it ends is judged as usual.
+  turn. Kangentic reads this from the agent's own tool events, not from what its reply says. The
+  reply is still judged when the agent stops, so a command that never exits does not hide a finished
+  step or a Needs owner line. If the step is done while a background command still runs, the card
+  waits: Kangentic tells the agent at once which command holds it, and the card moves at the
+  agent's next turn end with none running. Otherwise the task is left alone for up to an hour from
+  the oldest open work. When that work wakes the agent, the turn it ends is judged as usual; if the
+  work ends without waking it, the task gets the nudges below. A watch started with Claude Code's Monitor tool counts as
+  running work only until its own timeout.
 - **Anything else.** Kangentic types one line into its terminal telling it to carry on, at 5, 15,
   30 and 60 minutes, up to four times, and only while you are not there: no text typed, nothing you
   typed into it in the last 5 minutes, the agent idle and not at a permission prompt. The line

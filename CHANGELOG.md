@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 <!-- releases -->
 
+## [v0.53.0] - 2026-11-03
+
+### Features
+- Give each Command Terminal its own Browser pane (db9fd40c)
+- Make the Agent Browser the only browser agents drive (231d052b)
+- Save the panel's place per terminal count (f0a8d626)
+- Show Command Terminal Earlier search, rename, seam and rail resize (c5f6483a)
+- Finish OpenCode 2 support (GitHub #720) (5a73d336)
+- Judge a Stop held by background work, and end expired Monitors (8a7b25d9)
+- Name an OpenCode 1 server and report partial V2 history (3695e0af)
+- Add the OpenCode 2 server client for remote mode (885135ef)
+
+### Fixes
+- List the Command Terminal browser shortcut under General (90f0a2b8)
+- End a Command Terminal's browser when its slot stays empty (ca085ee2)
+- Key the discovered project server the way Claude writes it (beeb1836)
+- Browser policy matcher, capture pruning and test coverage (43917823)
+- Reconcile the V2 work with the remote-mode client (73c63ddd)
+- Read OpenCode 2 sessions continued after the migration (0363dfc6)
+- State the remote-mode refusal without advice (80ed16d7)
+- Launch OpenCode 2 sessions (GitHub #720) (b9b6887d)
+- Harden the OpenCode 2 client and name a V2 server behind a 401 (fecff60b)
+- Name an OpenCode 2 server in the OpenCode 1 connection test (bd9ab435)
+- Harden the tested-tree gate and the nightly release check (b043a627)
+
+### Other
+- Name the Hotkeys group the Command Terminal browser shortcut sits in (202dc680)
+- Give the browser handler tests a session manager that listens (8757cc06)
+- Pin every external script into asarUnpack (b007df2a)
+- Pin the Command Terminal demo scenes' seam, seed and search (7a7967db)
+- Let auto mode archive a Sentry issue on the user's OK (df1e3ec1)
+- Name OpenCode 2's session table in the capture list (06a198f2)
+- Name expiresAfterMs in the activity docs and the Claude hook row (fb374bf7)
+- Follow the new directive kind and the idle compaction (643646cc)
+- Pin held moves, held-turn drains and the nudge cap (551380ae)
+- Describe the cross-major probe fallback (9ef742e4)
+- Pin the trailing-comment trust form and the real worktree wrapper (cb272c05)
+- List the extracted URL resolution file, and label the audit baseline (0550fbcc)
+- Record what the sign-off removed and the final numbers (8dbf6b47)
+- Follow the font comparison, and give the Changes rail spec its budget (6696d5d1)
+- Apply the audit's sign-off list (100fa0d5)
+- Remove the one-off docs and review eval harnesses (c036c1bf)
+- Fix the root causes of the suite's hottest flakes (f0a70167)
+- Add the test suite audit and the rule for what earns a test (01fefb44)
+- Share a browser per worker in command-terminal.spec.ts (ec35c0a7)
+- Skip re-testing a merged tree and cut the PR job count (c9a15742)
+- Restore the template variable list and correct the agent and settings docs (ec3a2edc)
+
 ## [v0.52.0] - 2026-11-02
 
 ### Features

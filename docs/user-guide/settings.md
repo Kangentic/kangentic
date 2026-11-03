@@ -149,9 +149,9 @@ Applies to every project (Settings > Changes, not a per-project override). These
 
 | Setting | Description |
 |---------|-------------|
-| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Kimi Code, OpenCode, Droid (Factory), Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp), Ollama, Grok Build, Goose CLI. Per-project setting. |
+| Default Agent | Which agent CLI to use for new sessions in this project. Supported agents: Claude Code, Codex CLI, Gemini CLI, Antigravity CLI, Qwen Code, Kimi Code, OpenCode (1 and 2, see [OpenCode](../integrations/agents/opencode.md)), Droid (Factory), Cursor CLI, GitHub Copilot CLI, Aider, Oz CLI (Warp), Ollama, Grok Build, Goose CLI. Per-project setting. |
 | CLI Path | Path to agent CLI binary (auto-detected if empty) |
-| Execution (remote) | For agents that support it (today OpenCode), attach to a server you run instead of spawning a local process: server URL, authentication, and the server-side working directory. Shown only when the selected agent declares remote execution. |
+| Execution (remote) | For agents that support it (today OpenCode), attach to a server you run instead of spawning a local process: server URL, authentication, and the server-side working directory. Shown only when the selected agent declares remote execution. OpenCode's remote mode needs OpenCode 1 both locally and on the server. Test connection reports an OpenCode 2 server as a version mismatch. |
 | Launch Options | Agent-specific startup toggles (today Codex's "Disable ChatGPT Apps", which skips the optional cloud ChatGPT Apps connector that can hang startup). Shown only for agents that declare options. |
 | Permissions | Default permission mode for all sessions. Options vary by agent (e.g., Claude Code has Plan, Don't Ask, Default, Accept Edits, Auto, and Bypass; Aider has Interactive and Auto-Approve) |
 
@@ -292,6 +292,8 @@ If an agent session starts and its tools cannot connect, Kangentic shows one not
 ## Agent Browser
 
 The Agent Browser tab controls whether and how agents may drive the embedded Browser pane via the `kangentic_browser_*` tools (screenshot, click, type, navigate, and more), so an agent can verify a dev server you have loaded. It is a global (per-machine) policy, separate from the per-project Browser tab.
+
+While it is on, the Browser pane is the only browser agents drive. Every agent is told so, and a Claude Code agent's calls to other browser tools (a Playwright, Puppeteer or Chrome DevTools MCP server, or Claude in Chrome) are denied with a pointer to the pane. Turn it off to let them through again: a running session sees the change on its next call. Details: [Browser panes](../integrations/mcp-server/browser-panes.md).
 
 | Setting | Description |
 |---------|-------------|
