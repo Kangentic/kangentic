@@ -1,15 +1,28 @@
 import { v4 as uuidv4 } from 'uuid';
 import { getGlobalDb } from '../database';
-import type { Project, ProjectCreateInput } from '../../../shared/types';
+import type { Project, ProjectCreateInput, ProjectRemote } from '../../../shared/types';
 import { DEFAULT_AGENT } from '../../../shared/types';
 import { writeTransaction } from '../transaction';
 import { softly } from '../soft-db';
 import { rememberProjectRoots } from '../../shared/project-roots';
 
+/** A `projects` row as stored: a remote project's host and folder are two nullable columns. */
+type ProjectRow = Omit<Project, 'remote'> & { remote_host_id: string | null; remote_path: string | null };
+
+/** The row as the app sees it, with the two columns folded into `remote` (null for a project on this computer). */
+function toProject(row: ProjectRow): Project {
+  const { remote_host_id: hostId, remote_path: remotePath, ...project } = row;
+  return { ...project, remote: hostId && remotePath ? { hostId, path: remotePath } : null };
+}
+
 export class ProjectRepository {
   list(): Project[] {
     const db = getGlobalDb();
-    return db.prepare('SELECT * FROM projects ORDER BY position ASC').all() as Project[];
+    return (db.prepare('SELECT * FROM projects ORDER BY position ASC').all() as ProjectRow[]).map(toProject);
+  }
+
+  private read(id: string): Project {
+    return toProject(getGlobalDb().prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow);
   }
 
   /**
@@ -27,7 +40,8 @@ export class ProjectRepository {
 
   getById(id: string): Project | undefined {
     const db = getGlobalDb();
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project | undefined;
+    const row = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as ProjectRow | undefined;
+    return row ? toProject(row) : undefined;
   }
 
   create(input: ProjectCreateInput): Project {
@@ -48,6 +62,7 @@ export class ProjectRepository {
       default_effort: input.default_effort ?? null,
       group_id: null,
       position: 0,
+      remote: input.remote ?? null,
       last_opened: now,
       created_at: now,
     };
@@ -55,8 +70,8 @@ export class ProjectRepository {
       // Shift all existing projects down to make room at position 0
       db.prepare('UPDATE projects SET position = position + 1').run();
       db.prepare(
-        'INSERT INTO projects (id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
-      ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.default_model, project.default_effort, project.group_id, project.position, project.last_opened, project.created_at);
+        'INSERT INTO projects (id, name, path, github_url, default_agent, default_model, default_effort, group_id, position, remote_host_id, remote_path, last_opened, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)'
+      ).run(project.id, project.name, project.path, project.github_url, project.default_agent, project.default_model, project.default_effort, project.group_id, project.position, project.remote?.hostId ?? null, project.remote?.path ?? null, project.last_opened, project.created_at);
     });
     tx();
     return project;
@@ -64,9 +79,10 @@ export class ProjectRepository {
 
   getLastOpened(): Project | undefined {
     const db = getGlobalDb();
-    return db.prepare(
+    const row = db.prepare(
       'SELECT * FROM projects ORDER BY last_opened DESC LIMIT 1'
-    ).get() as Project | undefined;
+    ).get() as ProjectRow | undefined;
+    return row ? toProject(row) : undefined;
   }
 
   updateLastOpened(id: string): void {
@@ -98,7 +114,7 @@ export class ProjectRepository {
   rename(id: string, name: string): Project {
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET name = ? WHERE id = ?').run(name, id);
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project;
+    return this.read(id);
   }
 
   /** Re-point a project at a new folder on disk. Tasks/board data are keyed by project id and are unaffected. */
@@ -107,25 +123,38 @@ export class ProjectRepository {
     rememberProjectRoots([newPath]);
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET path = ? WHERE id = ?').run(newPath, id);
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Project;
+    return this.read(id);
+  }
+
+  /** Point a project at a repo folder on an SSH host, or back at this computer with null (#913). */
+  setRemote(projectId: string, remote: ProjectRemote | null): Project {
+    const db = getGlobalDb();
+    db.prepare('UPDATE projects SET remote_host_id = ?, remote_path = ? WHERE id = ?').run(remote?.hostId ?? null, remote?.path ?? null, projectId);
+    return this.read(projectId);
+  }
+
+  /** The projects that live on a host, which removing it takes out of Kangentic. */
+  listOnHost(hostId: string): Project[] {
+    const db = getGlobalDb();
+    return (db.prepare('SELECT * FROM projects WHERE remote_host_id = ? ORDER BY position ASC').all(hostId) as ProjectRow[]).map(toProject);
   }
 
   setDefaultAgent(projectId: string, agentName: string): Project {
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET default_agent = ? WHERE id = ?').run(agentName, projectId);
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+    return this.read(projectId);
   }
 
   setDefaultModel(projectId: string, model: string | null): Project {
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET default_model = ? WHERE id = ?').run(model, projectId);
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+    return this.read(projectId);
   }
 
   setDefaultEffort(projectId: string, effort: string | null): Project {
     const db = getGlobalDb();
     db.prepare('UPDATE projects SET default_effort = ? WHERE id = ?').run(effort, projectId);
-    return db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as Project;
+    return this.read(projectId);
   }
 
   reorder(ids: string[]): void {

@@ -55,8 +55,45 @@ export interface Project {
   default_effort: string | null;
   group_id: string | null;
   position: number;
+  /**
+   * Set when the project's repo and agents live on an SSH host (#913). `path` is then a folder on
+   * THIS computer that holds the project's local files (config, logs, session staging), and the
+   * repo itself is `remote.path` on `remote.hostId`. Absent or null for a project on this computer.
+   */
+  remote?: ProjectRemote | null;
   last_opened: string;
   created_at: string;
+}
+
+/** Where a remote project's repo lives (#913). */
+export interface ProjectRemote {
+  hostId: string;
+  /** An absolute folder on the host. */
+  path: string;
+}
+
+/**
+ * A Linux machine Kangentic runs agents on over SSH (#913). A host is trusted like this computer, and
+ * removing it ends its access. Holds no password and no key material: a key lives in a file.
+ */
+export interface SshHost {
+  id: string;
+  /** What the user calls it. */
+  name: string;
+  /** What `ssh` is given: a name from the user's SSH config, `user@host`, or an `ssh://` URL. */
+  destination: string;
+  /** A private key file this host signs in with (a chosen key, copied, or one Kangentic created), or null for the user's own SSH setup. */
+  key_path: string | null;
+  /** Kangentic made the key at `key_path` and deletes it, and its line on the host, when the host is removed. */
+  key_created: boolean;
+  created_at: string;
+}
+
+export interface SshHostCreateInput {
+  name: string;
+  destination: string;
+  key_path?: string | null;
+  key_created?: boolean;
 }
 
 /**
@@ -6436,6 +6473,8 @@ export interface ProjectCreateInput {
   default_agent?: string;
   default_model?: string | null;
   default_effort?: string | null;
+  /** A project whose repo is on an SSH host (#913): `path` is its local shell folder. */
+  remote?: ProjectRemote | null;
 }
 
 /** Optional overrides for project creation at open-by-path time (the Add project dialog). */
