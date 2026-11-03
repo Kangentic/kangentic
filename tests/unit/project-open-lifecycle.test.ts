@@ -1738,6 +1738,8 @@ describe('recoverSessionsAfterPtyHostLoss and the Command Terminals the host too
   function lostTerminal(agentSessionId: string): LostCommandTerminal {
     return {
       agentSessionId,
+      sessionId: `session-${agentSessionId}`,
+      slot: 'slot-1',
       claimed: true,
       ended: { agentName: 'claude', agentSessionId, cwd: path.join(PROJECT_PATH, 'a'), cliTarget: null },
       task: { id: `tag-${agentSessionId}`, worktree_path: null, title: 'Command Terminal 1' },

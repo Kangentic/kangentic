@@ -245,6 +245,24 @@ describe('SESSION_SPAWN_TRANSIENT handler: Windows .cmd shim launch resolution w
     expect(spawnInput.id).toBe(commandOptions.ptySessionId);
   });
 
+  // Red-green: pass the bare urlForProject result (drop appendCallerSession) and
+  // the URL loses its session segment, so the MCP server cannot resolve the
+  // terminal's slot.
+  it('names the terminal\'s own session in the agent\'s MCP URL', async () => {
+    (context as unknown as { mcpServerHandle: unknown }).mcpServerHandle = {
+      urlForProject: vi.fn((projectId: string) => `http://127.0.0.1:4000/mcp/${projectId}`),
+      token: 'test-token',
+    };
+
+    await callSpawnHandler(context, { projectId: 'proj-1', slot: 'slot-1' });
+
+    const commandOptions = buildCommandMock.mock.calls[0][0] as { mcpServerUrl?: string; ptySessionId?: string; mcpServerToken?: string };
+    const spawnInput = vi.mocked(context.sessionManager.spawn).mock.calls[0][0] as { id?: string };
+    expect(spawnInput.id).toBeDefined();
+    expect(commandOptions.mcpServerUrl).toBe(`http://127.0.0.1:4000/mcp/proj-1/${spawnInput.id}`);
+    expect(commandOptions.mcpServerToken).toBe('test-token');
+  });
+
   // Red-green: drop the catch's releaseCommandHold in transient-sessions.ts
   // and the built command's hold is never released.
   it('releases the built command\'s hold when buildEnv throws before the spawn', async () => {

@@ -50,6 +50,7 @@ import type {
   Task,
 } from '../../src/shared/types';
 import { EventType } from '../../src/shared/types';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 import type { ManagedSessionSummary } from '../../src/main/pty/session-registry';
 import type { IpcContext } from '../../src/main/ipc/ipc-context';
 import type { MonitorSnapshotSources } from '../../src/main/monitor/monitor-snapshot-sources';
@@ -1315,6 +1316,24 @@ describe('buildMonitorSnapshot', () => {
 
       expect(row.modelReported).toBe(false);
       expect(row.modelDisplayName).toBe('claude-opus-4-8');
+    });
+
+    it("marks a Command Terminal's browser by its slot's owner key, not its synthetic task id", async () => {
+      registerHealthyProject('project-a', { tasksById: new Map() });
+      const terminal = (id: string, slot: string, taskId: string) => makeManagedSummary({
+        id, projectId: 'project-a', taskId, transient: true, commandTerminalSlot: slot,
+      });
+      const context = makeContext([
+        terminal('session-open', 'slot-1', 'tag-1'),
+        terminal('session-closed', 'slot-2', 'tag-2'),
+      ]);
+      const sources = makeSources({ browserTaskIds: [commandTerminalBrowserOwner('project-a', 'slot-1'), 'tag-2'] });
+
+      const rowsById = new Map((await buildMonitorSnapshot(context, sources)).rows.map((row) => [row.sessionId, row]));
+
+      expect(rowsById.get('session-open')?.browserRunning).toBe(true);
+      // A match on the synthetic task id alone stays false.
+      expect(rowsById.get('session-closed')?.browserRunning).toBe(false);
     });
 
     it("marks the task whose browser is running, and never a Command Terminal", async () => {

@@ -270,6 +270,50 @@ describe('kangentic_send_session_message registration', () => {
     });
   });
 
+  // Red-green: drop resolveCallerTaskId in makeSentMessageRecorder (read
+  // getSessionTaskId directly) and caller_task_id becomes the synthetic id.
+  it('records a Command Terminal caller with a null task id, never its synthetic one', async () => {
+    const { resolver } = makeResolver();
+    const send = vi.fn(() => Promise.resolve({ status: 'delivered', sessionId: 'target-session', targetActivity: 'idle', hopDepth: 1 }));
+    const sessions = { ...makeSessions({ taskId: 'synthetic-terminal-tag' }), getCommandTerminalSlot: vi.fn(() => 'slot-1') };
+    const { handler } = captureTool(
+      { coordinator: { send, dispose: vi.fn(), _stateSizesForTesting: vi.fn() }, sessions, callerSessionId: 'terminal-session' },
+      resolver,
+    );
+
+    await handler({ taskId: '42', message: 'hello' });
+
+    const request = send.mock.calls[0][0] as { recordSentMessage: (delivery: unknown) => void };
+    request.recordSentMessage({
+      targetSessionId: 'target-session',
+      callerSessionId: 'terminal-session',
+      message: 'hello',
+      status: 'delivered',
+    });
+
+    expect(insertedSentMessages[0].row).toMatchObject({
+      caller_session_id: 'terminal-session',
+      caller_task_id: null,
+    });
+  });
+
+  // Red-green: read getSessionTaskId directly for the self-send check and this
+  // is refused as a self-send.
+  it('does not refuse a Command Terminal as a self-send when its synthetic task id equals the target', async () => {
+    const { resolver } = makeResolver();
+    const holdTaskMessage = makeHolder();
+    const sessions = { ...makeSessions({ live: undefined, taskId: 'task-uuid-target' }), getCommandTerminalSlot: vi.fn(() => 'slot-1') };
+    const { handler } = captureTool(
+      { coordinator: makeCoordinator(), sessions, holdTaskMessage, callerSessionId: 'terminal-session' },
+      resolver,
+    );
+
+    const result = await handler({ taskId: '42', message: 'hello' });
+
+    expect(result.isError).toBeUndefined();
+    expect(holdTaskMessage).toHaveBeenCalledWith(expect.objectContaining({ taskId: 'task-uuid-target', callerTaskId: null }));
+  });
+
   it('holds the message for a task with no running agent, with the reply the docs quote', async () => {
     const { resolver } = makeResolver();
     const send = vi.fn();

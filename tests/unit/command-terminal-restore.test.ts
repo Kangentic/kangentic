@@ -30,6 +30,20 @@ vi.mock('../../src/main/ipc/helpers/command-terminal-background-session', () => 
   stopEndedCommandTerminalBackgroundSession: hoisted.stopBackgroundSession,
 }));
 
+// The browser cleanup's leaves, so the real `endCommandTerminalBrowserIfSlotEmpty`
+// runs and its effect is observed on the lanes and the saved layout.
+vi.mock('../../src/main/browser/browser-pane-registry', () => ({
+  browserPaneRegistry: { getByTaskId: vi.fn(() => []), markDeliberateClose: vi.fn() },
+}));
+vi.mock('../../src/main/browser/browser-lane-manager', () => ({ destroyLanesForTask: vi.fn(() => 0) }));
+vi.mock('../../src/main/browser/browser-url-store', () => ({ browserUrlStore: { clear: vi.fn() } }));
+vi.mock('../../src/main/browser/command-terminal-browser-store', () => ({ commandTerminalBrowserStore: { clear: vi.fn() } }));
+vi.mock('../../src/main/browser/viewport-override', () => ({ releaseViewportOverridesForSession: vi.fn(async () => undefined) }));
+vi.mock('../../src/main/pop-out/pop-out-window-manager', () => ({
+  popOutWindowManager: { has: vi.fn(() => false), close: vi.fn() },
+}));
+vi.mock('../../src/main/pop-out/window-broadcast', () => ({ broadcast: vi.fn() }));
+
 vi.mock('../../src/main/ipc/handlers/transient-sessions', () => {
   class CommandTerminalStartError extends Error {
     constructor(readonly code: string, message: string) {
@@ -54,6 +68,10 @@ import {
   type LostCommandTerminal,
 } from '../../src/main/ipc/handlers/command-terminal-restore';
 import { CommandTerminalStartError } from '../../src/main/ipc/handlers/transient-sessions';
+import { destroyLanesForTask } from '../../src/main/browser/browser-lane-manager';
+import { commandTerminalBrowserStore } from '../../src/main/browser/command-terminal-browser-store';
+import { broadcast } from '../../src/main/pop-out/window-broadcast';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 import { IPC } from '../../src/shared/ipc-channels';
 import { PTY_HOST_LOST_EXIT_CODE } from '../../src/shared/pty-host';
 import type { Session, StoredCliTarget } from '../../src/shared/types';
@@ -79,6 +97,11 @@ class FakeSessions extends EventEmitter {
   }
   listSessions(): Session[] {
     return [...this.sessions.values()];
+  }
+  /** Slots (`projectId::slot`) a terminal runs in once the restore pass is over. */
+  readonly liveSlots = new Set<string>();
+  findLiveCommandTerminalSession(projectId: string, slot: string): Session | undefined {
+    return this.liveSlots.has(`${projectId}::${slot}`) ? ({ id: 'restored' } as Session) : undefined;
   }
 }
 
@@ -124,6 +147,7 @@ function makeRig(options: { rows?: SeedRow[]; enabled?: boolean; folderGone?: bo
     projectRepo,
     configManager,
     sessionManager: sessions,
+    mainWindow: { isDestroyed: () => false },
     commandTerminalHistory: undefined as CommandTerminalHistory | undefined,
   };
   const history = new CommandTerminalHistory({
@@ -144,6 +168,9 @@ function makeRig(options: { rows?: SeedRow[]; enabled?: boolean; folderGone?: bo
 const startedIds = (): string[] => startMock.mock.calls.map(([, input]) => input.resumeAgentSessionId);
 
 beforeEach(() => {
+  vi.mocked(destroyLanesForTask).mockClear();
+  vi.mocked(commandTerminalBrowserStore.clear).mockClear();
+  vi.mocked(broadcast).mockClear();
   startMock.mockReset();
   startMock.mockImplementation(async (_context, input) => ({ slot: input.slot ?? 'slot-9', session: { id: 'session' } }));
   hoisted.reapTaskLeftovers.mockClear();
@@ -525,6 +552,41 @@ describe('a pty host crash', () => {
     expect(startMock).not.toHaveBeenCalled();
     expect(history.claimResume(PROJECT_ID, 'conversation-a')).toBe(true);
     await vi.waitFor(() => expect(hoisted.reapTaskLeftovers).toHaveBeenCalledTimes(1));
+  });
+
+  describe("the lost terminal's Browser pane", () => {
+    const OWNER = commandTerminalBrowserOwner(PROJECT_ID, 'slot-2');
+
+    it('ends the slot browser when no terminal came back to the slot', async () => {
+      const { context, projectPath } = makeRig({ rows: [{ id: 'conversation-a', ended: true, slot: 'slot-2' }] });
+      startMock.mockRejectedValueOnce(startError('conversation-gone'));
+      await restoreLostCommandTerminals(context, PROJECT_ID, [claimed(context)]);
+
+      expect(destroyLanesForTask).toHaveBeenCalledWith(OWNER);
+      expect(commandTerminalBrowserStore.clear).toHaveBeenCalledWith(projectPath, 'slot-2');
+      expect(broadcast).toHaveBeenCalledWith(expect.anything(), IPC.BROWSER_PANE_CLOSE_REQUEST, PROJECT_ID, [OWNER]);
+    });
+
+    it('keeps the slot browser when a terminal runs in the slot after the pass', async () => {
+      const { context, sessions } = makeRig({ rows: [{ id: 'conversation-a', ended: true, slot: 'slot-2' }] });
+      sessions.liveSlots.add(`${PROJECT_ID}::slot-2`);
+      await restoreLostCommandTerminals(context, PROJECT_ID, [claimed(context)]);
+
+      expect(destroyLanesForTask).not.toHaveBeenCalled();
+      expect(commandTerminalBrowserStore.clear).not.toHaveBeenCalled();
+      expect(broadcast).not.toHaveBeenCalled();
+    });
+
+    it('ends nothing while the app is quitting, so the restart restore keeps the layout', async () => {
+      const { context } = makeRig({ rows: [{ id: 'conversation-a', ended: true, slot: 'slot-2' }] });
+      startMock.mockRejectedValueOnce(startError('conversation-gone'));
+      const lost = claimed(context);
+      hoisted.shuttingDown = true;
+      await restoreLostCommandTerminals(context, PROJECT_ID, [lost]);
+
+      expect(destroyLanesForTask).not.toHaveBeenCalled();
+      expect(commandTerminalBrowserStore.clear).not.toHaveBeenCalled();
+    });
   });
 
   it('reaps nothing once the app is quitting, as for any end', async () => {

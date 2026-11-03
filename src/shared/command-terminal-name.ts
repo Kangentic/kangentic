@@ -59,6 +59,15 @@ export function commandTerminalSlotNumber(slot: string | null | undefined): numb
   return match ? Number(match[1]) : null;
 }
 
+/** Whether `slot` is one of the `MAX_COMMAND_TERMINALS` slot ids, written as `commandTerminalSlotId` writes it. */
+export function isCommandTerminalSlotId(slot: string): boolean {
+  const slotNumber = commandTerminalSlotNumber(slot);
+  return slotNumber !== null
+    && slotNumber >= 1
+    && slotNumber <= MAX_COMMAND_TERMINALS
+    && slot === commandTerminalSlotId(slotNumber);
+}
+
 /** Display title for a Command Terminal window or monitor row. */
 export function commandTerminalTitle(slot: string | null | undefined): string {
   const slotNumber = commandTerminalSlotNumber(slot);
