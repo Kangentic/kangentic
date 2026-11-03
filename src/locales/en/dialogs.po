@@ -39,6 +39,12 @@ msgstr "\"{taskTitle}\" is on the board."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} failed)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr "{0} does not exist on {1}."
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
 msgstr "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
@@ -277,6 +283,15 @@ msgstr "Add automation"
 msgid "Add column"
 msgstr "Add column"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project"
+msgstr "Add project"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr "Add project on {0}"
+
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"
 msgid "Added"
@@ -356,6 +371,10 @@ msgstr "Already up to date"
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Already used on this column."
 msgstr "Already used on this column."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "An absolute path, or one starting with ~/"
+msgstr "An absolute path, or one starting with ~/"
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
@@ -508,6 +527,7 @@ msgstr "Can't remove \"{name}\""
 msgid "Can't update from {baseBranch}"
 msgstr "Can't update from {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -541,6 +561,10 @@ msgstr "Changes - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "Changes are open in their own window"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr "Choose a folder on this machine"
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Choose icon"
@@ -728,6 +752,14 @@ msgstr "Condition: {condition}"
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 msgid "Confirm"
 msgstr "Confirm"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Connected"
+msgstr "Connected"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Connecting…"
+msgstr "Connecting…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgctxt "board overview column header"
@@ -1165,6 +1197,10 @@ msgstr "Filter files..."
 msgid "Flat list"
 msgstr "Flat list"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Folder on the host"
+msgstr "Folder on the host"
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Frequency"
 msgstr "Frequency"
@@ -1429,6 +1465,7 @@ msgstr "Modified"
 msgid "Move to"
 msgstr "Move to"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name"
@@ -1930,6 +1967,10 @@ msgstr "Ran"
 msgid "Rebase or merge it in the session instead."
 msgstr "Rebase or merge it in the session instead."
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Reconnecting…"
+msgstr "Reconnecting…"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Refresh PR"
 msgstr "Refresh PR"
@@ -2362,6 +2403,10 @@ msgstr "Stop"
 msgid "Stop {label}"
 msgstr "Stop {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr "Stopped"
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
 msgid "Stopped"
@@ -2496,6 +2541,10 @@ msgstr "This action cannot be undone."
 msgid "This commit changed no files"
 msgstr "This commit changed no files"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr "This computer"
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "This is handled by the column's settings now. Remove it to use them."
@@ -2608,6 +2657,10 @@ msgstr "Type"
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "Under 0.1% of pixels changed"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Unreachable"
+msgstr "Unreachable"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "Unsaved"

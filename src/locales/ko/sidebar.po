@@ -37,6 +37,10 @@ msgstr "{count, plural, other {명령 터미널 #개 실행 중(작업 중)}}"
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, other {이 그룹의 프로젝트 #개는 그룹에서 해제됩니다.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "{hostName}: {stateLabel}"
+msgstr ""
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
 msgid "{idleCount} idle"
@@ -87,6 +91,11 @@ msgstr "<0>\"{projectName}\"</0>을(를) 삭제하시겠습니까?"
 #, fuzzy
 msgid "Clear search"
 msgstr "검색 지우기"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "연결됨"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -201,6 +210,11 @@ msgstr "프로젝트 설정"
 msgid "Projects"
 msgstr "프로젝트"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "다시 연결 중…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy
 msgid "Remove from group"
@@ -222,10 +236,19 @@ msgstr "프로젝트 검색..."
 msgid "Show sidebar"
 msgstr "사이드바 표시"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "Kangentic에서 프로젝트가 제거되지만 디스크의 파일은 삭제되지 않습니다."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "연결 불가"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

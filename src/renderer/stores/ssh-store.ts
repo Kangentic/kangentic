@@ -22,7 +22,18 @@ if (import.meta.hot) {
  * a host serves every project, and must be addable with no project open. Main pushes a change whenever
  * a host's connection state moves; `useSshHostsSync` turns each push into `loadHosts`.
  */
+/** Which step of Add project is open: nothing, the This computer / host chooser, or a host's folder form. */
+export type AddProjectDialogState =
+  | { kind: 'closed' }
+  | { kind: 'chooser' }
+  | { kind: 'remote'; hostId: string };
+
 interface SshStore {
+  addProjectDialog: AddProjectDialogState;
+  openAddProjectChooser: () => void;
+  openAddRemoteProject: (hostId: string) => void;
+  closeAddProjectDialog: () => void;
+
   hosts: SshHostStatus[];
   /** False until the first list arrives, so a surface can tell "no hosts" from "not asked yet". */
   hostsLoaded: boolean;
@@ -40,6 +51,11 @@ interface SshStore {
 }
 
 export const useSshStore = create<SshStore>((set, get) => ({
+  addProjectDialog: { kind: 'closed' },
+  openAddProjectChooser: () => set({ addProjectDialog: { kind: 'chooser' } }),
+  openAddRemoteProject: (hostId) => set({ addProjectDialog: { kind: 'remote', hostId } }),
+  closeAddProjectDialog: () => set({ addProjectDialog: { kind: 'closed' } }),
+
   hosts: [],
   hostsLoaded: false,
   client: null,

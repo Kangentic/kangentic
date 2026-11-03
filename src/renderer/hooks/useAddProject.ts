@@ -4,6 +4,7 @@ import { msg } from '@lingui/core/runtime-macro';
 import type { Project } from '../../shared/types';
 import { PROJECT_FOLDER_NOT_WRITABLE_PREFIX } from '../../shared/ipc-channels';
 import { useProjectStore } from '../stores/project-store';
+import { useSshStore } from '../stores/ssh-store';
 import { useToastStore } from '../stores/toast-store';
 import { asSentence, describeIpcError } from '../lib/ipc-error';
 
@@ -34,7 +35,7 @@ export function useAddProject() {
   const openProject = useProjectStore((state) => state.openProject);
   const openProjectByPath = useProjectStore((state) => state.openProjectByPath);
 
-  const startAddProject = useCallback(async () => {
+  const startLocalAddProject = useCallback(async () => {
     const selectedPath = await window.electronAPI.dialog.selectFolder({
       title: i18n._(msg`Choose a project folder`),
       buttonLabel: i18n._(msg`Choose folder`),
@@ -126,5 +127,15 @@ export function useAddProject() {
     }
   }, [probePath, ensureGit, openProject, openProjectByPath]);
 
-  return { startAddProject };
+  // With a host set up (#913) Add project asks where first: This computer or a host. With none it is
+  // the folder picker, exactly as before, so nobody who never adds a host sees a new step.
+  const startAddProject = useCallback(async () => {
+    if (useSshStore.getState().hosts.length > 0) {
+      useSshStore.getState().openAddProjectChooser();
+      return;
+    }
+    await startLocalAddProject();
+  }, [startLocalAddProject]);
+
+  return { startAddProject, startLocalAddProject };
 }

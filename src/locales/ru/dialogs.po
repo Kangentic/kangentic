@@ -47,6 +47,12 @@ msgstr "Задача «{taskTitle}» добавлена на доску."
 msgid "({deleteFailureCount} failed)"
 msgstr "(ошибок: {deleteFailureCount})"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
@@ -342,6 +348,16 @@ msgstr "Добавить автоматизацию"
 msgid "Add column"
 msgstr "Добавить столбец"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "Добавить проект"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
 msgctxt "file status"
@@ -439,6 +455,10 @@ msgstr "Уже актуально"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "Уже используется в этой колонке."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "An absolute path, or one starting with ~/"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -626,6 +646,7 @@ msgstr "Невозможно удалить «{name}»"
 msgid "Can't update from {baseBranch}"
 msgstr "Не удалось обновить из {baseBranch}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -666,6 +687,10 @@ msgstr "Изменения — #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "Изменения открыты в отдельном окне"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -894,6 +919,16 @@ msgstr "Условие: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "Подтвердить"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Подключено"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "Подключение…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1429,6 +1464,10 @@ msgstr "Фильтр файлов..."
 msgid "Flat list"
 msgstr "Плоский список"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Folder on the host"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
 msgid "Frequency"
@@ -1754,6 +1793,7 @@ msgstr "Изменен"
 msgid "Move to"
 msgstr "Переместить в"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2370,6 +2410,11 @@ msgstr "Выполнено"
 msgid "Rebase or merge it in the session instead."
 msgstr "Выполните rebase или merge в сеансе."
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Повторное подключение…"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Refresh PR"
@@ -2900,6 +2945,10 @@ msgstr "Остановить"
 msgid "Stop {label}"
 msgstr "Остановить {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3066,6 +3115,10 @@ msgstr "Это действие нельзя отменить."
 msgid "This commit changed no files"
 msgstr "Этот коммит не изменил ни одного файла"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3204,6 +3257,11 @@ msgstr "Тип"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "Изменено менее 0,1% пикселей"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Недоступен"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

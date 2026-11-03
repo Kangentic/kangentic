@@ -47,6 +47,12 @@ msgstr "「{taskTitle}」がボードに追加されました。"
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount} 件失敗)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
@@ -342,6 +348,16 @@ msgstr "オートメーションを追加"
 msgid "Add column"
 msgstr "列を追加"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "プロジェクトを追加"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
 msgctxt "file status"
@@ -439,6 +455,10 @@ msgstr "すでに最新です"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "この列ですでに使用されています。"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "An absolute path, or one starting with ~/"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -626,6 +646,7 @@ msgstr "「{name}」を削除できません"
 msgid "Can't update from {baseBranch}"
 msgstr "{baseBranch} から更新できません"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -666,6 +687,10 @@ msgstr "変更 - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "変更は別ウィンドウで開かれています"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -894,6 +919,16 @@ msgstr "条件: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "確認"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "接続済み"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "接続中…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1429,6 +1464,10 @@ msgstr "ファイルをフィルター..."
 msgid "Flat list"
 msgstr "フラット リスト"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Folder on the host"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
 msgid "Frequency"
@@ -1754,6 +1793,7 @@ msgstr "変更"
 msgid "Move to"
 msgstr "移動先"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2370,6 +2410,11 @@ msgstr "実行済み"
 msgid "Rebase or merge it in the session instead."
 msgstr "代わりにセッション内でリベースまたはマージしてください。"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "再接続中…"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Refresh PR"
@@ -2900,6 +2945,10 @@ msgstr "停止"
 msgid "Stop {label}"
 msgstr "{label} を停止"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3066,6 +3115,10 @@ msgstr "この操作は元に戻せません。"
 msgid "This commit changed no files"
 msgstr "このコミットで変更されたファイルはありません"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3204,6 +3257,11 @@ msgstr "種類"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "変更されたピクセルは 0.1% 未満です"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "接続不可"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

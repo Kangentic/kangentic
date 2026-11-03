@@ -52,6 +52,10 @@ msgstr "{count, plural, one {# aktív alágens} other {# aktív alágens}}"
 msgid "{count, plural, one {# tool in flight} other {# tools in flight}}"
 msgstr "{count, plural, one {# futó eszköz} other {# futó eszköz}}"
 
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "{hostName} is unreachable. Its agents keep running."
+msgstr ""
+
 #: src/renderer/components/board/ViewToggle.tsx
 #, fuzzy
 msgid "{runningWorkflowCount, plural, one {Workflows, # running} other {Workflows, # running}}"
@@ -373,6 +377,18 @@ msgstr ""
 #, fuzzy
 msgid "Queued..."
 msgstr "Várólistán..."
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnect"
+msgstr ""
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnect to {hostName}"
+msgstr ""
+
+#: src/renderer/components/board/HostDegradedStrip.tsx
+msgid "Reconnecting to {hostName}. Its agents keep running."
+msgstr ""
 
 #: src/renderer/components/board/Swimlane.tsx
 #, fuzzy

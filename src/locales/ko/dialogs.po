@@ -47,6 +47,12 @@ msgstr "\"{taskTitle}\" 작업이 보드에 추가되었습니다."
 msgid "({deleteFailureCount} failed)"
 msgstr "({deleteFailureCount}개 실패)"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 #, fuzzy
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
@@ -342,6 +348,16 @@ msgstr "자동화 추가"
 msgid "Add column"
 msgstr "열 추가"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "프로젝트 추가"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 #, fuzzy
 msgctxt "file status"
@@ -439,6 +455,10 @@ msgstr "이미 최신 상태임"
 #, fuzzy
 msgid "Already used on this column."
 msgstr "이 열에서 이미 사용 중입니다."
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "An absolute path, or one starting with ~/"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 #, fuzzy
@@ -626,6 +646,7 @@ msgstr "\"{name}\"을(를) 제거할 수 없음"
 msgid "Can't update from {baseBranch}"
 msgstr "{baseBranch}에서 업데이트할 수 없음"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -666,6 +687,10 @@ msgstr "변경 사항 - #{displayId} {taskTitle}"
 #, fuzzy
 msgid "Changes are open in their own window"
 msgstr "변경 사항이 별도 창에 열려 있습니다"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -894,6 +919,16 @@ msgstr "조건: {condition}"
 #, fuzzy
 msgid "Confirm"
 msgstr "확인"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "연결됨"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "연결 중…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 #, fuzzy
@@ -1429,6 +1464,10 @@ msgstr "파일 필터..."
 msgid "Flat list"
 msgstr "단순 목록"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Folder on the host"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #, fuzzy
 msgid "Frequency"
@@ -1754,6 +1793,7 @@ msgstr "수정됨"
 msgid "Move to"
 msgstr "이동"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 #, fuzzy
@@ -2370,6 +2410,11 @@ msgstr "실행됨"
 msgid "Rebase or merge it in the session instead."
 msgstr "대신 세션에서 리베이스하거나 병합하세요."
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "다시 연결 중…"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 #, fuzzy
 msgid "Refresh PR"
@@ -2900,6 +2945,10 @@ msgstr "중지"
 msgid "Stop {label}"
 msgstr "{label} 중지"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 #, fuzzy
 msgctxt "leftover section"
@@ -3066,6 +3115,10 @@ msgstr "이 작업은 실행 취소할 수 없습니다."
 msgid "This commit changed no files"
 msgstr "이 커밋에서 변경된 파일 없음"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy
 msgid "This is handled by the column's settings now. Remove it to use them."
@@ -3204,6 +3257,11 @@ msgstr "유형"
 #, fuzzy
 msgid "Under 0.1% of pixels changed"
 msgstr "픽셀의 0.1% 미만 변경됨"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "연결 불가"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 #, fuzzy

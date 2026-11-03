@@ -1527,8 +1527,9 @@ msgid "My SSH config"
 msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
 msgid "Name"
-msgstr ""
+msgstr "名稱"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 msgctxt "sort files by"
@@ -2541,8 +2542,9 @@ msgid "Try a different search term"
 msgstr "請嘗試其他搜尋字詞"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
 msgid "Type"
-msgstr ""
+msgstr "類型"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 msgctxt "cursor style"

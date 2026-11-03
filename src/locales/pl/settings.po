@@ -1866,8 +1866,9 @@ msgid "My SSH config"
 msgstr ""
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
 msgid "Name"
-msgstr ""
+msgstr "Nazwa"
 
 #: src/renderer/components/settings/tabs/ChangesTab.tsx
 #, fuzzy
@@ -3100,8 +3101,9 @@ msgid "Try a different search term"
 msgstr "Spróbuj użyć innego wyszukiwanego terminu"
 
 #: src/renderer/components/settings/tabs/SshTab.tsx
+#, fuzzy
 msgid "Type"
-msgstr ""
+msgstr "Typ"
 
 #: src/renderer/components/settings/tabs/TerminalTab.tsx
 #, fuzzy

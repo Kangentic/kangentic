@@ -1002,10 +1002,13 @@
         projects.forEach(function (p) { p.position = p.position + 1; });
         var defaultAgentOverride = window.__mockDefaultAgentOverride;
         if (defaultAgentOverride) window.__mockDefaultAgentOverride = null;
+        var projectId = uuid();
         var project = {
-          id: uuid(),
+          id: projectId,
           name: input.name,
-          path: input.path,
+          // A remote project (#913) lives on a host; main gives it a local shell folder in place of a path.
+          path: input.remote ? '/mock/remote-projects/' + projectId : input.path,
+          remote: input.remote || null,
           github_url: input.github_url || null,
           default_agent: defaultAgentOverride || 'claude',
           default_model: null,

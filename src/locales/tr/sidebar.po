@@ -37,6 +37,10 @@ msgstr "{count, plural, one {# Komut Terminali çalışıyor (işlem yapıyor)} 
 msgid "{groupProjectCount, plural, one {Its # project will become ungrouped.} other {Its # projects will become ungrouped.}}"
 msgstr "{groupProjectCount, plural, one {İçindeki # proje gruptan çıkarılacak.} other {İçindeki # proje gruptan çıkarılacak.}}"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "{hostName}: {stateLabel}"
+msgstr ""
+
 #: src/renderer/components/sidebar/project-sidebar/SidebarActivityCounts.tsx
 #, fuzzy
 msgid "{idleCount} idle"
@@ -87,6 +91,11 @@ msgstr "<0>\"{projectName}\"</0> projesini silmek istediğinizden emin misiniz?"
 #, fuzzy
 msgid "Clear search"
 msgstr "Aramayı temizle"
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "Bağlı"
 
 #: src/renderer/components/sidebar/project-sidebar/GroupContextMenu.tsx
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
@@ -201,6 +210,11 @@ msgstr "Proje ayarları"
 msgid "Projects"
 msgstr "Projeler"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "Yeniden bağlanıyor…"
+
 #: src/renderer/components/sidebar/project-sidebar/ProjectContextMenu.tsx
 #, fuzzy
 msgid "Remove from group"
@@ -222,10 +236,19 @@ msgstr "Projelerde ara..."
 msgid "Show sidebar"
 msgstr "Kenar çubuğunu göster"
 
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy
 msgid "This will remove the project from Kangentic but won't delete any files on disk."
 msgstr "Bu işlem projeyi Kangentic'ten kaldırır ancak diskteki hiçbir dosyayı silmez."
+
+#: src/renderer/components/sidebar/project-sidebar/HostChip.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "Erişilemiyor"
 
 #: src/renderer/components/sidebar/ProjectSidebar.tsx
 #, fuzzy

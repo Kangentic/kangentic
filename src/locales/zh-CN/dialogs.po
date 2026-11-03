@@ -39,6 +39,12 @@ msgstr "「{taskTitle}」已在看板上。"
 msgid "({deleteFailureCount} failed)"
 msgstr "（{deleteFailureCount} 个失败）"
 
+#. placeholder {0}: probe.path
+#. placeholder {1}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "{0} does not exist on {1}."
+msgstr ""
+
 #: src/renderer/components/dialogs/PausedForMemoryDialog.tsx
 msgid "{agentCount, plural, one {Agent paused to free memory} other {# agents paused to free memory}}"
 msgstr "{agentCount, plural, other {已暂停 # 个智能体以释放内存}}"
@@ -277,6 +283,16 @@ msgstr "添加自动化"
 msgid "Add column"
 msgstr "添加列"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Add project"
+msgstr "添加项目"
+
+#. placeholder {0}: host?.host.name ?? ''
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Add project on {0}"
+msgstr ""
+
 #: src/renderer/components/dialogs/task-detail/changes/file-status.ts
 msgctxt "file status"
 msgid "Added"
@@ -356,6 +372,10 @@ msgstr "已是最新"
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Already used on this column."
 msgstr "此列中已使用。"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "An absolute path, or one starting with ~/"
+msgstr ""
 
 #: src/renderer/components/dialogs/AdvancedOverridesSection.tsx
 msgid "An alternate set of per-column agent, model, and effort settings"
@@ -508,6 +528,7 @@ msgstr "无法移除「{name}」"
 msgid "Can't update from {baseBranch}"
 msgstr "无法从 {baseBranch} 更新"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/BaseDialog.tsx
 #: src/renderer/components/dialogs/board-manager/ProfileNameDialog.tsx
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
@@ -541,6 +562,10 @@ msgstr "更改 - #{displayId} {taskTitle}"
 #: src/renderer/components/dialogs/task-detail/completed/CompletedChangesTab.tsx
 msgid "Changes are open in their own window"
 msgstr "更改已在单独的窗口中打开"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Choose a folder on this machine"
+msgstr ""
 
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Choose icon"
@@ -728,6 +753,16 @@ msgstr "条件：{condition}"
 #: src/renderer/components/dialogs/ConfirmDialog.tsx
 msgid "Confirm"
 msgstr "确认"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connected"
+msgstr "已连接"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Connecting…"
+msgstr "正在连接…"
 
 #: src/renderer/components/dialogs/board-manager/ColumnsOverview.tsx
 msgctxt "board overview column header"
@@ -1165,6 +1200,10 @@ msgstr "筛选文件…"
 msgid "Flat list"
 msgstr "平铺列表"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Folder on the host"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 msgid "Frequency"
 msgstr "频率"
@@ -1429,6 +1468,7 @@ msgstr "已修改"
 msgid "Move to"
 msgstr "移至"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
 #: src/renderer/components/dialogs/board-manager/EditAutomationDialog.tsx
 #: src/renderer/components/dialogs/BoardManagerDialog.tsx
 msgid "Name"
@@ -1930,6 +1970,11 @@ msgstr "已运行"
 msgid "Rebase or merge it in the session instead."
 msgstr "请改为在会话中变基或合并。"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Reconnecting…"
+msgstr "正在重新连接…"
+
 #: src/renderer/components/dialogs/task-detail/TaskDetailHeader.tsx
 msgid "Refresh PR"
 msgstr "刷新 PR"
@@ -2362,6 +2407,10 @@ msgstr "停止"
 msgid "Stop {label}"
 msgstr "停止 {label}"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "Stopped"
+msgstr ""
+
 #: src/renderer/components/dialogs/LeftoverProcessesDialog.tsx
 msgctxt "leftover section"
 msgid "Stopped"
@@ -2496,6 +2545,10 @@ msgstr "此操作无法撤销。"
 msgid "This commit changed no files"
 msgstr "此提交未更改任何文件"
 
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+msgid "This computer"
+msgstr ""
+
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "This is handled by the column's settings now. Remove it to use them."
 msgstr "此项现由列的设置处理。移除此项即可使用列设置。"
@@ -2608,6 +2661,11 @@ msgstr "类型"
 #: src/renderer/components/dialogs/task-detail/changes/ImageDiffView.tsx
 msgid "Under 0.1% of pixels changed"
 msgstr "更改的像素不足 0.1%"
+
+#: src/renderer/components/dialogs/AddProjectDialogs.tsx
+#, fuzzy
+msgid "Unreachable"
+msgstr "无法连接"
 
 #: src/renderer/components/dialogs/board-manager/AutomationsPane.tsx
 msgid "Unsaved"

@@ -24,6 +24,8 @@ import { WALKTHROUGH_STEPS, resolveNextStep } from '../onboarding/walkthrough-st
 import { useWalkthroughActivation } from '../onboarding/useWalkthroughActivation';
 import { useOnboardingProgress } from '../../hooks/useOnboardingProgress';
 import { ProjectPathMissingDialog } from '../dialogs/ProjectPathMissingDialog';
+import { AddProjectDialogs } from '../dialogs/AddProjectDialogs';
+import { HostDegradedStrip } from '../board/HostDegradedStrip';
 import { LeftoverProcessesDialog } from '../dialogs/LeftoverProcessesDialog';
 import { PausedForMemoryDialog } from '../dialogs/PausedForMemoryDialog';
 import { ReleaseNotesDialog } from '../dialogs/ReleaseNotesDialog';
@@ -576,6 +578,7 @@ export function AppLayout() {
           {currentProject ? (
             <>
               <ViewToggle />
+              <HostDegradedStrip project={currentProject} />
               {activeView !== 'backlog' ? (
                 <>
                   <div className="flex-1 min-h-0 overflow-hidden">
@@ -658,6 +661,7 @@ export function AppLayout() {
       {commandBar.isOpen && !commandTerminalPopOut.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
+      <AddProjectDialogs />
       <LeftoverProcessesDialog />
       <PausedForMemoryDialog />
       <ReleaseNotesDialog />
