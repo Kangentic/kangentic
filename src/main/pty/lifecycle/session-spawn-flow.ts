@@ -21,6 +21,7 @@ import { handleSpawnFailure } from '../spawn/spawn-failure-handler';
 import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
+import { planRemoteSpawn } from '../spawn/remote-spawn';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -230,9 +231,14 @@ export async function performSpawn(
     throw new Error('Cannot spawn session during shutdown');
   }
 
+  // A session on a remote host decides its shell, cwd, environment and quoting from the host, never
+  // from this computer (remote-spawn.ts). Every local-only decision below branches on this one plan.
+  const remotePlan = input.remote ? planRemoteSpawn(input, input.remote) : null;
+
   // The spawn's own shell when its CLI decides it (`wsl -d <distro>` for a CLI
-  // installed in that distro), else the Terminal setting, as before.
-  const shell = input.shell ?? await context.getShell();
+  // installed in that distro), else the Terminal setting, as before. A remote
+  // session is typed into the host's shell, named by its program (zsh, fish, ...).
+  const shell = remotePlan ? remotePlan.shellName : (input.shell ?? await context.getShell());
   // EVERY registry row for the task, not the first match. The registry holds
   // one row per task by contract, but a stale suspended placeholder (a repeat
   // project open) or a suspended-in-place row (a settings restart) could
@@ -291,15 +297,16 @@ export async function performSpawn(
 
   // Shell invocation (exe + args) and spawn env. See pty-spawn.ts.
   const shellName = shell.toLowerCase();
-  const { exe: shellExe, args: shellArgs } = resolveShellArgs(shell);
+  const { exe: shellExe, args: shellArgs } = remotePlan ? { exe: remotePlan.file, args: remotePlan.args } : resolveShellArgs(shell);
   // Export KANGENTIC_EVENTS_PATH whenever the session has an events
   // output path. Adapters whose hooks shell out to event-bridge.js read
   // the path from their hook command line, but adapters whose hooks run
   // inline in the agent process (OpenCode plugins) need the path on
   // process.env. Setting it universally is harmless: hook-bridge-based
-  // adapters ignore the env var.
+  // adapters ignore the env var. Not for a remote session: the path is a file on THIS computer,
+  // and the host's hooks publish into their own inbox, which the helper relays back.
   let spawnEnv: Record<string, string> = { ...(input.env ?? {}) };
-  if (input.eventsOutputPath) {
+  if (input.eventsOutputPath && !remotePlan) {
     spawnEnv.KANGENTIC_EVENTS_PATH = input.eventsOutputPath;
   }
   // Tag every process this session's agent starts, so the end of its task, or
@@ -309,7 +316,7 @@ export async function performSpawn(
   // are reaped when the terminal ends (`command-terminal-leftovers.ts`). That
   // replaces any tag inherited from main's environment (Kangentic started from
   // a task's terminal), whose outer reap still stops this app's own tree.
-  const wslShell = parseWslShellSpec(shell) !== null;
+  const wslShell = !remotePlan && parseWslShellSpec(shell) !== null;
   spawnEnv = addTaskProcessTag(spawnEnv, input.taskId, {
     wslShell,
     inheritedWslEnv: process.env.WSLENV,
@@ -335,14 +342,17 @@ export async function performSpawn(
       }
     }
   }
-  const cleanEnv = buildSpawnEnv(spawnEnv);
+  // A remote session sends the plan's environment as it is: `buildSpawnEnv` would merge in main's
+  // whole environment, and the helper layers a spawn's variables OVER the host's own, so main's
+  // PATH, HOME and TEMP would replace the host's.
+  const cleanEnv = remotePlan ? remotePlan.env : buildSpawnEnv(spawnEnv);
 
-  // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts.
-  const { effectiveCwd, cwdFixupCommand } = resolveSpawnCwd({
-    requestedCwd: input.cwd,
-    shellName,
-    platform: process.platform,
-  });
+  // Validate cwd + resolve any Windows cwd fixup command. See pty-spawn.ts. A remote session's cwd
+  // is a folder on the host: tested against this computer's disk it would not exist, and be
+  // replaced with a local home folder.
+  const { effectiveCwd, cwdFixupCommand } = remotePlan
+    ? { effectiveCwd: remotePlan.cwd, cwdFixupCommand: null }
+    : resolveSpawnCwd({ requestedCwd: input.cwd, shellName, platform: process.platform });
 
   // Spawn at the real fitted dimensions if a resize arrived before the PTY
   // existed under THIS id (a queue promotion: a renderer fit, or the resting-grid
@@ -413,6 +423,7 @@ export async function performSpawn(
     agentSessionIdKnown: !!input.agentSessionId,
     exitSequence: input.exitSequence ?? ['\x03'],
     taskId: input.taskId,
+    ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
   });
 
   // Torn down during the host round trip. Ahead of every outcome branch: a
@@ -501,7 +512,12 @@ export async function performSpawn(
     // Asked for this platform's own console only: a WSL shell's close (ConPTY
     // closing wsl.exe, then a hangup in the distro) is not measured, so an
     // agent there is typed into as before.
-    consoleCloseIsGraceful: !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    // A session on a host is asked about THAT platform: Claude's hangup is measured on Linux, and
+    // this computer's console close (Windows) says nothing of a process on the host.
+    consoleCloseIsGraceful: remotePlan
+      ? remotePlan.consoleCloseIsGraceful
+      : !wslShell && input.agentParser?.consoleCloseIsGraceful?.(process.platform) === true,
+    ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
     reportsBackgroundCommands: input.agentParser?.backgroundCommands !== undefined,
     agentParser: input.agentParser,
     agentName: input.agentName ?? 'agent',
@@ -575,14 +591,20 @@ export async function performSpawn(
   // session ID is caller-owned (already set at spawn time) - the
   // 30s "not captured" warning would be a false positive since we
   // never expected the agent to report it.
-  context.sessionIdManager.init(
-    id,
-    input.agentParser,
-    effectiveCwd,
-    session.agentName ?? 'agent',
-    !!input.agentSessionId,
-    input.cliTarget ?? null,
-  );
+  // Not for a remote session: its filesystem pathway looks for the agent's transcript folder on THIS
+  // computer, where the host's does not exist. The hook and output pathways need no init, and a
+  // caller-owned id (Claude's `--session-id`) is already known. The read mirror (Phase 4) brings the
+  // filesystem pathway back.
+  if (!remotePlan) {
+    context.sessionIdManager.init(
+      id,
+      input.agentParser,
+      effectiveCwd,
+      session.agentName ?? 'agent',
+      !!input.agentSessionId,
+      input.cliTarget ?? null,
+    );
+  }
 
   // Caller-owned session ID short-circuit: when the adapter declares
   // `supportsCallerSessionId = true` the spawn pipeline pre-generates
@@ -607,7 +629,9 @@ export async function performSpawn(
   // so a previous run's status cannot have flowed. For Claude this is the sole
   // trigger that starts the transcript fallback for a background session.
   const callerOwnedSessionHistory = input.agentParser?.runtime?.sessionHistory;
-  if (input.agentSessionId && callerOwnedSessionHistory) {
+  // Not for a remote session: the reader tails the agent's transcript under THIS computer's home,
+  // which a host's agent never writes. It joins the read mirror in Phase 4.
+  if (input.agentSessionId && callerOwnedSessionHistory && !remotePlan) {
     context.sessionHistoryReader.attach({
       sessionId: id,
       agentSessionId: input.agentSessionId,
@@ -808,8 +832,9 @@ export async function performSpawn(
         // typed line, so the shell erases its startup preamble and command
         // echo at execution time - see buildSpawnClearPrelude for why this
         // beats every marker heuristic.
-        const prelude = buildSpawnClearPrelude(shellName);
-        const cmd = prelude + adaptCommandForShell(input.command, shellName);
+        const cmd = remotePlan
+          ? remotePlan.typedLine(input.command)
+          : buildSpawnClearPrelude(shellName) + adaptCommandForShell(input.command, shellName);
         if (cwdFixupCommand) {
           setTimeout(() => writeIfStillOwned(cmd + '\r'), 200);
         } else {

@@ -58,7 +58,22 @@ describe('starting a PTY on the host', () => {
     await spawning;
     const [file, args] = rig.helperRig.spawnPty.mock.calls[0] as [string, string[]];
     expect(file).toBe('/bin/zsh');
-    expect(args).toEqual(['-l']);
+    expect(args).toEqual(['--login']);
+  });
+
+  it.each([
+    ['/usr/bin/bash', ['--login']],
+    ['/usr/bin/fish', []],
+    ['/usr/bin/nu', []],
+    ['/bin/dash', ['-l']],
+    ['/bin/ksh', ['-l']],
+  ])('asks %s to be a login shell the way this computer asks it', async (shellPath, expectedArgs) => {
+    const rig = makeRig({ HOME: '/home/dev', SHELL: shellPath });
+    await settle();
+    const spawning = rig.client.spawn({ ...spawnParams('s1', 'task-1'), file: HOST_LOGIN_SHELL, args: [] });
+    await settle();
+    await spawning;
+    expect(rig.helperRig.spawnPty.mock.calls[0].slice(0, 2)).toEqual([shellPath, expectedArgs]);
   });
 
   it('falls back to sh when the host sets no shell', async () => {
@@ -97,6 +112,23 @@ describe('starting a PTY on the host', () => {
     await settle();
     await spawning;
     expect((rig.helperRig.spawnPty.mock.calls[0][2] as { env: Record<string, string> }).env.TERM).toBe('xterm-256color');
+  });
+});
+
+describe('what the helper says of its host', () => {
+  it('names the home folder and the shell a login spawn lands in', async () => {
+    const rig = makeRig({ SHELL: '/usr/bin/Fish' });
+    await settle();
+    const info = await ask(rig.link.requestHelper('hostInfo', {}));
+    expect(info).toEqual({ home: path.resolve(home), shellPath: '/usr/bin/Fish', shellName: 'fish' });
+  });
+
+  it('says sh when the host sets no shell, which is also what a login spawn then runs', async () => {
+    const rig = makeRig({});
+    await settle();
+    const info = await ask(rig.link.requestHelper('hostInfo', {}));
+    expect(info.shellPath).toBe('/bin/sh');
+    expect(info.shellName).toBe('sh');
   });
 });
 

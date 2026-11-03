@@ -22,6 +22,7 @@ import { promises as fs } from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
+import { isFishShell, isNushellShell } from '../../../shared/shell-quote';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
 import {
   toPtyHostError,
@@ -44,6 +45,7 @@ import {
   splitPortMessage,
   type HelperSessionRecord,
   type HostFileWrite,
+  type HostInfo,
   type HelperSnapshot,
   type HelperToLinkMessage,
   type PortBody,
@@ -59,6 +61,18 @@ export const HELPER_PROTOCOL = { min: 1, max: 1 } as const;
 const SESSION_ENV_PREFIXES = ['SSH_'] as const;
 const SESSION_ENV_NAMES = new Set(['NODE_OPTIONS', 'NODE_PATH', '_']);
 const MAX_READ_BYTES = 1_000_000;
+
+/**
+ * How each shell is asked to be a login shell, as `resolveShellArgs` asks it on this computer:
+ * bash and zsh take --login, fish and nushell take nothing (they read their startup files anyway),
+ * and sh, dash and ksh take only -l (dash rejects --login outright).
+ */
+function loginFlagsFor(shellPath: string): string[] {
+  const name = path.basename(shellPath).toLowerCase();
+  if (isFishShell(name) || isNushellShell(name)) return [];
+  if (name === 'bash' || name === 'zsh') return ['--login'];
+  return ['-l'];
+}
 
 export interface HelperServerOptions {
   /** The user's home on the host. Files are written, read and checked only beneath it. Defaults to the daemon's. */
@@ -290,6 +304,7 @@ export class HelperServer {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
     if (method === 'snapshot') return this.snapshot();
     if (method === 'suspendAll') return this.suspendAll(params as SuspendAllParams);
+    if (method === 'hostInfo') return this.hostInfo();
     if (method === 'writeFiles') return this.writeFiles((params as { files: HostFileWrite[] }).files);
     if (method === 'readFile') return this.readFile(params as { path: string; maxBytes?: number });
     if (method === 'pathPresence') return this.pathPresence((params as { paths: string[] }).paths);
@@ -379,13 +394,22 @@ export class HelperServer {
       if (SESSION_ENV_NAMES.has(name) || SESSION_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
       env[name] = value;
     }
-    const shell = baseEnv.SHELL || '/bin/sh';
     const wantsLoginShell = params.file === HOST_LOGIN_SHELL;
+    const shell = this.hostInfo().shellPath;
     return {
       ...params,
       file: wantsLoginShell ? shell : params.file,
-      args: wantsLoginShell ? ['-l', ...params.args] : params.args,
+      args: wantsLoginShell ? [...loginFlagsFor(shell), ...params.args] : params.args,
       env: { ...env, ...params.env },
+    };
+  }
+
+  private hostInfo(): HostInfo {
+    const shellPath = (this.options.baseEnv ?? process.env).SHELL || '/bin/sh';
+    return {
+      home: path.resolve(this.options.homeDirectory ?? os.homedir()),
+      shellPath,
+      shellName: path.basename(shellPath).toLowerCase(),
     };
   }
 

@@ -7299,6 +7299,15 @@ export interface QueueSnapshot {
   global: QueueTask[];
 }
 
+/** Where a spawn runs when it is on a remote host, resolved by the caller from the host's own answers. */
+export interface SpawnRemote {
+  hostId: string;
+  /** The folder on the host the PTY starts in, verbatim: nothing here checks it exists. */
+  cwd: string;
+  /** The host's login shell by program name (zsh, fish, nu, ...), which decides how a typed command is quoted. */
+  shellName: string;
+}
+
 export interface SpawnSessionInput {
   /** Caller-provided session ID. When omitted, spawn() generates one via uuidv4(). */
   id?: string;
@@ -7397,6 +7406,13 @@ export interface SpawnSessionInput {
    * readers and its reap.
    */
   cliTarget?: StoredCliTarget | null;
+  /**
+   * The session runs on a remote host over SSH (#913), as resolved by the caller before the spawn.
+   * `performSpawn` then sends the host a login shell, a path on the host and an environment of its
+   * own making, and never this computer's shell, cwd or environment (see `planRemoteSpawn`). `cwd`
+   * stays the local shell folder, where the session's own files live.
+   */
+  remote?: SpawnRemote;
   /**
    * Start the session idle rather than seeded as thinking, for a fresh task
    * spawn that carries no prompt: an agent launched while its worktree's setup

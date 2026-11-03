@@ -69,8 +69,22 @@ export interface HostFileWrite {
   mode?: number;
 }
 
+/**
+ * What main cannot know of a host and must not guess: where the user's files are and which shell a
+ * login shell spawn lands in. The shell decides how a typed command is quoted and cleared.
+ */
+export interface HostInfo {
+  /** The user's home folder on the host. */
+  home: string;
+  /** The login shell's path, such as /usr/bin/zsh. */
+  shellPath: string;
+  /** Its program name, such as zsh, fish or nu. */
+  shellName: string;
+}
+
 /** Requests only the helper answers, beside the pty host's own. */
 export interface HelperRequestMap {
+  hostInfo: { params: Record<string, never>; result: HostInfo };
   /** Bind the link's id to a session the helper already holds. */
   rebind: { params: { sessionId: string; ptyId: number }; result: { ok: boolean } };
   snapshot: { params: Record<string, never>; result: HelperSnapshot };

@@ -2116,3 +2116,147 @@ describe('performSpawn - the status and events files are emptied before the agen
     expect(context.registry.get(makeInput().id!)).toBeUndefined();
   });
 });
+
+describe('performSpawn - a session on a remote host (#913)', () => {
+  // Every local-only decision in the flow (shell, cwd check, environment, platform) describes THIS
+  // computer. None may reach a host: the helper layers a spawn's variables over the host's own, so
+  // a sent PATH or HOME would replace the host's, and a cwd tested against this disk would be
+  // replaced with a local home folder. The quoting itself is pinned in remote-spawn.test.ts.
+  const ptySpawnMock = ptyModule.spawn as ReturnType<typeof vi.fn>;
+  const hostPath = '/home/dev/projects/api';
+
+  afterEach(() => {
+    vi.clearAllMocks();
+  });
+
+  function remoteInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInput {
+    return makeInput({
+      cwd: 'C:\\Users\\dev\\remote-projects\\p1',
+      env: { CLAUDE_CODE_NO_FLICKER: '1' },
+      eventsOutputPath: 'C:\\Users\\dev\\remote-projects\\p1\\.kangentic\\sessions\\s\\events.jsonl',
+      remote: { hostId: 'host-a', cwd: hostPath, shellName: 'fish' },
+      ...overrides,
+    });
+  }
+
+  it('asks the host for its own login shell and names the host', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    const params = lastSpawnParams(context);
+    expect(params.file).toBe('$LOGIN_SHELL');
+    expect(params.args).toEqual([]);
+    expect(params.hostId).toBe('host-a');
+  });
+
+  it('starts the PTY in the host path verbatim and never tests it against this disk', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    expect(lastSpawnParams(context).cwd).toBe(hostPath);
+    expect(resolveSpawnCwd).not.toHaveBeenCalled();
+  });
+
+  it('sends the adapter\'s variables, the task tag and a TERM, and nothing of main\'s environment', async () => {
+    vi.stubEnv('PATH', 'C:\\Windows\\System32');
+    vi.stubEnv('USERPROFILE', 'C:\\Users\\dev');
+    vi.stubEnv('SystemRoot', 'C:\\Windows');
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+
+      const env = lastSpawnParams(context).env;
+      expect(env).toEqual({ CLAUDE_CODE_NO_FLICKER: '1', KANGENTIC_TASK_ID: 'task-001', TERM: 'xterm-256color' });
+      expect(Object.keys(env)).not.toContain('PATH');
+      expect(Object.keys(env)).not.toContain('USERPROFILE');
+      expect(Object.keys(env)).not.toContain('SystemRoot');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('does not export the events path: it is a file on this computer, and the host publishes into its own inbox', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    expect(Object.keys(lastSpawnParams(context).env)).not.toContain('KANGENTIC_EVENTS_PATH');
+  });
+
+  it('lists nothing in WSLENV, even from a Windows client', async () => {
+    vi.stubEnv('WSLENV', 'USERPROFILE/p');
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+
+      expect(Object.keys(lastSpawnParams(context).env)).not.toContain('WSLENV');
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it('asks whether closing the console is graceful for the HOST\'s platform, not this computer\'s', async () => {
+    const consoleCloseIsGraceful = vi.fn((platform: NodeJS.Platform) => platform === 'linux');
+    const agentParser = { consoleCloseIsGraceful } as unknown as AgentParser;
+    const context = makeContext();
+    await performSpawn(remoteInput({ agentParser }), context);
+
+    expect(consoleCloseIsGraceful).toHaveBeenCalledWith('linux');
+    expect(consoleCloseIsGraceful).not.toHaveBeenCalledWith(process.platform === 'linux' ? 'win32' : process.platform);
+    expect(context.registry.get(makeInput().id!)?.consoleCloseIsGraceful).toBe(true);
+  });
+
+  it('is not graceful when only this computer\'s console close is the agent\'s exit', async () => {
+    const agentParser = { consoleCloseIsGraceful: (platform: NodeJS.Platform) => platform === 'win32' } as unknown as AgentParser;
+    const context = makeContext();
+    await performSpawn(remoteInput({ agentParser }), context);
+
+    expect(context.registry.get(makeInput().id!)?.consoleCloseIsGraceful).toBe(false);
+  });
+
+  it('records the host on the row and hands back a handle with no pid on this machine', async () => {
+    const context = makeContext();
+    await performSpawn(remoteInput(), context);
+
+    const row = context.registry.get(makeInput().id!);
+    expect(row?.hostId).toBe('host-a');
+    expect(row?.pty?.pid).toBeNull();
+    expect(row?.shell).toBe('fish');
+  });
+
+  it('keeps a local session\'s row free of a host and its handle on a real pid', async () => {
+    const context = makeContext();
+    await performSpawn(makeInput(), context);
+
+    const row = context.registry.get(makeInput().id!);
+    expect(row?.hostId).toBeUndefined();
+    expect(row?.pty?.pid).toBe(999);
+    expect(lastSpawnParams(context).hostId).toBeUndefined();
+  });
+
+  it('turns off the readers that look for the agent\'s transcript on this computer', async () => {
+    const context = makeContext();
+    const agentParser = makeAdapter({ withSessionHistory: true });
+    await performSpawn(remoteInput({ agentParser, agentSessionId: 'agent-session-1' }), context);
+
+    expect(context.sessionIdManager.init).not.toHaveBeenCalled();
+    expect(context.sessionHistoryReader.attach).not.toHaveBeenCalled();
+    // The status and events files are this computer's mirror of the host's hooks, so they stay watched.
+    expect(context.statusFileReader.attach).toHaveBeenCalledOnce();
+  });
+
+  it('types the command through the host\'s quoting, for Linux and the host\'s shell', async () => {
+    vi.useFakeTimers();
+    try {
+      const context = makeContext();
+      await performSpawn(remoteInput({ command: 'claude --resume abc' }), context);
+      // The line is written on a short timer after the spawn.
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(adaptCommandForShell).toHaveBeenCalledWith('claude --resume abc', 'fish', 'linux');
+      expect(buildSpawnClearPrelude).toHaveBeenCalledWith('fish');
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(ptySpawnMock).toHaveBeenCalledOnce();
+  });
+});
