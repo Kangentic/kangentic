@@ -443,7 +443,9 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     id: 'commandTerminal.toggleBrowser',
     label: msg`Toggle Command Terminal Browser pane`,
     description: msg`Show or hide the focused Command Terminal's browser pane.`,
-    group: 'Browser',
+    // 'General', beside commandBar.toggle: the Browser group is hidden from the
+    // panel, and this one is rebindable and should be listed.
+    group: 'General',
     scope: 'command-bar',
     defaultCombo: 'Mod+Shift+B',
     rebindable: true,
