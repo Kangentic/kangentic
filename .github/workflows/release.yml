@@ -255,13 +255,103 @@ jobs:
           echo "::error::Never publish the draft by hand while the builds are running."
           exit 1
 
-  release:
+  # The host program for SSH projects: one archive per Linux CPU, each holding a pinned Node, the
+  # helper bundle and node-pty's Linux prebuild (scripts/build-host.mjs). Kangentic installs it on a
+  # remote machine the first time a project there is opened.
+  #
+  # It runs BEFORE the matrix because the installers carry its checksums: the manifest this job writes
+  # (dist/host-manifest/manifest.json, a few hundred bytes) is what each leg packages into
+  # resources/host, and the app downloads the archive named there from this release on first use and
+  # refuses any bytes that do not hash to the manifest's SHA-256.
+  #
+  # The archive is byte-stable (scripts/lib/deterministic-tar.mjs), so a re-run of the workflow over a
+  # draft or a finished release rebuilds the same bytes. If it ever did not, the compare step below
+  # fails the job rather than replacing an archive that installers already in the field pin.
+  #
+  # Deliberately carries no `environment:`, like the preflights and create-draft-release: an approval
+  # gate here would stall the whole matrix behind it.
+  build-host:
     needs: [create-tag, create-draft-release]
-    # The create-draft-release clause is load-bearing. always() is present to
+    # Same two clauses as `release`, for the same reason: always() tolerates the conditional create-tag
+    # and defeats the implicit "skip me if a dependency failed", so each needs: entry is named here.
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref }}
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+
+      - run: npm ci
+
+      - name: Determine version tag
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=v${INPUT_VERSION}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      # The manifest's download addresses name this release's tag, and verify-host-manifest.js requires
+      # each to end /v<package.json version>/<file>, so a tag that disagrees with package.json fails here.
+      - name: Build the host program
+        env:
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          node scripts/build-host.mjs --out host-out --manifest-out dist/host-manifest \
+            --url-base "https://github.com/${GITHUB_REPOSITORY}/releases/download/${RELEASE_TAG}"
+
+      - name: Verify the manifest and the archives it names
+        run: node scripts/verify-host-manifest.js --file dist/host-manifest/manifest.json --archives host-out
+
+      - name: Attach the archives to the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ steps.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p existing
+          for archive in host-out/*.tar.gz; do
+            name=$(basename "$archive")
+            if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -qxF "$name"; then
+              gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$name" --dir existing --clobber
+              built=$(sha256sum "$archive" | cut -d' ' -f1)
+              attached=$(sha256sum "existing/$name" | cut -d' ' -f1)
+              if [ "$built" != "$attached" ]; then
+                echo "::error::$name is already on $RELEASE_TAG with a different checksum ($attached) than this build ($built)."
+                echo "::error::Installers already built from an earlier run pin the attached bytes, so this job will not replace them. If no installer was built from that run, delete the asset and re-run."
+                exit 1
+              fi
+              echo "$name is already attached to $RELEASE_TAG and identical; leaving it."
+            else
+              gh release upload "$RELEASE_TAG" "$archive" --repo "$GITHUB_REPOSITORY"
+              echo "Attached $name to $RELEASE_TAG."
+            fi
+          done
+
+      - name: Hand the manifest to the build legs
+        uses: actions/upload-artifact@v7
+        with:
+          name: host-manifest
+          path: dist/host-manifest/manifest.json
+          if-no-files-found: error
+
+  release:
+    needs: [create-tag, create-draft-release, build-host]
+    # The create-draft-release and build-host clauses are load-bearing. always() is present to
     # tolerate the conditional create-tag, which means adding a job to needs:
     # without also naming it here would let the matrix run when draft creation
     # FAILED, straight back to the three-way split this job exists to prevent.
-    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success'
+    if: always() && (needs.create-tag.result == 'success' || needs.create-tag.result == 'skipped') && needs.create-draft-release.result == 'success' && needs.build-host.result == 'success'
     environment: release-${{ matrix.platform }}
     # Every leg builds on a runner of its own arch, never cross-built: npm installs
     # only the host's per-arch native packages (sherpa-onnx, sqlite-vec, koffi,
@@ -311,6 +401,15 @@ jobs:
           node-version: 22
 
       - run: npm ci
+
+      # The host program's manifest, from build-host, where electron-builder.yml's extraResources
+      # reads it (dist/host-manifest -> resources/host). The verify step after the build fails the
+      # leg if it did not make it in, because electron-builder only warns about a missing source.
+      - name: Fetch the host program manifest
+        uses: actions/download-artifact@v8
+        with:
+          name: host-manifest
+          path: dist/host-manifest
 
       # Import Apple Developer ID certificate using Apple's official action.
       # Handles keychain creation, partition list, and default keychain setup.
@@ -367,6 +466,14 @@ jobs:
           AZURE_SIGNING_ENDPOINT: https://eus.codesigning.azure.net/
           AZURE_SIGNING_ACCOUNT: sign-kangentic
           AZURE_CERT_PROFILE: kangentic-signing
+
+      # Fail the leg if the host program's manifest is not in the packaged app, or is for another
+      # version or half written. Runs on every leg, so it carries no `if:`.
+      - name: Verify the host program manifest is packaged
+        shell: bash
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: node scripts/verify-host-manifest.js --packaged "$PLATFORM"
 
       # Fail the build if app-update.yml is missing from the packaged app.
       # electron-updater reads this manifest on launch; if it's absent the

@@ -449,7 +449,7 @@ already published).
 releases page in the user's browser with `start
 https://github.com/Kangentic/kangentic/releases`:
 
-- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 19 assets: the 18 build assets `scripts/release-assets.js` lists, plus `demo-posters-X.Y.Z.zip` from the `demo-posters` job, which runs after the release is published. 18 after a green `gh run watch` means that job did not attach the poster set; read its log.
+- `gh api repos/Kangentic/kangentic/releases/tags/vX.Y.Z --jq '{draft, asset_count: (.assets | length)}'` must report `draft: false` and 21 assets: the 20 build assets `scripts/release-assets.js` lists (18 from the desktop builds, 2 host program archives from `build-host`), plus `demo-posters-X.Y.Z.zip` from the `demo-posters` job, which runs after the release is published. 20 after a green `gh run watch` means that job did not attach the poster set; read its log.
 - `npm view kangentic version` must report the new version.
 
 Opening the releases page while the builds are still running is what caused the v0.39.0 failure
@@ -458,7 +458,7 @@ front of a human for the ten minutes when clicking it does the most damage.
 
 **Never publish the draft by hand.** Publishing is automatic once
 `scripts/verify-release-assets.js` confirms the tag resolves to exactly one release carrying all
-18 expected build assets, with a `latest-mac.yml` that lists both macOS zips. So a release still sitting as a draft after the workflow finishes means that
+20 expected build assets, with a `latest-mac.yml` that lists both macOS zips. So a release still sitting as a draft after the workflow finishes means that
 gate FAILED, and the draft is presumed incomplete. Clicking Publish in the GitHub UI bypasses the
 only check that stands between a partial release and every user's auto-updater, which is exactly
 how v0.35.0 shipped macOS-less. Read the `publish-release` job log, fix the cause, and re-run the

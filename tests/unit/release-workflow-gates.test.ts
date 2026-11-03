@@ -154,10 +154,11 @@ describe('release.yml job graph', () => {
   const selfGatedJobs = jobs.filter((job) => STATUS_FUNCTION_PATTERN.test(job.condition ?? ''));
 
   // An empty or shrunken filter would turn the it.each below into zero tests, which passes. The
-  // six jobs that carry a status function are named here so dropping one from the workflow, or
+  // seven jobs that carry a status function are named here so dropping one from the workflow, or
   // a parse regression that stops recognizing one, fails rather than quietly reducing coverage.
   it('selects every job whose if: replaces the implied success() gate', () => {
     expect(selfGatedJobs.map((job) => job.name).sort()).toEqual([
+      'build-host',
       'create-draft-release',
       'demo-posters',
       'deploy-demo',
@@ -246,6 +247,38 @@ describe('release.yml job graph', () => {
     // dropped, a missing token stops failing the build.
     expect(releaseJob?.needs).toContain('create-draft-release');
     expect(releaseJob?.condition).toContain("needs.create-draft-release.result == 'success'");
+  });
+
+  // Add host downloads the host program named in the manifest an installer carries (#913). If a leg
+  // shipped without that manifest, or the archive on the release were swapped after installers pinned
+  // its checksum, every SSH project would fail at Add host with every job green.
+  it('builds the host program ahead of the matrix, attaches it once, and fails a leg that lost the manifest', () => {
+    const releaseJob = jobs.find((job) => job.name === 'release');
+    const buildHost = jobs.find((job) => job.name === 'build-host');
+    expect(buildHost).toBeDefined();
+    expect(releaseJob?.needs).toContain('build-host');
+    expect(releaseJob?.condition).toContain("needs.build-host.result == 'success'");
+    expect(buildHost?.needs).toContain('create-draft-release');
+    expect(buildHost?.condition).toContain("needs.create-draft-release.result == 'success'");
+    expect(buildHost?.body).not.toMatch(/^ {4}environment:/m);
+
+    // The checksums in the manifest and the bytes on the release are one fact: an attached archive
+    // is compared, never replaced, and the upload does not clobber.
+    const attach = stepBody('build-host', 'Attach the archives to the draft release');
+    expect(attach).toContain('exit 1');
+    expect(attach).toContain('::error::');
+    expect(attach).toContain('gh release upload');
+    expect(attach).not.toMatch(/gh release upload[^\n]*--clobber/);
+    expect(stepBody('build-host', 'Verify the manifest and the archives it names')).toContain('--archives host-out');
+
+    // Every leg downloads the manifest before packaging and checks it afterwards.
+    const buildOrder = (releaseJob?.body ?? '').indexOf('Fetch the host program manifest');
+    expect(buildOrder).toBeGreaterThan(-1);
+    expect(buildOrder).toBeLessThan((releaseJob?.body ?? '').indexOf('name: Build and publish'));
+    const verify = stepBody('release', 'Verify the host program manifest is packaged');
+    expect(verify).toContain('node scripts/verify-host-manifest.js --packaged "$PLATFORM"');
+    expect(verify).not.toMatch(/^ {8}if:/m);
+    expect(fs.readFileSync(path.join(REPO_ROOT, 'electron-builder.yml'), 'utf8')).toMatch(/- from: dist\/host-manifest\n\s+to: host/);
   });
 
   // The web demo exists to show the SHIPPED app, so deploy-demo has to build the ref the release

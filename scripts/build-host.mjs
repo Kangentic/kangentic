@@ -20,6 +20,8 @@
 //   kangentic-host-<version>-linux-<arch>.tar.gz
 //
 // The app reads manifest.json (src/main/remote/host-assets.ts) and refuses a manifest whose version is not its own.
+// Two builds of one commit give byte-identical archives (scripts/lib/deterministic-tar.mjs), which the release
+// workflow relies on: it attaches the archives once and pins their checksums in every installer.
 
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -29,6 +31,7 @@ import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { fileURLToPath } from 'node:url';
+import { packDirectoryToFile } from './lib/deterministic-tar.mjs';
 import { isEntrypoint } from './lib/is-entrypoint.mjs';
 
 /** Pinned. Raise it deliberately: the helper runs on this Node on every host. */
@@ -164,9 +167,9 @@ async function buildArchive({ arch, version, outDirectory, workDirectory, nodeTa
   const file = `kangentic-host-${version}-linux-${arch}.tar.gz`;
   const filePath = path.join(outDirectory, file);
   fs.rmSync(filePath, { force: true });
-  const packed = await execute(tarPath, ['-czf', filePath, '-C', assetRoot, '.']);
-  if (packed.code !== 0) throw new Error(`could not pack ${file}: ${packed.stderr}`);
-  const bytes = fs.readFileSync(filePath);
+  // Packed by our own writer, not `tar -czf`: the same inputs must give the same bytes on any machine,
+  // because this archive's SHA-256 ships inside the app and a release re-run rebuilds it.
+  const bytes = packDirectoryToFile(assetRoot, filePath);
   const sha256 = createHash('sha256').update(bytes).digest('hex');
   say(`${file}: ${(bytes.length / 1e6).toFixed(1)} MB, sha256 ${sha256.slice(0, 12)}`);
   return { arch, file, sha256, size: bytes.length };
