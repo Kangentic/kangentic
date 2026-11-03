@@ -4541,6 +4541,15 @@ export class SessionManager extends EventEmitter {
     return this.registry.getSessionAgentName(sessionId);
   }
 
+  /**
+   * The folder the session's command was built for, which its agent works in.
+   * Differs from `Session.cwd` when the PTY started in the home folder and the
+   * shell moved into this one (a UNC path under cmd).
+   */
+  getSessionCommandCwd(sessionId: string): string | undefined {
+    return this.registry.get(sessionId)?.commandCwd;
+  }
+
   /** Where the session's CLI runs when it is not this machine (a WSL distro), or null. */
   getSessionCliTarget(sessionId: string): StoredCliTarget | null {
     return this.registry.get(sessionId)?.cliTarget ?? null;

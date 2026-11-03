@@ -25,6 +25,8 @@
  */
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import * as http from 'node:http';
+import * as os from 'node:os';
+import * as path from 'node:path';
 
 vi.mock('electron', () => ({
   webContents: { fromId: () => null },
@@ -190,5 +192,82 @@ describe('startMcpHttpServer - resolveBrowser caller-scope wiring', () => {
       projectId: 'proj-2',
       callerSessionId: 'caller-b',
     });
+  });
+});
+
+describe('startMcpHttpServer - resolveBrowser captureDirectory wiring (saveToFile)', () => {
+  let handle: McpHttpServerHandle | undefined;
+
+  afterEach(() => {
+    handle?.close();
+    handle = undefined;
+    registerBrowserToolsSpy.mockClear();
+  });
+
+  function resolverWithProjectPath(projectId: string, projectPath: string | null): RequestResolver {
+    const fakeIpcContext = { projectRepo: { list: () => [] } } as unknown as IpcContext;
+    const fakeCommandContext = {
+      getProjectPath: () => {
+        if (projectPath === null) throw new Error('no project path');
+        return projectPath;
+      },
+    } as unknown as CommandContext;
+    return new RequestResolver({
+      ipcContext: fakeIpcContext,
+      defaultContext: fakeCommandContext,
+      defaultProjectId: projectId,
+      defaultProjectName: 'Test Project',
+    });
+  }
+
+  async function startAndPost(
+    resolver: RequestResolver,
+    pathname: string,
+    sessionCwd: string | undefined,
+  ): Promise<() => string> {
+    const fakeSessionManager = {
+      ...makeFakeSessionManager(),
+      getSessionCommandCwd: (sessionId: string) => (sessionId === 'worktree-sess' ? sessionCwd : undefined),
+    };
+    handle = await startMcpHttpServer(
+      () => resolver,
+      () => ({ enabled: true, allowInteraction: false, allowNavigation: false, allowEval: false, restrictNavigationToLocalhost: false }),
+      { bindAddress: '127.0.0.1' },
+      () => ({ sessionManager: fakeSessionManager as never, terminalSubmit: { submitContent: vi.fn(() => Promise.resolve()) } }),
+    );
+    await postToPath(Number(new URL(handle.baseUrl).port), pathname, handle.token);
+    expect(registerBrowserToolsSpy).toHaveBeenCalledOnce();
+    const captureDirectory = registerBrowserToolsSpy.mock.calls[0]?.[2]?.captureDirectory;
+    expect(typeof captureDirectory).toBe('function');
+    return captureDirectory;
+  }
+
+  it('lands a worktree caller under <sessionCwd>/.kangentic/captures/<sessionId>', async () => {
+    const projectRoot = path.join(os.tmpdir(), 'kangentic-scope-project');
+    const worktree = path.join(projectRoot, '.kangentic', 'worktrees', 'fix-login-5ff16815');
+    const captureDirectory = await startAndPost(
+      resolverWithProjectPath('proj-1', projectRoot),
+      '/mcp/proj-1/worktree-sess',
+      worktree,
+    );
+
+    expect(captureDirectory()).toBe(path.join(worktree, '.kangentic', 'captures', 'worktree-sess'));
+  });
+
+  it('lands a caller with no session id under <projectPath>/.kangentic/captures/shared', async () => {
+    const projectRoot = path.join(os.tmpdir(), 'kangentic-scope-project');
+    const captureDirectory = await startAndPost(
+      resolverWithProjectPath('proj-1', projectRoot),
+      '/mcp/proj-1',
+      undefined,
+    );
+
+    expect(captureDirectory()).toBe(path.join(projectRoot, '.kangentic', 'captures', 'shared'));
+  });
+
+  it('falls back to the temp folder when the project path cannot be read and there is no session', async () => {
+    const captureDirectory = await startAndPost(resolverWithProjectPath('proj-1', null), '/mcp/proj-1', undefined);
+
+    expect(captureDirectory()).toBe(path.join(os.tmpdir(), 'kangentic-captures', 'proj-1'));
   });
 });
