@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useProjectStore } from './project-store';
 import type { SshClientStatus, SshHostAddInput, SshHostKeyProbe, SshHostStatus, SshRemoteFolderProbe } from '../../shared/types';
 
 /**
@@ -84,7 +85,12 @@ export const useSshStore = create<SshStore>((set, get) => ({
 
   removeHost: async (hostId) => {
     await window.electronAPI.ssh.removeHost(hostId);
-    await get().loadHosts();
+    // Main took the host's projects out of Kangentic with it, so the sidebar and an open board must hear.
+    await Promise.all([
+      get().loadHosts(),
+      useProjectStore.getState().loadProjects(),
+      useProjectStore.getState().loadCurrent(),
+    ]);
   },
 
   renameHost: async (hostId, name) => {

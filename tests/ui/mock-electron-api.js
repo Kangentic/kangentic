@@ -5064,7 +5064,12 @@
           return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
         },
         listHosts: async function () {
-          return win().__mockSshHosts || hosts;
+          if (win().__mockSshHosts) return win().__mockSshHosts;
+          // Main counts the projects on each host from the project table; so does the mock.
+          return hosts.map(function (status) {
+            var count = projects.filter(function (project) { return project.remote && project.remote.hostId === status.host.id; }).length;
+            return Object.assign({}, status, { projectCount: count });
+          });
         },
         probeHostKey: async function (destination) {
           if (win().__mockSshProbeError) throw new Error(win().__mockSshProbeError);
@@ -5093,6 +5098,8 @@
         },
         removeHost: async function (hostId) {
           hosts = hosts.filter(function (status) { return status.host.id !== hostId; });
+          // Main takes the host's projects out of Kangentic with it (they stay on the host).
+          projects = projects.filter(function (project) { return !(project.remote && project.remote.hostId === hostId); });
           fire();
         },
         renameHost: async function (hostId, name) {

@@ -69,9 +69,12 @@ process, a path tested against the wrong disk, an environment that overwrites th
   `tests/unit/remote-host-service.test.ts` pins the ssh options, the destination check, and that a
   failed ask is never an absence. `tests/unit/remote-helper-boundary.test.ts` keeps the helper bundle
   free of electron and the native modules it cannot load.
-- **Gap:** the test that runs the board's operations with the link down and asserts no row, branch or
-  task changed lands with those operations (the remote project work, Phase 3). Until then the
-  `pathPresence` rule is held by review.
+- **Test (link down):** `tests/unit/remote-link-down-no-mutation.test.ts` runs cold-open recovery
+  with the host out of reach and asserts a paused remote task stays paused, whether the resume fails
+  to prepare or the spawn onto the host fails, and that a failed local spawn still retires its record.
+  **Gap:** the other board operations (prune, stale-resource cleanup, auto-spawn) have no remote
+  test yet. A remote task has no worktree path for them to find absent, which is what keeps them
+  from demoting it, and `pathPresence` over `existsSync` is otherwise held by review.
 - **Review:** `/code-review` flags a new `existsSync`, `fs` read or pid use on a path or session that
   may belong to a remote project, and a new spawn path that reads `process.env` or `process.platform`
   for a host.

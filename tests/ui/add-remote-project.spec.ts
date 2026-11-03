@@ -167,6 +167,32 @@ test('marks a remote project with its host, and warns above the board only while
   await expect(strip).toHaveCount(0);
 });
 
+test('removing the host in Settings takes its projects out of the sidebar', async () => {
+  await addHost('Build server');
+  const projectName = `gone-${Date.now()}`;
+  await page.locator('[data-testid="sidebar-new-project-button"]').click();
+  await page.locator('[data-testid="add-project-host"]').click();
+  const form = page.locator('[data-testid="add-remote-project"]');
+  await form.locator('[data-testid="add-remote-project-folder"]').fill(`/srv/${projectName}`);
+  await form.locator('[data-testid="add-remote-project-submit"]').click();
+  await expect(form).toHaveCount(0);
+  const row = page.locator('[data-testid^="project-row-"]', { hasText: projectName });
+  await expect(row).toHaveCount(1);
+
+  await page.locator('[data-testid="settings-button"]').click();
+  await page.locator('[data-testid="settings-tab-ssh"]').click();
+  await page.locator('[data-testid="ssh-host-remove"]').click();
+  const confirmDialog = page.locator('h3:has-text("Remove host")').locator('xpath=ancestor::*[contains(@class, "z-[60]")][1]');
+  await expect(confirmDialog).toContainText('1 project');
+  await confirmDialog.getByRole('button', { name: 'Remove', exact: true }).click();
+  await expect(page.locator('[data-testid="ssh-host-row"]')).toHaveCount(0);
+
+  await page.evaluate(() => {
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+  });
+  await expect(row).toHaveCount(0);
+});
+
 test('shows a host that cannot be reached as its own reason, never as a missing folder', async () => {
   await addHost('Build server');
   await page.evaluate(() => {
