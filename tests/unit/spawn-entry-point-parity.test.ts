@@ -406,6 +406,40 @@ describe('spawn entry-point parity: every buildCommand site holds by session id 
     ).toEqual([]);
   });
 
+  // (k) The Agent Browser switch (task #977). While it is on, the Agent Browser
+  // is the only browser an agent drives, and an adapter that takes system
+  // prompt text gets the policy from `browserAutomationEnabled`. A build site
+  // that leaves it out spawns that agent with no policy and no sign of it.
+  it('every buildCommand( call site passes browserAutomationEnabled in its command options', () => {
+    // The value is read from the config, or forwarded from the transition
+    // engine's appConfig, which agent-spawn.ts reads from the config. A
+    // literal `true` or `false` would pass a presence check and fail the user.
+    const switchLine = /^\s*browserAutomationEnabled:\s*(?:resolveBrowserAutomationConfig\(|appConfig\.browserAutomationEnabled\b)/;
+    const buildSites = collectReceiverCalls('buildCommand');
+    expect(buildSites.length, 'expected at least one buildCommand( call site').toBeGreaterThan(0);
+    const missing = buildSites
+      .filter((site) => {
+        const lines = fs.readFileSync(path.join(REPO_ROOT, site.relativePath), 'utf-8').split('\n');
+        const previousSiteLine = Math.max(
+          0,
+          ...buildSites
+            .filter((other) => other.relativePath === site.relativePath && other.line < site.line)
+            .map((other) => other.line),
+        );
+        return !lines
+          .slice(previousSiteLine, site.line - 1)
+          .some((line) => !isCommentLine(line) && switchLine.test(line));
+      })
+      .map((site) => site.location);
+    expect(
+      missing,
+      `buildCommand( without a browserAutomationEnabled property in the command options above it:\n`
+        + `${missing.join('\n')}\n\n`
+        + `Pass resolveBrowserAutomationConfig(config.browserAutomation).enabled, so the agent gets `
+        + `the browser policy while the Agent Browser is on. See ${RULE_FILE}.`,
+    ).toEqual([]);
+  });
+
   it('every file with a buildCommand( call site also calls releaseCommandHold(', () => {
     const buildFiles = [...new Set(collectReceiverCalls('buildCommand').map((site) => site.relativePath))];
     const missing = buildFiles.filter((relativePath) => !fileHasNonCommentCall(relativePath, 'releaseCommandHold'));

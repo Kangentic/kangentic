@@ -23,6 +23,7 @@ import { resumePromptRidesCommandLine } from '../transition-engine/resume-prompt
 import { pasteAgentMessageInBackground } from '../automations/turn-end/agent-message-delivery';
 import { resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import { appendWorkflowAgentCaller } from '../agent/mcp-http/caller-url';
+import { resolveBrowserAutomationConfig } from '../browser/browser-automation-config';
 import { releaseCommandHold } from '../pty/lifecycle/adapter-lifecycle';
 import { buildWorkflowAgentContinueMessage, buildWorkflowAgentFirstMessage } from './workflow-agent-prompt';
 import { workflowTasks } from './workflow-tasks';
@@ -674,6 +675,9 @@ async function startWorkflowAgent(
     eventsOutputPath,
     shell,
     mcpServerEnabled: true,
+    // A read-only launch already runs Kangentic's server alone with Claude in
+    // Chrome off; the policy text still says which browser it may drive.
+    browserAutomationEnabled: resolveBrowserAutomationConfig(config.browserAutomation).enabled,
     mcpServerUrl: appendWorkflowAgentCaller(context.mcpServerHandle.urlForProject(homeProjectId), workflow.id),
     mcpServerToken: context.mcpServerHandle.token,
     model: choiceApplies ? choice.model ?? undefined : undefined,

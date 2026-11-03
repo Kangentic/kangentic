@@ -116,6 +116,7 @@ asarUnpack:
   - ".vite/build/status-bridge.js"
   - ".vite/build/plan-approval-bridge.js"
   - ".vite/build/background-shell-hint-bridge.js"
+  - ".vite/build/browser-policy-bridge.js"
   - ".vite/build/plugins/**"
 
 extraResources:

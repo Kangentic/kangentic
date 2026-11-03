@@ -43,6 +43,13 @@ const EXTERNAL_SCRIPTS = [
     destFile: 'background-shell-hint-bridge.js',
   },
   {
+    kind: 'bridge',
+    name: 'browser-policy-bridge',
+    src: 'src/main/agent/browser-policy-bridge.js',
+    destDir: '',
+    destFile: 'browser-policy-bridge.js',
+  },
+  {
     kind: 'plugin',
     adapter: 'opencode',
     name: 'kangentic-activity',

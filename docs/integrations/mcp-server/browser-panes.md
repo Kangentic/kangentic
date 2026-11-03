@@ -1,7 +1,7 @@
 ---
 type: Reference
 title: Browser panes
-description: "How agents open, list, close, pop out and resize the embedded Browser pane over MCP: surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Agent Browser gating, and set_viewport's zoom-to-fit emulation."
+description: "How agents open, list, close, pop out and resize the embedded Browser pane over MCP: the policy that makes it the only browser an agent drives, surface handles and surface-gone, the one-surface-per-task rule with its offscreen lane fallback and hand-off, Agent Browser gating, and set_viewport's zoom-to-fit emulation."
 tags: [mcp, browser, panes]
 sources:
   - resource: src/main/agent/mcp-http/browser-tools.ts
@@ -12,6 +12,8 @@ sources:
   - resource: src/main/browser/browser-pane-detach.ts
   - resource: src/main/browser/viewport-override.ts
   - resource: src/main/browser/browser-automation-config.ts
+  - resource: src/main/agent/mcp-http/server-instructions.ts
+  - resource: src/main/agent/shared/browser-policy-hook.ts
 ---
 # Browser panes
 
@@ -29,6 +31,18 @@ No tool in the family takes a `project` argument, so there is no way to *drive* 
 - `kangentic_browser_close_pane` reaches other projects only on an explicit `includeOtherProjects`, which widens `all` and also lets an explicitly named foreign `sessionId` / `taskId` resolve. That is a deliberate carve-out for "close all browsers": closing a pane is not reading or controlling someone else's page, and retention keeps a backgrounded project's panes alive, so those are exactly what such a request should reach. Without the flag it stays scoped like everything else. Note the asymmetry - a foreign pane can be *seen* (`list_panes` with `includeOtherProjects`) and *closed*, never driven.
 
 Gating: the global **Agent Browser** settings tab controls the family, read live per request. `browserAutomation.enabled` is the master switch: when off, the entire `kangentic_browser_*` family is not registered, so the tools never appear in `tools/list` and the instructions omit their guidance section (they would be unusable anyway, and advertising them is wasted context). When `enabled` is on, the sub-capability gates apply: `allowInteraction` gates click/type/keypress/drag (off = observe-only); `allowNavigation` gates navigate; `allowEval` gates eval (off by default); `restrictNavigationToLocalhost` confines navigation to localhost/private hosts (off by default). With `enabled` on, each tool returns an actionable `{ kind, detail }` error when one of those sub-capabilities is gated off, when no driveable pane exists (`no-pane-open`), when the named pane belongs to another project (`foreign-project`), or when the window holding the pane is minimized and therefore composites no frames (`pane-not-rendering`). Screenshots have a further constraint: a window that is hidden or fully occluded also stops compositing, and Electron cannot report that to the main process, so `pane-not-rendering` does not catch it. Those captures instead fail after a short bound with a `driver-error` telling the user to bring the window to the front. Non-pixel tools (`query_dom`, `click`, `type`, and the rest) are unaffected and keep working against a backgrounded pane.
+
+### The only browser an agent drives
+
+While `browserAutomation.enabled` is on, the Agent Browser is the only browser an agent drives, for any page (localhost, staging, production, a third-party site) and any purpose: checking the app, screenshots or DOM for its own work or an artifact, comparing production with a local build, scraping. This came from a session that drove a project's own Playwright MCP server for a whole task, capturing a production page for an artifact, while these tools sat in its tool list (task #977). The old guidance named Claude in Chrome by prefix but Playwright only as "a script", scoped the pane to verifying the running app, and said not to drive a browser proactively, so the agent judged its capture work out of scope. Three layers say it now:
+
+- **The MCP instructions** (`server-instructions.ts`, every agent): a short `BROWSER` section that states the policy, names `mcp__playwright__*`, `mcp__claude-in-chrome__*`, chrome-devtools and puppeteer servers, computer use and hand-written scripts, and says "open a browser only when the work needs one". Claude Code cuts a server's instructions at 4,096 characters, so the builder keeps under `MCP_INSTRUCTIONS_CHARACTER_CAP`: a pane URL is cut at 80 characters and the project list is shortened, ending in the `kangentic_list_projects` pointer, when the rest would pass it. `tests/unit/mcp-server-instructions-cap.test.ts` fails when the fixed text leaves too little room for a typical list.
+- **System prompt text** (Claude only): `--append-system-prompt` with `BROWSER_POLICY_PROMPT`, and `--no-chrome`, at spawn while the switch is on. A resumed conversation keeps the system prompt it started with until it compacts, and a subagent never gets it, so this is guidance, not the guarantee (see [Claude Code](../agents/claude-code.md#new-session)).
+- **A PreToolUse deny hook** (Claude only, the guarantee): `browser-policy-bridge.js` denies a browser server's tool with a reason that names `kangentic_browser_open_pane`, reading the switch live, so it holds for subagents and resumed sessions and lets go the moment the switch goes off. Servers are found by package in the configs Claude loads, whatever the user named them. See [`browser-policy-bridge.js`](../agents/bridge-scripts.md#browser-policy-bridgejs).
+
+There is no switch to allow another browser while this one is on: turn the Agent Browser off to use one. The hook cannot see whether the user named another browser, so "unless the user names it" is gone from the instructions too. Bash is left alone: running a project's own `npx playwright test` is not driving a browser.
+
+Large output no longer forces another browser: `kangentic_browser_screenshot`, `_screenshot_element`, `_query_dom` and `_eval` take `saveToFile` (see [Browser actions](browser-actions.md#kangentic_browser_screenshot)). `_query_dom` is the one for page HTML, since it needs no `allowEval`.
 
 Tool categories (26 tools):
 - **Discovery:** `kangentic_browser_list_panes` - list the Browser panes open in your project and their URLs. Each entry carries `sameProject` and `driveable`, and the response reports `otherProjectPaneCount` / `unknownProjectPaneCount` so an empty list is never mistaken for an idle machine. Pass `includeOtherProjects: true` to also list other projects' panes, which are visible but not driveable

@@ -44,7 +44,14 @@
  *    `captureElementClip`, exactly as the viewport screenshot does, so an
  *    element capture is planned to fit the pane rather than tiled by
  *    Chromium.
+ * 6. `saveToFile` on eval, query_dom and both screenshots writes the result to the
+ *    caller's capture folder and returns the path instead of the inline value
+ *    (task #977). An agent needing large DOM and PNG captures as files drove
+ *    Playwright MCP because these tools could only answer inline.
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 vi.mock('electron', () => ({
@@ -80,6 +87,8 @@ const getLayoutMetrics = vi.fn();
 // an untracked inline stub.
 const clickAtCenterOfSelector = vi.fn();
 const dispatchKeypress = vi.fn();
+// runtimeEvaluate drives the eval body's saveToFile path tested below.
+const runtimeEvaluate = vi.fn();
 vi.mock('../../src/main/browser/cdp/cdp', () => ({
   clickAtCenterOfSelector: (...args: unknown[]) => clickAtCenterOfSelector(...args),
   dispatchMouseEvent: (...args: unknown[]) => dispatchMouseEvent(...args),
@@ -95,7 +104,7 @@ vi.mock('../../src/main/browser/cdp/cdp', () => ({
   getLayoutMetrics: (...args: unknown[]) => getLayoutMetrics(...args),
   hoverSelector: vi.fn(),
   queryAllElements: vi.fn(),
-  runtimeEvaluate: vi.fn(),
+  runtimeEvaluate: (...args: unknown[]) => runtimeEvaluate(...args),
   scrollBy: (...args: unknown[]) => scrollBy(...args),
   selectOptionOnSelector: (...args: unknown[]) => selectOptionOnSelector(...args),
   setDialogResponse: vi.fn(),
@@ -113,6 +122,8 @@ vi.mock('../../src/main/browser/cdp/screenshot', () => ({
   captureScreenshotWithBudget: (...args: unknown[]) => captureScreenshotWithBudget(...args),
   captureElementClip: (...args: unknown[]) => captureElementClip(...args),
   describeViewportCapture: (...args: unknown[]) => describeViewportCapture(...args),
+  // saveToFile prunes its folder before each write; the pruning has its own test.
+  pruneShotsDir: vi.fn(),
 }));
 
 // detectDevServerError is stubbed per test; describeDevServerError stays REAL
@@ -193,6 +204,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { buildConfiguredMcpServer } from '../../src/main/agent/mcp-http-server';
 import { withGuest } from '../../src/main/browser/browser-pane-driver';
+import { getBoundingBox } from '../../src/main/browser/cdp/cdp';
 import type { TaskCounter } from '../../src/main/agent/mcp-http/handler-helpers';
 import type { RequestResolver } from '../../src/main/agent/mcp-http/project-resolver';
 import type { ResolvedBrowserAutomationConfig } from '../../src/main/browser/browser-automation-config';
@@ -215,8 +227,11 @@ function automationConfig(): ResolvedBrowserAutomationConfig {
   return { enabled: true, allowInteraction: true, allowNavigation: true, allowEval: true, restrictNavigationToLocalhost: false };
 }
 
-async function connect() {
-  const browser: BrowserToolDependencies = { projectId: CALLER_PROJECT };
+async function connect(captureDirectory?: string) {
+  const browser: BrowserToolDependencies = {
+    projectId: CALLER_PROJECT,
+    ...(captureDirectory ? { captureDirectory: () => captureDirectory } : {}),
+  };
   const server = buildConfiguredMcpServer(makeResolver(), fakeTaskCounter, automationConfig, null, browser);
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const client = new Client({ name: 'drive-body-guard', version: '1.0.0' });
@@ -420,6 +435,270 @@ describe('kangentic_browser_screenshot_element: pane surface passthrough', () =>
       elementClip: { selector: '.thing', box: { x: 10, y: 20, width: 80, height: 40 } },
     });
     await close();
+  });
+});
+
+describe('saveToFile: a capture written to the caller\'s folder instead of inline', () => {
+  const PNG_BYTES = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const inlineShot = {
+    mode: 'inline' as const,
+    format: 'png' as const,
+    base64: PNG_BYTES.toString('base64'),
+    byteLength: PNG_BYTES.byteLength,
+    width: 740,
+    height: 749,
+    viewportWidth: 740,
+    viewportHeight: 749,
+    deviceScaleFactor: 1,
+    metricsAvailable: true,
+    pixelsPerCssPixel: 1,
+    scale: 1,
+    fullPage: true,
+    elementClip: null,
+    retries: 0,
+    note: null,
+  };
+
+  function captureFolder(): string {
+    return fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-browser-capture-'));
+  }
+
+  it('eval writes a string value as it is and returns its path and size, not the value', async () => {
+    const folder = captureFolder();
+    const html = '<html><body>' + 'x'.repeat(5000) + '</body></html>';
+    runtimeEvaluate.mockResolvedValue({ value: html, error: null });
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_eval',
+      arguments: { expression: 'document.documentElement.outerHTML', saveToFile: true },
+    });
+
+    expect(result.isError).toBeUndefined();
+    const data = result.structuredContent as { filePath: string; bytes: number; value?: unknown };
+    expect(data.value).toBeUndefined();
+    expect(path.dirname(data.filePath)).toBe(folder);
+    expect(data.filePath).toMatch(/eval-.*\.txt$/);
+    expect(fs.readFileSync(data.filePath, 'utf8')).toBe(html);
+    expect(data.bytes).toBe(Buffer.byteLength(html));
+    // The inline text never carries the value, which is the whole point.
+    expect(JSON.stringify(result.content)).not.toContain('xxxxxxxxxx');
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('eval writes a non-string value as JSON', async () => {
+    const folder = captureFolder();
+    runtimeEvaluate.mockResolvedValue({ value: { links: ['/a', '/b'] }, error: null });
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_eval',
+      arguments: { expression: 'collectLinks()', saveToFile: true },
+    });
+
+    const data = result.structuredContent as { filePath: string };
+    expect(data.filePath).toMatch(/\.json$/);
+    expect(JSON.parse(fs.readFileSync(data.filePath, 'utf8'))).toEqual({ links: ['/a', '/b'] });
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('eval without saveToFile still returns the value inline', async () => {
+    runtimeEvaluate.mockResolvedValue({ value: 42, error: null });
+    const { client, close } = await connect(captureFolder());
+
+    const result = await client.callTool({ name: 'kangentic_browser_eval', arguments: { expression: '6 * 7' } });
+
+    expect(result.structuredContent).toEqual({ value: 42 });
+    await close();
+  });
+
+  it('screenshot writes the pane-bounded capture with no inline budget and returns a resource link', async () => {
+    const folder = captureFolder();
+    detectDevServerError.mockResolvedValue(null);
+    captureScreenshotWithBudget.mockResolvedValue(inlineShot);
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_screenshot',
+      arguments: { fullPage: true, format: 'png', maxBytes: 1000, saveToFile: true },
+    });
+
+    expect(result.isError).toBeUndefined();
+    // Still planned to the pane's own pixels; only the inline byte budget is lifted.
+    const options = captureScreenshotWithBudget.mock.calls[0][1] as { surface: unknown; maxBytes?: number; inlineCeiling?: number };
+    expect(options.surface).toEqual({ widget: { width: 740, height: 749 }, displayScale: 1 });
+    expect(options.maxBytes).toBeUndefined();
+    expect(options.inlineCeiling).toBe(Number.MAX_SAFE_INTEGER);
+    const meta = result.structuredContent as { mode: string; reason: string; filePath: string };
+    expect(meta).toMatchObject({ mode: 'file', reason: 'requested' });
+    expect(path.dirname(meta.filePath)).toBe(folder);
+    expect(meta.filePath).toMatch(/screenshot-.*\.png$/);
+    expect(fs.readFileSync(meta.filePath).equals(PNG_BYTES)).toBe(true);
+    expect(result.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: 'resource_link' })]));
+    expect(result.content).not.toEqual(expect.arrayContaining([expect.objectContaining({ type: 'image' })]));
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('query_dom writes the outerHTML at the observe tier, so a DOM capture needs no eval', async () => {
+    const folder = captureFolder();
+    const html = '<html><body><main>' + 'y'.repeat(5000) + '</main></body></html>';
+    getOuterHtml.mockResolvedValue(html);
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({ name: 'kangentic_browser_query_dom', arguments: { saveToFile: true } });
+
+    expect(result.isError).toBeUndefined();
+    const data = result.structuredContent as { selector: string; filePath: string; bytes: number; outerHTML?: string };
+    expect(data.outerHTML).toBeUndefined();
+    expect(data.selector).toBe('html');
+    expect(data.filePath).toMatch(/dom-.*\.html$/);
+    expect(path.dirname(data.filePath)).toBe(folder);
+    expect(fs.readFileSync(data.filePath, 'utf8')).toBe(html);
+    expect(vi.mocked(withGuest).mock.calls[0][0]).toMatchObject({ capability: 'observe' });
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('screenshot_element writes its clip to the caller\'s folder', async () => {
+    const folder = captureFolder();
+    captureElementClip.mockResolvedValue({ ...inlineShot, fullPage: false, elementClip: { selector: 'main', box: { x: 0, y: 0, width: 740, height: 749 } } });
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_screenshot_element',
+      arguments: { selector: 'main', saveToFile: true },
+    });
+
+    const meta = result.structuredContent as { filePath: string };
+    expect(path.dirname(meta.filePath)).toBe(folder);
+    expect(meta.filePath).toMatch(/element-.*\.png$/);
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('a jpeg screenshot is saved with a .jpg extension and its bytes round-trip', async () => {
+    const folder = captureFolder();
+    const jpegBytes = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46]);
+    detectDevServerError.mockResolvedValue(null);
+    captureScreenshotWithBudget.mockResolvedValue({
+      ...inlineShot,
+      format: 'jpeg' as const,
+      base64: jpegBytes.toString('base64'),
+      byteLength: jpegBytes.byteLength,
+    });
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_screenshot',
+      arguments: { format: 'jpeg', saveToFile: true },
+    });
+
+    expect(result.isError).toBeUndefined();
+    const meta = result.structuredContent as { filePath: string };
+    expect(meta.filePath).toMatch(/screenshot-.*\.jpg$/);
+    expect(fs.readFileSync(meta.filePath).equals(jpegBytes)).toBe(true);
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('query_dom with includeBox and saveToFile keeps selector and box, adds filePath and bytes, and omits outerHTML', async () => {
+    const folder = captureFolder();
+    const html = '<main>' + 'z'.repeat(200) + '</main>';
+    getOuterHtml.mockResolvedValue(html);
+    vi.mocked(getBoundingBox).mockResolvedValue({ content: [10, 20, 110, 20, 110, 70, 10, 70] } as never);
+    const { client, close } = await connect(folder);
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_query_dom',
+      arguments: { selector: 'main', includeBox: true, saveToFile: true },
+    });
+
+    expect(result.isError).toBeUndefined();
+    const data = result.structuredContent as Record<string, unknown>;
+    expect(data.selector).toBe('main');
+    expect(data.box).toEqual({ x: 10, y: 20, width: 100, height: 50 });
+    expect(data.bytes).toBe(Buffer.byteLength(html));
+    expect(data).not.toHaveProperty('outerHTML');
+    expect(fs.readFileSync(data.filePath as string, 'utf8')).toBe(html);
+    await close();
+    fs.rmSync(folder, { recursive: true, force: true });
+  });
+
+  it('writes under os.tmpdir()/kangentic-captures/<projectId> when no capture directory is supplied', async () => {
+    const expectedFolder = path.join(os.tmpdir(), 'kangentic-captures', CALLER_PROJECT);
+    runtimeEvaluate.mockResolvedValue({ value: 'fallback-value', error: null });
+    const { client, close } = await connect();
+
+    const result = await client.callTool({
+      name: 'kangentic_browser_eval',
+      arguments: { expression: '"fallback-value"', saveToFile: true },
+    });
+
+    const data = result.structuredContent as { filePath: string };
+    try {
+      expect(path.dirname(data.filePath)).toBe(expectedFolder);
+      expect(fs.readFileSync(data.filePath, 'utf8')).toBe('fallback-value');
+    } finally {
+      fs.rmSync(data.filePath, { force: true });
+      await close();
+    }
+  });
+
+  describe('a folder that cannot be created reports save-failed', () => {
+    let blockerDirectory: string;
+    let unwritableFolder: string;
+
+    beforeEach(() => {
+      // A regular file in the way: a folder cannot be created beneath it.
+      blockerDirectory = captureFolder();
+      const blockerFile = path.join(blockerDirectory, 'not-a-directory');
+      fs.writeFileSync(blockerFile, 'file');
+      unwritableFolder = path.join(blockerFile, 'captures');
+    });
+
+    function expectSaveFailed(result: Awaited<ReturnType<Awaited<ReturnType<typeof connect>>['client']['callTool']>>): void {
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toMatchObject({ error: { kind: 'save-failed' } });
+      const detail = (result.structuredContent as { error: { detail: string } }).error.detail;
+      expect(detail).toContain('could not be written');
+      fs.rmSync(blockerDirectory, { recursive: true, force: true });
+    }
+
+    it('screenshot', async () => {
+      detectDevServerError.mockResolvedValue(null);
+      captureScreenshotWithBudget.mockResolvedValue(inlineShot);
+      const { client, close } = await connect(unwritableFolder);
+
+      expectSaveFailed(await client.callTool({ name: 'kangentic_browser_screenshot', arguments: { saveToFile: true } }));
+      await close();
+    });
+
+    it('screenshot_element', async () => {
+      captureElementClip.mockResolvedValue({ ...inlineShot, fullPage: false, elementClip: { selector: 'main', box: { x: 0, y: 0, width: 1, height: 1 } } });
+      const { client, close } = await connect(unwritableFolder);
+
+      expectSaveFailed(await client.callTool({ name: 'kangentic_browser_screenshot_element', arguments: { selector: 'main', saveToFile: true } }));
+      await close();
+    });
+
+    it('query_dom', async () => {
+      getOuterHtml.mockResolvedValue('<html></html>');
+      const { client, close } = await connect(unwritableFolder);
+
+      expectSaveFailed(await client.callTool({ name: 'kangentic_browser_query_dom', arguments: { saveToFile: true } }));
+      await close();
+    });
+
+    it('eval', async () => {
+      runtimeEvaluate.mockResolvedValue({ value: 'x', error: null });
+      const { client, close } = await connect(unwritableFolder);
+
+      expectSaveFailed(await client.callTool({ name: 'kangentic_browser_eval', arguments: { expression: '"x"', saveToFile: true } }));
+      await close();
+    });
   });
 });
 

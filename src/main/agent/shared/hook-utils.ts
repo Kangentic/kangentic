@@ -5,6 +5,13 @@ import { toForwardSlash } from '../../../shared/paths';
 import { MARK_BACKGROUND_SERVICE_TOOL } from '../../../shared/background-shell-hold';
 import { resolveBridgeScript } from './bridge-utils';
 
+/**
+ * The tool every browser policy spec points the agent at, which also marks a
+ * hook command as Kangentic's (`browser-policy-hook.ts` re-exports it, since
+ * that module imports this one).
+ */
+export const BROWSER_POLICY_REPLACEMENT_TOOL = 'kangentic_browser_open_pane';
+
 /** The bridges this running app ships, as `ownBridgePaths` resolved them. */
 let shippedBridgePaths: readonly string[] | null = null;
 
@@ -18,32 +25,35 @@ function ownBridgePaths(): readonly string[] {
     resolveBridgeScript('event-bridge'),
     resolveBridgeScript('plan-approval-bridge'),
     resolveBridgeScript('background-shell-hint-bridge'),
+    resolveBridgeScript('browser-policy-bridge'),
   ].map((bridgePath) => toForwardSlash(bridgePath));
   return shippedBridgePaths;
 }
 
 /**
- * True when a hint bridge command's spec, its last argument (base64 JSON),
- * names Kangentic's MCP tool. Every spec Kangentic writes carries the hint
- * text, which names it; a user's own hint-like hook does not.
+ * True when a bridge command's spec, its last argument (base64 JSON), names
+ * `marker`. Every hint spec Kangentic writes names its MCP tool, and every
+ * browser policy spec names the tool it points the agent at; a user's own
+ * look-alike hook does not.
  */
-function carriesKangenticHintSpec(command: string): boolean {
+function carriesKangenticSpec(command: string, marker: string): boolean {
   const lastArgument = command.trim().split(/\s+/).pop() ?? '';
   if (!/^[A-Za-z0-9+/]+={0,2}$/.test(lastArgument)) return false;
-  return Buffer.from(lastArgument, 'base64').toString('utf8').includes(MARK_BACKGROUND_SERVICE_TOOL);
+  return Buffer.from(lastArgument, 'base64').toString('utf8').includes(marker);
 }
 
 /**
  * Identify a hook command string as Kangentic-injected.
  *
  * Matches the current bridges (`event-bridge`, `plan-approval-bridge`,
- * `background-shell-hint-bridge`) and the legacy `activity-bridge` (removed
- * 2026-03-01) AND requires the command to be Kangentic's by one of:
+ * `background-shell-hint-bridge`, `browser-policy-bridge`) and the legacy
+ * `activity-bridge` (removed 2026-03-01) AND requires the command to be
+ * Kangentic's by one of:
  * - `.kangentic` or `/kangentic/` in a path (a session directory, a workspace
  *   bridge copy, a source checkout, a Windows install);
  * - the events path named through Kangentic's own variable
- *   (`EVENTS_PATH_FROM_ENVIRONMENT`), or a hint spec that names Kangentic's
- *   MCP tool. Neither depends on where the app is installed, so they also
+ *   (`EVENTS_PATH_FROM_ENVIRONMENT`), or a hint or browser policy spec that
+ *   names Kangentic's MCP tool. Neither depends on where the app is installed, so they also
  *   hold for a hook an earlier install wrote from a path this one no longer
  *   runs from (an AppImage mounts at a new `/tmp/.mount_*` path on every
  *   launch, and a user can move the app);
@@ -59,12 +69,14 @@ export function isKangenticHookCommand(command: string | undefined): boolean {
     || command.includes('event-bridge')
     || command.includes('plan-approval-bridge')
     || command.includes('background-shell-hint-bridge')
+    || command.includes('browser-policy-bridge')
     // The WSL hook transport's script, a session's own or a workspace copy.
     || command.includes('wsl-hook.sh');
   if (!hasBridge) return false;
   if (command.includes('.kangentic') || command.includes('/kangentic/')) return true;
   if (command.includes(EVENTS_PATH_FROM_ENVIRONMENT)) return true;
-  if (command.includes('background-shell-hint-bridge') && carriesKangenticHintSpec(command)) return true;
+  if (command.includes('background-shell-hint-bridge') && carriesKangenticSpec(command, MARK_BACKGROUND_SERVICE_TOOL)) return true;
+  if (command.includes('browser-policy-bridge') && carriesKangenticSpec(command, BROWSER_POLICY_REPLACEMENT_TOOL)) return true;
   return ownBridgePaths().some((bridgePath) => command.includes(bridgePath));
 }
 

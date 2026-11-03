@@ -73,7 +73,7 @@ All implementations are best-effort and never throw: a help-read or history-scan
 
 `src/main/agent/agent-adapter.ts`
 
-Eleven recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
+Twelve recently-added optional fields drive per-spawn overrides. Adapters consume them in `buildCommand` to emit the appropriate CLI flag (or branch) when the value is present:
 
 | Field | Type | Purpose |
 |-------|------|---------|
@@ -88,6 +88,7 @@ Eleven recently-added optional fields drive per-spawn overrides. Adapters consum
 | `capturePromptText?` | `boolean` | Carry the submitted prompt's text in the Prompt event's `detail`. Set only by a Command Terminal's start, whose namer (`command-terminal-namer.ts`) names the terminal from its first prompt; a task spawn never sets it, so task sessions' events keep no prompt text. An adapter whose prompt hook carries no text ignores it. |
 | `readOnly?` | `boolean` | Launch with no tool that edits a file or runs a shell command, and with Kangentic's MCP server as the only one. Set only for a workflow's own agent, and only on an adapter that declares `supportsReadOnlyLaunch`. Claude maps it to `--tools Read,Grep,Glob,ToolSearch`, `--strict-mcp-config` and `--no-chrome` (`READ_ONLY_TOOLS` in `adapters/claude/command-builder.ts`). |
 | `readableDirectories?` | `readonly string[]` | More directories the agent may read beyond its `cwd`: other projects' checkouts, for a workflow agent planning tasks on their boards. Set only on an adapter that declares `supportsReadableDirectories`. Claude emits one `--add-dir` per directory. |
+| `browserAutomationEnabled?` | `boolean` | The Agent Browser switch (`AppConfig.browserAutomation.enabled`, resolved) when the command is built. While on, an adapter that takes system prompt text gets the browser policy: Claude gets `--append-system-prompt` with `BROWSER_POLICY_PROMPT`, and `--no-chrome` unless `readOnly` already added it. Every `buildCommand` site sets it (`transition-engine.ts`, `session-startup/prepare-spawn.ts`, `ipc/helpers/agent-spawn.ts`, `ipc/handlers/transient-sessions.ts`, `workflows/workflow-agent.ts`); `spawn-entry-point-parity.test.ts` fails a site without it. See [Browser panes](../mcp-server/browser-panes.md#the-only-browser-an-agent-drives). |
 
 A task session never switches model or effort live: any change to a concrete value restarts it with the new launch flags (see [Command Injection](../../architecture/automations/command-injection.md)). Only the Command Terminal, which has no session to `--resume`, switches live, through `getInjectionSequence` in the [Optional properties](optional-properties.md) table. The adapter declares the slash-command writes and `TerminalSubmitScheduler.scheduleKeystrokes` delivers them via `TerminalSubmit.submitKeystrokes`, unverified (a transient session has no task row for the verifier to resolve). `getSubmissionVerifier('command-injection')` confirms a task's column message instead.
 

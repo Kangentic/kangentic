@@ -56,6 +56,7 @@ import { scopeServerToWorkflowAgent } from './mcp-http/workflow-agent-scope';
 import { registerDiagnosticsTools } from './mcp-http/diagnostics-tools';
 import { registerUsageTools } from './mcp-http/usage-tools';
 import { resolveCallerTaskId } from './mcp-http/caller-task';
+import { browserCaptureDirectory } from './mcp-http/browser-capture-file';
 import {
   registerBrowserTools,
   type AutomationConfigReader,
@@ -127,6 +128,15 @@ export interface McpHttpServerHandle {
 }
 
 /**
+ * The folder a session's agent works in, where a browser tool's saveToFile
+ * writes (`browserCaptureDirectory`). The command's cwd, not the PTY's: a
+ * shell that started in the home folder (a UNC path under cmd) moves into it.
+ */
+interface BrowserCaptureSessionLookup {
+  getSessionCommandCwd(sessionId: string): string | undefined;
+}
+
+/**
  * Main-process singletons the steering tools need. `CommandContext` carries
  * only the project DB and board callbacks, so these are threaded in at
  * registration time instead (the `browser-tools.ts` precedent). Read lazily
@@ -134,7 +144,7 @@ export interface McpHttpServerHandle {
  * context does not exist yet at `startMcpHttpServer` time.
  */
 export interface McpSteeringContext {
-  sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker;
+  sessionManager: SessionSendSessionManager & SteeringSessionLookup & BackgroundShellServiceMarker & BrowserCaptureSessionLookup;
   terminalSubmit: SessionSendTerminalSubmit;
   /** Hold a message for a task with no running agent (src/main/held-messages). */
   holdTaskMessage: HeldMessageHolder;
@@ -183,12 +193,22 @@ export async function startMcpHttpServer(
   // one); the session lookup is read lazily for the same reason as above.
   const resolveBrowser = (
     projectId: string,
-    callerSessionId?: string,
+    callerSessionId: string | undefined,
+    projectPath: () => string | null,
   ): BrowserToolDependencies => {
     const sessionManager = getSteeringContext()?.sessionManager ?? null;
     return {
       projectId,
       callerSessionId,
+      // Where saveToFile writes: a Kangentic folder inside the caller's own
+      // working directory, so it can Read the file back without a prompt.
+      // Read only when a tool saves.
+      captureDirectory: () => browserCaptureDirectory({
+        projectPath: projectPath(),
+        callerSessionId,
+        sessionCwd: callerSessionId ? sessionManager?.getSessionCommandCwd(callerSessionId) ?? null : null,
+        projectId,
+      }),
       // A narrow adapter over SessionManager: these tools only need to resolve
       // the caller's own task id. The lane's cookie jar is keyed by that task
       // id, so no worktree path lookup is needed here.
@@ -512,7 +532,7 @@ async function handleHttpRequest(
   getBrowserAutomationConfig: AutomationConfigReader,
   networkConfig: McpServerNetworkConfig,
   resolveSteering: (callerSessionId?: string) => SteeringToolDependencies | null,
-  resolveBrowser: (projectId: string, callerSessionId?: string) => BrowserToolDependencies,
+  resolveBrowser: (projectId: string, callerSessionId: string | undefined, projectPath: () => string | null) => BrowserToolDependencies,
   resolveBackgroundShells: (callerSessionId?: string) => BackgroundShellToolDependencies | null,
 ): Promise<void> {
   // Token check first -- cheapest reject path. Constant-time compare so a
@@ -580,7 +600,13 @@ async function handleHttpRequest(
         taskCounter,
         getBrowserAutomationConfig,
         resolveSteering(callerSessionId),
-        resolveBrowser(projectId, callerSessionId),
+        resolveBrowser(projectId, callerSessionId, () => {
+          try {
+            return resolver.defaultContextResolved().context.getProjectPath();
+          } catch {
+            return null;
+          }
+        }),
         toolArgumentNotices,
         resolveBackgroundShells(callerSessionId),
       );

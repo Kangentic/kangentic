@@ -73,6 +73,8 @@ interface TransitionEngineConfig {
   projectName: string | null;
   gitConfig: AppConfig['git'];
   mcpServerEnabled?: boolean;
+  /** The Agent Browser switch, resolved (`CommandOptions.browserAutomationEnabled`). */
+  browserAutomationEnabled?: boolean;
   /** Project-scoped URL for the in-process MCP HTTP server. */
   mcpServerUrl?: string;
   /** Per-launch MCP server token (X-Kangentic-Token header). */
@@ -691,6 +693,7 @@ export class TransitionEngine {
       eventsOutputPath,
       shell,
       mcpServerEnabled: appConfig.mcpServerEnabled,
+      browserAutomationEnabled: appConfig.browserAutomationEnabled,
       // Carries this session's own id so the MCP server can identify the caller
       // (see appendCallerSession). Stamped, never looked up, so it cannot drift.
       mcpServerUrl: appendCallerSession(appConfig.mcpServerUrl, input.ptySessionId),

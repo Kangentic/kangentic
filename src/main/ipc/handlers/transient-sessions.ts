@@ -19,6 +19,7 @@ import { agentRegistry } from '../../agent/agent-registry';
 import { AgentCliNotFoundError } from '../../agent/shared/agent-cli-not-found';
 import { resolveShimLaunch } from '../../agent/shared/shim-launch';
 import { isSameCliPlace, resolveCliTarget, shellForTarget, toStoredCliTarget } from '../../agent/shared/cli-target';
+import { resolveBrowserAutomationConfig } from '../../browser/browser-automation-config';
 import { canResumeConversationById } from '../../agent/shared/workflow-agent-capability';
 import { resolveFreshAgentSessionId } from '../../agent/shared/fresh-agent-session-id';
 import { heldByLiveSession, settleCommandTerminalResume } from '../helpers/command-terminal-background-session';
@@ -403,6 +404,7 @@ export async function startCommandTerminal(
       ptySessionId: sessionId,
       shell,
       mcpServerEnabled: config.mcpServer.enabled,
+      browserAutomationEnabled: resolveBrowserAutomationConfig(config.browserAutomation).enabled,
       mcpServerUrl: context.mcpServerHandle?.urlForProject(input.projectId),
       mcpServerToken: context.mcpServerHandle?.token,
       // Project default model/effort, same tier board-task spawns apply. A
