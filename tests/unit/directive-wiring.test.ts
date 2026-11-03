@@ -35,6 +35,7 @@ const KNOWN_KINDS = new Set([
   'extractPlanMode',
   'extractDetail',
   'extractDetailWhenTool',
+  'extractHolderTimeout',
   'setDetail',
   'setTypeWhen',
   'setToolWhen',
