@@ -392,6 +392,51 @@ describe('captureSessionIdFromFilesystem - an OpenCode 2 database', () => {
     expect(located).toBe(path.join(fakeHome, '.local', 'share', 'opencode', 'opencode.db'));
   });
 
+  it('warns about an incomplete session_v2 with no session table, naming the table, the missing column and the version', () => {
+    const fixture = createDbWithSchema('CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL)');
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    const message = String(warnSpy.mock.calls[0]?.[0]);
+    expect(message).toContain('`time_created`');
+    expect(message).toContain('`session_v2` table');
+    expect(message).toContain('(detected version: v2.2.5)');
+    expect(message).toContain('Verified against 1.14.25 and 2.2.5');
+  });
+
+  it('does not warn about an incomplete session_v2 beside a complete session', () => {
+    const fixture = createDbWithSchema(
+      `CREATE TABLE session_v2 (id TEXT PRIMARY KEY);
+       CREATE TABLE session ${SESSION_TABLE_COLUMNS}`,
+    );
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).not.toHaveBeenCalled();
+  });
+
+  it('warns that the session table is missing when neither session table exists', () => {
+    const fixture = createDbWithSchema('CREATE TABLE unrelated (id TEXT PRIMARY KEY)');
+    const database = new Database(fixture.path, { readonly: true });
+    try {
+      verifyOpenCodeSchemaOnce(database, () => 'v2.2.5');
+    } finally {
+      database.close();
+      fixture.cleanup();
+    }
+    expect(warnSpy).toHaveBeenCalledTimes(1);
+    expect(String(warnSpy.mock.calls[0]?.[0])).toContain('`session` table is missing');
+  });
+
   it('does not warn about a fresh OpenCode 2 database, which has no session table at all', () => {
     const fixture = createDbWithSchema(`CREATE TABLE session_v2 ${SESSION_TABLE_COLUMNS}`);
     const database = new Database(fixture.path, { readonly: true });

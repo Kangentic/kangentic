@@ -16,6 +16,10 @@ sources:
   - resource: src/main/agent/adapters/opencode/version.ts
   - resource: src/main/agent/adapters/opencode/v2-messages.ts
   - resource: src/main/agent/adapters/opencode/plugin/kangentic-activity-v2.mjs
+  - resource: src/main/agent/adapters/opencode/transcript-parser.ts
+  - resource: src/main/agent/adapters/opencode/command-injection-verifier.ts
+  - resource: src/main/agent/adapters/opencode/capability-discovery.ts
+  - resource: src/main/agent/adapters/opencode/project-relocation.ts
 ---
 # OpenCode
 
@@ -54,15 +58,15 @@ opencode --standalone [--session <id> | --prompt <text>]
   - a failed execution to `idle` with `detail: 'error'`, and an interrupted one to `interrupted`;
   - `permission.asked` and `question.asked` to the waits, their replies to notifications (the V1 names).
 
-  The first event carrying `data.sessionID` writes `session_start` with the id in hookContext. `ctx.tool.hook('execute.before' | 'execute.after')` writes `tool_start` (detail from `input.command`, `input.path`, ...) and `tool_end`. Measured on 2.2.5: a turn with a shell call wrote session start, prompt, tool start and end, idle; a `.env` read wrote the approval wait and its reply. The failure and interrupt event names are not measured.
+  The first event carrying `data.sessionID` writes `session_start` with the id in hookContext. `ctx.tool.hook('execute.before' | 'execute.after')` writes `tool_start` (detail from `input.command`, `input.path`, ...) and `tool_end`. Measured on 2.2.5: a turn with a shell call wrote session start, prompt, tool start and end, idle; a `.env` read wrote the approval wait and its reply. The failure and interrupt event names, and the `question.*` names, are not measured. They stay as guesses: one that misses matches nothing, and the PTY fallback ends the turn.
 - **Session ids.** V2 keeps `~/.local/share/opencode/opencode.db` and migrates it in place: it leaves the V1 `session`, `message` and `part` tables as they were, copies the V1 sessions into `session_v2`, and writes new sessions to `session_v2` and `session_message` only. An OpenCode 1 run afterwards writes `session` again. The session poll reads both tables.
-- **Transcript and delivery check.** A V2 session's messages are `session_message` rows, one per message ordered by `seq`, with the text, reasoning and tool calls in `data.content` (`v2-messages.ts`). The transcript reader and the Conversation viewer's pages read those rows for a session that has no V1 rows, and the auto_command check reads its `type = 'user'` rows. So handoff, the agent's last reply for turn-end automations, and delivery confirmation work on V2.
-- **WSL.** The distro CLI's major is read once per binary with `--version`. On V2, `session list` takes `--standalone` instead of `--pure`, and the export is `session export <id> --standalone`, which prints one record per message.
+- **Transcript and delivery check.** A V2 session's messages are `session_message` rows, one per message ordered by `seq`, with the text, reasoning and tool calls in `data.content` (`v2-messages.ts`). The migration copies every V1 session's messages into `session_message` too, and each major then writes only its own table, so a session continued after the upgrade has its newest turns in one table alone. The transcript reader and the Conversation viewer's pages read whichever table holds the session's newest message, and `message` on a tie. The auto_command check reads the recent `message` rows, then the session's `type = 'user'` rows. So handoff, the agent's last reply for turn-end automations, and delivery confirmation work on V2.
+- **WSL.** The distro CLI's major is read with `--version` once per binary, and again after Kangentic re-detects the CLI. A failed read fails the run that asked rather than guessing a major. On V2, `session list` takes `--standalone` instead of `--pure`, and the export is `session export <id> --standalone`, which prints one record per message.
 - **Sign-in.** V2 keeps credentials in the database's `credential` table and imports a V1 `auth.json` there at start, so `probeAuth` counts that table first (local only), then reads `auth.json`.
 - **Upgrading in place.** The detected version is cached until Kangentic re-detects the CLI (a CLI path change, or a restart), so the first spawn after replacing OpenCode 1 with 2 under the same path still gets the V1 command.
 - **Answer runs** (auto-name, Knowledge Graph Ask): `run --agent plan --format json --standalone`, and the session delete takes `--standalone` too. V2 has no `--pure`. Its `run --format json` events have V1's shape. V2's built-in Plan agent allows shell commands (V1's refused them), so an answer run's inline config denies `shell` and `edit`. Measured: without the deny a scripted shell call wrote its file, with it V2 did not offer the shell tool.
 - **Model picker.** V2's root `--help` has no `--model`, so capability discovery reports the model override as supported on V2 without reading the help.
-- **Remote mode** needs OpenCode 1: `attach` and the server API remote mode uses are V1's. A V2 remote spawn is blocked with that reason, and so is "Test connection" with a local V2. A V2 server answers `/global/health` with its web UI's HTML page, which the connection test reports the same way.
+- **Remote mode** needs OpenCode 1: `attach` and the server API remote mode uses are V1's. A V2 remote spawn is blocked with that reason, and so is "Test connection" with a local V2. A V2 server answers `/global/health` with its web UI's HTML page, which the connection test reports the same way. A body that is neither JSON nor an HTML page keeps its parse error, since it points at a wrong URL or a proxy.
 - **Telemetry.** OpenCode streams no token usage to Kangentic on either major, so the adapter declares `liveTelemetryUnsupported` ("Telemetry: TUI only") and the card no longer shows "Starting agent..." for the whole session.
 
 ## Permission Modes

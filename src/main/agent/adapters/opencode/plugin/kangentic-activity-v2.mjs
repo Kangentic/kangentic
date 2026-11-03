@@ -43,12 +43,15 @@ function sessionIdOf(event) {
  *
  * Measured on 2.2.5 (`run` and the TUI share the server that runs plugins):
  *  - `session.execution.started` opens a turn and `session.execution.succeeded`
- *    closes it. A turn that does not succeed ends in another
- *    `session.execution.*` event: a failure reads as `idle` with
- *    `detail: 'error'`, as OpenCode 1's `session.error` did, and an interrupt
- *    as `interrupted`.
+ *    closes it.
  *  - `permission.asked` / `permission.replied` keep their OpenCode 1 names.
- *    `question.*` is taken to have kept them too.
+ *
+ * Not measured, and kept on purpose: the names of a failed or interrupted
+ * turn (`session.execution.failed`, `.interrupted` and their spellings, and
+ * OpenCode 1's `session.idle` / `session.error`), and `question.*`, taken to
+ * have kept its OpenCode 1 names. A failure reads as `idle` with
+ * `detail: 'error'` and an interrupt as `interrupted`. A guess that misses
+ * matches nothing, and the PTY fallback ends the turn, as with no branch.
  *
  * `session_start` is not an OpenCode 2 event: the plugin writes it for the
  * first event of each session it sees (`isNewSession`), with the id in

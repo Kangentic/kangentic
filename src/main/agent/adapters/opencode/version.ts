@@ -12,7 +12,7 @@
  */
 export function openCodeMajorVersion(version: string | null | undefined): number | null {
   if (!version) return null;
-  const match = /^v?(\d+)\./i.exec(version.trim().replace(/^opencode\s+/i, ''));
+  const match = /^v?(\d+)(?:\.|$)/i.exec(version.trim().replace(/^opencode\s+/i, ''));
   return match ? Number(match[1]) : null;
 }
 

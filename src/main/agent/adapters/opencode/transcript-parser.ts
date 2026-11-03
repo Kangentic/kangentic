@@ -5,7 +5,7 @@ import type { TranscriptPageReadRequest, TranscriptPageReadResult } from '../../
 import { parseWindowBytes, prependTruncationMarker } from '../../shared/transcript-truncation';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
-import { openCodeV2MessageEntry } from './v2-messages';
+import { openCodeV2RowEntries, type OpenCodeV2MessageRow } from './v2-messages';
 
 /**
  * Parse an OpenCode session into agent-agnostic `TranscriptEntry[]` for the
@@ -114,21 +114,37 @@ interface MessageExtent {
  * Where a session's messages are stored. OpenCode 1 writes `message` and
  * `part`. OpenCode 2 (measured on 2.2.5) keeps the same database, leaves those
  * tables as they were, and writes a session's messages to `session_message`
- * only, one row per message ordered by `seq`. A session is in exactly one.
+ * only, one row per message ordered by `seq`.
+ *
+ * A session can be in both. OpenCode 2's migration copies every OpenCode 1
+ * session's messages into `session_message`, and each major then writes only
+ * its own table, so a session continued on either major after the migration
+ * has its newest turns in one table alone. The store with the newer message
+ * holds the whole conversation, and a tie (a session no one continued) reads
+ * `message` as before. A session whose newest turn moves to the other store
+ * changes its cursors, and the viewer starts it again (`reset`).
  */
 type MessageStore = 'v1' | 'v2';
 
-function hasRows(database: DatabaseType.Database, sql: string, sessionId: string): boolean {
+/** The session's newest `time_created` in `table`, or null for none or no such table. */
+function newestMessageAt(database: DatabaseType.Database, table: 'message' | 'session_message', sessionId: string): number | null {
   try {
-    return database.prepare<[string], { found: number }>(sql).get(sessionId) !== undefined;
-  } catch {
-    return false; // No such table in this database.
+    return database
+      .prepare<[string], { newest: number | null }>(`SELECT MAX(time_created) AS newest FROM ${table} WHERE session_id = ?`)
+      .get(sessionId)?.newest ?? null;
+  } catch (error) {
+    // An OpenCode 1 database has no `session_message`, and a fresh OpenCode 2
+    // one may have no `message`. Any other failure is a failed read.
+    if (error instanceof Error && /no such table/i.test(error.message)) return null;
+    throw error;
   }
 }
 
 function storeOf(database: DatabaseType.Database, sessionId: string): MessageStore {
-  if (hasRows(database, 'SELECT 1 AS found FROM message WHERE session_id = ? LIMIT 1', sessionId)) return 'v1';
-  return hasRows(database, 'SELECT 1 AS found FROM session_message WHERE session_id = ? LIMIT 1', sessionId) ? 'v2' : 'v1';
+  const v1Newest = newestMessageAt(database, 'message', sessionId);
+  const v2Newest = newestMessageAt(database, 'session_message', sessionId);
+  if (v2Newest === null) return 'v1';
+  return v1Newest === null || v2Newest > v1Newest ? 'v2' : 'v1';
 }
 
 /** Every message of a session in order, sized from SQLite's own `length()`, without reading any data. */
@@ -171,18 +187,13 @@ function messageExtents(database: DatabaseType.Database, sessionId: string, stor
 /** An OpenCode 2 session's `session_message` rows `[first, last]`, mapped like an export's messages. */
 function readV2Messages(database: DatabaseType.Database, sessionId: string, first: MessageExtent, last: MessageExtent): TranscriptEntry[] {
   const rows = database
-    .prepare<[string, number, string, number, string], { id: string; type: string; time_created: number; data: string }>(
+    .prepare<[string, number, string, number, string], OpenCodeV2MessageRow>(
       `SELECT id, type, time_created, data FROM session_message
        WHERE session_id = ? AND (seq, id) >= (?, ?) AND (seq, id) <= (?, ?)
        ORDER BY seq ASC, id ASC`,
     )
     .all(sessionId, first.order, first.id, last.order, last.id);
-  const messages = rows.flatMap((row) => {
-    const data = tryParseJson(row.data);
-    const entry = isRecord(data) ? openCodeV2MessageEntry(row.id, row.type, row.time_created, data) : null;
-    return entry ? [entry] : [];
-  });
-  return mapOpenCodeRemoteEntries(messages);
+  return mapOpenCodeRemoteEntries(openCodeV2RowEntries(rows));
 }
 
 /** Read and map the messages `extents[from, to)`, each entry stamped with its message's position. */

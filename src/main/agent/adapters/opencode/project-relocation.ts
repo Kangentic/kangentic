@@ -1,6 +1,6 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import { replacePathPrefix } from '../../../../shared/paths';
+import { replacePathPrefix, toForwardSlash } from '../../../../shared/paths';
 import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import { writeTransaction } from '../../../db/transaction';
 
@@ -86,7 +86,11 @@ export async function migrateOpenCodeProjectData(oldProjectPath: string, newProj
           .all() as Array<{ rowid: number | bigint; value: string }>;
         const update = db!.prepare(`UPDATE "${table}" SET "${column}" = ? WHERE rowid = ?`);
         for (const row of rows) {
-          const rewritten = replacePathPrefix(row.value, oldResolved, newResolved);
+          const joined = replacePathPrefix(row.value, oldResolved, newResolved);
+          // `path.join` gives native separators. A value stored with forward
+          // slashes only (OpenCode 2, and OpenCode 1 since 1.18 on Windows)
+          // keeps them, so the rewrite matches what OpenCode itself writes.
+          const rewritten = joined && !row.value.includes('\\') ? toForwardSlash(joined) : joined;
           if (!rewritten || rewritten === row.value) continue;
           try {
             update.run(rewritten, row.rowid);

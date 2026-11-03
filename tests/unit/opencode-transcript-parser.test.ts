@@ -185,6 +185,185 @@ describe('an OpenCode 2 session in the same database', () => {
   });
 });
 
+/**
+ * OpenCode 2's migration copies every OpenCode 1 session into `session_message`, and
+ * each major then writes only its own table. A session id in both stores reads the
+ * store with the newer message, and a tie reads `message`.
+ */
+describe('a session stored in both message and session_message', () => {
+  const SESSION = 'ses_mixed';
+  let directory: string;
+  let dbPath: string;
+
+  function buildMixedDatabase(v1Time: number, v2Time: number): void {
+    const DatabaseConstructor = loadBetterSqlite3();
+    if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+    const database = new DatabaseConstructor(dbPath);
+    database.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.exec('CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.prepare('INSERT INTO message VALUES (?, ?, ?, ?, ?)').run('v1_user', SESSION, v1Time, v1Time, JSON.stringify({ role: 'user' }));
+    database.prepare('INSERT INTO part VALUES (?, ?, ?, ?, ?, ?)').run('v1_part', 'v1_user', SESSION, v1Time, v1Time, JSON.stringify({ type: 'text', text: 'Asked on OpenCode 1' }));
+    database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)')
+      .run('v2_user', SESSION, 'user', 1, v2Time, v2Time, JSON.stringify({ time: { created: v2Time }, text: 'Asked on OpenCode 2', files: [] }));
+    database.close();
+  }
+
+  function tailTexts(): string[] {
+    return readOpenCodeTailAtPath(dbPath, SESSION).entries.map((entry) => (entry.kind === 'user' ? entry.text : entry.kind));
+  }
+
+  function pageTexts(): string[] {
+    const result = readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'around', position: 0, maxBytes: 100_000 });
+    if (result.status !== 'ok') throw new Error(`expected a page, got ${JSON.stringify(result)}`);
+    return result.page.entries.map((entry) => (entry.kind === 'user' ? entry.text : entry.kind));
+  }
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-mixed-'));
+    dbPath = path.join(directory, 'opencode.db');
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('reads session_message when its newest message is later (a session continued on OpenCode 2)', () => {
+    buildMixedDatabase(100, 200);
+    expect(tailTexts()).toEqual(['Asked on OpenCode 2']);
+    expect(pageTexts()).toEqual(['Asked on OpenCode 2']);
+  });
+
+  it('reads message when its newest message is later (a session continued on OpenCode 1)', () => {
+    buildMixedDatabase(300, 200);
+    expect(tailTexts()).toEqual(['Asked on OpenCode 1']);
+    expect(pageTexts()).toEqual(['Asked on OpenCode 1']);
+  });
+
+  it('reads message on a tie (a migrated session no one continued)', () => {
+    buildMixedDatabase(200, 200);
+    expect(tailTexts()).toEqual(['Asked on OpenCode 1']);
+    expect(pageTexts()).toEqual(['Asked on OpenCode 1']);
+  });
+});
+
+describe('paging an OpenCode 2 session forward and by position', () => {
+  const SESSION = 'ses_v2forward';
+  let directory: string;
+  let dbPath: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-v2-forward-'));
+    dbPath = path.join(directory, 'opencode.db');
+    const DatabaseConstructor = loadBetterSqlite3();
+    if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+    const database = new DatabaseConstructor(dbPath);
+    database.exec('CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT, type TEXT, seq INTEGER, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    const insert = database.prepare('INSERT INTO session_message VALUES (?, ?, ?, ?, ?, ?, ?)');
+    database.transaction(() => {
+      for (let turn = 0; turn < 30; turn += 1) {
+        const time = 1_000 + turn * 10;
+        const suffix = String(turn).padStart(3, '0');
+        insert.run(`m${suffix}_user`, SESSION, 'user', turn * 2 + 1, time, time, JSON.stringify({ time: { created: time }, text: `Question ${turn}`, files: [] }));
+        insert.run(`m${suffix}_assistant`, SESSION, 'assistant', turn * 2 + 2, time + 1, time + 1, JSON.stringify({
+          time: { created: time + 1 }, model: { id: 'stub-model' }, content: [{ type: 'text', text: `Answer ${turn}` }],
+        }));
+      }
+    })();
+    database.close();
+  });
+
+  afterEach(() => {
+    setParseWindowBytesForTests();
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  function okPage(result: ReturnType<typeof readOpenCodeTranscriptPage>) {
+    if (result.status !== 'ok') throw new Error(`expected a page, got ${JSON.stringify(result)}`);
+    return result.page;
+  }
+
+  it('tiles the session with after pages from the first cursor and reports reachedEnd on the last', () => {
+    setParseWindowBytesForTests(64 * 1024 * 1024);
+    const whole = readOpenCodeTailAtPath(dbPath, SESSION);
+    expect(whole.entries).toHaveLength(60);
+
+    let page = okPage(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'around', position: 0, maxBytes: 400 }));
+    expect(page.reachedStart).toBe(true);
+    expect(page.reachedEnd).toBe(false);
+    const collected = [...page.entries];
+    let pages = 1;
+    for (let guard = 0; guard < 200 && !page.reachedEnd; guard += 1) {
+      page = okPage(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'after', cursor: page.endCursor, maxBytes: 400 }));
+      collected.push(...page.entries);
+      pages += 1;
+    }
+    expect(pages).toBeGreaterThan(2);
+    expect(page.reachedEnd).toBe(true);
+    expect(page.endCursor).toBe('o:end');
+    expect(page.endPosition).toBe(whole.totalPosition);
+    expect(collected).toEqual(whole.entries);
+  });
+
+  it('reads around a position in the middle with neither end reached', () => {
+    setParseWindowBytesForTests(64 * 1024 * 1024);
+    const whole = readOpenCodeTailAtPath(dbPath, SESSION);
+    const middle = Math.floor(whole.totalPosition / 2);
+    const page = okPage(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'around', position: middle, maxBytes: 400 }));
+    expect(page.startPosition).toBeLessThanOrEqual(middle);
+    expect(page.endPosition).toBeGreaterThan(middle);
+    expect(page.reachedStart).toBe(false);
+    expect(page.reachedEnd).toBe(false);
+    expect(page.entries.length).toBeGreaterThan(0);
+  });
+
+  it('answers reset for a cursor whose seq no longer matches its message, before or after', () => {
+    // m005_user is at seq 11; a cursor naming another seq names no message.
+    expect(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'after', cursor: 'o:999:m005_user', maxBytes: 400 })).toEqual({ status: 'reset' });
+    expect(readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'before', cursor: 'o:999:m005_user', maxBytes: 400 })).toEqual({ status: 'reset' });
+    const accepted = readOpenCodeTranscriptPage(dbPath, SESSION, { direction: 'after', cursor: 'o:11:m005_user', maxBytes: 400 });
+    expect(accepted.status).toBe('ok');
+  });
+});
+
+describe('a failed store probe', () => {
+  let directory: string;
+
+  beforeEach(() => {
+    directory = fs.mkdtempSync(path.join(os.tmpdir(), 'kangentic-opencode-probe-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(directory, { recursive: true, force: true });
+  });
+
+  it('answers read_failed, not not_found, when session_message errors with something other than a missing table', () => {
+    const dbPath = path.join(directory, 'opencode.db');
+    const DatabaseConstructor = loadBetterSqlite3();
+    if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+    const database = new DatabaseConstructor(dbPath);
+    database.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    // A view with no time_created column: MAX(time_created) fails with "no such column", not "no such table".
+    database.exec('CREATE VIEW session_message AS SELECT 1 AS id');
+    database.close();
+    expect(readOpenCodeTranscriptPage(dbPath, 'ses_any', { direction: 'around', position: 0, maxBytes: 700 }))
+      .toEqual({ status: 'unavailable', reason: 'read_failed' });
+  });
+
+  it('answers not_found when the session_message table is simply absent', () => {
+    const dbPath = path.join(directory, 'opencode.db');
+    const DatabaseConstructor = loadBetterSqlite3();
+    if (!DatabaseConstructor) throw new Error('better-sqlite3 should load in the unit tier');
+    const database = new DatabaseConstructor(dbPath);
+    database.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.exec('CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT, session_id TEXT, time_created INTEGER, time_updated INTEGER, data TEXT)');
+    database.close();
+    expect(readOpenCodeTranscriptPage(dbPath, 'ses_any', { direction: 'around', position: 0, maxBytes: 700 }))
+      .toEqual({ status: 'unavailable', reason: 'not_found' });
+  });
+});
+
 describe('the tail and history pages of a session', () => {
   const SESSION = 'ses_paged';
   let directory: string;

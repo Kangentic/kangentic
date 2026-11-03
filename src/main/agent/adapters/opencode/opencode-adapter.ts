@@ -23,7 +23,7 @@ import { SharedFolderHolds } from '../../shared/shared-folder-holds';
 import { extractOpenCodeAnswer, openCodeAnswerEvents, openCodeSessionId } from './answer-stream';
 import { installsActivityPlugin, openCodeKangenticMcpEntry } from './command-builder';
 import { isOpenCodeV2, OPENCODE_REMOTE_NEEDS_V1 } from './version';
-import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession } from './distro-sessions';
+import { captureDistroOpenCodeSessionId, exportDistroOpenCodeSession, forgetDistroOpenCodeVersions } from './distro-sessions';
 import { hostPathForTarget, parseWslCliPath, placeFromStored, resolveCliTarget, targetOfPlace, type CliPlace } from '../../shared/cli-target';
 import { kangenticMcpServer, startRunMcpRelay, type KangenticMcpServer } from '../../shared/kangentic-mcp-server';
 import { withAnswerRunDirectory } from '../../shared/answer-run-directory';
@@ -272,15 +272,20 @@ export class OpenCodeAdapter implements AgentAdapter {
 
   invalidateDetectionCache(): void {
     this.detector.invalidateCache();
+    forgetDistroOpenCodeVersions();
   }
 
   /**
-   * The version of the CLI at `cliPath` when the cache has none: a helper
-   * run's caller can keep a path across a detection reset that emptied the
-   * cache (`automation-agent.ts`'s own path cache), so that path is detected
-   * again. Callers read `getCachedVersion` first.
+   * The version of the CLI at `cliPath`: the cached detection's, or, when the
+   * cache has none, a fresh detection's. A helper run's caller can keep a path
+   * across a detection reset that emptied the cache (`automation-agent.ts`'s
+   * own path cache), so that path is detected again. The cached answer comes
+   * back without waiting a tick. `buildCommand` and `buildEnv` are synchronous
+   * and read the cache alone: every spawn path detects just before them.
    */
-  private async detectedVersion(cliPath: string): Promise<string | null> {
+  private async versionFor(cliPath: string): Promise<string | null> {
+    const cached = this.detector.getCachedVersion(cliPath);
+    if (cached) return cached;
     const info = await this.detector.detect(cliPath).catch(() => null);
     return info?.version ?? null;
   }
@@ -319,7 +324,7 @@ export class OpenCodeAdapter implements AgentAdapter {
       // imports a V1 `auth.json` into it at start (measured on 2.2.5), so a V2
       // sign-in shows there first. A distro's database is never opened from
       // Windows (`distro-sessions.ts`), so a distro V2 is judged by `auth.json`.
-      if (!place && isOpenCodeV2(this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath))) {
+      if (!place && isOpenCodeV2(await this.versionFor(cliPath))) {
         if (openCodeCredentialCount(path.join(dataHome, 'opencode', 'opencode.db')) > 0) return true;
       }
       const authPath = path.join(dataHome, 'opencode', 'auth.json');
@@ -370,7 +375,7 @@ export class OpenCodeAdapter implements AgentAdapter {
     // Hold the project root until this session releases, so concurrent
     // sessions serialize their cleanup in `removeHooks`. Local mode only -
     // remote mode never installs the plugin (see command-builder.ts).
-    if (installsActivityPlugin({ eventsOutputPath: options.eventsOutputPath })) {
+    if (installsActivityPlugin(options)) {
       this.hookHolds.retain(options.ptySessionId, options.projectRoot || options.cwd);
     }
     return command;
@@ -602,7 +607,7 @@ export class OpenCodeAdapter implements AgentAdapter {
   }
 
   async discoverCapabilities(cliPath: string): Promise<AgentCapabilities> {
-    return discoverOpenCodeCapabilities(cliPath, this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath));
+    return discoverOpenCodeCapabilities(cliPath, await this.versionFor(cliPath));
   }
 
   getInjectionSequence(_spec: SettingsChangeSpec): string[] {
@@ -677,9 +682,9 @@ export class OpenCodeAdapter implements AgentAdapter {
     const server = retrieval
       ? kangenticMcpServer({ url: retrieval.url, token: retrieval.token, place: cliTarget, directory: options?.runDirectory ?? cwd })
       : null;
-    // The cached version answers without an await, so the run starts in this
-    // tick as before; only a cache miss waits on a detection.
-    const openCode2 = isOpenCodeV2(this.detector.getCachedVersion(cliPath) ?? await this.detectedVersion(cliPath));
+    // The cached version is read here without an await, so the run starts in
+    // this tick as before; only a cache miss waits on a detection (`versionFor`).
+    const openCode2 = isOpenCodeV2(this.detector.getCachedVersion(cliPath) ?? await this.versionFor(cliPath));
     const inlineConfig = openCodeAnswerConfig(server, openCode2);
     const stopRelay = startRunMcpRelay(options?.runDirectory ?? cwd, server);
     let sessionId: string | null = null;

@@ -162,11 +162,12 @@ export function __resetSchemaCanaryForTests(): void {
 }
 
 /**
- * Run a one-shot sanity check on the OpenCode `session` table schema.
- * Emits a single `console.warn` if the `session` table is missing
- * entirely, or if any of `id`, `directory`, `time_created` is absent,
- * so users have a breadcrumb when a future OpenCode release renames or
- * drops a column we depend on.
+ * Run a one-shot sanity check on OpenCode's session table schema: either
+ * `session_v2` (OpenCode 2) or `session` (OpenCode 1) must carry `id`,
+ * `directory` and `time_created`. When neither does, it emits a single
+ * `console.warn` naming the table and the missing columns, so users have a
+ * breadcrumb when a future OpenCode release renames or drops a column we
+ * depend on.
  *
  * This function never throws: a PRAGMA failure flips the once-flag and
  * returns silently, so the legitimate read path that follows can
@@ -190,42 +191,23 @@ export function verifyOpenCodeSchemaOnce(
     const v1Columns = columnsOf('session');
     if (REQUIRED_SESSION_COLUMNS.every((column) => v1Columns.has(column))) return;
 
-    if (v2Columns.size > 0) {
+    const warn = (problem: string): void => {
       const version = getAgentVersion?.() ?? null;
       const versionSuffix = version ? ` (detected version: ${version})` : '';
-      const columnList = REQUIRED_SESSION_COLUMNS.filter((column) => !v2Columns.has(column)).map((column) => `\`${column}\``).join(', ');
       console.warn(
-        `[opencode] opencode.db schema mismatch: missing column(s) ${columnList} in \`session_v2\` table${versionSuffix}. ` +
+        `[opencode] opencode.db schema mismatch: ${problem}${versionSuffix}. ` +
           `Resume will fall back to fresh sessions until this is fixed. ` +
           `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
       );
-      return;
-    }
+    };
+    const missingIn = (table: string, columns: Set<string>): string => {
+      const columnList = REQUIRED_SESSION_COLUMNS.filter((column) => !columns.has(column)).map((column) => `\`${column}\``).join(', ');
+      return `missing column(s) ${columnList} in \`${table}\` table`;
+    };
 
-    const rows = [...v1Columns].map((name) => ({ name }));
-    if (rows.length === 0) {
-      const version = getAgentVersion?.() ?? null;
-      const versionSuffix = version ? ` (detected version: ${version})` : '';
-      console.warn(
-        `[opencode] opencode.db schema mismatch: \`session\` table is missing${versionSuffix}. ` +
-          `Resume will fall back to fresh sessions until this is fixed. ` +
-          `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
-      );
-      return;
-    }
-
-    const present = new Set(rows.map((row) => row.name));
-    const missing = REQUIRED_SESSION_COLUMNS.filter((column) => !present.has(column));
-    if (missing.length > 0) {
-      const version = getAgentVersion?.() ?? null;
-      const versionSuffix = version ? ` (detected version: ${version})` : '';
-      const columnList = missing.map((column) => `\`${column}\``).join(', ');
-      console.warn(
-        `[opencode] opencode.db schema mismatch: missing column(s) ${columnList} in \`session\` table${versionSuffix}. ` +
-          `Resume will fall back to fresh sessions until this is fixed. ` +
-          `Verified against ${VERIFIED_AGAINST_OPENCODE_VERSION}.`,
-      );
-    }
+    if (v2Columns.size > 0) warn(missingIn('session_v2', v2Columns));
+    else if (v1Columns.size === 0) warn('`session` table is missing');
+    else warn(missingIn('session', v1Columns));
   } catch {
     // PRAGMA itself failed - leave the flag set so we don't loop and
     // let the real SELECT below decide whether the DB is usable.
@@ -358,8 +340,9 @@ export function openCodeDbPath(): string {
 }
 
 /**
- * Normalize a path for cross-platform comparison. OpenCode writes
- * directories with OS-native separators (backslashes on Windows).
+ * Normalize a path for cross-platform comparison. OpenCode's separators
+ * vary by version on Windows: backslashes in early OpenCode 1 releases,
+ * forward slashes by 1.18 and in OpenCode 2. `path.normalize` makes them one.
  * Lowercase on win32 because NTFS is case-insensitive.
  */
 function normalizeCwdForCompare(raw: string): string {
