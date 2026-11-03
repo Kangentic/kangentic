@@ -43,6 +43,7 @@ import { safeKillPty } from './lifecycle/pty-kill';
 import { DEFAULT_PTY_COLS, DEFAULT_PTY_ROWS, performSpawn } from './lifecycle/session-spawn-flow';
 import { SessionRegistry, toSession, filterCacheByProject, type ManagedSession, type ManagedSessionSummary } from './session-registry';
 import type { RemoteHostRequest, SuspendPlan } from '../remote/protocol/messages';
+import type { RemoteSessionRelay } from '../remote/remote-session-relay';
 import type { WriteOrigin } from './prompt-draft-ledger';
 import type { RendererPort } from './host/protocol';
 import type { ScrollbackInvokeResult } from '../../shared/pty-port-protocol';
@@ -486,6 +487,8 @@ export class SessionManager extends EventEmitter {
   /** Set by `killAll()`: how long the pty host may wait for exits after
    *  `dispose()`, so it is gone inside the quit drain's deadline. */
   private hostExitWaitMs: number | undefined;
+  /** Keeps a remote session's folder in step with its host's (#913); null until startup sets it. */
+  private remoteSessionRelay: RemoteSessionRelay | null = null;
   /** At a quit, how each session on a remote host ends, by host (#913). Sent to the host as it grows. */
   private readonly remoteQuitPlans = new Map<string, SuspendPlan[]>();
   /** Main's mirror of each session's alternate-screen state, from the host. */
@@ -1179,6 +1182,16 @@ export class SessionManager extends EventEmitter {
    *  drain: the host flushes and exits after the PTYs die. */
   getPtyHostPid(): number | null {
     return this.host.hostPid;
+  }
+
+  /**
+   * Give the manager the relay that keeps a remote session's folder in step with its host's (#913). The
+   * host's hook files arrive as `remote-hook-file` events, which it writes into the hook folder the
+   * inbox reads. Set once at startup; without it a spawn onto a host fails with a sentence.
+   */
+  setRemoteSessionRelay(relay: RemoteSessionRelay): void {
+    this.remoteSessionRelay = relay;
+    this.on('remote-hook-file', (event: Extract<PtyHostEvent, { type: 'hookFile' }>) => relay.deliver(event));
   }
 
   /** Add or remove an SSH host's link, or ask its helper, through the pty host that holds the links (#913). */
@@ -2442,6 +2455,7 @@ export class SessionManager extends EventEmitter {
         this.firstOutputTracker.disarmCeiling(sessionId);
         this.endCommandTerminalAfterPtyExit(sessionId);
       },
+      ...(this.remoteSessionRelay ? { remoteSessions: this.remoteSessionRelay } : {}),
     });
   }
 

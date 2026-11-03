@@ -116,6 +116,7 @@ import { removeAdapterHooks } from '../../src/main/pty/lifecycle/adapter-lifecyc
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../src/shared/paths';
 import * as ptyModule from 'node-pty';
 import { InProcessPtyHostTransport, PtyHostClient } from '../../src/main/pty/host/pty-host-client';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
 
 // ---- Helpers ----
 
@@ -207,6 +208,11 @@ function makeContext(): SpawnFlowContext {
     getShell: vi.fn().mockResolvedValue('/bin/bash'),
     takePendingResize: vi.fn(() => undefined),
     emit: vi.fn(),
+    // What a session on a remote host needs around its PTY (#913); a local spawn never calls it.
+    remoteSessions: {
+      register: vi.fn().mockResolvedValue(undefined),
+      release: vi.fn().mockResolvedValue(undefined),
+    },
   } as unknown as SpawnFlowContext;
   hostTransports.set(context, transport);
   return context;
@@ -2129,15 +2135,97 @@ describe('performSpawn - a session on a remote host (#913)', () => {
     vi.clearAllMocks();
   });
 
+  const shellFolder = 'C:\\Users\\dev\\remote-projects\\p1';
+  const sshTarget = toStoredCliTarget({
+    kind: 'ssh',
+    hostId: 'host-a',
+    home: '/home/dev',
+    shellName: 'fish',
+    localHome: 'C:\\Users\\dev\\remote-homes\\host-a',
+    roots: [{ local: shellFolder, host: hostPath }],
+  });
+
   function remoteInput(overrides: Partial<SpawnSessionInput> = {}): SpawnSessionInput {
     return makeInput({
-      cwd: 'C:\\Users\\dev\\remote-projects\\p1',
+      cwd: shellFolder,
       env: { CLAUDE_CODE_NO_FLICKER: '1' },
-      eventsOutputPath: 'C:\\Users\\dev\\remote-projects\\p1\\.kangentic\\sessions\\s\\events.jsonl',
+      statusOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\status.json`,
+      eventsOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\events.jsonl`,
+      cliTarget: sshTarget,
       remote: { hostId: 'host-a', cwd: hostPath, shellName: 'fish' },
       ...overrides,
     });
   }
+
+  describe('the host\'s session folder', () => {
+    it('is registered with the relay BEFORE the host starts the PTY, so the first hook has somewhere to publish', async () => {
+      const context = makeContext();
+      const order: string[] = [];
+      vi.mocked(context.remoteSessions!.register).mockImplementation(async () => { order.push('register'); });
+      vi.mocked(context.host.spawn).mockImplementation((params) => {
+        order.push('spawn');
+        return PtyHostClient.prototype.spawn.call(context.host, params);
+      });
+
+      await performSpawn(remoteInput(), context);
+
+      expect(order).toEqual(['register', 'spawn']);
+      expect(context.remoteSessions!.register).toHaveBeenCalledWith(expect.objectContaining({
+        hostId: 'host-a',
+        sessionId: makeInput().id,
+        localSessionDirectory: `${shellFolder}\\.kangentic\\sessions\\s`,
+        statusOutputPath: `${shellFolder}\\.kangentic\\sessions\\s\\status.json`,
+        place: expect.objectContaining({ kind: 'ssh', hostId: 'host-a' }),
+      }));
+    });
+
+    it('starts no PTY, and says why, when the host could not be reached', async () => {
+      const context = makeContext();
+      vi.mocked(context.remoteSessions!.register).mockRejectedValue(new Error('Connection refused'));
+
+      await expect(performSpawn(remoteInput(), context)).rejects.toThrow('Connection refused');
+
+      expect(context.host.spawn).not.toHaveBeenCalled();
+      expect(context.registry.get(makeInput().id!)).toBeUndefined();
+    });
+
+    it('is released when the PTY did not start', async () => {
+      const context = makeContext();
+      vi.mocked(context.host.spawn).mockResolvedValue({ ok: false, error: new Error('no shell'), previousScrollback: '' });
+
+      await performSpawn(remoteInput(), context);
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
+    });
+
+    it('is released when the PTY exits, after the last events were flushed', async () => {
+      const context = makeContext();
+      await performSpawn(remoteInput(), context);
+      expect(context.remoteSessions!.release).not.toHaveBeenCalled();
+
+      ptyExitHarness.onExitCallback?.({ exitCode: 0 });
+
+      expect(context.remoteSessions!.release).toHaveBeenCalledWith(makeInput().id);
+    });
+
+    it('is refused when the context has no relay or the session has no ssh target, rather than starting an agent with no hooks', async () => {
+      const withoutRelay = makeContext();
+      withoutRelay.remoteSessions = undefined;
+      await expect(performSpawn(remoteInput(), withoutRelay)).rejects.toThrow('host connection');
+
+      await expect(performSpawn(remoteInput({ cliTarget: null }), makeContext())).rejects.toThrow('host connection');
+      await expect(performSpawn(remoteInput({ statusOutputPath: undefined }), makeContext())).rejects.toThrow('host connection');
+    });
+
+    it('is never touched by a session on this computer', async () => {
+      const context = makeContext();
+      await performSpawn(makeInput(), context);
+      ptyExitHarness.onExitCallback?.({ exitCode: 0 });
+
+      expect(context.remoteSessions!.register).not.toHaveBeenCalled();
+      expect(context.remoteSessions!.release).not.toHaveBeenCalled();
+    });
+  });
 
   it('asks the host for its own login shell and names the host', async () => {
     const context = makeContext();

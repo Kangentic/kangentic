@@ -104,6 +104,7 @@ import { fillEarlierRunResultTokens } from './handlers/session-metrics';
 import { getProjectRepos } from './helpers';
 import { KANGENTIC_HOSTED_RELAY_URL, resolveRelayUrl } from '../../shared/relay';
 import type { IpcContext } from './ipc-context';
+import { createRemoteHosting } from '../remote/remote-hosting';
 import type { McpHttpServerHandle } from '../agent/mcp-http-server';
 
 let context: IpcContext | null = null;
@@ -144,6 +145,11 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const ptyHostTransport = new UtilityPtyHostTransport({ projectsDir: PATHS.projectsDir });
   const sessionManager = new SessionManager({ ptyHostTransport });
   ptyHostTransport.start();
+  // SSH hosts (#913): the host table, the service that connects them, and the resolver both spawn
+  // chokepoints ask. The projects are read through the context, which exists by the first spawn.
+  const remoteHosting = createRemoteHosting({ sessionManager, projects: () => requireContext().projectRepo });
+  // After startup, not before the window: a host that is down must never delay it.
+  setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => console.warn('[remote] connecting the hosts failed:', error)));
   // One-shot child processes (version probes, help-text reads, gh and git
   // checks) run in the pty host too: on Windows each spawn's CreateProcess is
   // synchronous on the calling thread.
@@ -305,6 +311,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
     boardEvents,
     desktopNotifier,
     spareWorktrees: spareWorktreePool,
+    remoteHosting,
   };
 
   // The bridge needs IpcContext (SessionManager, repos, DiffService,

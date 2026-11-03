@@ -595,6 +595,7 @@ export async function resumeSuspendedSessions(
           ...(restoredGrid ? { restoredGrid } : {}),
           shell: input.shell,
           cliTarget: input.cliTarget,
+          ...(input.remote ? { remote: input.remote } : {}),
         });
 
         retireRecord(sessionRepo, input.record.id);

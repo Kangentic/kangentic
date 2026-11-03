@@ -22,6 +22,8 @@ import { isShuttingDown } from '../../shutdown-state';
 import { traceTerminal } from '../terminal-trace';
 import { adaptCommandForShell, buildSpawnClearPrelude } from '../../../shared/paths';
 import { planRemoteSpawn } from '../spawn/remote-spawn';
+import { placeFromStored } from '../../agent/shared/cli-target';
+import type { RemoteSessionRegistration } from '../../remote/remote-session-relay';
 
 /**
  * Default PTY dimensions a session is spawned at, before any renderer-driven
@@ -130,6 +132,15 @@ export interface SpawnFlowContext {
    * this keeps every exited row.
    */
   onPtyExited?: (sessionId: string) => void;
+  /**
+   * What a session on a remote host needs around its PTY (#913): its files pushed to the host and the
+   * host's watcher started before the agent runs, and both ended with the session. A context built
+   * without this cannot start a remote session, which then fails with a sentence.
+   */
+  remoteSessions?: {
+    register(registration: RemoteSessionRegistration): Promise<void>;
+    release(sessionId: string): Promise<void>;
+  };
 }
 
 /**
@@ -405,6 +416,28 @@ export async function performSpawn(
     if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, null, context);
   }
 
+  // A session on a remote host: its files go to the host and the host starts sending its hook
+  // files BEFORE the agent exists, since the agent's first hook can fire in its first second. A
+  // failure here fails the spawn with the host's own words: an agent whose hooks have nowhere to
+  // publish would run with no activity and no plan approval.
+  if (remotePlan) {
+    const place = placeFromStored(input.cliTarget ?? null);
+    if (place?.kind !== 'ssh' || !context.remoteSessions || !input.statusOutputPath) {
+      throw new Error('This session needs its host connection and its session folder, and one is missing.');
+    }
+    await context.remoteSessions.register({
+      hostId: remotePlan.hostId,
+      sessionId: id,
+      place,
+      localSessionDirectory: path.dirname(input.statusOutputPath),
+      statusOutputPath: input.statusOutputPath,
+    });
+    if (context.isSpawnCancelled?.(id)) {
+      void context.remoteSessions.release(id);
+      abandonCancelledSpawn(id, null, context);
+    }
+  }
+
   // The host spawns the PTY (CreateProcess runs on its thread, not main's: 36
   // to 47 ms a spawn on Windows) and seeds the new ring. The adapter's name
   // lets it run the output detectors; a session with no adapter has none.
@@ -426,9 +459,15 @@ export async function performSpawn(
     ...(remotePlan ? { hostId: remotePlan.hostId } : {}),
   });
 
+  // A remote session whose PTY did not start has no use for the host's watcher.
+  if (remotePlan && !spawnOutcome.ok) void context.remoteSessions?.release(id);
+
   // Torn down during the host round trip. Ahead of every outcome branch: a
   // failed spawn's placeholder would bring back a row a remove() announced gone.
-  if (context.isSpawnCancelled?.(id)) abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
+  if (context.isSpawnCancelled?.(id)) {
+    if (remotePlan) void context.remoteSessions?.release(id);
+    abandonCancelledSpawn(id, spawnOutcome.ok ? spawnOutcome.pty : null, context);
+  }
 
   // The quit can begin during the host round trip. killAll found no row for
   // this session, so nothing else would stop the PTY the host just started,
@@ -724,6 +763,8 @@ export async function performSpawn(
     // Catches the common race where the agent writes ToolEnd just before
     // the PTY exits, but fs.watch hasn't fired the callback yet.
     context.statusFileReader.flushPendingEvents(id);
+    // The host sent the session's last hook files ahead of this exit; its watcher is done.
+    if (remotePlan) void context.remoteSessions?.release(id);
 
     // Release this session's hold on what its adapter wrote, so hooks don't
     // accumulate across sessions. Keyed by this session's id: a late exit of a

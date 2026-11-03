@@ -86,6 +86,15 @@ export function localPathToHost(localPath: string, roots: SshCliPlace['roots']):
   return `${hostRoot}${normalized.slice(localRoot.length)}`;
 }
 
+/** Whether a local path is a root or inside one, so `localPathToHost` names it on the host. */
+export function isUnderLocalRoot(localPath: string, roots: SshCliPlace['roots']): boolean {
+  const normalized = toForwardSlash(localPath);
+  return roots.some((root) => {
+    const localRoot = toForwardSlash(root.local).replace(/\/+$/, '');
+    return normalized === localRoot || normalized.startsWith(`${localRoot}/`);
+  });
+}
+
 /** A host path as this computer's mirror folder names it, or the path unchanged when it is under no root. */
 export function hostPathToLocal(hostPath: string, roots: SshCliPlace['roots']): string {
   let best: { local: string; host: string } | null = null;
@@ -187,7 +196,8 @@ export function toStoredCliTarget(place: CliPlace | StoredCliTarget | null): Sto
       shellName: place.shellName,
       localHome: place.localHome,
       roots: place.roots.map((root) => ({ local: root.local, host: root.host })),
-      ...(isLinuxPath(place.linuxCliPath) ? { linuxCliPath: place.linuxCliPath } : {}),
+      // A host's CLI may be a bare name its login shell resolves, not only an absolute path.
+      ...(place.linuxCliPath ? { linuxCliPath: place.linuxCliPath } : {}),
     };
   }
   if ('facts' in place) {
@@ -298,7 +308,7 @@ export function placeFromStored(stored: StoredCliTarget | null | undefined): Cli
       shellName: stored.shellName,
       localHome: stored.localHome,
       roots: stored.roots,
-      ...(isLinuxPath(stored.linuxCliPath) ? { linuxCliPath: stored.linuxCliPath } : {}),
+      ...(stored.linuxCliPath ? { linuxCliPath: stored.linuxCliPath } : {}),
     };
   }
   if (!stored || !stored.homeUnc || !stored.uncRoot) return null;

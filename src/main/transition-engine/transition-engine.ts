@@ -34,6 +34,7 @@ import { resolveExecutionTarget } from '../agent/shared/execution-target';
 import { resolveLaunchOptions } from '../agent/shared/launch-options';
 import { resolveShimLaunch } from '../agent/shared/shim-launch';
 import { resolveFreshAgentSessionId } from '../agent/shared/fresh-agent-session-id';
+import { resolveRemoteLaunch } from '../remote/remote-launch';
 import { cliPathForTarget, resolveCliTarget, serializeCliTarget, shellForTarget, toStoredCliTarget, type CliTarget } from '../agent/shared/cli-target';
 import type { AgentAdapter, SpawnCommandOptions } from '../agent/agent-adapter';
 import { createEarlyAgentHandle, EARLY_AGENT_INPUT_READY_BUDGET_MS, launchKeyOf, type EarlyAgentHandle } from './early-agent';
@@ -723,16 +724,30 @@ export class TransitionEngine {
     const adapter = agentRegistry.getOrThrow(agentName);
     const cliPathOverride = appConfig.cliPathOverrides[agentName] ?? null;
 
-    console.log(`[spawnAgent] Detecting ${agentName} CLI...`);
-    const detection = await adapter.detect(cliPathOverride);
-    if (!detection.found || !detection.path) {
-      throw new AgentCliNotFoundError(agentName, adapter.displayName);
+    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
+    // A remote project runs its agent on a host (#913): the CLI is not detected here, it is the host's
+    // own, named by the adapter. The launch is the path map to the host and the descriptor performSpawn
+    // takes. Null for a project on this computer, which goes on exactly as before.
+    const remoteLaunch = await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd, adapter });
+    let detectedCliPath: string;
+    let cliTarget: CliTarget | null;
+    if (remoteLaunch) {
+      detectedCliPath = remoteLaunch.place.linuxCliPath;
+      cliTarget = remoteLaunch.place;
+      console.log(`[spawnAgent] ${agentName} runs on host ${remoteLaunch.remote.hostId.slice(0, 8)} as ${detectedCliPath}`);
+    } else {
+      console.log(`[spawnAgent] Detecting ${agentName} CLI...`);
+      const detection = await adapter.detect(cliPathOverride);
+      if (!detection.found || !detection.path) {
+        throw new AgentCliNotFoundError(agentName, adapter.displayName);
+      }
+      console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
+      detectedCliPath = detection.path;
+      // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
+      // once for this spawn. A distro CLI runs in that distro's shell, whatever
+      // the Terminal setting says.
+      cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
     }
-    console.log(`[spawnAgent] ${agentName} CLI found at ${detection.path} (v${detection.version})`);
-    // Where the CLI runs (a WSL distro, for a CLI installed in one), resolved
-    // once for this spawn. A distro CLI runs in that distro's shell, whatever
-    // the Terminal setting says.
-    const cliTarget = await resolveCliTarget(detection.path, adapter.supportsWslCli === true);
     // A handoff points the receiving agent at the prior session's file; a CLI
     // in a WSL distro opens it by the path the distro sees.
     if (cliTarget && handoffPromptPrefix) {
@@ -745,7 +760,6 @@ export class TransitionEngine {
     const permissionMode = resolveEffectivePermissionMode(
       task.permission_mode, permissionOverride, appConfig.permissionMode as PermissionMode,
     );
-    const cwd = task.worktree_path || appConfig.projectPath || process.cwd();
 
     // Pre-populate trust so the agent doesn't block on the trust dialog.
     // This covers both worktree paths and the main project path (important
@@ -791,8 +805,9 @@ export class TransitionEngine {
           sessionRepo: this.sessionRepo,
           // The conversation resumes where this spawn's CLI runs.
           place: cliTarget,
-          // Stops the CLI's own background session holding the conversation, if any.
-          cliPath: detection.path,
+          // Stops the CLI's own background session holding the conversation, if any. Not for a host's
+          // CLI: that would run a command on this computer, where the session is not.
+          cliPath: remoteLaunch ? undefined : detectedCliPath,
         })
       : null;
 
@@ -912,7 +927,7 @@ export class TransitionEngine {
       task,
       agentName,
       adapter,
-      detectionPath: detection.path,
+      detectionPath: detectedCliPath,
       cliTarget,
       permissionMode,
       cwd,
@@ -955,7 +970,7 @@ export class TransitionEngine {
     const agentSessionId = canResume
       ? resumedAgentSessionId
       : await resolveFreshAgentSessionId(adapter, {
-          cliPath: detection.path,
+          cliPath: detectedCliPath,
           workingDirectory: cwd,
           permissionMode,
           nonInteractive: config.nonInteractive,
@@ -1033,6 +1048,8 @@ export class TransitionEngine {
       // The shell the command was built for, and where its CLI runs.
       shell,
       cliTarget: toStoredCliTarget(cliTarget),
+      // A remote project's agent runs on its host: the PTY, its cwd and its environment are the host's.
+      ...(remoteLaunch ? { remote: remoteLaunch.remote } : {}),
     });
 
     console.log(`[spawnAgent] PTY session created: id=${session.id.slice(0, 8)} status=${session.status}`);
@@ -1301,6 +1318,9 @@ export class TransitionEngine {
     const agentName = input.agentOverride;
     const adapter = agentRegistry.get(agentName);
     if (!adapter?.firstPromptMayBeTyped) return null;
+    // A remote project's agent starts through the main path only: its files must reach the host before
+    // it runs, and an agent started ahead of its worktree's setup script would have neither.
+    if (await resolveRemoteLaunch({ projectPath: appConfig.projectPath, cwd: input.worktreePath, adapter }).catch(() => ({}))) return null;
     if (this.sessionManager.getFreeAgentSlots() <= 0 || this.sessionManager.hasSessionForTask(task.id)) return null;
     if (this.sessionManager.columnBlocks({ taskId: task.id, projectId: appConfig.projectId })) return null;
 

@@ -31,6 +31,8 @@ vi.mock('../../src/main/analytics/analytics', () => ({
 import * as pty from 'node-pty';
 import { SessionManager } from '../../src/main/pty/session-manager';
 import type { PtyHostCommand } from '../../src/main/pty/host/protocol';
+import type { RemoteSessionRelay } from '../../src/main/remote/remote-session-relay';
+import { toStoredCliTarget } from '../../src/main/agent/shared/cli-target';
 
 const EXIT_SEQUENCE = ['\x03', '/exit\r'];
 let tmpDir: string;
@@ -58,14 +60,20 @@ function giveHostAPid(manager: SessionManager, pid: number): void {
   Object.defineProperty(transport, 'hostPid', { value: pid });
 }
 
+/** A relay that pushes nothing: this file is about the quit, not the session folder. */
+const quietRelay = { register: async () => undefined, release: async () => undefined, deliver: () => undefined } as unknown as RemoteSessionRelay;
+
 async function spawnRemote(manager: SessionManager, taskId: string, hostId: string, hostPid: number, consoleCloseIsGraceful = false) {
   const mock = createMockPty(hostPid);
   vi.mocked(pty.spawn).mockReturnValue(mock as unknown as pty.IPty);
+  manager.setRemoteSessionRelay(quietRelay);
   const session = await manager.spawn({
     taskId,
     command: '',
     cwd: tmpDir,
     exitSequence: EXIT_SEQUENCE,
+    statusOutputPath: path.join(tmpDir, '.kangentic', 'sessions', taskId, 'status.json'),
+    cliTarget: toStoredCliTarget({ kind: 'ssh', hostId, home: '/home/dev', shellName: 'bash', localHome: tmpDir, roots: [{ local: tmpDir, host: '/home/dev/project' }] }),
     remote: { hostId, cwd: '/home/dev/project', shellName: 'bash' },
     agentParser: { consoleCloseIsGraceful: () => consoleCloseIsGraceful } as never,
   });

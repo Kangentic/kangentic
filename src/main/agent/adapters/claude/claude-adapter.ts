@@ -344,6 +344,9 @@ export class ClaudeAdapter implements AgentAdapter {
   // run in the distro's shell, its hooks through the WSL transport, its trust,
   // settings and transcripts in the distro's home (cli-target.ts).
   readonly supportsWslCli = true;
+  // On a remote host over SSH the CLI is `claude` from the host's own login PATH; the ssh place
+  // routes its hooks, status line and MCP through the same transport script a distro uses.
+  readonly remoteCliName = 'claude';
   // `--mcp-config` pointing at the session's own `mcp.json`.
   readonly kangenticMcp = 'per-session' as const;
   // `--tools` with the read-only set (`READ_ONLY_TOOLS` in command-builder.ts,

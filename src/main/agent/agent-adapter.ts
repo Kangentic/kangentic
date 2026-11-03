@@ -513,6 +513,15 @@ export interface AgentAdapter {
    */
   readonly supportsWslCli?: boolean;
 
+  /**
+   * The CLI's executable name on a remote host over SSH (#913), such as `claude`, which the host's
+   * login shell resolves from its own PATH. Present only on an adapter whose builder, trust, hooks and
+   * readers take an `ssh` place (`shared/cli-target.ts`); declare it once that integration is in, as
+   * for `supportsWslCli`. A remote project that runs an agent without it fails the spawn with a
+   * sentence instead of half working. The local CLI is never detected for a remote project.
+   */
+  readonly remoteCliName?: string;
+
   /** Invalidate any cached detection result (e.g. after user changes CLI path). */
   invalidateDetectionCache(): void;
 
