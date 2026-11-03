@@ -329,6 +329,18 @@ export const IPC = {
   MOBILE_GET_TERMINAL_STREAMS: 'mobile:getTerminalStreams',
   MOBILE_TERMINAL_STREAMS_CHANGED: 'mobile:terminalStreamsChanged',
 
+  // SSH hosts (#913) -- machine-global (like mobile), not project-scoped.
+  SSH_DETECT_CLIENT: 'ssh:detectClient',
+  SSH_LIST_HOSTS: 'ssh:listHosts',
+  SSH_PROBE_HOST_KEY: 'ssh:probeHostKey',
+  SSH_ADD_HOST: 'ssh:addHost',
+  SSH_REMOVE_HOST: 'ssh:removeHost',
+  SSH_RENAME_HOST: 'ssh:renameHost',
+  SSH_RECONNECT_HOST: 'ssh:reconnectHost',
+  SSH_FORGET_HOST_KEY: 'ssh:forgetHostKey',
+  SSH_PROBE_REMOTE_FOLDER: 'ssh:probeRemoteFolder',
+  SSH_HOSTS_CHANGED: 'ssh:hostsChanged',
+
   // Agent Monitor - machine-global (like mobile bridge), NOT project-scoped. The monitor
   // aggregates live sessions across EVERY registered project, so these channels deliberately
   // take no trailing projectId and are outside the project-scoped-ipc mutation set. They are

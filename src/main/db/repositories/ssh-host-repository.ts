@@ -43,6 +43,12 @@ export class SshHostRepository {
     return host;
   }
 
+  /** Record the key a host signs in with: a file in Kangentic's folder, and whether Kangentic made it. */
+  setKey(id: string, keyPath: string | null, keyCreated: boolean): SshHost | undefined {
+    getGlobalDb().prepare('UPDATE ssh_hosts SET key_path = ?, key_created = ? WHERE id = ?').run(keyPath, keyCreated ? 1 : 0, id);
+    return this.getById(id);
+  }
+
   rename(id: string, name: string): SshHost | undefined {
     getGlobalDb().prepare('UPDATE ssh_hosts SET name = ? WHERE id = ?').run(name, id);
     return this.getById(id);

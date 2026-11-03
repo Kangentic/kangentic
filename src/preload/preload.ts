@@ -821,6 +821,23 @@ const api: ElectronAPI = {
     },
   },
 
+  ssh: {
+    detectClient: () => ipcRenderer.invoke(IPC.SSH_DETECT_CLIENT),
+    listHosts: () => ipcRenderer.invoke(IPC.SSH_LIST_HOSTS),
+    probeHostKey: (destination) => ipcRenderer.invoke(IPC.SSH_PROBE_HOST_KEY, destination),
+    addHost: (input) => ipcRenderer.invoke(IPC.SSH_ADD_HOST, input),
+    removeHost: (hostId) => ipcRenderer.invoke(IPC.SSH_REMOVE_HOST, hostId),
+    renameHost: (hostId, name) => ipcRenderer.invoke(IPC.SSH_RENAME_HOST, hostId, name),
+    reconnectHost: (hostId) => ipcRenderer.invoke(IPC.SSH_RECONNECT_HOST, hostId),
+    forgetHostKey: (hostId) => ipcRenderer.invoke(IPC.SSH_FORGET_HOST_KEY, hostId),
+    probeRemoteFolder: (hostId, folderPath) => ipcRenderer.invoke(IPC.SSH_PROBE_REMOTE_FOLDER, hostId, folderPath),
+    onHostsChanged: (callback) => {
+      const handler = () => callback();
+      ipcRenderer.on(IPC.SSH_HOSTS_CHANGED, handler);
+      return () => ipcRenderer.removeListener(IPC.SSH_HOSTS_CHANGED, handler);
+    },
+  },
+
   boardConfig: {
     exists: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_EXISTS),
     export: () => ipcRenderer.invoke(IPC.BOARD_CONFIG_EXPORT),

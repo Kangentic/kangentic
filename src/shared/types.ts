@@ -89,6 +89,62 @@ export interface SshHost {
   created_at: string;
 }
 
+/**
+ * Where a host's connection stands, for the settings row and a project's chip. `unreachable` is a
+ * connection that has not come up for a while (or a setup step that failed), with the reason in `detail`.
+ */
+export type SshHostConnectionState = 'connecting' | 'connected' | 'reconnecting' | 'unreachable' | 'stopped';
+
+export interface SshHostStatus {
+  host: SshHost;
+  state: SshHostConnectionState;
+  /** ssh's or the helper's own words about the state, shown as given, or null. */
+  detail: string | null;
+  /** UTC ISO time the state last changed, or null before the first. */
+  since: string | null;
+  /** How many Kangentic projects live on this host. */
+  projectCount: number;
+}
+
+export interface SshClientStatus {
+  found: boolean;
+  /** ssh's own version line, such as `OpenSSH_9.5p1`. */
+  version: string | null;
+  error: string | null;
+}
+
+export interface SshHostKeyProbe {
+  hostname: string;
+  port: number;
+  keyType: string;
+  /** `SHA256:...`, the form a terminal prints. */
+  fingerprint: string;
+}
+
+/** How Kangentic signs in to a host. None of these asks for a passphrase. */
+export type SshSignIn =
+  /** The user's own SSH setup: their config, agent and keys, exactly as a terminal uses them. */
+  | { method: 'config' }
+  /** A private key file the user chose; Kangentic keeps a copy in its own folder. */
+  | { method: 'key-file'; keyFilePath: string }
+  /** Make a key for this host and add it using the host's password, which is used once and never stored. */
+  | { method: 'create-key'; password: string };
+
+export interface SshHostAddInput {
+  name: string;
+  destination: string;
+  signIn: SshSignIn;
+  /** The fingerprint the user saw and agreed to. The host must still present it. */
+  expectedFingerprint: string;
+}
+
+export interface SshRemoteFolderProbe {
+  exists: boolean;
+  /** The folder as the host resolved it, when it exists. */
+  path: string;
+  isGitRepo: boolean;
+}
+
 export interface SshHostCreateInput {
   name: string;
   destination: string;
@@ -8986,6 +9042,35 @@ export interface ElectronAPI {
      *  xterm that would fit the PTY to its strip. */
     getTerminalStreams: () => Promise<string[]>;
     onTerminalStreamsChanged: (callback: (sessionIds: string[]) => void) => () => void;
+  };
+
+  // SSH hosts (#913): machine-global, like the mobile bridge, not project-scoped.
+  ssh: {
+    /** The `ssh` program on this computer, or the raw error when it cannot be started. */
+    detectClient: () => Promise<SshClientStatus>;
+    /** Every host with its connection state, in the order they were added. */
+    listHosts: () => Promise<SshHostStatus[]>;
+    /**
+     * Learn the key a host presents, without trusting it, so the user can compare its fingerprint.
+     * Rejects with ssh's own words when the host cannot be reached.
+     */
+    probeHostKey: (destination: string) => Promise<SshHostKeyProbe>;
+    /**
+     * Add a host: trust the key the user was shown (refused if it changed), set up the way Kangentic
+     * signs in, install Kangentic's small program on the host, and start its connection. Rejects with
+     * the failing step's own words, having changed nothing that step cannot undo.
+     */
+    addHost: (input: SshHostAddInput) => Promise<SshHostStatus>;
+    /** Remove a host and take its projects out of Kangentic. They stay on the host. Running agents are suspended first. */
+    removeHost: (hostId: string) => Promise<void>;
+    renameHost: (hostId: string, name: string) => Promise<void>;
+    /** Try the connection again now, installing Kangentic's program on the host first if it is not there. */
+    reconnectHost: (hostId: string) => Promise<SshHostStatus>;
+    /** Forget the recorded key of a host whose key changed, so the next connection asks again. */
+    forgetHostKey: (hostId: string) => Promise<void>;
+    /** Whether a folder exists on a host, for the Add project dialog. Rejects with the reason when it cannot say. */
+    probeRemoteFolder: (hostId: string, folderPath: string) => Promise<SshRemoteFolderProbe>;
+    onHostsChanged: (callback: () => void) => () => void;
   };
 
   // Board Config

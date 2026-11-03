@@ -46,7 +46,7 @@ import { retrievalService } from '../../retrieval/retrieval-service';
 import { retrievalClient } from '../../retrieval/retrieval-client';
 import { repairToolBreakdownDurations } from '../helpers/tool-breakdown-repair';
 import { DEFAULT_AGENT } from '../../../shared/types';
-import type { Project, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
+import type { Project, ProjectCreateInput, ProjectGroup, Task, AppConfig, ProjectSearchEntriesInput, ProjectRelocateOptions, ProjectPathProbe, ProjectEnsureGitResult, ProjectOpenByPathOverrides } from '../../../shared/types';
 import type { IpcContext } from '../ipc-context';
 import type { ProjectRepository } from '../../db/repositories/project-repository';
 import type { ConfigManager } from '../../config/config-manager';
@@ -1037,7 +1037,15 @@ export function registerProjectHandlers(context: IpcContext): void {
     { notify: true },
   ));
 
-  ipcMain.handle(IPC.PROJECT_CREATE, (_, input) => {
+  ipcMain.handle(IPC.PROJECT_CREATE, async (_, requested: ProjectCreateInput) => {
+    // A project on a host (#913): its folder is checked there, its shell folder is made here, and
+    // `.kangentic/` is kept out of the host repository's git status. The input then goes on as any other.
+    let input = requested;
+    if (requested.remote) {
+      const admin = context.remoteHosting?.admin;
+      if (!admin) throw new Error('Remote projects are not available.');
+      input = await admin.prepareRemoteProject(requested);
+    }
     // Explicit input wins; the inherited defaults only fill what it left unset.
     const project = context.projectRepo.create({
       ...getLastProjectAgentDefaults(context.projectRepo, input.path),

@@ -5041,6 +5041,83 @@
       })(),
     },
 
+    // SSH hosts mock (#913). Stateful: an added host persists into listHosts() for the rest
+    // of the test. Escape hatches for specs:
+    //   - window.__mockSshHosts: overrides listHosts()'s return value
+    //   - window.__mockSshClient: overrides detectClient()'s result
+    //   - window.__mockSshProbeError / __mockSshAddError / __mockSshFolderError: a string that makes
+    //     that call reject with it, to drive the error shapes
+    //   - window.__mockSshFolders: { [path]: { exists, isGitRepo } } consulted by probeRemoteFolder
+    //   - window.__mockFireSshHostsChanged(): fires the push the main process sends on a state change
+    ssh: (function () {
+      var hosts = [];
+      var listeners = [];
+      var counter = 0;
+      function fire() { listeners.slice().forEach(function (listener) { listener(); }); }
+      if (typeof window !== 'undefined') window.__mockFireSshHostsChanged = fire;
+      function win() { return typeof window !== 'undefined' ? window : {}; }
+      return {
+        detectClient: async function () {
+          return win().__mockSshClient || { found: true, version: 'OpenSSH_9.6p1', error: null };
+        },
+        listHosts: async function () {
+          return win().__mockSshHosts || hosts;
+        },
+        probeHostKey: async function (destination) {
+          if (win().__mockSshProbeError) throw new Error(win().__mockSshProbeError);
+          return { hostname: String(destination).split('@').pop(), port: 22, keyType: 'ssh-ed25519', fingerprint: 'SHA256:mockFingerprintForTestsOnly000000000000000' };
+        },
+        addHost: async function (input) {
+          if (win().__mockSshAddError) throw new Error(win().__mockSshAddError);
+          counter += 1;
+          var status = {
+            host: {
+              id: 'mock-ssh-host-' + counter,
+              name: input.name,
+              destination: input.destination,
+              key_path: input.signIn.method === 'config' ? null : '/mock/ssh/key',
+              key_created: input.signIn.method === 'create-key',
+              created_at: new Date().toISOString(),
+            },
+            state: 'connected',
+            detail: null,
+            since: new Date().toISOString(),
+            projectCount: 0,
+          };
+          hosts = hosts.concat([status]);
+          fire();
+          return status;
+        },
+        removeHost: async function (hostId) {
+          hosts = hosts.filter(function (status) { return status.host.id !== hostId; });
+          fire();
+        },
+        renameHost: async function (hostId, name) {
+          hosts = hosts.map(function (status) {
+            return status.host.id === hostId ? Object.assign({}, status, { host: Object.assign({}, status.host, { name: name }) }) : status;
+          });
+          fire();
+        },
+        reconnectHost: async function (hostId) {
+          hosts = hosts.map(function (status) {
+            return status.host.id === hostId ? Object.assign({}, status, { state: 'connected', detail: null, since: new Date().toISOString() }) : status;
+          });
+          fire();
+          return hosts.filter(function (status) { return status.host.id === hostId; })[0];
+        },
+        forgetHostKey: async function () {},
+        probeRemoteFolder: async function (hostId, folderPath) {
+          if (win().__mockSshFolderError) throw new Error(win().__mockSshFolderError);
+          var known = (win().__mockSshFolders || {})[folderPath];
+          return { exists: known ? known.exists : true, path: folderPath, isGitRepo: known ? !!known.isGitRepo : true };
+        },
+        onHostsChanged: function (callback) {
+          listeners.push(callback);
+          return function () { listeners = listeners.filter(function (listener) { return listener !== callback; }); };
+        },
+      };
+    })(),
+
     // Mobile bridge mock. Stateful (pairing a device persists into
     // listDevices() for the rest of the test), with escape hatches for
     // specs that need to drive the pairing flow's push events directly:

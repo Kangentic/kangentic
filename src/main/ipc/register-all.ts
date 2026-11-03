@@ -69,6 +69,7 @@ import { registerBrowserHandlers } from './handlers/browser';
 import { registerSearchHandlers } from './handlers/search';
 import { registerTranscriptHandlers } from './handlers/transcripts';
 import { registerMobileBridgeHandlers } from './handlers/mobile-bridge';
+import { registerSshHostHandlers } from './handlers/ssh-hosts';
 import { registerUsageStatsHandlers } from './handlers/usage-stats';
 import { registerPopOutHandlers } from './handlers/pop-out';
 import { registerMonitorHandlers } from './handlers/monitor';
@@ -147,7 +148,14 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   ptyHostTransport.start();
   // SSH hosts (#913): the host table, the service that connects them, and the resolver both spawn
   // chokepoints ask. The projects are read through the context, which exists by the first spawn.
-  const remoteHosting = createRemoteHosting({ sessionManager, projects: () => requireContext().projectRepo });
+  const remoteHosting = createRemoteHosting({
+    sessionManager,
+    projects: () => requireContext().projectRepo,
+    onHostsChanged: () => {
+      const mainWindow = requireContext().mainWindow;
+      if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SSH_HOSTS_CHANGED);
+    },
+  });
   // After startup, not before the window: a host that is down must never delay it.
   setImmediate(() => void remoteHosting.connectAll().catch((error: unknown) => console.warn('[remote] connecting the hosts failed:', error)));
   // One-shot child processes (version probes, help-text reads, gh and git
@@ -470,6 +478,7 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   registerUsageStatsHandlers(context);
   registerSystemHandlers(context);
   registerMobileBridgeHandlers(context);
+  registerSshHostHandlers(context);
   registerMonitorHandlers(context);
   registerMcpServerHandlers(context);
   registerTaskDetailOwnershipHandlers();

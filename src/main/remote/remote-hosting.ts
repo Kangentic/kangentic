@@ -15,6 +15,8 @@ import { SshHostRepository } from '../db/repositories/ssh-host-repository';
 import type { SessionManager } from '../pty/session-manager';
 import type { HostAsset } from './link/host-installer';
 import { readInstallId } from './install-identity';
+import { HostStatusBook } from './host-status';
+import type { SshHostAdmin } from './ssh-host-admin';
 import { createRemoteLaunchResolver, setRemoteLaunchResolver } from './remote-launch';
 import { RemoteHostService } from './remote-host-service';
 import { RemoteSessionRelay } from './remote-session-relay';
@@ -23,6 +25,12 @@ export interface RemoteHosting {
   hosts: SshHostRepository;
   hostService: RemoteHostService;
   relay: RemoteSessionRelay;
+  /** Where each host's connection stands; the settings row and the project chip read it. */
+  status: HostStatusBook;
+  /** What the SSH tab and the Add project dialog do; set when the IPC handlers register, null before. */
+  admin: SshHostAdmin | null;
+  /** Connect one host, recording the outcome. A setup failure becomes `unreachable` with its words and does not throw. */
+  connectHost(hostId: string): Promise<void>;
   /** Connect every stored host, one after another, logging what could not be reached. */
   connectAll(): Promise<void>;
 }
@@ -34,6 +42,8 @@ export interface RemoteHostingDeps {
   hostAsset?: () => HostAsset | null;
   /** The `ssh` program; a name on the PATH by default, which is how every platform finds its own. */
   sshPath?: string;
+  /** Told after a host's connection state changes, so the window can redraw. */
+  onHostsChanged?: (hostId: string) => void;
   log?: (line: string) => void;
 }
 
@@ -55,6 +65,11 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
   });
   const relay = new RemoteSessionRelay({ files: hostService, log });
   deps.sessionManager.setRemoteSessionRelay(relay);
+  const status = new HostStatusBook({ onChange: (hostId) => deps.onHostsChanged?.(hostId) });
+  // A link reports its own state; a drop is a state here, never the end of a session.
+  deps.sessionManager.on('remote-link', (event: { hostId: string; state: 'connecting' | 'connected' | 'reconnecting' | 'stopped'; detail: string | null }) => {
+    status.set(event.hostId, event.state, event.detail);
+  });
 
   setRemoteLaunchResolver(createRemoteLaunchResolver({
     remoteOfProjectPath: (projectPath) => deps.projects().list().find((project) => project.remote && samePath(project.path, projectPath))?.remote ?? null,
@@ -64,14 +79,26 @@ export function createRemoteHosting(deps: RemoteHostingDeps): RemoteHosting {
     homeMirror: (hostId) => PATHS.remoteHomeMirror(hostId),
   }));
 
+  const connectHost = async (hostId: string): Promise<void> => {
+    status.set(hostId, 'connecting');
+    try {
+      await hostService.connect(hostId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(`[remote] host ${hostId.slice(0, 8)} was not connected: ${message}`);
+      status.set(hostId, 'unreachable', message);
+    }
+  };
+
   return {
     hosts,
     hostService,
     relay,
+    status,
+    admin: null,
+    connectHost,
     async connectAll() {
-      for (const result of await hostService.connectAll()) {
-        if (result.error) log(`[remote] host ${result.hostId.slice(0, 8)} was not connected: ${result.error.message}`);
-      }
+      for (const host of hosts.list()) await connectHost(host.id);
     },
   };
 }
