@@ -1,4 +1,6 @@
-import { type BrowserWindow, ipcMain } from 'electron';
+import { app, type BrowserWindow, ipcMain } from 'electron';
+import * as path from 'node:path';
+import { readHostAssets } from '../remote/host-assets';
 import { IPC } from '../../shared/ipc-channels';
 import type { ProjectOpenByPathOverrides, RendererErrorContext, Session } from '../../shared/types';
 import {
@@ -151,6 +153,13 @@ export function registerAllIpc(mainWindow: BrowserWindow, mcpServerHandle: McpHt
   const remoteHosting = createRemoteHosting({
     sessionManager,
     projects: () => requireContext().projectRepo,
+    // The host program this build carries: packaged beside the app, or built by `npm run build:host`.
+    hostAsset: () => {
+      const directory = app.isPackaged ? path.join(process.resourcesPath, 'host') : path.join(app.getAppPath(), 'dist', 'host');
+      const found = readHostAssets(directory, app.getVersion());
+      if (found.problem) console.warn(`[remote] ${found.problem}`);
+      return found.assets;
+    },
     onHostsChanged: () => {
       const mainWindow = requireContext().mainWindow;
       if (!mainWindow.isDestroyed()) mainWindow.webContents.send(IPC.SSH_HOSTS_CHANGED);

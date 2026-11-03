@@ -80,7 +80,7 @@ describe('installing the helper', () => {
 });
 
 describe('refusing a host', () => {
-  async function refusal(options: FakeHostOptions, asset: HostAsset = ASSET): Promise<HostInstallError> {
+  async function refusal(options: FakeHostOptions, asset: HostAsset | readonly HostAsset[] = ASSET): Promise<HostInstallError> {
     try {
       await installHost(fakeHost(options).runner, asset, stream);
     } catch (error) {
@@ -107,6 +107,36 @@ describe('refusing a host', () => {
   it('accepts arm64 when the build carries it', async () => {
     const host = fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
     expect((await installHost(host.runner, { ...ASSET, arch: 'arm64' }, stream)).installed).toBe(true);
+  });
+
+  describe('a build that carries one asset per CPU', () => {
+    const ARM_SHA = 'b'.repeat(64);
+    const BOTH: HostAsset[] = [ASSET, { ...ASSET, arch: 'arm64', sha256: ARM_SHA, filePath: '/mock/kangentic-host-0.52.0-linux-arm64.tar.gz' }];
+
+    it('sends the one that matches the host, whichever order they are listed in', async () => {
+      const opened: string[] = [];
+      const arm = fakeHost({ probe: ok('Linux\naarch64\n/home/dev\nglibc 2.39\n') });
+      await installHost(arm.runner, BOTH, (filePath) => { opened.push(filePath); return stream(); });
+      const intel = fakeHost();
+      await installHost(intel.runner, [...BOTH].reverse(), (filePath) => { opened.push(filePath); return stream(); });
+
+      expect(opened).toEqual(['/mock/kangentic-host-0.52.0-linux-arm64.tar.gz', '/mock/kangentic-host-0.52.0-linux-x64.tar.gz']);
+      expect(arm.calls[2].command).toContain(`expected='${ARM_SHA}'`);
+      expect(intel.calls[2].command).toContain(`expected='${SHA}'`);
+    });
+
+    it('names the CPUs it does carry when the host has another', async () => {
+      const error = await refusal({ probe: ok('Linux\nriscv64\n/home/dev\nglibc 2.39\n') }, BOTH as never);
+      expect(error.code).toBe('unsupported-arch');
+      expect(error.message).toContain('riscv64');
+      expect(error.message).toContain('x86_64 and arm64');
+    });
+
+    it('refuses a bad checksum on any entry before it runs anything on the host', async () => {
+      const host = fakeHost();
+      await expect(installHost(host.runner, [ASSET, { ...ASSET, arch: 'arm64', sha256: 'not-a-checksum' }], stream)).rejects.toThrow('checksum');
+      expect(host.runner).not.toHaveBeenCalled();
+    });
   });
 
   it('refuses musl and a glibc older than 2.28, and accepts 2.28', async () => {

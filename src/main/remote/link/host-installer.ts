@@ -120,10 +120,12 @@ function installScript(version: string, sha256: string): string {
  */
 export async function installHost(
   run: SshRunner,
-  asset: HostAsset,
+  assets: HostAsset | readonly HostAsset[],
   openAsset: (filePath: string) => Readable = (filePath) => createReadStream(filePath),
 ): Promise<InstalledHost> {
-  validate(asset);
+  // A build carries one asset per CPU it supports; the host's own CPU, learned below, picks the one to send.
+  const candidates: readonly HostAsset[] = Array.isArray(assets) ? assets : [assets as HostAsset];
+  for (const candidate of candidates) validate(candidate);
   const probe = await run(PROBE_COMMAND);
   if (probe.code !== 0) {
     throw new HostInstallError('failed', `Could not read the host's details: ${probe.stderr.trim() || `ssh exited with ${probe.code}`}`);
@@ -133,8 +135,10 @@ export async function installHost(
     throw new HostInstallError('unsupported-os', `Kangentic can run agents only on a Linux host. This one reports ${system || 'an unknown system'} ${machine}.`.trim());
   }
   const hostArch = archOf(machine);
-  if (hostArch !== asset.arch) {
-    throw new HostInstallError('unsupported-arch', `This host is ${machine}, and this build carries the helper for ${asset.arch === 'x64' ? 'x86_64' : 'arm64'}.`);
+  const asset = candidates.find((candidate) => candidate.arch === hostArch);
+  if (!asset) {
+    const carried = candidates.map((candidate) => (candidate.arch === 'x64' ? 'x86_64' : 'arm64')).join(' and ');
+    throw new HostInstallError('unsupported-arch', `This host is ${machine}, and this build carries the helper for ${carried || 'no CPU'}.`);
   }
   if (!glibcAtLeast(libc, MIN_GLIBC)) {
     throw new HostInstallError('unsupported-libc', `Kangentic's helper needs glibc ${MIN_GLIBC.join('.')} or newer. This host reports ${libc && libc !== 'none' ? libc : 'no glibc (Alpine and other musl hosts are not supported)'}.`);

@@ -39,7 +39,7 @@ export interface RemoteHostingDeps {
   sessionManager: SessionManager;
   projects: () => Pick<ProjectRepository, 'list'>;
   /** The program installed on a host: this build's, with its checksum, or null when the build carries none. */
-  hostAsset?: () => HostAsset | null;
+  hostAsset?: () => HostAsset | readonly HostAsset[] | null;
   /** The `ssh` program; a name on the PATH by default, which is how every platform finds its own. */
   sshPath?: string;
   /** Told after a host's connection state changes, so the window can redraw. */

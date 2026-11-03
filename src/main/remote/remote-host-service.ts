@@ -48,16 +48,16 @@ export interface RemoteHostServiceDeps {
   /** The pty host's `remote` request (`PtyHostClient.remote`). */
   send: (request: RemoteHostRequest) => Promise<unknown>;
   /** The program to install on a host: this app's version of it, with its checksum. Null when this build carries none. */
-  asset: () => HostAsset | null;
+  asset: () => HostAsset | readonly HostAsset[] | null;
   /** How this computer introduces itself to a host's helper. */
   identity: { installId: string; label: string };
-  install?: (run: SshRunner, asset: HostAsset) => Promise<InstalledHost>;
+  install?: (run: SshRunner, asset: HostAsset | readonly HostAsset[]) => Promise<InstalledHost>;
   createRunner?: (config: { sshPath: string; args: string[] }) => SshRunner;
 }
 
 export class HostProgramMissingError extends Error {
   constructor() {
-    super('This build of Kangentic does not include the program to install on a host.');
+    super('This build of Kangentic does not include the program to install on a host. A development build makes it with npm run build:host.');
     this.name = 'HostProgramMissingError';
   }
 }
@@ -82,7 +82,7 @@ export class RemoteHostService {
     if (!host) throw new Error('That host is not set up in Kangentic.');
     const args = sshArgsFor(host);
     const asset = this.deps.asset();
-    if (!asset) throw new HostProgramMissingError();
+    if (!asset || (Array.isArray(asset) && asset.length === 0)) throw new HostProgramMissingError();
     const createRunner = this.deps.createRunner ?? createSshRunner;
     const install = this.deps.install ?? installHost;
     const installed = await install(createRunner({ sshPath: this.deps.sshPath, args }), asset);
