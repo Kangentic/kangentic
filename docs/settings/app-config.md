@@ -372,6 +372,6 @@ Not every id in `settings-registry.ts` is a key in this file. These four rows wr
 
 The other ids that are not keys fall into three groups:
 
-- **A row that writes other keys.** Each `notifications.on*` row is one dropdown that writes the event's key under both `notifications.desktop` and `notifications.toasts`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `keybindings`.
+- **A row that writes other keys.** Each `notifications.on*` row is one dropdown that writes the event's key under both `notifications.desktop` and `notifications.toasts`. The four `agent.execution*` rows write `agent.execution` and `agent.executionServers`, and `hotkeys` writes `hotkeyOverrides`.
 - **A row stored outside this file.** `project.defaultAgent`, `project.defaultModel` and `project.defaultEffort` are columns on the project's row in the global database.
 - **An action, a notice or a card.** `browser.clearStorage`, `mobileBridge.pairing`, `mobileBridge.devices`, `mobileBridge.getApp`, `developer.crashReports` and `developer.devTriggers` store nothing in `AppConfig`. `workflows.agentCard` and `automation.agentCard` name a card, and its rows write `workflows.*` and `automation.*`.
