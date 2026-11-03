@@ -49,8 +49,18 @@ msgstr "Terminal başladığında kullanılabilir"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "Ajan için tarayıcı çalışıyor. Belleği boşaltmak için terminal menüsünden kapatın."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
 msgid "Clear search"
 msgstr "Aramayı temizle"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#, fuzzy
+msgid "Close browser"
+msgstr "Tarayıcıyı kapat"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
@@ -117,6 +127,11 @@ msgstr "Terminal durdurulamadı"
 msgid "Couldn't switch branch"
 msgstr "Dal değiştirilemedi"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Drag to resize"
+msgstr "Yeniden boyutlandırmak için sürükleyin"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
 msgid "Earlier"
@@ -147,6 +162,12 @@ msgstr "Git: {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "Gizle"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Hide browser"
+msgstr "Tarayıcıyı gizle"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -190,6 +211,11 @@ msgstr "Önceki bölümünden kalkar ve artık aranamaz. Aracı dökümünü sak
 msgid "Its process may still be running."
 msgstr "İşlemi hâlâ çalışıyor olabilir."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Kept alive until you close it"
+msgstr "Siz kapatana kadar açık tutulur"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 #, fuzzy
 msgid "Maximize panel"
@@ -219,6 +245,11 @@ msgstr "Yeni pencerede aç"
 #, fuzzy
 msgid "Open project folder"
 msgstr "Proje klasörünü aç"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Page kept"
+msgstr "Sayfa korundu"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -295,6 +326,12 @@ msgstr "Konuşmalarda aranıyor..."
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy
+msgid "Show browser"
+msgstr "Tarayıcıyı göster"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
 msgid "Show changes"
 msgstr "Değişiklikleri göster"
 
@@ -348,6 +385,11 @@ msgstr "Terminal adı"
 #, fuzzy
 msgid "The terminals are back in the panel."
 msgstr "Terminaller panele geri döndü."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+#, fuzzy
+msgid "Toggle browser"
+msgstr "Tarayıcıyı aç/kapat"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 #, fuzzy

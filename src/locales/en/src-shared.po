@@ -936,6 +936,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Show or hide the description panel inside the task detail dialog."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr "Show or hide the focused Command Terminal's browser pane."
+
+#: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
 msgstr "Show or hide the project sidebar."
 
@@ -1128,6 +1132,10 @@ msgstr "Toggle Changes panel"
 #: src/shared/keybindings.ts
 msgid "Toggle Command Terminal"
 msgstr "Toggle Command Terminal"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr "Toggle Command Terminal Browser pane"
 
 #: src/shared/keybindings.ts
 msgid "Toggle debug overlay"

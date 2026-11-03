@@ -1,3 +1,5 @@
+import { isCommandTerminalBrowserOwner } from './browser-owner';
+
 // Persistent partitions (cookie jars) for the embedded browser pane.
 //
 // The pane's jar is keyed by TASK IDENTITY (project id + task id), not by the
@@ -11,7 +13,7 @@
 // directory back to its project and task and check existence, instead of hashing
 // every task's possible paths to reverse an opaque hash.
 //
-// `browserPartitionForTask` / `browserPartitionForProjectIdentity` are imported
+// `browserPartitionForOwner` / `browserPartitionForProjectIdentity` are imported
 // by both the renderer (`<webview partition>`, from the pane's task+project) and
 // the main process (the offscreen lane, the jar seeder, the clear-storage and
 // sweep passes), so the two derive the same name from the same ids. Pure (no
@@ -54,6 +56,37 @@ export function browserPartitionForTask(
 }
 
 /**
+ * The jar every Command Terminal of a project shares: `kng-<projectId>-terminals`.
+ *
+ * One per project rather than one per terminal, because a project's Command
+ * Terminals all run in the same project root on the same HEAD, so they serve
+ * one dev server. A separate dev server per worktree is the reason each TASK
+ * gets its own jar; terminals have no such split, and one jar keeps a login to
+ * that server shared across them. Identity-provider cookies are seeded from and
+ * mirrored to the identity jar exactly as a task jar's are (`jar-seeder.ts`).
+ */
+export function browserPartitionForCommandTerminals(projectId: string | null | undefined): string {
+  if (!projectId) return BROWSER_PARTITION;
+  return `persist:kng-${normalizePartitionId(projectId)}-terminals`;
+}
+
+/**
+ * The jar for a Browser surface's OWNER key (`src/shared/browser-owner.ts`): a
+ * task's own jar for a task id, the project's shared terminals jar for a
+ * Command Terminal's key. The one function every jar consumer (the pane's
+ * `<webview partition>`, the lane, the jar seeder, the registry's log line)
+ * calls, so a Command Terminal key can never reach `browserPartitionForTask`
+ * and become a jar name the sweep cannot parse.
+ */
+export function browserPartitionForOwner(
+  projectId: string | null | undefined,
+  ownerKey: string | null | undefined,
+): string {
+  if (ownerKey && isCommandTerminalBrowserOwner(ownerKey)) return browserPartitionForCommandTerminals(projectId);
+  return browserPartitionForTask(projectId, ownerKey);
+}
+
+/**
  * The project's IDENTITY jar: the durable, project-wide store for non-localhost
  * (identity-provider) cookies that every task's jar seeds from and mirrors back
  * into. One per project. Falls back to the legacy jar when no project is known.
@@ -74,13 +107,15 @@ export function partitionDirName(partition: string): string {
 
 const KNG_TASK_DIR_RE = /^kng-([0-9a-f]{32})-([0-9a-f]{32})$/;
 const KNG_IDENTITY_DIR_RE = /^kng-([0-9a-f]{32})-identity$/;
+const KNG_TERMINALS_DIR_RE = /^kng-([0-9a-f]{32})-terminals$/;
 /** The pre-task-keying scheme, abandoned. Reclaimed once by the sweep. */
 const LEGACY_WORKTREE_JAR_DIR_RE = /^kngbrowser-[0-9a-f]{8}$/;
 
 /** What a `kng-...` jar directory belongs to, parsed back from its name. */
 export type ParsedPartitionDir =
   | { kind: 'task'; projectId: string; taskId: string }
-  | { kind: 'identity'; projectId: string };
+  | { kind: 'identity'; projectId: string }
+  | { kind: 'terminals'; projectId: string };
 
 /**
  * Parse a jar directory name back into the project (and task) it belongs to, or
@@ -90,12 +125,14 @@ export type ParsedPartitionDir =
 export function parseKngPartitionDir(name: string): ParsedPartitionDir | null {
   const identity = KNG_IDENTITY_DIR_RE.exec(name);
   if (identity) return { kind: 'identity', projectId: identity[1] };
+  const terminals = KNG_TERMINALS_DIR_RE.exec(name);
+  if (terminals) return { kind: 'terminals', projectId: terminals[1] };
   const task = KNG_TASK_DIR_RE.exec(name);
   if (task) return { kind: 'task', projectId: task[1], taskId: task[2] };
   return null;
 }
 
-/** True for a current-scheme jar directory (`kng-<proj>-<task>` or `-identity`). */
+/** True for a current-scheme jar directory (`kng-<proj>-<task>`, `-identity` or `-terminals`). */
 export function isKngPartitionDirName(name: string): boolean {
   return parseKngPartitionDir(name) !== null;
 }

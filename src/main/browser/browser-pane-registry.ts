@@ -7,6 +7,12 @@ import { detachDebugger, isDebuggerAttached } from './cdp/cdp';
 import { forgetViewportOverride } from './viewport-override-store';
 import { trackFeatureUsed } from '../analytics/usage';
 import type { BrowserPaneVisibility } from '../../shared/types';
+import {
+  browserOwnerKind,
+  isCommandTerminalBrowserOwner,
+  parseCommandTerminalBrowserOwner,
+  type BrowserOwnerKind,
+} from '../../shared/browser-owner';
 
 /**
  * Registry mapping an open embedded Browser pane to its guest `<webview>`
@@ -133,6 +139,14 @@ export interface BrowserPaneStatus extends BrowserPaneEntry {
   alive: boolean;
   /** True when a CDP debugger is currently attached to the guest. */
   debuggerAttached: boolean;
+  /**
+   * Who the surface belongs to. A Command Terminal's surface carries its owner
+   * key in `taskId` (`src/shared/browser-owner.ts`), which names no board task,
+   * so an agent reads this rather than treating that value as a task id.
+   */
+  owner: BrowserOwnerKind;
+  /** The Command Terminal slot (`slot-1`, ...) for a Command Terminal's surface, else null. */
+  commandTerminalSlot: string | null;
 }
 
 export type ResolveTargetSelector = {
@@ -157,9 +171,11 @@ export type ResolveTargetSelector = {
    */
   callerSessionId?: string;
   /**
-   * The caller's own task id, resolved server-side from `callerSessionId`.
-   * When present, an implicit call resolves ONLY among that task's surfaces:
-   * it never reaches another task's pane, however many are open.
+   * The caller's own surface OWNER, resolved server-side from
+   * `callerSessionId`: its task id, or its Command Terminal's owner key
+   * (`commandTerminalBrowserOwner`). When present, an implicit call resolves
+   * ONLY among that owner's surfaces: it never reaches another task's or
+   * terminal's pane, however many are open.
    */
   callerTaskId?: string;
 };
@@ -198,7 +214,7 @@ const FOREIGN_PROJECT_HINT =
  * can actually perform. Keep this pointing at the tool, not at the pill.
  */
 const NO_PANE_OPEN_HINT =
-  'Call kangentic_browser_open_pane with a url to open and load your own task\'s Browser pane, then retry.';
+  'Call kangentic_browser_open_pane with a url to open and load your own Browser pane, then retry.';
 
 /**
  * Why a pane left the registry. Every deletion names one.
@@ -295,6 +311,11 @@ function bestRanked(entries: readonly BrowserPaneEntry[]): BrowserPaneEntry[] {
     if (rank === bestRank) winners.push(entry);
   }
   return winners;
+}
+
+/** "your task <id>" or "your Command Terminal", for a refusal an agent reads. */
+function ownerPhrase(ownerKey: string): string {
+  return isCommandTerminalBrowserOwner(ownerKey) ? 'your Command Terminal' : `your own task ${ownerKey}`;
 }
 
 function describeSurface(entry: BrowserPaneEntry): string {
@@ -662,6 +683,8 @@ export class BrowserPaneRegistry {
         url: this.readLiveUrl(entry),
         alive,
         debuggerAttached: alive ? isDebuggerAttached(guest) : false,
+        owner: browserOwnerKind(entry.taskId),
+        commandTerminalSlot: parseCommandTerminalBrowserOwner(entry.taskId)?.slot ?? null,
       };
     });
   }
@@ -684,8 +707,9 @@ export class BrowserPaneRegistry {
    * single pane in the project" happened to be the sibling's. A preference that
    * matches nothing now refuses with `no-pane-open` and says so; only a caller
    * with no identity (a human-driven client, the two-segment
-   * `.kangentic/mcp-config.json` URL, a Command Terminal session) still lands
-   * on the project-wide rule.
+   * `.kangentic/mcp-config.json` URL) still lands on the project-wide rule. A
+   * Command Terminal names its own owner key, so it resolves only its own pane,
+   * exactly as a task's agent does.
    *
    * Returns a structured error the MCP layer surfaces verbatim.
    */
@@ -760,7 +784,7 @@ export class BrowserPaneRegistry {
         return {
           ok: false,
           kind: 'multiple-panes',
-          detail: `${ownTask.length} Browser surfaces belong to your own task ${selector.callerTaskId}. Pass one of their handles as sessionId to choose: ${ownTask.map(describeSurface).join(', ')}.`,
+          detail: `${ownTask.length} Browser surfaces belong to ${ownerPhrase(selector.callerTaskId)}. Pass one of their handles as sessionId to choose: ${ownTask.map(describeSurface).join(', ')}.`,
           candidates: ownTask,
         };
       }
@@ -769,15 +793,15 @@ export class BrowserPaneRegistry {
         otherTaskCount === 0
           ? ''
           : otherTaskCount === 1
-            ? ' 1 Browser pane open in this project belongs to another task and is never used implicitly.'
-            : ` ${otherTaskCount} Browser panes open in this project belong to other tasks and are never used implicitly.`;
+            ? ' 1 Browser pane open in this project belongs to another task or terminal and is never used implicitly; pass its handle from kangentic_browser_list_panes to drive it.'
+            : ` ${otherTaskCount} Browser panes open in this project belong to other tasks or terminals and are never used implicitly; pass a handle from kangentic_browser_list_panes to drive one.`;
       const unattributed = this.getByTaskId(selector.callerTaskId).some((entry) => entry.projectId === null)
-        ? ' Your task has a registered Browser pane with no project recorded, which a scoped caller cannot use. Close and reopen it so it registers against this project.'
+        ? ' You have a registered Browser pane with no project recorded, which a scoped caller cannot use. Close and reopen it so it registers against this project.'
         : '';
       return {
         ok: false,
         kind: 'no-pane-open',
-        detail: `No Browser surface is open for your task ${selector.callerTaskId}. ${NO_PANE_OPEN_HINT}${others}${unattributed}`,
+        detail: `No Browser surface is open for ${ownerPhrase(selector.callerTaskId)}. ${NO_PANE_OPEN_HINT}${others}${unattributed}`,
       };
     }
 
@@ -860,32 +884,38 @@ export class BrowserPaneRegistry {
         detail: `Surface ${handle} belonged to a different project than this connection. ${FOREIGN_PROJECT_HINT}`,
       };
     }
+    const commandTerminal = isCommandTerminalBrowserOwner(retired.taskId);
+    const owner = commandTerminal ? 'a Command Terminal' : `task ${retired.taskId}`;
+    const jar = commandTerminal
+      ? "every Command Terminal of a project shares the project's terminals jar"
+      : "every surface of a task shares the task's jar";
     return {
       ok: false,
       kind: 'surface-gone',
       detail:
-        `Browser surface ${handle} (a ${retired.kind} for task ${retired.taskId}) is gone: ` +
+        `Browser surface ${handle} (a ${retired.kind} for ${owner}) is gone: ` +
         `${RETIRED_REASON_WORDS[retired.reason]} ${formatElapsed(Date.now() - retired.retiredAt)} ago. ` +
         'Its per-tab state (sessionStorage, in-memory app state, an unsaved form) did not carry over to any other surface; ' +
-        `cookies and localStorage did, because every surface of a task shares the task's jar. ${current}`,
+        `cookies and localStorage did, because ${jar}. ${current}`,
     };
   }
 
   private describeCallerSurfaces(selector: ResolveTargetSelector): string {
     if (!selector.callerTaskId) {
-      return 'This connection is not bound to a task. Call kangentic_browser_list_panes to see the surfaces in this project and pass one of their handles as sessionId.';
+      return 'This connection is not bound to a task or Command Terminal. Call kangentic_browser_list_panes to see the surfaces in this project and pass one of their handles as sessionId.';
     }
     const surfaces = this.getByTaskId(selector.callerTaskId)
       .filter((entry) => this.inScope(entry, selector.projectId))
       .sort((left, right) => surfaceRank(left) - surfaceRank(right));
+    const owner = isCommandTerminalBrowserOwner(selector.callerTaskId) ? 'Your Command Terminal' : 'Your task';
     if (surfaces.length === 0) {
-      return 'Your task has no Browser surface open now. Call kangentic_browser_open_pane with a url to open one, then pass the handle it returns as sessionId (or omit sessionId to use it).';
+      return `${owner} has no Browser surface open now. Call kangentic_browser_open_pane with a url to open one, then pass the handle it returns as sessionId (or omit sessionId to use it).`;
     }
     const named = surfaces.map((entry) => `${describeSurface(entry)} at ${this.readLiveUrl(entry) ?? 'no URL yet'}`);
     if (named.length === 1) {
-      return `Your task's current surface is ${named[0]}. Pass it as sessionId, or omit sessionId to use it; redo any per-tab setup it needs.`;
+      return `${owner}'s current surface is ${named[0]}. Pass it as sessionId, or omit sessionId to use it; redo any per-tab setup it needs.`;
     }
-    return `Your task's current surfaces are ${named.join('; ')}. Pass one of them as sessionId (omitting sessionId uses the first); redo any per-tab setup it needs.`;
+    return `${owner}'s current surfaces are ${named.join('; ')}. Pass one of them as sessionId (omitting sessionId uses the first); redo any per-tab setup it needs.`;
   }
 
   /**

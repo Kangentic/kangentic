@@ -66,6 +66,7 @@ import {
   type BrowserPaneOpenerHost,
 } from '../../src/main/browser/browser-pane-opener';
 import { IPC } from '../../src/shared/ipc-channels';
+import { commandTerminalBrowserOwner } from '../../src/shared/browser-owner';
 
 const PROJECT = 'proj-1';
 const CALLER_TASK = 'task-1';
@@ -1014,5 +1015,58 @@ describe('closePanes', () => {
       expect(result).toMatchObject({ ok: false, error: { kind: 'no-pane-open' } });
       expect(closedWindowCalls).toEqual([]);
     });
+  });
+});
+
+describe('openPaneForCallerTask for a Command Terminal caller', () => {
+  // A Command Terminal's surface is keyed by its slot's owner key, which names
+  // no task row. The opener must check the slot's live terminal instead of the
+  // task table (where the key would answer task-not-found), and push the key so
+  // the Command Terminal bridge, not the task-detail one, opens it.
+  const OWNER = commandTerminalBrowserOwner(PROJECT, 'slot-1');
+  const terminalInput = (url?: string) => ({ ...openInput(url), callerTaskId: OWNER });
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    sent = [];
+    laneExistsForTask = false;
+    vi.mocked(browserPaneRegistry.getByTaskId).mockReturnValue([]);
+    vi.mocked(validateNavigationUrl).mockImplementation((url: string) => ({ ok: true, url }) as never);
+    vi.mocked(capabilityGate).mockReturnValue(null);
+    vi.mocked(browserUrlStore.get).mockReturnValue(null);
+  });
+
+  it('opens on the live terminal, never asking the task table, and pushes the owner key', async () => {
+    const taskExists = vi.fn(() => false);
+    const commandTerminalLive = vi.fn(() => true);
+    installHost({ taskExists, commandTerminalLive });
+    vi.mocked(browserPaneRegistry.waitForLivePane).mockResolvedValue(pane({ taskId: OWNER }) as never);
+
+    await openPaneForCallerTask(terminalInput('http://localhost:5173'));
+
+    expect(taskExists).not.toHaveBeenCalled();
+    expect(commandTerminalLive).toHaveBeenCalledWith(PROJECT, 'slot-1');
+    expect(browserUrlStore.set).toHaveBeenCalledWith('/projects/app', OWNER, 'http://localhost:5173');
+    expect(sent).toEqual([{ channel: IPC.BROWSER_PANE_OPEN_REQUEST, args: [PROJECT, OWNER] }]);
+  });
+
+  it('refuses before any push when the slot runs no terminal', async () => {
+    installHost({ taskExists: () => true, commandTerminalLive: () => false });
+
+    const result = await openPaneForCallerTask(terminalInput('http://localhost:5173'));
+
+    expect(result).toMatchObject({ ok: false, error: { kind: 'command-terminal-not-running' } });
+    expect(sent).toEqual([]);
+    expect(browserUrlStore.set).not.toHaveBeenCalled();
+  });
+
+  it('tells a connection with no caller what to say, and names no other browser', async () => {
+    installHost();
+    const result = await openPaneForCallerTask({ ...openInput('http://localhost:5173'), callerTaskId: undefined });
+    expect(result.ok).toBe(false);
+    const detail = result.ok ? '' : result.error.detail;
+    // The old text sent an agent with no task to the user's Chrome extension.
+    expect(detail).toContain('Do not use another browser');
+    expect(detail).not.toMatch(/task's Browser pane/);
   });
 });

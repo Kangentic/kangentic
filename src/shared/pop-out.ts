@@ -163,8 +163,13 @@ export function parsePopOutInstanceKey(
   // filePath is deliberately the LAST segment, so extra segments never shift these two.
   const segments = key.split(':');
   if (segments.length < 3) return null;
-  const [kind, projectId, taskId] = segments;
+  const [kind, projectId] = segments;
   if (!isPopOutKind(kind) || isGlobalPopOutKind(kind) || isProjectPopOutKind(kind)) return null;
+  // A Browser window's "task" may be a Command Terminal's owner key
+  // (`command-terminal::<projectId>::<slot>`, src/shared/browser-owner.ts),
+  // which carries colons of its own, so the rest of the key is the task. Every
+  // other task-scoped kind keeps reading segment 2 alone.
+  const taskId = kind === 'browser' ? segments.slice(2).join(':') : segments[2];
   if (!projectId || !taskId) return null;
   return { kind, projectId, taskId };
 }
@@ -190,7 +195,8 @@ export interface PopOutSurfaceMeta {
   title: MessageDescriptor;
   defaultBounds: { width: number; height: number };
   minSize: { width: number; height: number };
-  /** Only 'browser' needs webviewTag: true. */
+  /** True for a surface that mounts a Browser pane: 'browser', and
+   *  'command-terminal', whose terminals each hold their own. */
   needsWebview: boolean;
   /** Push channels the main process fans out to this surface's open windows. */
   channels: readonly string[];
@@ -394,7 +400,8 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
     // beside the rail; a window too small for the grid tiles every terminal
     // under the floor, as the panel does in a small app window.
     minSize: { width: 900, height: 600 },
-    needsWebview: false,
+    // Each terminal can hold its own Browser pane, a `<webview>`, in this window.
+    needsWebview: true,
     resolveTitle: (params) => ({ ...COMMAND_TERMINAL_TITLE, values: { projectName: (params as PopOutProjectParams).projectName } }),
     channels: [
       // This window runs no App.tsx, so it keeps its own session replica live
@@ -417,6 +424,12 @@ export const POP_OUT_SURFACES: Readonly<Record<PopOutKind, PopOutSurfaceMeta>> =
       // The rail's Earlier list.
       IPC.COMMAND_TERMINAL_HISTORY_CHANGED,
       IPC.CONFIG_CHANGED,
+      // Each terminal's own Browser pane mounts in this window while the panel
+      // lives here: an agent's open_pane and close_pane reach it through these,
+      // and the Running row's globe lights for a page running offscreen.
+      IPC.BROWSER_PANE_OPEN_REQUEST,
+      IPC.BROWSER_PANE_CLOSE_REQUEST,
+      IPC.BROWSER_OFFSCREEN_SURFACES,
     ],
   },
 };

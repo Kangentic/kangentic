@@ -8348,7 +8348,9 @@ export interface ElectronAPI {
      */
     getToolResultTokens: (sessionId: string) => Promise<Record<string, number> | null>;
     spawnTransient: (input: SpawnTransientSessionInput) => Promise<SpawnTransientSessionResult>;
-    killTransient: (sessionId: string) => Promise<void>;
+    /** `respawn`: a branch switch or a resume in place ends this session to
+     *  start the slot again at once, so the slot's Browser pane is kept. */
+    killTransient: (sessionId: string, options?: { respawn?: boolean }) => Promise<void>;
     /** Mirror where a Command Terminal's checkout actually sits, re-derived
      *  from live HEAD by the renderer, onto its live registry row so the
      *  Monitor row and a post-reload adopt agree with the pill. Last write
@@ -9114,6 +9116,14 @@ export interface ElectronAPI {
      *  window directly. True when something was closed. */
     closeOffscreenSurface: (taskId: string, projectId?: string | null) => Promise<boolean>;
     /**
+     * A Command Terminal slot's saved Browser layout (open, and the split), or
+     * null when it has none. A task keeps these on its row; a terminal has no
+     * row, so main keeps them per project and slot (`command-terminal-browser-store.ts`).
+     */
+    getCommandTerminalState: (projectId: string, slot: string) => Promise<CommandTerminalBrowserState | null>;
+    /** Save a Command Terminal slot's Browser layout. */
+    setCommandTerminalState: (projectId: string, slot: string, state: CommandTerminalBrowserState) => Promise<void>;
+    /**
      * A file download started from a Browser pane has finished. The pane saves
      * silently to the OS Downloads folder (what Chrome does), so this push is
      * what stops an agent-triggered download from being invisible.
@@ -9321,6 +9331,16 @@ export interface BrowserCaptureInput {
  */
 export const BROWSER_PANE_VISIBILITIES = ['showing', 'hidden', 'parked', 'offscreen'] as const;
 export type BrowserPaneVisibility = (typeof BROWSER_PANE_VISIBILITIES)[number];
+
+/**
+ * A Command Terminal slot's Browser layout, saved per project and slot so the
+ * pane comes back after a restart and in the detached Command Terminal window.
+ * `ratio` is the terminal's share of the split, as a task's `dividerRatio`.
+ */
+export interface CommandTerminalBrowserState {
+  open: boolean;
+  ratio?: number;
+}
 
 export interface BrowserPaneRegisterInput {
   /** The agent session this pane serves (the registry records it as the

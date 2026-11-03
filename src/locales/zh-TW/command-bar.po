@@ -47,8 +47,17 @@ msgid "Available once the terminal starts"
 msgstr "終端機啟動後即可使用"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+#, fuzzy
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "代理正在使用瀏覽器。請從終端機選單關閉以釋放記憶體。"
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Clear search"
 msgstr "清除搜尋"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Close browser"
+msgstr "關閉瀏覽器"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -105,6 +114,10 @@ msgstr "無法停止終端機"
 msgid "Couldn't switch branch"
 msgstr "無法切換分支"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Drag to resize"
+msgstr "拖曳以調整大小"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Earlier"
 msgstr "先前"
@@ -131,6 +144,11 @@ msgstr "前往 {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "隱藏"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Hide browser"
+msgstr "隱藏瀏覽器"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -170,6 +188,10 @@ msgstr "對話將從「先前」中移除，且無法再被搜尋。代理程式
 msgid "Its process may still be running."
 msgstr "其處理程序可能仍在執行。"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Kept alive until you close it"
+msgstr "保持運作，直到你關閉為止"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Maximize panel"
 msgstr "最大化面板"
@@ -194,6 +216,10 @@ msgstr "在新視窗中開啟"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Open project folder"
 msgstr "開啟專案資料夾"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page kept"
+msgstr "頁面已保留"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 #, fuzzy
@@ -262,6 +288,11 @@ msgstr "正在搜尋對話..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Show browser"
+msgstr "顯示瀏覽器"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Show changes"
 msgstr "顯示變更"
 
@@ -307,6 +338,10 @@ msgstr "終端機名稱"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
 msgstr "終端機已回到面板中。"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Toggle browser"
+msgstr "切換瀏覽器"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Toggle changes"

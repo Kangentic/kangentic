@@ -3,8 +3,8 @@ import { promises as fsPromises } from 'node:fs';
 import path from 'node:path';
 import { v4 as uuidv4 } from 'uuid';
 import { isAbortError } from '../../shared/abort-utils';
-import { isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
-import { normalizeCommandTerminalName } from '../../shared/command-terminal-name';
+import { findLiveCommandTerminalSession, isCommandTerminalSession, isWorkflowAgentSession } from '../../shared/session-owner';
+import { commandTerminalDisplayName, normalizeCommandTerminalName } from '../../shared/command-terminal-name';
 
 /**
  * Renderer key used when a caller does not identify itself (headless callers, and
@@ -4530,9 +4530,36 @@ export class SessionManager extends EventEmitter {
     return this.registry.getSessionProjectId(sessionId);
   }
 
-  /** Return the taskId for a given session, or undefined if not found. */
+  /** Return the taskId for a given session, or undefined if not found. A
+   *  Command Terminal's is synthetic (its process tag, no task row); ask
+   *  `getCommandTerminalSlot` first wherever that matters. */
   getSessionTaskId(sessionId: string): string | undefined {
     return this.registry.getSessionTaskId(sessionId);
+  }
+
+  /** The session's Command Terminal slot, or undefined when the session is
+   *  unknown or not a Command Terminal (a task's agent, a workflow agent). */
+  getCommandTerminalSlot(sessionId: string): string | undefined {
+    const session = this.registry.getSession(sessionId);
+    if (!session || !isCommandTerminalSession(session)) return undefined;
+    return session.commandTerminalSlot ?? undefined;
+  }
+
+  /** The name a project's live Command Terminal in `slot` shows, as its header does. */
+  getCommandTerminalName(projectId: string, slot: string): string | undefined {
+    const session = this.findLiveCommandTerminalSession(projectId, slot);
+    if (!session) return undefined;
+    return commandTerminalDisplayName(session.commandTerminalLabel, slot);
+  }
+
+  /**
+   * The live (running or queued) Command Terminal session in a project's slot,
+   * or undefined. A Command Terminal's Browser pane is keyed by its project and
+   * slot, which outlive any one session id (a branch switch or a resume in
+   * place respawns the slot under a new id).
+   */
+  findLiveCommandTerminalSession(projectId: string, slot: string): Session | undefined {
+    return findLiveCommandTerminalSession(this.registry.listSessions(), projectId, slot);
   }
 
   /** Return the adapter name (e.g. "claude", "codex") for a given session,

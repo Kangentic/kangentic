@@ -27,10 +27,13 @@ interface SettledRow {
  * the project changing under it as a switch. See
  * `.claude/rules/pop-out-surface-registry.md`.
  */
-export function usePopOutTaskRow(projectId: string, taskId: string): PopOutTaskRow {
+export function usePopOutTaskRow(projectId: string, taskId: string | null): PopOutTaskRow {
   const [settled, setSettled] = useState<SettledRow | null>(null);
-  const key = `${projectId}\u0000${taskId}`;
+  const key = `${projectId}\u0000${taskId ?? ''}`;
   useEffect(() => {
+    // No task to read: a Command Terminal's popped-out Browser pane, whose
+    // owner key names no task row.
+    if (taskId === null) return;
     let cancelled = false;
     window.electronAPI.monitor.getTaskDetail(projectId, taskId)
       .then((bundle) => {
@@ -42,6 +45,8 @@ export function usePopOutTaskRow(projectId: string, taskId: string): PopOutTaskR
       });
     return () => { cancelled = true; };
   }, [key, projectId, taskId]);
+  // With no task there is nothing to wait for: settled, with no row.
+  if (taskId === null) return { task: null, projectPath: null, loading: false };
   const current = settled?.key === key ? settled : null;
   return { task: current?.task ?? null, projectPath: current?.projectPath ?? null, loading: current === null };
 }

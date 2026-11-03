@@ -1145,6 +1145,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Zobrazí nebo skryje panel popisu v dialogu s podrobnostmi úkolu."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Zobrazí nebo skryje postranní panel projektu."
@@ -1385,6 +1389,10 @@ msgstr "Přepnout panel změn"
 #, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "Přepnout příkazový terminál"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

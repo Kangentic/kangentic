@@ -1,7 +1,7 @@
 ---
 type: Design
 title: Embedded browser decision log
-description: "Decisions 1 to 42 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives."
+description: "Decisions 1 to 43 behind the Browser pane, cited as decision N from source comments: task-keyed and identity cookie jars, popups, downloads and permissions, agent focus and drive rules, dictation into the pane, offscreen lanes, viewport mechanisms, the Electron/ token, the deny hook that makes it the only browser an agent drives, the Command Terminal's pane."
 tags: [browser, decisions, cookies, focus, lanes]
 sources:
   - resource: src/main/permission-policy.ts
@@ -11,6 +11,8 @@ sources:
   - resource: src/main/browser/embedded-signin-refusal.ts
   - resource: src/main/browser/browser-user-agent.ts
   - resource: src/main/browser/browser-partition-cleanup.ts
+  - resource: src/renderer/components/command-bar/CommandTerminalBrowserHost.tsx
+  - resource: src/shared/browser-owner.ts
   - resource: src/main/browser/cookie-seed.ts
   - resource: src/main/browser/jar-seeder.ts
   - resource: src/main/browser/browser-pane-registry.ts
@@ -273,3 +275,13 @@ An agent in a project whose own `.mcp.json` shipped Playwright MCP drove that se
 *Large output is the answer to the capture gap, not a second browser.* `saveToFile` on `kangentic_browser_screenshot`, `_screenshot_element`, `_query_dom` and `_eval` writes to a gitignored `.kangentic/` folder inside the caller's working directory, so the agent can Read it back without a permission prompt. It never takes a path from the agent, which keeps a screenshot's read-only annotation honest, and a screenshot is still planned to the pane's own pixels, never scaled up to match Playwright's full-page output. `_query_dom` carries it because page HTML must not need `allowEval`, which is off by default.
 
 *The prompt is inline text, not a file.* `--append-system-prompt-file` is missing from `claude --help` with no recorded first version, and Claude exits on an unknown option, so a CLI that predates it would fail every spawn. The text is one line with no character a host shell treats specially. See [Browser panes](../../integrations/mcp-server/browser-panes.md#the-only-browser-an-agent-drives).
+
+## 43. A Command Terminal's pane lives outside the panel, and a project's terminals share one jar
+
+A Command Terminal agent that asked for a browser got `no-caller-task`: its MCP URL named no session, so there was no task, and the refusal told it to ask for a task's pane. In a reported session the agent then reached for the user's Chrome extension, which the server instructions forbid. Each Command Terminal now has the task window's pane, at parity.
+
+*Where the pane lives.* The panel unmounts on every hide (Ctrl+Shift+P, a backdrop click, Hide), on a project switch, and on Open in new window, and a `<webview>` dies with its node. Three answers were weighed. Handing the page to an offscreen lane on each hide reloads it twice and loses `sessionStorage` on every Ctrl+Shift+P, which is the logout decision 35 was made to stop. Keeping the whole panel mounted, hidden, needs board-style retention the panel deliberately does not have, leaves terminals mounted while main has stopped streaming to them, and still loses the page on Open in new window. The chosen answer mounts the pane in `CommandTerminalBrowserHost`, a host that outlives the panel, and has the window draw only an empty slot (`data-command-terminal-browser-slot`). The host re-places the pane when its slot mounts or unmounts, when the panel shows or hides and when the window store changes, and follows a moving slot on animation frames with a timer beside them, since a minimized window throttles both; with no slot showing it, the pane stays at its last rect at `opacity: 0`, which keeps the guest compositing (decision 8's physics). The cost is the tracking itself and one reload when the panel moves to its own window, whose host is a different renderer.
+
+*Who owns it.* A Command Terminal's surface is keyed by `command-terminal::<projectId>::<slot>` (`src/shared/browser-owner.ts`), not by its session, because a branch switch or a resume in place respawns the slot under a new session id and the page belongs to the slot. The key rides every field a task id already rides, so the registry, lanes, sidecar and renderer sets needed no second shape. Its MCP URL now names its session and `resolveMcpCaller` resolves that to the slot, never to the session's synthetic task id, which would have made every task-keyed consumer treat it as a board task. A bare call from a terminal resolves only its own surface; before this, a terminal took the single pane open in the project whenever exactly one existed.
+
+*Its jar.* One per project, `persist:kng-<projectId>-terminals`, not one per terminal. A task gets its own jar because each worktree runs its own dev server on `localhost` (decision 33); a project's terminals all run in the project root on one HEAD and so serve one dev server, and a login made in one should hold in the others. The name is self-describing, so the sweep parses it (kept while the project exists, like the identity jar) and Clear browser data enumerates it. A terminal key passed straight to `browserPartitionForTask` would have produced a name the sweep could not parse, or, with the synthetic task id, a jar the sweep deletes as an orphan.

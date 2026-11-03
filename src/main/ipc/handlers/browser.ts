@@ -2,7 +2,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { app, ipcMain, session, webContents } from 'electron';
 import { IPC } from '../../../shared/ipc-channels';
-import { browserPartitionForTask } from '../../../shared/browser-partition';
+import { browserPartitionForOwner } from '../../../shared/browser-partition';
+import { parseCommandTerminalBrowserOwner } from '../../../shared/browser-owner';
+import { isCommandTerminalSlotId } from '../../../shared/command-terminal-name';
+import { installCommandTerminalBrowserCleanup } from '../helpers/command-terminal-browser';
+import { isRestorableAfterHostLoss } from './command-terminal-restore';
+import { isCommandTerminalSlotStarting } from './transient-sessions';
+import { commandTerminalBrowserStore, toCommandTerminalBrowserState } from '../../browser/command-terminal-browser-store';
 import { BROWSER_PANE_VISIBILITIES } from '../../../shared/types';
 import type {
   BrowserCaptureInput,
@@ -64,6 +70,15 @@ import {
 // the element's own outerHTML) optimized for grepping the codebase.
 // Mirrors Chrome DevTools MCP's "snapshot over screenshot" guidance.
 
+/** Whether a Command Terminal runs in `slot` of `projectId`. A lookup failure answers no. */
+function isCommandTerminalSlotLive(context: IpcContext, projectId: string, slot: string): boolean {
+  try {
+    return context.sessionManager.findLiveCommandTerminalSession(projectId, slot) !== undefined;
+  } catch {
+    return false;
+  }
+}
+
 export function registerBrowserHandlers(context: IpcContext): void {
   // Give the pane opener (behind kangentic_browser_open_pane / _close_pane) the
   // slice of app state it needs. Injected rather than imported so the opener -
@@ -79,10 +94,14 @@ export function registerBrowserHandlers(context: IpcContext): void {
         return false;
       }
     },
+    commandTerminalLive: (projectId, slot) => isCommandTerminalSlotLive(context, projectId, slot),
     browserOverrides: (projectPath) => context.configManager.loadProjectOverrides(projectPath)?.browser ?? null,
     send: (channel, ...args) => {
       if (context.mainWindow.isDestroyed()) return false;
-      context.mainWindow.webContents.send(channel, ...args);
+      // `broadcast`, not a main-window send: a detached Command Terminal window
+      // hosts its terminals' Browser panes and declares the open and close
+      // request channels, so an agent's open_pane reaches it there.
+      broadcast(context.mainWindow, channel, ...args);
       return true;
     },
     hasDetachedWindow: (projectId, taskId) => popOutWindowManager.has('browser', { projectId, taskId }),
@@ -111,6 +130,12 @@ export function registerBrowserHandlers(context: IpcContext): void {
         // that pane off would stand a lane up for an agent that is being
         // stopped, only for session end to tear it down moments later
         // (observed live).
+        //
+        // A Command Terminal's surface is keyed by its owner key, which no
+        // session row carries as its task id, so it asks for the slot's live
+        // session instead.
+        const commandTerminal = parseCommandTerminalBrowserOwner(taskId);
+        if (commandTerminal) return isCommandTerminalSlotLive(context, commandTerminal.projectId, commandTerminal.slot);
         return context.sessionManager.hasLiveSessionForTask(taskId);
       } catch {
         // Never let a lookup failure decide policy: no hand-off is the safe
@@ -138,6 +163,16 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // lists `BROWSER_OFFSCREEN_SURFACES` and seeds the set in its own bootstrap.
   setLaneChangeListener(() => {
     broadcast(context.mainWindow, IPC.BROWSER_OFFSCREEN_SURFACES, laneTaskIds());
+  });
+
+  // A Command Terminal's Browser pane, offscreen page, pop-out and saved URL
+  // end with the terminal, which has no `sessions` row for the task path's
+  // cleanup to run off.
+  // A terminal the crash restore brings back did not end, so it keeps its page,
+  // and a respawn keeps it while the slot's next start runs.
+  installCommandTerminalBrowserCleanup(context, {
+    willRestore: (session) => isRestorableAfterHostLoss(context, session),
+    isSlotStarting: isCommandTerminalSlotStarting,
   });
 
   ipcMain.handle(IPC.BROWSER_CAPTURE_SEND, async (_event, input: BrowserCaptureInput) => {
@@ -294,7 +329,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
       // binds. A null projectId means the pane bound the legacy jar, which is a
       // hub partition and needs no seeding.
       if (!projectId || !taskId) return;
-      const partition = browserPartitionForTask(projectId, taskId);
+      const partition = browserPartitionForOwner(projectId, taskId);
       await syncJarFromIdentity(partition, projectId);
     } catch (error) {
       console.warn('[browser-pane] ensureJar failed:', error);
@@ -340,7 +375,7 @@ export function registerBrowserHandlers(context: IpcContext): void {
     // occur; this stays only as a lightweight "which jar did it bind" trace.
     if (input.projectId) {
       console.log(
-        `[browser-pane] pane bound partition=${browserPartitionForTask(input.projectId, input.taskId)} `
+        `[browser-pane] pane bound partition=${browserPartitionForOwner(input.projectId, input.taskId)} `
           + `task=${input.taskId.slice(0, 8)} owner=${input.sessionId.slice(0, 8)} handle=${entry.sessionId} wc=${input.webContentsId}`,
       );
     }
@@ -418,6 +453,38 @@ export function registerBrowserHandlers(context: IpcContext): void {
   // a reloaded renderer would otherwise show no browser for a task that has
   // one.
   ipcMain.handle(IPC.BROWSER_OFFSCREEN_SURFACES_GET, () => laneTaskIds());
+
+  // A Command Terminal slot's saved Browser layout. Routed by the explicit
+  // project id, never the ambient one: the detached Command Terminal window and
+  // a backgrounded project's slot both ask for a project that may not be open.
+  // A slot is one of the `slot-N` ids main allocates, never any string the
+  // renderer sends, so nothing else becomes a key in the project's file.
+  const toSlotRequest = (projectId: unknown, slot: unknown): { projectId: string; slot: string } | null =>
+    typeof projectId === 'string' && projectId !== '' && typeof slot === 'string' && isCommandTerminalSlotId(slot)
+      ? { projectId, slot }
+      : null;
+
+  ipcMain.handle(IPC.BROWSER_COMMAND_TERMINAL_STATE_GET, (_event, projectId: unknown, slot: unknown) => {
+    const request = toSlotRequest(projectId, slot);
+    if (!request) return null;
+    const { projectPath } = resolveProjectContext(context, request.projectId);
+    if (!projectPath) return null;
+    return commandTerminalBrowserStore.get(projectPath, request.slot);
+  });
+
+  ipcMain.handle(IPC.BROWSER_COMMAND_TERMINAL_STATE_SET, (_event, projectId: unknown, slot: unknown, state: unknown) => {
+    const request = toSlotRequest(projectId, slot);
+    const narrowed = toCommandTerminalBrowserState(state);
+    if (!request || !narrowed) return;
+    // Only a slot with a terminal saves. The renderer may hear the close a
+    // terminal's end pushes before it hears the removal, and save `open: false`
+    // with the old split after the end cleared the slot's entry, which the
+    // slot's next terminal would then inherit.
+    if (!isCommandTerminalSlotLive(context, request.projectId, request.slot)) return;
+    const { projectPath } = resolveProjectContext(context, request.projectId);
+    if (!projectPath) return;
+    commandTerminalBrowserStore.set(projectPath, request.slot, narrowed);
+  });
 
   // The user's Close on a task whose surface is offscreen.
   //

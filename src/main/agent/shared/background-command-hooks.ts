@@ -61,7 +61,8 @@ export function backgroundToolMatcher(tools: readonly string[]): string {
  * Whether the session will be offered `kangentic_mark_background_service`, so
  * a hint pointing at it may be shown: the MCP server is on with a token, and
  * the session's MCP URL names it as the caller (`/mcp/<project>/<session>`). A
- * Command Terminal, a workflow's own agent and an answer run have no such URL.
+ * task's agent and a Command Terminal have one; a workflow's own agent and an
+ * answer run do not.
  */
 export function offersMarkBackgroundService(
   options: Pick<CommandOptions, 'mcpServerEnabled' | 'mcpServerToken' | 'mcpServerUrl'>,

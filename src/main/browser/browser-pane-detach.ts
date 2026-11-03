@@ -8,6 +8,8 @@ import {
 } from './browser-pane-driver';
 import type { ResolvedBrowserAutomationConfig } from './browser-automation-config';
 import { openPaneForCallerTask, PANE_OPEN_TIMEOUT_MS } from './browser-pane-opener';
+import { NO_CALLER_BROWSER_DETAIL } from './no-caller-refusal';
+import { parseCommandTerminalBrowserOwner } from '../../shared/browser-owner';
 import { popOutWindowManager } from '../pop-out/pop-out-window-manager';
 import {
   applyViewport,
@@ -267,10 +269,7 @@ export async function popOutPaneForCallerTask(
   const { projectId, callerSessionId, callerTaskId, config } = input;
 
   if (!callerTaskId) {
-    return failure(
-      'no-caller-task',
-      'This connection is not bound to a task, so there is no Browser pane to detach. Only an agent running on a Kangentic task can move its own pane.',
-    );
+    return failure('no-caller-task', NO_CALLER_BROWSER_DETAIL);
   }
 
   // Gated before the side effect, for the same reason `open_pane` is: this puts
@@ -279,6 +278,18 @@ export async function popOutPaneForCallerTask(
   // capability open a window and only then refuse.
   const gate = capabilityGate(input.capability, config);
   if (gate) return { ok: false, error: gate };
+
+  // A Command Terminal whose panel already lives in a window of its own: its
+  // Browser pane is in that window, which is not the app window a pop-out
+  // detaches from and cannot see a Browser window open beside it, so the pane
+  // would show in both. The panel's window is already the agent's own window.
+  const commandTerminal = parseCommandTerminalBrowserOwner(callerTaskId);
+  if (commandTerminal && popOutWindowManager.has('command-terminal', { projectId, projectName: '' })) {
+    return failure(
+      'pop-out-unavailable',
+      'Your Command Terminal panel is already in a window of its own, and your Browser pane is in it. Resize that window, or use kangentic_browser_set_viewport, instead.',
+    );
+  }
 
   if (popOutWindowManager.has('browser', { projectId, taskId: callerTaskId })) {
     const existing = liveOwnPane(projectId, callerTaskId);
@@ -415,10 +426,7 @@ export async function dockPaneForCallerTask(
   const { projectId, callerSessionId, callerTaskId, config } = input;
 
   if (!callerTaskId) {
-    return failure(
-      'no-caller-task',
-      'This connection is not bound to a task, so there is no detached Browser window to dock.',
-    );
+    return failure('no-caller-task', NO_CALLER_BROWSER_DETAIL);
   }
 
   const gate = capabilityGate(input.capability, config);

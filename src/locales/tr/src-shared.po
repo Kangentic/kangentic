@@ -1145,6 +1145,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "Görev ayrıntısı penceresindeki açıklama panelini gösterin veya gizleyin."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "Proje kenar çubuğunu gösterin veya gizleyin."
@@ -1385,6 +1389,10 @@ msgstr "Değişiklikler panelini aç/kapat"
 #, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "Komut Terminali'ni aç/kapat"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

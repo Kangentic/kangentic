@@ -1145,6 +1145,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "작업 세부 정보 대화 상자에서 설명 패널을 표시하거나 숨깁니다."
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 #, fuzzy
 msgid "Show or hide the project sidebar."
 msgstr "프로젝트 사이드바를 표시하거나 숨깁니다."
@@ -1385,6 +1389,10 @@ msgstr "변경 내용 패널 토글"
 #, fuzzy
 msgid "Toggle Command Terminal"
 msgstr "명령 터미널 토글"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 #, fuzzy

@@ -16,6 +16,7 @@ import {
   CommandTerminalLayer,
   useCloseCommandWindowOnRemoval,
 } from '../command-bar/CommandTerminalLayer';
+import { CommandTerminalBrowserBridge, CommandTerminalBrowserHost } from '../command-bar/CommandTerminalBrowserHost';
 import { SearchPalette } from '../search/SearchPalette';
 import { WelcomeScreen } from './WelcomeScreen';
 import { WelcomeChecklistDialog } from '../onboarding/WelcomeChecklistDialog';
@@ -654,6 +655,13 @@ export function AppLayout() {
       {knowledgeGraphOpen && !knowledgeGraphPopOut.isOpen && <KnowledgeGraphPage />}
       {settingsOpen && <SettingsPanel />}
       {commandBar.isOpen && !commandTerminalPopOut.isOpen && <CommandTerminalLayer onHide={commandBar.close} />}
+      {/* Always mounted, unlike the layer above: each Command Terminal's Browser
+          pane lives here so hiding the panel or switching projects never
+          unmounts its page (command-terminal-browser.ts). The bridge takes
+          main's open and close requests for those panes, so an agent's
+          open_pane reaches a hidden panel. */}
+      <CommandTerminalBrowserBridge />
+      <CommandTerminalBrowserHost />
       {searchPalette.isOpen && <SearchPalette onClose={searchPalette.close} />}
       <ProjectPathMissingDialog />
       <LeftoverProcessesDialog />

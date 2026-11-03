@@ -438,6 +438,17 @@ export const KEYBINDINGS: readonly KeybindingDefinition[] = [
     rebindable: true,
   },
   {
+    // The Command Terminal's own Browser pane, on the same default as a task
+    // window's: the two never hold the keyboard at once, so the scopes differ.
+    id: 'commandTerminal.toggleBrowser',
+    label: msg`Toggle Command Terminal Browser pane`,
+    description: msg`Show or hide the focused Command Terminal's browser pane.`,
+    group: 'Browser',
+    scope: 'command-bar',
+    defaultCombo: 'Mod+Shift+B',
+    rebindable: true,
+  },
+  {
     id: 'taskDetail.toggleChanges',
     label: msg`Toggle Changes panel`,
     description: msg`Show or hide the changes (diff) panel inside the task detail dialog.`,

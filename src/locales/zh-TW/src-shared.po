@@ -937,6 +937,10 @@ msgid "Show or hide the description panel inside the task detail dialog."
 msgstr "顯示或隱藏任務詳細資料對話方塊中的描述面板。"
 
 #: src/shared/keybindings.ts
+msgid "Show or hide the focused Command Terminal's browser pane."
+msgstr ""
+
+#: src/shared/keybindings.ts
 msgid "Show or hide the project sidebar."
 msgstr "顯示或隱藏專案側邊欄。"
 
@@ -1129,6 +1133,10 @@ msgstr "切換變更面板"
 #: src/shared/keybindings.ts
 msgid "Toggle Command Terminal"
 msgstr "切換命令終端機"
+
+#: src/shared/keybindings.ts
+msgid "Toggle Command Terminal Browser pane"
+msgstr ""
 
 #: src/shared/keybindings.ts
 msgid "Toggle debug overlay"

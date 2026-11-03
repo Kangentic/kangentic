@@ -40,8 +40,16 @@ msgid "Available once the terminal starts"
 msgstr "Available once the terminal starts"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
+msgid "Browser running for the agent. Close it from the terminal's menu to free memory."
+msgstr "Browser running for the agent. Close it from the terminal's menu to free memory."
+
+#: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Clear search"
 msgstr "Clear search"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+msgid "Close browser"
+msgstr "Close browser"
 
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Command Terminal"
@@ -95,6 +103,10 @@ msgstr "Couldn't stop the terminal"
 msgid "Couldn't switch branch"
 msgstr "Couldn't switch branch"
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Drag to resize"
+msgstr "Drag to resize"
+
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Earlier"
 msgstr "Earlier"
@@ -119,6 +131,11 @@ msgstr "Go to {name}"
 msgctxt "Command Terminal rail fold button"
 msgid "Hide"
 msgstr "Hide"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Hide browser"
+msgstr "Hide browser"
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
@@ -154,6 +171,10 @@ msgstr "It leaves Earlier and can no longer be searched. The agent keeps its tra
 msgid "Its process may still be running."
 msgstr "Its process may still be running."
 
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Kept alive until you close it"
+msgstr "Kept alive until you close it"
+
 #: src/renderer/components/command-bar/CommandTerminalPanel.tsx
 msgid "Maximize panel"
 msgstr "Maximize panel"
@@ -177,6 +198,10 @@ msgstr "Open in new window"
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Open project folder"
 msgstr "Open project folder"
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Page kept"
+msgstr "Page kept"
 
 #: src/renderer/components/command-bar/CommandTerminalRail.tsx
 msgid "Rail width"
@@ -238,6 +263,11 @@ msgstr "Searching conversations..."
 
 #: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Show browser"
+msgstr "Show browser"
+
+#: src/renderer/components/command-bar/CommandTerminalMenuItems.tsx
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Show changes"
 msgstr "Show changes"
 
@@ -281,6 +311,10 @@ msgstr "Terminal name"
 #: src/renderer/components/command-bar/CommandTerminalLayer.tsx
 msgid "The terminals are back in the panel."
 msgstr "The terminals are back in the panel."
+
+#: src/renderer/components/command-bar/CommandTerminalWindow.tsx
+msgid "Toggle browser"
+msgstr "Toggle browser"
 
 #: src/renderer/components/command-bar/CommandTerminalWindow.tsx
 msgid "Toggle changes"
