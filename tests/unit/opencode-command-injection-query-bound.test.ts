@@ -161,7 +161,8 @@ describe('OpenCode command-injection verifier - an OpenCode 2 session', () => {
         return {
           all: (...params: unknown[]) => {
             recorded.push({ sql, params });
-            if (/FROM session_message/.test(sql)) return userRows;
+            // The query asks for `type = 'user'` rows only, so each row is one.
+            if (/FROM session_message/.test(sql)) return userRows.map((row) => ({ ...row, type: 'user' }));
             return [];
           },
         };
@@ -184,6 +185,32 @@ describe('OpenCode command-injection verifier - an OpenCode 2 session', () => {
     const v2Query = recorded.find((entry) => /FROM session_message/.test(entry.sql));
     expect(v2Query?.sql).toMatch(/type = 'user'/);
     expect(v2Query?.params[0]).toBe('ses_v2');
+  });
+
+  it('returns false without throwing when the database has no session_message table (OpenCode 1)', async () => {
+    mockLoadBetterSqlite3.mockReturnValue(class FakeDatabase {
+      prepare(sql: string): { all: (...params: unknown[]) => unknown[] } {
+        if (/FROM session_message/.test(sql)) throw new Error('no such table: session_message');
+        return { all: () => [] };
+      }
+      close(): void {
+        // no-op
+      }
+    } as unknown as new (...args: unknown[]) => unknown);
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    await expect(verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v1', sentAt: Date.now() })).resolves.toBe(false);
+  });
+
+  it('confirms a submit whose row is not the newest of several user rows', async () => {
+    const sentAt = Date.now();
+    // Newest first, as the query's ORDER BY seq DESC returns them.
+    mockLoadBetterSqlite3.mockReturnValue(v2Database([
+      { id: 'msg_newest', time_created: sentAt + 300, data: JSON.stringify({ text: 'a later follow-up' }) },
+      { id: 'msg_middle', time_created: sentAt + 200, data: JSON.stringify({ text: '/pull-request' }) },
+      { id: 'msg_oldest', time_created: sentAt + 100, data: JSON.stringify({ text: 'an earlier message' }) },
+    ]));
+    const verifier = createOpenCodeCommandInjectionVerifier();
+    expect(await verifier({ type: 'command-injection', text: '/pull-request', agentSessionId: 'ses_v2', sentAt })).toBe(true);
   });
 
   it('does not confirm a different text, or one written before the send', async () => {

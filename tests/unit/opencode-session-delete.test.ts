@@ -13,6 +13,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { EventEmitter } from 'node:events';
 import { OpenCodeAdapter, OpenCodeDetector } from '../../src/main/agent/adapters/opencode';
+import { openCodeAnswerConfig } from '../../src/main/agent/adapters/opencode/opencode-adapter';
+import type { KangenticMcpServer } from '../../src/main/agent/shared/kangentic-mcp-server';
 import { runCliForChat, stopAllCliRuns, stopCliRunsForChat } from '../../src/main/agent/shared/cli-print';
 import { setOffMainCliSpawner, type CliChildProcess, type OffMainCliOptions } from '../../src/main/utility-process/off-main-cli';
 
@@ -239,5 +241,68 @@ describe('OpenCode answer on OpenCode 2', () => {
 
     expect(spawned[0].args).toEqual(['run', '--agent', 'plan', '--format', 'json', '--pure']);
     expect(spawned[0].options.env?.OPENCODE_CONFIG_CONTENT).toBeUndefined();
+  });
+});
+
+// A caller can hold a CLI path across a detection reset that emptied the cache
+// (`versionFor`): the answer then detects the path again before it picks flags.
+describe('OpenCode answer after a cache miss', () => {
+  /** Start an answer, wait for its run to spawn (it waits on a detection first), then let it finish. */
+  async function answerAfterDetection(): Promise<string> {
+    const answer = adapter.answerFromContext('Which row?', CLI_PATH, WORKING_DIRECTORY, null);
+    await vi.waitFor(() => expect(spawned).toHaveLength(1));
+    spawned[0].run.stdout.emit('data', Buffer.from(answerOutput(SESSION_ID)));
+    spawned[0].run.emit('exit', 0, null);
+    spawned[0].run.emit('close', 0, null);
+    return answer;
+  }
+
+  it('detects the path again and runs with OpenCode 2\'s flags when that finds a V2', async () => {
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(null);
+    const detectSpy = vi.spyOn(OpenCodeDetector.prototype, 'detect').mockResolvedValue({ found: true, path: CLI_PATH, version: 'v2.2.5' });
+
+    await answerAfterDetection();
+
+    expect(detectSpy).toHaveBeenCalledWith(CLI_PATH);
+    expect(spawned[0].args).toContain('--standalone');
+    expect(spawned[0].args).not.toContain('--pure');
+    expect(spawned[1].args).toEqual(['session', 'delete', SESSION_ID, '--standalone']);
+  });
+
+  it('runs with OpenCode 1\'s flags when the detection fails', async () => {
+    vi.spyOn(OpenCodeDetector.prototype, 'getCachedVersion').mockReturnValue(null);
+    vi.spyOn(OpenCodeDetector.prototype, 'detect').mockRejectedValue(new Error('spawn ENOENT'));
+
+    await answerAfterDetection();
+
+    expect(spawned[0].args).toContain('--pure');
+    expect(spawned[0].args).not.toContain('--standalone');
+  });
+});
+
+describe('openCodeAnswerConfig', () => {
+  const server: KangenticMcpServer = { kind: 'http', url: 'http://127.0.0.1:51234/mcp/proj-abc', token: 'token-deadbeef' };
+  const mcpEntry = { type: 'remote', url: server.kind === 'http' ? server.url : '', enabled: true, headers: { 'X-Kangentic-Token': 'token-deadbeef' } };
+  const denyRules = [
+    { action: 'shell', resource: '*', effect: 'deny' },
+    { action: 'edit', resource: '*', effect: 'deny' },
+  ];
+
+  it('carries both the deny rules and the Kangentic MCP entry for OpenCode 2 with a server', () => {
+    expect(openCodeAnswerConfig(server, true)).toEqual({ permissions: denyRules, mcp: { kangentic: mcpEntry } });
+  });
+
+  it('carries only the MCP entry, with no permissions, for OpenCode 1', () => {
+    const config = openCodeAnswerConfig(server, false);
+    expect(config).toEqual({ mcp: { kangentic: mcpEntry } });
+    expect(config).not.toHaveProperty('permissions');
+  });
+
+  it('carries only the deny rules for OpenCode 2 with no server', () => {
+    expect(openCodeAnswerConfig(null, true)).toEqual({ permissions: denyRules });
+  });
+
+  it('is null when there is no server and no OpenCode 2 deny rules to add', () => {
+    expect(openCodeAnswerConfig(null, false)).toBeNull();
   });
 });

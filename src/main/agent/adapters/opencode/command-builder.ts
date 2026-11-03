@@ -118,6 +118,7 @@ export function installsActivityPlugin(options: Pick<OpenCodeCommandOptions, 'ev
 export class OpenCodeCommandBuilder {
   buildOpenCodeCommand(options: OpenCodeCommandOptions): string {
     const { shell } = options;
+    const openCode2 = isOpenCodeV2(options.cliVersion);
 
     // Remote mode: attach to the user-run server instead of spawning a local
     // session. The server owns providers/models/MCP/tools (per the task's
@@ -125,7 +126,6 @@ export class OpenCodeCommandBuilder {
     // emits --model or installs the activity plugin (there is no local
     // project directory to write it into; the server's filesystem is not
     // ours to touch).
-    const openCode2 = isOpenCodeV2(options.cliVersion);
     if (options.executionTarget) {
       // `attach` and the server API remote mode speaks are OpenCode 1's.
       // Thrown, so the spawn is blocked with the reason rather than started
@@ -146,13 +146,15 @@ export class OpenCodeCommandBuilder {
 
     const parts: string[] = [quoteArg(options.cliTarget ? options.cliTarget.linuxCliPath : options.opencodePath, shell)];
 
+    // OpenCode 2's TUI takes no `--agent` or `--model`: a fresh spawn names
+    // them in config (`buildOpenCodeEnv`).
     if (openCode2) {
       parts.push('--standalone');
       if (options.resume && options.sessionId) {
         parts.push('--session', quoteArg(options.sessionId, shell));
-        return parts.join(' ');
+      } else if (options.prompt) {
+        parts.push('--prompt', quotePrompt(options.prompt, shell));
       }
-      if (options.prompt) parts.push('--prompt', quotePrompt(options.prompt, shell));
       return parts.join(' ');
     }
 

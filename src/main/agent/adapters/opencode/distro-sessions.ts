@@ -105,30 +105,35 @@ const VERSION_TIMEOUT_MS = 15_000;
 
 /**
  * Whether the distro's CLI is OpenCode 2, asked once per binary (`--version`)
- * and kept for the run. Its runs take other flags: OpenCode 2 has no `--pure`,
- * its `export` is `session export`, and without `--standalone` each run joins
- * or starts the distro user's shared background service. A failed answer is
- * not kept, so the next run asks again.
+ * and kept until the adapter's detection is reset (`forgetDistroOpenCodeVersions`),
+ * so an upgrade in the distro is seen when the CLI is detected again. Its runs
+ * take other flags: OpenCode 2 has no `--pure`, its `export` is `session
+ * export`, and without `--standalone` each run joins or starts the distro
+ * user's shared background service. A failed answer is not kept, so the next
+ * run asks again, and the run that asked rejects with it: guessing a major
+ * would only run the other major's flags.
  */
-const distroMajorCache = new Map<string, Promise<boolean>>();
+const distroIsV2Cache = new Map<string, Promise<boolean>>();
 
 export function isDistroOpenCodeV2(
   target: CliTarget,
   exec: typeof execCliForTarget = execCliForTarget,
 ): Promise<boolean> {
   const key = `${target.distro}\u0000${target.linuxCliPath}`;
-  const cached = distroMajorCache.get(key);
+  const cached = distroIsV2Cache.get(key);
   if (cached) return cached;
   const answer = exec(target, ['--version'], { timeout: VERSION_TIMEOUT_MS, maxBuffer: 64 * 1024 })
     .then(({ stdout }) => isOpenCodeV2(stdout.trim()));
-  distroMajorCache.set(key, answer);
-  answer.catch(() => distroMajorCache.delete(key));
+  distroIsV2Cache.set(key, answer);
+  answer.catch(() => {
+    if (distroIsV2Cache.get(key) === answer) distroIsV2Cache.delete(key);
+  });
   return answer;
 }
 
-/** Test-only: forget every distro CLI's version. */
-export function __resetDistroVersionCacheForTests(): void {
-  distroMajorCache.clear();
+/** Forget every distro CLI's major, so the next run asks again. */
+export function forgetDistroOpenCodeVersions(): void {
+  distroIsV2Cache.clear();
 }
 
 /** `session list`'s arguments for a CLI of the given major. */
@@ -143,7 +148,7 @@ export function distroSessionExportArgs(sessionId: string, openCode2: boolean): 
 
 /** The distro's newest sessions. Rejects as the run does. */
 export async function listDistroOpenCodeSessions(target: CliTarget, cwd: string): Promise<DistroOpenCodeSession[]> {
-  const openCode2 = await isDistroOpenCodeV2(target).catch(() => false);
+  const openCode2 = await isDistroOpenCodeV2(target);
   const { stdout } = await execCliForTarget(
     target,
     distroSessionListArgs(openCode2),
@@ -189,7 +194,7 @@ export async function captureDistroOpenCodeSessionId(options: {
 /** A session's messages as the distro's CLI exports them. Rejects as the run does; none for an id not in an id's shape. */
 export async function exportDistroOpenCodeSession(target: CliTarget, sessionId: string, cwd: string): Promise<OpenCodeRemoteMessageEntry[]> {
   if (!isSessionId(sessionId)) return [];
-  const openCode2 = await isDistroOpenCodeV2(target).catch(() => false);
+  const openCode2 = await isDistroOpenCodeV2(target);
   const { stdout } = await execCliForTarget(
     target,
     distroSessionExportArgs(sessionId, openCode2),

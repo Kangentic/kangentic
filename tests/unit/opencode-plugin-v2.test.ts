@@ -95,6 +95,81 @@ describe('the OpenCode 2 activity plugin', () => {
       .toMatchObject({ type: 'tool_start', tool: 'read', detail: '.env' });
   });
 
+  it.each([
+    ['session.idle', { type: 'idle' }],
+    ['session.error', { type: 'idle', detail: 'error' }],
+    ['session.execution.failed', { type: 'idle', detail: 'error' }],
+    ['session.execution.errored', { type: 'idle', detail: 'error' }],
+    ['session.execution.error', { type: 'idle', detail: 'error' }],
+    ['session.execution.interrupted', { type: 'interrupted' }],
+    ['session.execution.cancelled', { type: 'interrupted' }],
+    ['session.execution.canceled', { type: 'interrupted' }],
+    ['session.execution.aborted', { type: 'interrupted' }],
+    ['question.replied', { type: 'notification', detail: 'question.replied' }],
+    ['question.rejected', { type: 'notification', detail: 'question.rejected' }],
+  ])('maps the unmeasured event name %s', async (eventType, expected) => {
+    const { helpers } = await loadPlugin();
+    const lines = helpers.extractEvent({ type: eventType, data: { sessionID: SESSION } }, () => false);
+    expect(lines).toEqual([expect.objectContaining(expected)]);
+  });
+
+  it('maps an unrelated event name to nothing', async () => {
+    const { helpers } = await loadPlugin();
+    expect(helpers.extractEvent({ type: 'session.usage.updated', data: { sessionID: SESSION } }, () => false)).toEqual([]);
+  });
+
+  it('setup returns undefined and subscribes to nothing when KANGENTIC_EVENTS_PATH is unset', async () => {
+    delete process.env.KANGENTIC_EVENTS_PATH;
+    const plugin = await loadPlugin();
+    const subscribe = vi.fn();
+    const hook = vi.fn();
+    const cleanup = await plugin.setup({ event: { subscribe }, tool: { hook } });
+    expect(cleanup).toBeUndefined();
+    expect(subscribe).not.toHaveBeenCalled();
+    expect(hook).not.toHaveBeenCalled();
+    expect(fs.existsSync(eventsPath)).toBe(false);
+  });
+
+  it('replays a real OpenCode 2.2.5 capture (a rejected .env read) through setup into the expected lines', async () => {
+    const fixturePath = path.resolve(__dirname, '../fixtures/opencode-v2-plugin-events.jsonl');
+    const records = fs.readFileSync(fixturePath, 'utf-8').split('\n').filter((line) => line.trim().length > 0)
+      .map((line) => JSON.parse(line) as { kind: 'event' | 'execute.before' | 'execute.after'; payload: unknown });
+    expect(records.map((record) => record.kind)).toContain('execute.before');
+    expect(records.map((record) => record.kind)).toContain('execute.after');
+
+    const plugin = await loadPlugin();
+    const hooks = new Map<string, (event: unknown) => void>();
+    let release: () => void = () => undefined;
+    const delivered = new Promise<void>((resolve) => { release = resolve; });
+    const ctx = {
+      event: {
+        subscribe: () => (async function* () {
+          // setup registers its tool hooks after it starts the subscription.
+          while (hooks.size < 2) await new Promise((resolve) => setTimeout(resolve, 0));
+          for (const record of records) {
+            if (record.kind === 'event') yield record.payload;
+            else hooks.get(record.kind)?.(record.payload);
+          }
+          release();
+        })(),
+      },
+      tool: { hook: async (name: string, handler: (event: unknown) => void) => { hooks.set(name, handler); } },
+    };
+    const cleanup = await plugin.setup(ctx);
+    await delivered;
+    cleanup?.();
+
+    const written = fs.readFileSync(eventsPath, 'utf-8').trim().split('\n').map((line) => JSON.parse(line) as PluginEventLine);
+    expect(written.map((line) => line.type)).toEqual([
+      'session_start', 'prompt', 'tool_start', 'idle', 'tool_end', 'notification', 'idle',
+    ]);
+    expect(JSON.parse(written[0].hookContext ?? '{}')).toEqual({ sessionID: 'ses_e60042ee8ffeAy5Cq2RJH2s4gd' });
+    expect(written[2]).toMatchObject({ tool: 'read', detail: '.env' });
+    expect(written[3]).toMatchObject({ detail: 'permission', waitKind: 'approval' });
+    expect(written[4]).toMatchObject({ tool: 'read' });
+    expect(written[5]).toMatchObject({ detail: 'permission.replied' });
+  });
+
   it('writes the lines a turn with a tool produces, in order, through setup', async () => {
     const plugin = await loadPlugin();
     const hooks = new Map<string, (event: unknown) => void>();

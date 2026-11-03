@@ -428,9 +428,28 @@ describe('probeOpenCodeServer', () => {
   // speaks OpenCode 1's API; the test says that instead of a parse error.
   it('reports that remote mode needs OpenCode 1 for a server that answers with a page', async () => {
     const fetchImpl: FetchLike = vi.fn().mockResolvedValue({
-      ok: true, status: 200, json: async () => { throw new SyntaxError('Unexpected token \'<\''); },
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/html; charset=utf-8' }),
+      json: async () => { throw new SyntaxError('Unexpected token \'<\''); },
     });
     expect(await probeOpenCodeServer(server, fetchImpl)).toEqual({ reachable: false, reason: OPENCODE_REMOTE_NEEDS_V1 });
+  });
+
+  // A V1 user whose URL reaches something other than OpenCode (a proxy's
+  // plain-text error, a wrong port) is told what the body was, not to install
+  // OpenCode 1.
+  it('keeps the parse error for a body that is neither JSON nor an HTML page', async () => {
+    const fetchImpl: FetchLike = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: new Headers({ 'content-type': 'text/plain' }),
+      json: async () => { throw new SyntaxError('Unexpected token \'B\', "Bad gateway" is not valid JSON'); },
+    });
+    expect(await probeOpenCodeServer(server, fetchImpl)).toEqual({
+      reachable: false,
+      reason: 'Unexpected token \'B\', "Bad gateway" is not valid JSON',
+    });
   });
 
   it('reports the same for a server that names an OpenCode 2 version', async () => {

@@ -70,9 +70,9 @@ function v2PluginDir(projectRoot: string): string {
 
 /** Where a plugin of the given major is installed, and the git exclude pattern that hides it. */
 function installLayout(projectRoot: string, openCode2: boolean): { directory: string; file: string; excludePattern: string } {
-  return openCode2
-    ? { directory: v2PluginDir(projectRoot), file: path.join(v2PluginDir(projectRoot), V2_PLUGIN_ENTRY), excludePattern: V2_PLUGIN_EXCLUDE_PATTERN }
-    : { directory: pluginsDir(projectRoot), file: pluginPath(projectRoot), excludePattern: PLUGIN_EXCLUDE_PATTERN };
+  if (!openCode2) return { directory: pluginsDir(projectRoot), file: pluginPath(projectRoot), excludePattern: PLUGIN_EXCLUDE_PATTERN };
+  const directory = v2PluginDir(projectRoot);
+  return { directory, file: path.join(directory, V2_PLUGIN_ENTRY), excludePattern: V2_PLUGIN_EXCLUDE_PATTERN };
 }
 
 /**
@@ -117,9 +117,7 @@ export function buildHooks(projectRoot: string, openCode2 = false): void {
     return;
   }
 
-  const layout = installLayout(projectRoot, openCode2);
-  const destinationDir = layout.directory;
-  const destinationFile = layout.file;
+  const { directory: destinationDir, file: destinationFile, excludePattern } = installLayout(projectRoot, openCode2);
 
   try {
     fs.mkdirSync(destinationDir, { recursive: true });
@@ -159,7 +157,7 @@ export function buildHooks(projectRoot: string, openCode2 = false): void {
   // tracked `.gitignore` this used to append to (which dirtied the user's
   // checkout); a non-git directory is a silent no-op inside the helper.
   if (fs.existsSync(destinationFile)) {
-    ensureLocalGitExcludes(projectRoot, [layout.excludePattern]);
+    ensureLocalGitExcludes(projectRoot, [excludePattern]);
   }
 }
 

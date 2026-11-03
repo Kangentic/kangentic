@@ -5,7 +5,7 @@ import { loadBetterSqlite3, openCodeDbPath } from './session-history-parser';
 import { exportDistroOpenCodeSession } from './distro-sessions';
 import { placeFromStored, targetOfPlace } from '../../shared/cli-target';
 import type { OpenCodeRemoteMessageEntry } from './remote-client';
-import { openCodeV2MessageEntry } from './v2-messages';
+import { openCodeV2RowEntries, type OpenCodeV2MessageRow } from './v2-messages';
 
 /**
  * OpenCode's `command-injection` verifier. CONFIRM-ONLY.
@@ -192,11 +192,11 @@ function queryForSubmittedText(
  * match. A database without the table (OpenCode 1 only) is a plain "not seen".
  */
 function findInV2Messages(database: DatabaseType.Database, sessionId: string, text: string, sentAt: number): boolean {
-  let rows: Array<{ id: string; time_created: number; data: string }>;
+  let rows: OpenCodeV2MessageRow[];
   try {
     rows = database
-      .prepare<[string, number], { id: string; time_created: number; data: string }>(
-        `SELECT id, time_created, data FROM session_message
+      .prepare<[string, number], OpenCodeV2MessageRow>(
+        `SELECT id, type, time_created, data FROM session_message
          WHERE session_id = ? AND type = 'user' AND time_created >= ?
          ORDER BY seq DESC LIMIT ${RECENT_MESSAGE_LIMIT}`,
       )
@@ -204,12 +204,7 @@ function findInV2Messages(database: DatabaseType.Database, sessionId: string, te
   } catch {
     return false;
   }
-  const messages = rows.reverse().flatMap((row) => {
-    const data = tryParseJson(row.data);
-    const entry = isRecord(data) ? openCodeV2MessageEntry(row.id, 'user', row.time_created, data) : null;
-    return entry ? [entry] : [];
-  });
-  return findOpenCodeSubmittedTextInMessages(messages, text, sentAt);
+  return findOpenCodeSubmittedTextInMessages(openCodeV2RowEntries(rows.reverse()), text, sentAt);
 }
 
 /**

@@ -252,6 +252,50 @@ describe('opencode-hook-manager', () => {
       expect(fs.readFileSync(userFile, 'utf-8')).toBe('mine');
     });
 
+    it('deletes a sentinel-bearing legacy .mjs from .opencode/plugins/ on a V2 install, and leaves a user-authored one', () => {
+      const pluginsDirectory = path.join(projectDir, '.opencode', 'plugins');
+      fs.mkdirSync(pluginsDirectory, { recursive: true });
+      fs.writeFileSync(legacyPluginPath(), '// kangentic-activity\n// earlier build\n');
+
+      buildHooks(projectDir, true);
+
+      expect(fs.existsSync(legacyPluginPath())).toBe(false);
+      expect(fs.existsSync(v2PluginPath())).toBe(true);
+
+      const userContents = '// the user\'s own plugin\nexport const Mine = async () => ({});\n';
+      fs.writeFileSync(legacyPluginPath(), userContents);
+
+      buildHooks(projectDir, true);
+
+      expect(fs.readFileSync(legacyPluginPath(), 'utf-8')).toBe(userContents);
+    });
+
+    it('removes both copies and every empty folder after a V1 install then a V2 install in one project', () => {
+      buildHooks(projectDir);
+      buildHooks(projectDir, true);
+      expect(fs.existsSync(pluginPath())).toBe(true);
+      expect(fs.existsSync(v2PluginPath())).toBe(true);
+
+      removeHooks(projectDir);
+
+      expect(fs.existsSync(pluginPath())).toBe(false);
+      expect(fs.existsSync(v2PluginPath())).toBe(false);
+      expect(fs.existsSync(path.dirname(v2PluginPath()))).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins'))).toBe(false);
+      expect(fs.existsSync(path.join(projectDir, '.opencode'))).toBe(false);
+    });
+
+    it('leaves a user-authored index.js without the sentinel alone, and its directory', () => {
+      fs.mkdirSync(path.dirname(v2PluginPath()), { recursive: true });
+      const foreignContents = '// not ours\nexport default {};\n';
+      fs.writeFileSync(v2PluginPath(), foreignContents);
+
+      removeHooks(projectDir);
+
+      expect(fs.readFileSync(v2PluginPath(), 'utf-8')).toBe(foreignContents);
+      expect(fs.existsSync(path.join(projectDir, '.opencode', 'plugins', 'kangentic-activity'))).toBe(true);
+    });
+
     it('hides the directory from git through .git/info/exclude', () => {
       execSync('git init', { cwd: projectDir, stdio: 'ignore' });
       buildHooks(projectDir, true);

@@ -11,6 +11,7 @@ import type { OpenCodeRemoteMessageEntry, OpenCodeRemotePart } from './remote-cl
  *                content: { type: 'text', text }
  *                         { type: 'reasoning', text }
  *                         { type: 'tool', id, name, state: { status, input, content: [{ type: 'text', text }] } }
+ *                         a failed tool: state { status: 'error', input, error: { type, message } }, no content
  *   synthetic, agent-switched, idle, ...   (not conversation)
  *
  * OpenCode 1 kept a message and its parts apart (`message` / `part`), and its
@@ -44,13 +45,35 @@ export function openCodeV2MessageEntry(
         tool: typeof block.name === 'string' ? block.name : 'tool',
         state: {
           input: state.input,
-          output: contentText(state.content) ?? state.output,
+          output: contentText(state.content) ?? errorMessage(state.error) ?? state.output,
           status: typeof state.status === 'string' ? state.status : undefined,
         },
       });
     }
   }
   return { info: { id, role: 'assistant', time, ...(model ? { modelID: model } : {}) }, parts };
+}
+
+/** A `session_message` row as the database readers select it. */
+export interface OpenCodeV2MessageRow {
+  id: string;
+  type: string;
+  time_created: number;
+  data: string;
+}
+
+/** `session_message` rows as `{ info, parts }` entries, without the rows that are not conversation or whose `data` does not parse. */
+export function openCodeV2RowEntries(rows: ReadonlyArray<OpenCodeV2MessageRow>): OpenCodeRemoteMessageEntry[] {
+  return rows.flatMap((row) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(row.data);
+    } catch {
+      return [];
+    }
+    const entry = isRecord(data) ? openCodeV2MessageEntry(row.id, row.type, row.time_created, data) : null;
+    return entry ? [entry] : [];
+  });
 }
 
 /** A record's own creation time, the `time.created` every OpenCode 2 message carries. */
@@ -65,6 +88,11 @@ function contentText(value: unknown): string | undefined {
   return texts.length > 0 ? texts.join('\n') : undefined;
 }
 
-export function isRecord(value: unknown): value is Record<string, unknown> {
+/** A failed tool's `error.message` (a rejected permission, bad arguments), or undefined. */
+function errorMessage(value: unknown): string | undefined {
+  return isRecord(value) && typeof value.message === 'string' ? value.message : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
