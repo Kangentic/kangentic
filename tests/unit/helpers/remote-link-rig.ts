@@ -65,29 +65,42 @@ export function spawnParams(sessionId: string, taskId: string, hostId?: string):
 export interface HelperRig {
   helper: HelperServer;
   fakes: FakePty[];
+  /** node-pty's spawn as the helper called it: the file, the args and the options each PTY got. */
+  spawnPty: ReturnType<typeof vi.fn>;
   /** The link's end of every connection dialed to this helper, oldest first. */
   linkStreams: Duplex[];
 }
 
+export interface HelperRigOptions {
+  firstPid?: number;
+  endpoint?: ConstructorParameters<typeof HelperServer>[0]['endpoint'];
+  homeDirectory?: string;
+  baseEnv?: NodeJS.ProcessEnv;
+}
+
 /** A helper whose node-pty hands out the queued fakes in order. */
-export function makeHelperRig(fakeCount = 1, firstPid = 4242, endpoint?: ConstructorParameters<typeof HelperServer>[0]['endpoint']): HelperRig {
-  const fakes = Array.from({ length: fakeCount }, (_, index) => createFakePty(firstPid + index));
+export function makeHelperRig(fakeCount = 1, firstPidOrOptions: number | HelperRigOptions = 4242, legacyEndpoint?: HelperRigOptions['endpoint']): HelperRig {
+  const options: HelperRigOptions = typeof firstPidOrOptions === 'number' ? { firstPid: firstPidOrOptions, endpoint: legacyEndpoint } : firstPidOrOptions;
+  const fakes = Array.from({ length: fakeCount }, (_, index) => createFakePty((options.firstPid ?? 4242) + index));
   const queue = [...fakes];
+  const spawnPty = vi.fn(() => {
+    const next = queue.shift();
+    if (!next) throw new Error('no fake PTY queued');
+    return next.pty;
+  });
   const helper = new HelperServer({
+    homeDirectory: options.homeDirectory,
+    baseEnv: options.baseEnv,
     coreDeps: {
       resolveAgent: () => undefined,
       transcriptSinkFor: () => null,
       coalesceMs: 0,
       platform: 'linux',
-      spawnPty: vi.fn(() => {
-        const next = queue.shift();
-        if (!next) throw new Error('no fake PTY queued');
-        return next.pty;
-      }) as unknown as typeof nodePty.spawn,
+      spawnPty: spawnPty as unknown as typeof nodePty.spawn,
     },
-    endpoint,
+    endpoint: options.endpoint,
   });
-  return { helper, fakes, linkStreams: [] };
+  return { helper, fakes, spawnPty, linkStreams: [] };
 }
 
 /** Join a link to the helper. The returned stream is the link's end. */

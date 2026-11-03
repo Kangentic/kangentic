@@ -54,6 +54,21 @@ export interface SuspendAllParams {
   sessions: SuspendPlan[];
 }
 
+/**
+ * A spawn's `file` that means "the host's own login shell": the helper puts in the shell the user has
+ * there, run as a login shell so their PATH and rc files apply. The app never guesses a host's shell.
+ */
+export const HOST_LOGIN_SHELL = '$LOGIN_SHELL';
+
+export interface HostFileWrite {
+  /** An absolute path on the host, under the user's home. */
+  path: string;
+  /** The file's text, UTF-8. */
+  content: string;
+  /** Unix permission bits, such as 0o755 for a script. Defaults to owner read and write. */
+  mode?: number;
+}
+
 /** Requests only the helper answers, beside the pty host's own. */
 export interface HelperRequestMap {
   /** Bind the link's id to a session the helper already holds. */
@@ -65,6 +80,12 @@ export interface HelperRequestMap {
    * `ignored`, when the epoch is not the helper's current one.
    */
   suspendAll: { params: SuspendAllParams; result: { suspended: number; ignored: boolean } };
+  /** Write files the agent's command needs (its settings, its hook scripts), making their folders. */
+  writeFiles: { params: { files: HostFileWrite[] }; result: { written: number } };
+  /** Read one text file, for the files the app must see before it writes its own beside them. */
+  readFile: { params: { path: string; maxBytes?: number }; result: { exists: boolean; content: string | null } };
+  /** Whether each path is there. Only the helper may say a path is absent: this computer's copy proves nothing. */
+  pathPresence: { params: { paths: string[] }; result: Array<'present' | 'absent'> };
 }
 
 export type HelperMethod = keyof HelperRequestMap;

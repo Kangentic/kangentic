@@ -18,6 +18,9 @@
  * Imports nothing of electron or better-sqlite3 (`tests/unit/remote-helper-boundary.test.ts`).
  */
 
+import { promises as fs } from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { PtyHostCore, type PtyHostCoreDeps } from '../../pty/host/pty-host-core';
 import {
@@ -35,10 +38,12 @@ import type { ExitSequenceStep } from '../../../shared/types';
 import { writeExitSteps } from '../../pty/shutdown/exit-sequence';
 import { ResumeEndpoint, type PeerHello, type ResumeEndpointOptions } from '../protocol/resume-endpoint';
 import {
+  HOST_LOGIN_SHELL,
   joinPortMessage,
   parseLinkMessage,
   splitPortMessage,
   type HelperSessionRecord,
+  type HostFileWrite,
   type HelperSnapshot,
   type HelperToLinkMessage,
   type PortBody,
@@ -50,7 +55,16 @@ const LINK_RENDERER_ID = 1;
 
 export const HELPER_PROTOCOL = { min: 1, max: 1 } as const;
 
+/** Variables that describe the ssh session that happened to start the daemon. A PTY has no use for them. */
+const SESSION_ENV_PREFIXES = ['SSH_'] as const;
+const SESSION_ENV_NAMES = new Set(['NODE_OPTIONS', 'NODE_PATH', '_']);
+const MAX_READ_BYTES = 1_000_000;
+
 export interface HelperServerOptions {
+  /** The user's home on the host. Files are written, read and checked only beneath it. Defaults to the daemon's. */
+  homeDirectory?: string;
+  /** The environment every PTY starts from, before the spawn's own variables. Defaults to the daemon's. */
+  baseEnv?: NodeJS.ProcessEnv;
   /** Everything the core needs but `emit`, which the server owns. */
   coreDeps: Omit<PtyHostCoreDeps, 'emit'>;
   /** Timers and limits for the link's endpoint, which tests shorten. */
@@ -274,6 +288,9 @@ export class HelperServer {
     if (method === 'spawn') return this.spawnSession(params as PtyHostSpawnParams);
     if (method === 'snapshot') return this.snapshot();
     if (method === 'suspendAll') return this.suspendAll(params as SuspendAllParams);
+    if (method === 'writeFiles') return this.writeFiles((params as { files: HostFileWrite[] }).files);
+    if (method === 'readFile') return this.readFile(params as { path: string; maxBytes?: number });
+    if (method === 'pathPresence') return this.pathPresence((params as { paths: string[] }).paths);
     if (method === 'rebind') {
       const { sessionId, ptyId } = params as { sessionId: string; ptyId: number };
       return this.rebind(sessionId, ptyId);
@@ -298,7 +315,7 @@ export class HelperServer {
       };
     }
     const corePtyId = this.nextCorePtyId++;
-    const result = await this.core.handleRequest('spawn', { ...params, ptyId: corePtyId });
+    const result = await this.core.handleRequest('spawn', { ...this.prepareSpawn(params), ptyId: corePtyId });
     if (result.ok) {
       this.wireToCore.set(params.ptyId, corePtyId);
       this.coreToWire.set(corePtyId, params.ptyId);
@@ -345,6 +362,77 @@ export class HelperServer {
       setTimeout(kill, pauses + EXIT_GRACE_MS).unref?.();
     }
     return { suspended, ignored: false };
+  }
+
+  /**
+   * A spawn's shell and environment as this host should have them. The app cannot know either: main's
+   * environment is another machine's and never reaches a host, so a PTY starts from the daemon's own
+   * (minus the ssh session that started it), with the spawn's variables on top.
+   */
+  private prepareSpawn(params: PtyHostSpawnParams): PtyHostSpawnParams {
+    const baseEnv = this.options.baseEnv ?? process.env;
+    const env: Record<string, string> = {};
+    for (const [name, value] of Object.entries(baseEnv)) {
+      if (value === undefined) continue;
+      if (SESSION_ENV_NAMES.has(name) || SESSION_ENV_PREFIXES.some((prefix) => name.startsWith(prefix))) continue;
+      env[name] = value;
+    }
+    const shell = baseEnv.SHELL || '/bin/sh';
+    const wantsLoginShell = params.file === HOST_LOGIN_SHELL;
+    return {
+      ...params,
+      file: wantsLoginShell ? shell : params.file,
+      args: wantsLoginShell ? ['-l', ...params.args] : params.args,
+      env: { ...env, ...params.env },
+    };
+  }
+
+  /** A path the app named, resolved and held beneath the user's home. Anything outside it is refused. */
+  private homePath(requested: string): string {
+    const home = path.resolve(this.options.homeDirectory ?? os.homedir());
+    const resolved = path.resolve(requested);
+    const relative = path.relative(home, resolved);
+    if (!path.isAbsolute(requested) || relative.startsWith('..') || path.isAbsolute(relative)) {
+      throw new Error(`${requested} is not inside the home folder of this host, so it was not touched`);
+    }
+    return resolved;
+  }
+
+  private async writeFiles(files: HostFileWrite[]): Promise<{ written: number }> {
+    for (const file of files) {
+      const target = this.homePath(file.path);
+      await fs.mkdir(path.dirname(target), { recursive: true });
+      // Beside the file, then renamed in: a reader never sees half a settings file.
+      const staging = `${target}.${process.pid}.tmp`;
+      await fs.writeFile(staging, file.content, { encoding: 'utf8', mode: file.mode ?? 0o600 });
+      await fs.chmod(staging, file.mode ?? 0o600);
+      await fs.rename(staging, target);
+    }
+    return { written: files.length };
+  }
+
+  private async readFile(request: { path: string; maxBytes?: number }): Promise<{ exists: boolean; content: string | null }> {
+    const target = this.homePath(request.path);
+    try {
+      const buffer = await fs.readFile(target);
+      return { exists: true, content: buffer.subarray(0, Math.min(request.maxBytes ?? MAX_READ_BYTES, MAX_READ_BYTES)).toString('utf8') };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return { exists: false, content: null };
+      throw error;
+    }
+  }
+
+  private async pathPresence(paths: string[]): Promise<Array<'present' | 'absent'>> {
+    return Promise.all(paths.map(async (requested) => {
+      try {
+        await fs.access(this.homePath(requested));
+        return 'present' as const;
+      } catch (error) {
+        // A refusal to look is not an answer: only a path that is not there is absent.
+        if ((error as NodeJS.ErrnoException).code === 'ENOENT') return 'absent' as const;
+        throw error;
+      }
+    }));
   }
 
   private rebind(sessionId: string, wirePtyId: number): { ok: boolean } {
